@@ -295,7 +295,7 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         $composition->show($actor, $session->project_id, $session->id);
     }
 
-    public function test_composition_reserves_one_fact_before_offering_or_accepting_work(): void
+    public function test_composition_reserves_facts_for_each_required_quantity_confirmation(): void
     {
         [$actor, $session] = $this->fixture();
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
@@ -307,20 +307,22 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         $bounded = static fn (int $count): array => [...$capture, 'snapshot' => new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot(
             $snapshot->entities, array_fill(0, $count, $snapshot->facts[0]), $snapshot->evidence, $snapshot->conflicts)];
         $modelReader = Mockery::mock(ProjectModelRepository::class);
-        $modelReader->shouldReceive('snapshotForPlanning')->times(4)->with(...[...$scope, 10001])
-            ->andReturn($bounded(9999), $bounded(10000), $bounded(10000), $bounded(10001));
+        $modelReader->shouldReceive('snapshotForPlanning')->times(7)->with(...[...$scope, 10001])
+            ->andReturn($bounded(9997), $bounded(9997), $bounded(9998), $bounded(9999), $bounded(10000), $bounded(10001), $bounded(9997));
         $preview = new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationCompositionPreview($modelReader,
             app(BuildMostEstimateDraft::class), app(EvaluationInputFingerprint::class),
             new \App\BusinessModules\Addons\EstimateGeneration\Planning\SupplementaryWorkCatalog);
         $composition = $this->app->makeWith(EvaluationWorkComposition::class, ['preview' => $preview]);
         $offered = $composition->show($actor, $session->project_id, $session->id);
         self::assertCount(11, $offered['candidates']);
+        self::assertSame(1, $offered['maximum_additional_rows']);
         $raw = $session->fresh()->getRawOriginal();
         $outbound = count(Http::recorded());
-        foreach (['preview', 'accept', 'overflow'] as $action) {
+        foreach (['batch', 'preview', 'accept', 'full', 'overflow'] as $action) {
             try {
-                if ($action === 'accept') {
-                    $composition->accept($actor, $session->project_id, $session->id, $this->input($offered, ['roof.rafters']));
+                if (in_array($action, ['accept', 'batch'], true)) {
+                    $composition->accept($actor, $session->project_id, $session->id,
+                        $this->input($offered, $action === 'batch' ? ['roof.rafters', 'roof.battens'] : ['roof.rafters']));
                 } else {
                     $composition->show($actor, $session->project_id, $session->id);
                 }
@@ -329,6 +331,20 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
                 self::assertSame($raw, $session->fresh()->getRawOriginal());
                 self::assertCount(1, $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts);
             }
+        }
+        $accepted = $composition->accept($actor, $session->project_id, $session->id, $this->input($offered, ['roof.rafters']));
+        self::assertSame('0', $accepted['cost_units']);
+        $pendingReader = Mockery::mock(ProjectModelRepository::class);
+        $pendingReader->shouldReceive('snapshotForPlanning')->once()->with(...[...$scope, 10001])->andReturn($bounded(9997));
+        $pendingPreview = new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationCompositionPreview($pendingReader,
+            app(BuildMostEstimateDraft::class), app(EvaluationInputFingerprint::class),
+            new \App\BusinessModules\Addons\EstimateGeneration\Planning\SupplementaryWorkCatalog);
+        $raw = $session->fresh()->getRawOriginal();
+        try {
+            $pendingPreview->current($session->fresh());
+            self::fail('Another composition consumed facts reserved for an outstanding quantity.');
+        } catch (ValidationException) {
+            self::assertSame($raw, $session->fresh()->getRawOriginal());
         }
         self::assertCount($outbound, Http::recorded());
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());

@@ -39,10 +39,15 @@ final readonly class EvaluationCompositionPreview
         }
         $existing = [];
         $rowCount = 0;
+        $pendingQuantities = 0;
         foreach ($restored['local_estimates'] ?? [] as $local) {
             foreach ($local['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $item) {
                     $rowCount++;
+                    if (($item['metadata']['generation_source'] ?? null) === 'accepted_supplementary_work'
+                        && ($item['quantity'] ?? null) === null) {
+                        $pendingQuantities++;
+                    }
                     $work = $item['metadata']['composition_work_key'] ?? $item['work_key'] ?? $item['metadata']['quantity_key'] ?? null;
                     if (is_string($work)) {
                         $existing[$work] = true;
@@ -59,7 +64,8 @@ final readonly class EvaluationCompositionPreview
             }
         }
         $capture = $this->models->snapshotForPlanning((int) $session->organization_id, (int) $session->project_id, (int) $session->id, 10001);
-        if (count($capture['snapshot']->facts) >= 10000) {
+        $factCapacity = intdiv(max(0, 10000 - count($capture['snapshot']->facts) - 1), 2) - $pendingQuantities;
+        if ($factCapacity < 1) {
             throw ValidationException::withMessages(['composition' => trans_message('estimate_composition.unavailable')]);
         }
         $binding = ['contract' => self::CONTRACT, 'catalog_version' => SupplementaryWorkCatalog::VERSION,
@@ -72,7 +78,7 @@ final readonly class EvaluationCompositionPreview
             'state_version' => (int) $session->state_version,
             'preview_fingerprint' => hash('sha256', CanonicalPipelineJson::encode($binding)),
             'artifact_hash' => $draft['artifact_hash'], 'candidates' => $candidates,
-            'maximum_additional_rows' => 1000 - $rowCount,
+            'maximum_additional_rows' => min(1000 - $rowCount, $factCapacity),
             'estimate_complete' => false, 'cost_units' => '0'];
     }
 }
