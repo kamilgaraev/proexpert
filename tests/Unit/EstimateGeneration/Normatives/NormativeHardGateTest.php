@@ -13,6 +13,40 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeHardGateTest extends TestCase
 {
+    #[DataProvider('openingProductCandidates')]
+    public function test_opening_product_gate_is_independent_of_generic_window_and_door_matching(?string $system, string $name, bool $accepted): void
+    {
+        $text = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\OpeningSystemSpecification::searchText($system) ?? 'Установка оконных блоков';
+        $intent = new WorkIntentData(1, 2, 3, 'opening', $text, 'm2', 'area', '', '', '', '', 'residential', 'v1', 'published', null,
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], openingSystem: $system, openingSystemRequired: true);
+        $candidate = $this->candidate(['name' => $name, 'canonicalUnit' => 'm2', 'material' => null, 'technology' => null,
+            'structure' => null, 'normativeSection' => null, 'objectType' => null, 'regionCode' => null]);
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+        if ($accepted) {
+            self::assertCount(1, $set->candidates, json_encode(array_map(static fn ($row) => $row->reasonCodes, $set->rejected)));
+        } else {
+            self::assertSame([], $set->candidates);
+            self::assertContains($system === null ? 'opening_system_missing' : 'opening_system_mismatch', $set->rejected[0]->reasonCodes);
+        }
+    }
+
+    public static function openingProductCandidates(): array
+    {
+        return [
+            ['steel_glazed_window', 'Установка стальных остеклённых оконных блоков', true],
+            ['steel_glazed_window', 'Установка оконных блоков из поливинилхлоридных профилей', false],
+            ['steel_glazed_window', 'Установка алюминиевых оконных блоков', false],
+            ['steel_glazed_window', 'Установка оконных блоков', false],
+            ['pvc_glazed_window', 'Установка оконных блоков из поливинилхлоридных профилей', true],
+            ['pvc_glazed_window', 'Установка стальных оконных блоков', false],
+            ['timber_hollow_core_door', 'Установка внутренних деревянных дверных блоков с пустотелыми полотнами', true],
+            ['timber_hollow_core_door', 'Установка наружных деревянных дверных блоков из меранти', false],
+            ['meranti_external_door', 'Установка наружных деревянных дверных блоков из меранти', true],
+            ['meranti_external_door', 'Установка внутренних деревянных дверных блоков', false],
+            [null, 'Установка оконных блоков из поливинилхлоридных профилей', false],
+        ];
+    }
+
     #[DataProvider('incompatibilities')]
     public function test_each_closed_compatibility_gate_rejects_candidate(string $field, mixed $value, string $reason): void
     {

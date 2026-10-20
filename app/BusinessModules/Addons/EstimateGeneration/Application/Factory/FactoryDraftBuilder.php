@@ -116,7 +116,8 @@ final readonly class FactoryDraftBuilder
             : \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
         $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander)->expand($draft, $openingSnapshot,
             \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions),
-            $quantities, self::MAX_ROWS, $documentVersions);
+            $quantities, self::MAX_ROWS, $documentVersions,
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions));
         FrozenWorkItemLimit::assertDraft($draft, self::MAX_ROWS);
         $identity = ['input_snapshot_hash' => $planning['input_snapshot_hash'], 'evaluation_mode' => 'universal',
             'scope_identity' => ['organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2], 'source_version' => $planning['source_version']]];

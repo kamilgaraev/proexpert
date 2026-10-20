@@ -43,11 +43,12 @@ final readonly class EvaluationDraftArithmeticRecalculator
         $openingSnapshot = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
             : \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
         $openingScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
+        $openingSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions);
         if ($universal) {
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander)->expand($draft,
                 $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander)->expand($draft,
-                $openingSnapshot, $openingScopes, $quantities, 1000, $documentVersions);
+                $openingSnapshot, $openingScopes, $quantities, 1000, $documentVersions, $openingSystems);
         }
         $quantitiesByEntity = [];
         foreach ($quantities as $quantity) {
@@ -116,6 +117,13 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     $changed = $oldAmount !== $item['quantity'] || $oldUnit !== ($item['unit'] ?? null)
                         || \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['basis' => $oldBasis])
                         !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['basis' => $item['quantity_basis_details']]);
+                    if ($universal && ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($item, $openingSystems)) {
+                        $item['pricing_status'] = 'not_calculated';
+                        $item['pricing_blocker'] = 'opening_system_required';
+                        $draft['local_estimates'][$estimateIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $item;
+
+                        continue;
+                    }
                     if ($actor !== null && $session !== null && isset($sessionInput['price_selections'][$item['key']])) {
                         $price = $this->commercial->resolve($actor, $session, $item, $snapshot, $decisions);
                         if ($price === null) {

@@ -23,6 +23,7 @@ final class NormativeCandidateManualSearchService
     public function search(EstimateGenerationSession $session, string $workItemKey, ?string $query, int $limit = 10): array
     {
         [$workItem, $context] = $this->findWorkItemContext($session, $workItemKey);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\CurrentOpeningSystemProofGuard::class)->assertCurrent($session, $workItem);
         $query = trim((string) $query);
 
         if ($query !== '') {

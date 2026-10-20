@@ -21,7 +21,16 @@ final class SaveManualProjectFactsRequest extends FormRequest
         return [
             'state_version' => ['required', 'integer', 'min:0'], 'request_id' => ['required', 'uuid'],
             'entities' => ['required', 'array', 'min:1', 'max:100'],
-            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice,native_question,wall_assembly,opening_scope'],
+            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice,native_question,wall_assembly,opening_scope,opening_system'],
+            'entities.*.opening_system' => ['sometimes', 'required', 'array:system,entity_fingerprint,reason'],
+            'entities.*.opening_system.system' => ['required_with:entities.*.opening_system', \Illuminate\Validation\Rule::in(array_keys(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::SYSTEMS))],
+            'entities.*.opening_system.entity_fingerprint' => ['required_with:entities.*.opening_system', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'entities.*.opening_system.reason' => ['required_with:entities.*.opening_system', 'string', 'min:10', 'max:1000',
+                static function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (is_string($value) && strlen($value) > 1000) {
+                        $fail(trans_message('estimate_opening.reason_too_long'));
+                    }
+                }],
             'entities.*.opening_scope' => ['sometimes', 'required', 'array:opening_kind,entity_fingerprint,reason'],
             'entities.*.opening_scope.opening_kind' => ['required_with:entities.*.opening_scope', 'in:door,window'],
             'entities.*.opening_scope.entity_fingerprint' => ['required_with:entities.*.opening_scope', 'string', 'regex:/\A[a-f0-9]{64}\z/'],

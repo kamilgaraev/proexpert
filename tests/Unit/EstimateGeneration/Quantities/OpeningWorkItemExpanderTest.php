@@ -17,6 +17,35 @@ use PHPUnit\Framework\TestCase;
 
 final class OpeningWorkItemExpanderTest extends TestCase
 {
+    public function test_system_proofs_remain_per_opening_and_do_not_erase_previous_resources_or_prices(): void
+    {
+        $draft = $this->draft();
+        $draft['local_estimates'][0]['sections'][0]['work_items'][1]['metadata']['specialization_scenario'] = ['assumption_code' => 'residential_pvc_windows'];
+        $systems = ['opening:door' => ['system' => 'timber_hollow_core_door', 'fact_id' => 'fact:door-system'],
+            'opening:window' => ['system' => 'steel_glazed_window', 'fact_id' => 'fact:window-system']];
+        $expander = new OpeningWorkItemExpander;
+        $built = $expander->expand($draft, $this->snapshot(), $this->scopes(), $this->quantities(), 10, [], $systems);
+        $rows = &$built['local_estimates'][0]['sections'][0]['work_items'];
+        foreach (array_slice($rows, 0, 2) as $row) {
+            self::assertSame($systems[$row['entity_id']], $row['metadata']['opening_system']);
+            self::assertArrayNotHasKey('specialization_scenario', $row['metadata']);
+            self::assertTrue(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($row, $systems));
+            self::assertFalse(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($row, []));
+        }
+        $rows[0]['normative_match'] = ['norm_id' => 123, 'selected_by_user' => true];
+        $rows[0]['materials'] = [['construction_resource_id' => 456, 'quantity' => '12']];
+        $rows[0]['unit_price'] = '99';
+        $previous = $rows[0];
+        $systems[$previous['entity_id']]['fact_id'] = 'fact:replacement';
+        $again = $expander->expand($built, $this->snapshot(), $this->scopes(), $this->quantities(), 10, [], $systems);
+        $updated = $again['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame($previous['normative_match'], $updated['normative_match']);
+        self::assertSame($previous['materials'], $updated['materials']);
+        self::assertSame('99', $updated['unit_price']);
+        self::assertFalse(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($previous, $systems));
+        self::assertTrue(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($updated, $systems));
+    }
+
     public function test_previously_accepted_manual_aggregate_is_preserved_and_keeps_its_direct_quantity(): void
     {
         $draft = $this->draft();

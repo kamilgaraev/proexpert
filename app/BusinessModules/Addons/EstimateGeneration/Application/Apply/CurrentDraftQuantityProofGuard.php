@@ -45,6 +45,7 @@ final readonly class CurrentDraftQuantityProofGuard
         $openingSnapshot = GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
             : GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
         $openingScopes = OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
+        $openingSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions);
         $ids = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
@@ -78,7 +79,8 @@ final readonly class CurrentDraftQuantityProofGuard
                             }
                         }
                     }
-                    if (! WallWorkItemExpander::permits($item, $wallScopes, $universal) || ! OpeningWorkItemExpander::permits($item, $openingScopes)) {
+                    if (! WallWorkItemExpander::permits($item, $wallScopes, $universal) || ! OpeningWorkItemExpander::permits($item, $openingScopes)
+                        || ($universal && ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($item, $openingSystems))) {
                         $this->reject();
                     }
                     if (isset($item['metadata']['wall_assembly'])) {

@@ -68,6 +68,95 @@ final class OpeningScopeEvaluationPostgresTest extends EstimateGenerationCanonic
         return ['cyrillic' => [str_repeat('я', 500)], 'ascii' => [str_repeat('a', 1000)], 'emoji' => [str_repeat('😀', 250)]];
     }
 
+    #[DataProvider('openingSystems')]
+    public function test_product_system_is_a_separate_current_entity_bound_choice(string $system, string $kind): void
+    {
+        [$actor, $session] = $this->fixture();
+        $writer = app(SaveManualProjectFacts::class);
+        $scope = $this->scope($session);
+        $beforeCalls = count(Http::recorded());
+        $question = $this->questions($session)[0];
+        $writer->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $this->answer($question, $kind));
+        [$capture, $decisions] = $this->capture($session->fresh());
+        self::assertSame([], \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($capture['snapshot'], $decisions, []));
+        $backlog = app(NativeParameterBacklog::class)->current($session->fresh(), $capture['snapshot'], $capture['token']);
+        $offered = array_values(array_filter($backlog['questions'], static fn (array $row): bool => $row['answer']['kind'] === 'opening_system'));
+        self::assertCount(1, $offered);
+        $question = $offered[0];
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::choices($kind), array_column($question['input_contract']['choices'], 'value'));
+        $input = ['entities' => [['key' => 'system-answer', 'type' => 'opening', 'existing_entity_id' => $question['answer']['entity_id'],
+            'native_question' => $question['answer']['native_question'], 'opening_system' => ['system' => $system,
+                'entity_fingerprint' => $question['answer']['entity_fingerprint'], 'reason' => 'Изделие выбрано по обозначению и спецификации исходного чертежа.']]]];
+        self::assertFalse(Validator::make(['state_version' => 3, 'request_id' => (string) Str::uuid(), ...$input],
+            (new SaveManualProjectFactsRequest)->rules())->fails());
+        $before = DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count();
+        foreach (['incompatible', 'fingerprint', 'reason_bytes', 'binding', 'mixed', 'missing_binding', 'extra'] as $variant) {
+            $invalid = $input;
+            match ($variant) {
+                'incompatible' => $invalid['entities'][0]['opening_system']['system'] = $kind === 'window' ? 'timber_hollow_core_door' : 'steel_glazed_window',
+                'fingerprint' => $invalid['entities'][0]['opening_system']['entity_fingerprint'] = str_repeat('f', 64),
+                'reason_bytes' => $invalid['entities'][0]['opening_system']['reason'] = str_repeat('я', 501),
+                'binding' => $invalid['entities'][0]['native_question']['version'] = str_repeat('f', 64),
+                'mixed' => $invalid['entities'][0]['parameters'] = ['width' => ['value' => '1', 'unit' => 'm', 'basis' => 'input']],
+                'missing_binding' => $invalid['entities'][0]['native_question'] = null,
+                'extra' => $invalid['entities'][0]['opening_system']['automatic'] = true,
+            };
+            try {
+                $writer->handle($actor, $scope[1], $scope[2], 3, (string) Str::uuid(), $invalid);
+                self::fail('Invalid product system was accepted: '.$variant);
+            } catch (ValidationException) {
+                self::assertSame($before, DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count());
+                self::assertSame(3, $session->fresh()->state_version);
+            }
+        }
+        $request = (string) Str::uuid();
+        $result = $writer->handle($actor, $scope[1], $scope[2], 3, $request, $input);
+        self::assertEquals($result, $writer->handle($actor, $scope[1], $scope[2], 3, $request, $input));
+        self::assertSame('0', $result['cost_units']);
+        [$capture, $decisions] = $this->capture($session->fresh());
+        $systems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($capture['snapshot'], $decisions, []);
+        self::assertCount(1, $systems);
+        self::assertSame($system, $systems[$question['answer']['entity_id']]['system']);
+        self::assertSame($question['answer']['scope_fact_id'], $systems[$question['answer']['entity_id']]['scope_fact_id']);
+        $systemDecision = $systems[$question['answer']['entity_id']]['decision_id'];
+        self::assertSame([], \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($capture['snapshot'],
+            array_values(array_filter($decisions, static fn ($decision): bool => $decision->id !== $systemDecision)), []));
+        $remaining = app(NativeParameterBacklog::class)->current($session->fresh(), $capture['snapshot'], $capture['token']);
+        self::assertCount(0, array_filter($remaining['questions'], static fn (array $row): bool => $row['answer']['kind'] === 'opening_system'));
+        foreach (['scope_fact_version', 'entity_fingerprint', 'target_source_version', 'decision_id', 'fact_version', 'invalidated'] as $variant) {
+            $facts = array_map(static function ($fact) use ($variant) {
+                if ($fact->type !== 'opening_system') {
+                    return $fact;
+                }
+                $properties = get_object_vars($fact);
+                match ($variant) {
+                    'scope_fact_version' => $properties['value']['scope_fact_version']++,
+                    'entity_fingerprint' => $properties['value']['entity_fingerprint'] = str_repeat('f', 64),
+                    'target_source_version' => $properties['value']['target_source_version'] = 'sha256:'.str_repeat('f', 64),
+                    'decision_id' => $properties['value']['decision_id'] = 'decision:foreign',
+                    'fact_version' => $properties['version']++,
+                    'invalidated' => $properties['status'] = 'invalidated',
+                };
+
+                return new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(...$properties);
+            }, $capture['snapshot']->facts);
+            $changed = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot(
+                $capture['snapshot']->entities, $facts, $capture['snapshot']->evidence, $capture['snapshot']->conflicts);
+            self::assertSame([], \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($changed, $decisions, []), $variant);
+        }
+        self::assertCount($beforeCalls, Http::recorded());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
+        self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+    }
+
+    public static function openingSystems(): array
+    {
+        return array_map(static fn (string $kind, string $system): array => [$system, $kind],
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::SYSTEMS,
+            array_keys(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::SYSTEMS));
+    }
+
     public function test_native_choices_are_source_bound_replayable_and_never_inferred_from_names_or_paid(): void
     {
         [$actor, $session] = $this->fixture();
@@ -139,6 +228,29 @@ final class OpeningScopeEvaluationPostgresTest extends EstimateGenerationCanonic
             $writer->handle($actor, $session->project_id, $session->id, $session->fresh()->state_version, (string) Str::uuid(), $this->answer($question, $kind));
         }
         $draft = $this->recalculate($this->draft(), $actor, $session->fresh());
+        try {
+            DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent(...[...$this->scope($session), $draft]));
+            self::fail('An opening without a product choice was accepted for application.');
+        } catch (ValidationException) {
+            self::addToAssertionCount(1);
+        }
+        while (true) {
+            [$capture] = $this->capture($session->fresh());
+            $questions = array_values(array_filter(app(NativeParameterBacklog::class)->current($session->fresh(), $capture['snapshot'], $capture['token'])['questions'],
+                static fn (array $question): bool => $question['answer']['kind'] === 'opening_system'));
+            if ($questions === []) {
+                break;
+            }
+            $question = $questions[0];
+            $writer->handle($actor, $session->project_id, $session->id, $session->fresh()->state_version, (string) Str::uuid(), ['entities' => [[
+                'key' => 'product', 'type' => 'opening', 'existing_entity_id' => $question['answer']['entity_id'],
+                'native_question' => $question['answer']['native_question'], 'opening_system' => [
+                    'system' => $question['answer']['opening_kind'] === 'window' ? 'steel_glazed_window' : 'timber_hollow_core_door',
+                    'entity_fingerprint' => $question['answer']['entity_fingerprint'], 'reason' => 'Изделие подтверждено по спецификации исходного чертежа.',
+                ],
+            ]]]);
+        }
+        $draft = $this->recalculate($draft, $actor, $session->fresh());
         $rows = $draft['local_estimates'][0]['sections'][0]['work_items'];
         self::assertCount(3, $rows);
         $byWork = array_column(array_filter($rows, static fn ($row): bool => isset($row['metadata']['composition_work_key'])), null, 'work_key');
@@ -148,6 +260,17 @@ final class OpeningScopeEvaluationPostgresTest extends EstimateGenerationCanonic
         $scope = $this->scope($session);
         DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent(...[...$scope, $draft]));
         self::addToAssertionCount(1);
+        $proofGuard = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\CurrentOpeningSystemProofGuard::class);
+        foreach ($byWork as $row) {
+            $proofGuard->assertCurrent($session->fresh(), $row);
+            $row['metadata']['opening_system']['fact_id'] = 'fact:foreign';
+            try {
+                $proofGuard->assertCurrent($session->fresh(), $row);
+                self::fail('Stale product proof reached normative selection.');
+            } catch (ValidationException) {
+                self::addToAssertionCount(1);
+            }
+        }
         self::assertEquals($draft, $this->recalculate($draft, $actor, $session->fresh()));
         $deleted = $draft;
         array_shift($deleted['local_estimates'][0]['sections'][0]['work_items']);
