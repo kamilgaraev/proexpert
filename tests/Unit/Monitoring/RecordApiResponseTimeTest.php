@@ -153,9 +153,22 @@ final class RecordApiResponseTimeTest extends TestCase
             ['GET', '/api/v1/admin/executive-documentation/references/1', false],
             ['GET', '/api/v1/admin/personal-files', true], ['POST', '/api/v1/admin/personal-files', false],
             ['GET', '/api/v1/admin/personal-files/1', false],
+            ['GET', '/api/v1/admin/personal-files/1/download-url', true],
+            ['POST', '/api/v1/admin/personal-files/1/download-url', false],
+            ['HEAD', '/api/v1/admin/personal-files/1/download-url', false],
+            ['GET', '/api/v1/admin/personal-files/1/extra/download-url', false],
+            ['GET', '/api/v1/admin/personal-files//download-url', false],
+            ['GET', '/api/v1/mobile/personal-files/1/download-url', false],
             ['GET', '/api/v1/admin/report-files', true],
             ['POST', '/api/v1/admin/report-files', false],
             ['GET', '/api/v1/admin/report-files/1', false],
+            ['GET', '/api/v1/admin/report-files/2/download-url', true],
+            ['POST', '/api/v1/admin/report-files/2/download-url', false],
+            ['PUT', '/api/v1/admin/report-files/2/download-url', false],
+            ['GET', '/api/v1/admin/report-files/2/download-url/extra', false],
+            ['GET', '/api/v1/admin/report-files/2/download-url-extra', false],
+            ['GET', '/api/v1/landing/report-files/2/download-url', false],
+            ['GET', '/api/v1/admin/act-files/2/download-url', false],
             ['GET', '/api/v1/admin/payments/documents/calendar', true],
             ['POST', '/api/v1/admin/payments/documents/calendar', false],
             ['GET', '/api/v1/admin/payments/documents/calendar/extra', false],
@@ -183,6 +196,34 @@ final class RecordApiResponseTimeTest extends TestCase
             });
             self::assertSame($expected, array_key_exists('sql_sources', $captured));
             self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
+        }
+    }
+
+    public function test_download_url_profile_excludes_file_ids_query_values_and_signed_urls(): void
+    {
+        foreach (['personal-files', 'report-files'] as $resource) {
+            Facade::clearResolvedInstances();
+            $captured = null;
+            $this->expectLog(static function (array $context) use (&$captured): bool {
+                $captured = $context;
+
+                return true;
+            });
+            $template = 'api/v1/admin/'.$resource.'/{id}/download-url';
+            $request = Request::create('/api/v1/admin/'.$resource.'/private-file-id/download-url?token=private', 'GET');
+            $request->setRouteResolver(static fn (): Route => new Route('GET', $template, static fn (): null => null));
+            $response = new JsonResponse(['data' => ['download_url' => 'https://storage.example.test/private-file?signature=private']]);
+            $actual = (new RecordApiResponseTime)->handle($request, static function () use ($request, $response): Response {
+                ApiQueryMetrics::record($request, 3.25);
+
+                return $response;
+            });
+            self::assertSame($response, $actual);
+            self::assertSame($template, $captured['route']);
+            self::assertSame(1, $captured['sql_count']);
+            self::assertArrayHasKey('sql_sources', $captured);
+            self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
+            self::assertStringNotContainsString('storage.example.test', json_encode($captured, JSON_THROW_ON_ERROR));
         }
     }
 

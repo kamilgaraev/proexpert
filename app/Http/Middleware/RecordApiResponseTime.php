@@ -41,7 +41,11 @@ final class RecordApiResponseTime
         };
         $pulseSources = ($request->isMethod('GET') && $request->path() === 'api/v1/admin/ai-assistant/project-pulse/current')
             || ($request->isMethod('POST') && $request->path() === 'api/v1/admin/ai-assistant/project-pulse/generate');
-        $metrics = new ApiQueryMetrics($pulseSources || $designDocumentSources || ($request->isMethod('GET') && $request->is(
+        $fileDownloadSources = $request->isMethod('GET') && preg_match(
+            '~^api/v1/admin/(?:personal-files|report-files)/[^/]+/download-url$~D',
+            $request->path(),
+        ) === 1;
+        $metrics = new ApiQueryMetrics($pulseSources || $designDocumentSources || $fileDownloadSources || ($request->isMethod('GET') && $request->is(
             'api/v1/admin/ai-assistant/conversations',
             'api/v1/admin/ai-assistant/rag/status',
             'api/v1/admin/permissions',
