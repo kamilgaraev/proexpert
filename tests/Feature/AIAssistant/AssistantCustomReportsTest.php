@@ -1464,7 +1464,7 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertSame([[null, 'RUB', 3, '50.30']], $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows']);
     }
 
-    public function test_counterparty_projection_does_not_replace_self_execution_with_legacy_contractor(): void
+    public function test_counterparty_projection_labels_self_execution_without_legacy_names_or_references(): void
     {
         $this->extraModules = ['catalog-management'];
         [$org, $actor, $project] = $this->fixture();
@@ -1477,9 +1477,12 @@ final class AssistantCustomReportsTest extends TestCase
                 'role' => 'contractor', 'linked_organization_id' => $org->id, 'name' => $org->name, 'snapshot' => [],
             ]));
         }
-        $section = $this->contractsSection(['columns' => ['counterparty_name'],
-            'filters' => [['field' => 'counterparty_name', 'operator' => 'is_null', 'value' => null]]]);
-        self::assertSame([[null]], $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows']);
+        $section = $this->contractsSection(['columns' => ['counterparty_name']]);
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame([['Собственные силы']], $report['sections'][0]['rows']);
+        self::assertCount(1, $report['source_refs']);
+        $emptyCounterparty = array_replace($section, ['filters' => [['field' => 'counterparty_name', 'operator' => 'is_null', 'value' => null]]]);
+        self::assertSame([], $this->builder->build($this->plan($emptyCounterparty), $actor, $org->id)['sections'][0]['rows']);
         $source = $this->sources->resolve($actor, $org->id, 'contracts', 'contract', null);
         self::assertSame(['count'], $source['fields']['counterparty_name']['aggregations']);
         $query = 'Сделай Excel по договорам: номер, подрядчик и сумма';
@@ -1489,9 +1492,31 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertSame('counterparty_name', $hints[0]['preferred_fields']['counterparty']);
         $legacy = $this->contract($org, $project, '10.00');
         $legacy->parties()->delete();
-        $legacy->contractor->update(['source_organization_id' => $org->id]);
+        $legacy->contractor->update(['source_organization_id' => $org->id, 'name' => 'SECRET-LEGACY-SELF-CONTRACTOR']);
         DB::table('contracts')->where('id', $legacy->id)->update(['is_self_execution' => true, 'contract_side_type' => 'contract']);
-        self::assertSame([[null], [null]], $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows']);
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame([['Собственные силы'], ['Собственные силы']], $report['sections'][0]['rows']);
+        self::assertCount(1, $report['source_refs']);
+        self::assertStringNotContainsString('SECRET-LEGACY-SELF-CONTRACTOR', json_encode($report, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_self_execution_label_does_not_depend_on_legacy_catalog_access_or_private_data(): void
+    {
+        $this->extraModules = ['catalog-management'];
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '10.00');
+        $contract->parties()->delete();
+        $contract->contractor->update(['source_organization_id' => $org->id, 'name' => 'SECRET-UNUSED-SELF-CONTRACTOR']);
+        DB::table('contracts')->where('id', $contract->id)->update(['is_self_execution' => true,
+            'contract_side_type' => 'contract', 'supplier_id' => null]);
+        $section = $this->contractsSection(['columns' => ['counterparty_name']]);
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame([['Собственные силы']], $report['sections'][0]['rows']);
+        self::assertCount(1, $report['source_refs']);
+        self::assertStringNotContainsString('SECRET-UNUSED-SELF-CONTRACTOR', json_encode($report, JSON_THROW_ON_ERROR));
+        $this->denied = ['suppliers.view', 'contractors.view'];
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        self::assertSame([['Собственные силы']], $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows']);
     }
 
     public function test_legacy_supply_counterparty_uses_authorized_supplier_and_rechecks_its_reference(): void

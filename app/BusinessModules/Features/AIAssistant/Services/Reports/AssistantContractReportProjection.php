@@ -46,11 +46,10 @@ final class AssistantContractReportProjection
         }
         $usesSupplier = '(contracts.contract_side_type IN ('.implode(', ', array_fill(0, count($supplyTypes), '?')).')
             OR (contracts.contract_side_type IS NULL AND report_contractor_relation.id IS NULL))';
-        $selfExecution = 'COALESCE(contracts.is_self_execution, FALSE) AND report_contractor_relation.source_organization_id = contracts.organization_id';
-        $contractorName = $contractors !== null ? "CASE WHEN {$selfExecution} THEN NULL ELSE NULLIF(BTRIM(report_legacy_contractor.name), '') END" : 'NULL';
+        $contractorName = $contractors !== null ? "NULLIF(BTRIM(report_legacy_contractor.name), '')" : 'NULL';
         $contractorName = "CASE WHEN contracts.contract_side_type IS NOT NULL AND NOT COALESCE(contracts.is_self_execution, FALSE)
             AND report_contractor_relation.id IS NULL THEN NULLIF(BTRIM(report_second_party.name), '') ELSE {$contractorName} END";
-        $contractorId = $contractors !== null ? "CASE WHEN {$selfExecution} THEN NULL ELSE report_legacy_contractor.id END" : 'NULL';
+        $contractorId = $contractors !== null ? 'report_legacy_contractor.id' : 'NULL';
         $supplierName = $suppliers !== null ? "NULLIF(BTRIM(report_legacy_supplier.name), '')" : 'NULL';
         $supplierName = "CASE WHEN contracts.contract_side_type IS NOT NULL AND report_supplier_relation.id IS NULL
             THEN NULLIF(BTRIM(report_second_party.name), '') ELSE {$supplierName} END";
@@ -66,16 +65,17 @@ final class AssistantContractReportProjection
             ELSE {$resolvedCustomerName} END";
         $customerProjectId = $customerProjects !== null ? 'report_legacy_customer_project.id' : 'NULL';
         $legacyName = "CASE WHEN {$usesSupplier} THEN {$supplierName} WHEN {$usesCustomer} THEN {$customerName} ELSE {$contractorName} END";
-        $contracts->selectRaw("CASE WHEN report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL THEN
+        $contracts->selectRaw("CASE WHEN COALESCE(contracts.is_self_execution, FALSE) THEN ?
+            WHEN report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL THEN
             CASE WHEN NOT COALESCE(contracts.is_self_execution, FALSE) AND report_second_party.linked_organization_id = ? THEN
                 CASE WHEN report_first_party.linked_organization_id = ? THEN NULL ELSE NULLIF(BTRIM(report_first_party.name), '') END
             ELSE CASE WHEN report_second_party.linked_organization_id = ? THEN NULL ELSE NULLIF(BTRIM(report_second_party.name), '') END END
-            ELSE {$legacyName} END AS counterparty_name", [$organizationId, $organizationId, $organizationId, ...$supplyTypes, ...$customerTypes])
-            ->selectRaw("CASE WHEN report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL THEN NULL
+            ELSE {$legacyName} END AS counterparty_name", [trans_message('ai_custom_reports.self_execution'), $organizationId, $organizationId, $organizationId, ...$supplyTypes, ...$customerTypes])
+            ->selectRaw("CASE WHEN COALESCE(contracts.is_self_execution, FALSE) OR (report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL) THEN NULL
                 WHEN {$usesSupplier} THEN NULL WHEN {$usesCustomer} THEN NULL ELSE {$contractorId} END AS _report_counterparty_id", [...$supplyTypes, ...$customerTypes])
-            ->selectRaw("CASE WHEN report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL THEN NULL
+            ->selectRaw("CASE WHEN COALESCE(contracts.is_self_execution, FALSE) OR (report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL) THEN NULL
                 WHEN {$usesSupplier} THEN {$supplierId} ELSE NULL END AS _report_counterparty_supplier_id", $supplyTypes)
-            ->selectRaw("CASE WHEN report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL THEN NULL
+            ->selectRaw("CASE WHEN COALESCE(contracts.is_self_execution, FALSE) OR (report_first_party.id IS NOT NULL AND report_second_party.id IS NOT NULL) THEN NULL
                 WHEN {$usesCustomer} AND ({$customerName}) IS NOT NULL
                     AND (report_contractor_relation.id IS NOT NULL OR NULLIF(BTRIM(report_first_party.name), '') IS NULL)
                 THEN {$customerProjectId} ELSE NULL END AS _report_counterparty_customer_project_id", $customerTypes);
