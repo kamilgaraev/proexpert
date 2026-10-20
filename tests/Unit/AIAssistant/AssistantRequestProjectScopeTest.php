@@ -92,7 +92,8 @@ final class AssistantRequestProjectScopeTest extends TestCase
         $arguments = ['sections' => [['project_id' => null, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]]]];
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
         $question = 'Сводка по всем актам организации. Сравни проекты 52 и 100 по отдельности.';
-        $arguments = ['sections' => [['scope' => 'project', 'project_id' => 52, 'filters' => []], ['scope' => 'project', 'project_id' => 100, 'filters' => []]]];
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'filters' => []],
+            ['scope' => 'project', 'project_id' => 52, 'filters' => []], ['scope' => 'project', 'project_id' => 100, 'filters' => []]]];
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
     }
 
@@ -584,6 +585,14 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
         $this->expectException(AssistantReportScopeAmbiguous::class);
         AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 100], 52, true, static fn (): array => ['status' => 'error']);
+    }
+
+    public function test_mixed_report_requires_a_real_organization_section_as_well_as_project_coverage(): void
+    {
+        $question = 'Сравни все акты организации с проектом 100';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question,
+            ['sections' => [['scope' => 'project', 'project_id' => 100]]]);
     }
 
     private function plan(string $question): array

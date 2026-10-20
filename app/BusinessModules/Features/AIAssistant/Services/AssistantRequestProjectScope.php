@@ -99,6 +99,7 @@ final readonly class AssistantRequestProjectScope
         $projectIds = null;
         $boundProjects = [];
         $projectSections = [];
+        $hasOrganizationSection = false;
         foreach ($arguments['sections'] as $index => $section) {
             if (! is_array($section)) {
                 continue;
@@ -108,6 +109,7 @@ final readonly class AssistantRequestProjectScope
                 || ($mixed && $scope === null) || (! $organizationWide && $scope === 'organization')) {
                 throw new AssistantReportScopeAmbiguous;
             }
+            $hasOrganizationSection = $hasOrganizationSection || $scope === 'organization';
             if ($organizationWide && $scope === 'project') {
                 if (! $mixed) {
                     throw new AssistantReportScopeAmbiguous;
@@ -156,12 +158,18 @@ final readonly class AssistantRequestProjectScope
         }
         if ($mixed) {
             $projectIds ??= $this->reportProjectIds($question, $search);
-            if (array_diff($projectIds, array_keys($boundProjects)) !== []) {
+            if (! $hasOrganizationSection || array_diff($projectIds, array_keys($boundProjects)) !== []) {
                 throw new AssistantReportScopeAmbiguous;
             }
         }
 
         return $arguments;
+    }
+
+    public function comparisonProjectIds(string $question, ?callable $search = null): ?array
+    {
+        return ! $this->requested && self::organizationWide($question) && self::hasExplicitProjectSections($question)
+            ? $this->reportProjectIds($question, $search) : null;
     }
 
     private static function hasAffirmativeCurrentProject(string $question): bool
