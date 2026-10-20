@@ -40,12 +40,14 @@ final readonly class EvaluationDraftArithmeticRecalculator
         $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
         $documentVersions = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($snapshot);
         $wallScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, $documentVersions);
-        $openingScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($snapshot, $decisions, $documentVersions);
+        $openingSnapshot = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
+            : \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
+        $openingScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         if ($universal) {
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander)->expand($draft,
                 $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander)->expand($draft,
-                $snapshot, $openingScopes, $quantities, 1000, $documentVersions);
+                $openingSnapshot, $openingScopes, $quantities, 1000, $documentVersions);
         }
         $quantitiesByEntity = [];
         foreach ($quantities as $quantity) {

@@ -25,7 +25,12 @@ final class SaveManualProjectFactsRequest extends FormRequest
             'entities.*.opening_scope' => ['sometimes', 'required', 'array:opening_kind,entity_fingerprint,reason'],
             'entities.*.opening_scope.opening_kind' => ['required_with:entities.*.opening_scope', 'in:door,window'],
             'entities.*.opening_scope.entity_fingerprint' => ['required_with:entities.*.opening_scope', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
-            'entities.*.opening_scope.reason' => ['required_with:entities.*.opening_scope', 'string', 'max:1000'],
+            'entities.*.opening_scope.reason' => ['required_with:entities.*.opening_scope', 'string', 'min:10', 'max:1000',
+                static function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (is_string($value) && strlen($value) > 1000) {
+                        $fail(trans_message('estimate_opening.reason_too_long'));
+                    }
+                }],
             'entities.*.wall_assembly' => ['sometimes', 'required', 'array:role,finished_surfaces,entity_fingerprint,reason'],
             'entities.*.wall_assembly.role' => ['required_with:entities.*.wall_assembly', 'in:external,partition'],
             'entities.*.wall_assembly.finished_surfaces' => ['present_with:entities.*.wall_assembly', 'array', 'max:2'],

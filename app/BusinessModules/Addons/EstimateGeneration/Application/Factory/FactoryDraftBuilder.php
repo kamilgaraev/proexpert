@@ -112,8 +112,10 @@ final readonly class FactoryDraftBuilder
         $draft = $this->walls->expand($draft, $snapshot,
             \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, $documentVersions),
             $quantities, self::MAX_ROWS, $documentVersions);
-        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander)->expand($draft, $snapshot,
-            \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($snapshot, $decisions, $documentVersions),
+        $openingSnapshot = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
+            : \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander)->expand($draft, $openingSnapshot,
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions),
             $quantities, self::MAX_ROWS, $documentVersions);
         FrozenWorkItemLimit::assertDraft($draft, self::MAX_ROWS);
         $identity = ['input_snapshot_hash' => $planning['input_snapshot_hash'], 'evaluation_mode' => 'universal',

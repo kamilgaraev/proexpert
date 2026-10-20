@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope;
@@ -39,7 +40,9 @@ final readonly class CurrentDraftQuantityProofGuard
             : $this->current->previewInput($organizationId, $projectId, $sessionId)['quantities'];
         $documentVersions = GeometryInventory::currentDocumentVersions($snapshot);
         $wallScopes = WallEstimateScope::select($snapshot, $decisions, $documentVersions);
-        $openingScopes = OpeningEstimateScope::select($snapshot, $decisions, $documentVersions);
+        $openingSnapshot = GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
+            : GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
+        $openingScopes = OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         $ids = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {

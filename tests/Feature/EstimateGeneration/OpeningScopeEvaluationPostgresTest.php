@@ -29,10 +29,45 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class OpeningScopeEvaluationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[DataProvider('openingReasons')]
+    public function test_opening_reason_validation_matches_persisted_decision_byte_limit(string $reason): void
+    {
+        [$actor, $session] = $this->fixture();
+        $beforeCalls = count(Http::recorded());
+        $input = $this->answer($this->questions($session)[0], 'door');
+        $input['entities'][0]['opening_scope']['reason'] = $reason;
+        $request = ['state_version' => 2, 'request_id' => (string) Str::uuid(), ...$input];
+        $rules = (new SaveManualProjectFactsRequest)->rules();
+        self::assertFalse(Validator::make($request, $rules)->fails());
+        foreach ([str_repeat('я', 501), str_repeat('a', 1001), str_repeat('😀', 251), str_repeat('я', 9)] as $invalidReason) {
+            $invalid = $request;
+            $invalid['entities'][0]['opening_scope']['reason'] = $invalidReason;
+            $validator = Validator::make($invalid, $rules);
+            self::assertTrue($validator->fails());
+            self::assertTrue($validator->errors()->has('entities.0.opening_scope.reason'));
+        }
+        $result = app(SaveManualProjectFacts::class)->handle($actor, $session->project_id, $session->id, 2, $request['request_id'], $input);
+        self::assertSame('0', $result['cost_units']);
+        [$capture, $decisions] = $this->capture($session);
+        $facts = array_values(array_filter($capture['snapshot']->facts, static fn ($fact): bool => $fact->type === 'opening_scope'));
+        self::assertCount(1, $facts);
+        self::assertSame($reason, $facts[0]->value['reason']);
+        self::assertCount(1, OpeningEstimateScope::select($capture['snapshot'], $decisions, []));
+        self::assertCount($beforeCalls, Http::recorded());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+    }
+
+    public static function openingReasons(): array
+    {
+        return ['cyrillic' => [str_repeat('я', 500)], 'ascii' => [str_repeat('a', 1000)], 'emoji' => [str_repeat('😀', 250)]];
+    }
+
     public function test_native_choices_are_source_bound_replayable_and_never_inferred_from_names_or_paid(): void
     {
         [$actor, $session] = $this->fixture();
