@@ -56,7 +56,7 @@ final readonly class FactoryDraftBuilder
         }
         $snapshot = $capture['snapshot'];
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
-        $payload = $session->input_payload;
+        $payload = FactoryWorkingInput::fromPayload($session->input_payload ?? []);
         $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
         if (! (new EvaluationScenarioSourceBinding)->current($payload['scenario_selections'] ?? null, $snapshot, $decisions)) {
             throw ValidationException::withMessages(['draft' => trans_message('estimate_generation.factory.scenarios_changed')]);

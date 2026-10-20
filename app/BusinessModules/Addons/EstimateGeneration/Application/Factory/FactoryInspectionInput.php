@@ -15,6 +15,8 @@ final readonly class FactoryInspectionInput
 {
     public const MAX_INPUT_BYTES = 1048576;
 
+    public const MAX_TOTAL_BYTES = 16777216;
+
     private const TABLE_CAPS = [
         'estimate_generation_project_model_entities' => 4096,
         'estimate_generation_project_model_assertions' => 10000,
@@ -40,7 +42,8 @@ final readonly class FactoryInspectionInput
             ['project-understanding:'.implode(':', $scope)]);
         $payload = CanonicalPipelineJson::encode($session->input_payload ?? []);
         $bytes = strlen($payload);
-        $withinBudget = $bytes <= self::MAX_INPUT_BYTES;
+        $withinBudget = $bytes <= self::MAX_TOTAL_BYTES
+            && strlen(CanonicalPipelineJson::encode(FactoryWorkingInput::fromPayload($session->input_payload ?? []))) <= self::MAX_INPUT_BYTES;
         foreach (self::TABLE_CAPS as $table => $cap) {
             $query = $this->database->table($table)->where('organization_id', $scope[0])
                 ->where('project_id', $scope[1])->where('session_id', $scope[2]);
@@ -52,7 +55,7 @@ final readonly class FactoryInspectionInput
             $aggregate = $this->database->query()->fromSub($query, 'bounded')
                 ->selectRaw('count(*) AS rows, COALESCE(sum(octet_length(row_to_json(bounded)::text)), 0) AS bytes')->first();
             $bytes += (int) $aggregate->bytes;
-            $withinBudget = $withinBudget && (int) $aggregate->rows <= $cap && $bytes <= 16777216;
+            $withinBudget = $withinBudget && (int) $aggregate->rows <= $cap && $bytes <= self::MAX_TOTAL_BYTES;
             if (! $withinBudget) {
                 break;
             }
@@ -80,7 +83,7 @@ final readonly class FactoryInspectionInput
             })->where('link.organization_id', $scope[0])->where('link.project_id', $scope[1])->where('link.session_id', $scope[2])
                 ->selectRaw('COALESCE(sum(octet_length(row_to_json(record)::text)), 0) AS bytes')->first();
             $bytes += (int) $aggregate->bytes;
-            if ($bytes > 16777216) {
+            if ($bytes > self::MAX_TOTAL_BYTES) {
                 return $this->unavailable($session, $payload);
             }
         }
@@ -89,7 +92,7 @@ final readonly class FactoryInspectionInput
         $serialized = json_encode(['snapshot' => $capture['snapshot'], 'decisions' => $decisions,
             'document_versions' => GeometryInventory::currentDocumentVersions($capture['snapshot'])],
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
-        if (strlen($serialized) > 16777216) {
+        if (strlen($serialized) > self::MAX_TOTAL_BYTES) {
             return $this->unavailable($session, $payload);
         }
         $snapshotFingerprint = hash('sha256', CanonicalPipelineJson::encode(json_decode($serialized, true, 512, JSON_THROW_ON_ERROR)));
@@ -97,7 +100,7 @@ final readonly class FactoryInspectionInput
         return ['within_budget' => true, 'snapshot' => $capture['snapshot'], 'model_token' => $capture['token'],
             'limitations' => [],
             'fingerprint' => hash('sha256', CanonicalPipelineJson::encode([
-                FactoryInspectionStore::POLICY, (int) $session->state_version, $session->status->value, $payload, $capture['token'], $snapshotFingerprint,
+                FactoryInspectionStore::POLICY, FactoryWorkingInput::CONTRACT, (int) $session->state_version, $session->status->value, $payload, $capture['token'], $snapshotFingerprint,
             ]))];
     }
 
@@ -105,7 +108,7 @@ final readonly class FactoryInspectionInput
     {
         return ['within_budget' => false, 'snapshot' => null, 'model_token' => null, 'limitations' => [$reason],
             'fingerprint' => hash('sha256', CanonicalPipelineJson::encode([
-                FactoryInspectionStore::POLICY, (int) $session->state_version, $session->status->value, $payload, $reason,
+                FactoryInspectionStore::POLICY, FactoryWorkingInput::CONTRACT, (int) $session->state_version, $session->status->value, $payload, $reason,
             ]))];
     }
 }

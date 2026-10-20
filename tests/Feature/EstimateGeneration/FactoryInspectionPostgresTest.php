@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationFactoryController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -31,6 +32,64 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class FactoryInspectionPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_replay_history_has_a_separate_working_budget_without_changing_storage_replay_or_raw_source_fences(): void
+    {
+        [$actor, $session, , $originalInput] = $this->fixture();
+        $payload = $session->fresh()->input_payload;
+        $originalRequest = array_key_first($payload['manual_fact_receipts']);
+        $payload['manual_fact_receipts'][$originalRequest]['result']['warnings'][] = ['code' => 'historic_fixture', 'message' => str_repeat('x', 2800000)];
+        $session->update(['input_payload' => $payload]);
+        $before = $session->fresh()->getRawOriginal();
+        $outbound = count(Http::recorded());
+        $request = (string) Str::uuid();
+        $result = app(InspectFactoryInputs::class)->handle($actor, $session->project_id, $session->id, 1, $request);
+        self::assertSame('awaiting_input', $result['checkpoint']['status']);
+        self::assertTrue($result['fresh']);
+        self::assertSame('height', $result['checkpoint']['result']['question_refs'][0]['parameter']);
+        self::assertSame(strlen(CanonicalPipelineJson::encode($payload)), $result['processing_limits']['input_bytes']);
+        self::assertGreaterThan(1048576, $result['processing_limits']['input_bytes']);
+        self::assertLessThan(1048576, $result['processing_limits']['working_input_bytes']);
+        self::assertSame(16777216, $result['processing_limits']['maximum_total_bytes']);
+        self::assertSame(strlen(CanonicalPipelineJson::encode($payload['manual_fact_receipts'])), $result['processing_limits']['history_components']['manual_fact_receipts']);
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        $replayed = app(SaveManualProjectFacts::class)->handle($actor, $session->project_id, $session->id, 0, $originalRequest,
+            $originalInput);
+        self::assertSame($payload['manual_fact_receipts'][$originalRequest]['result'], $replayed);
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        $store = app(FactoryInspectionStore::class);
+        $claim = $store->claim($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+        self::assertInstanceOf(FactoryInspectionClaim::class, $claim);
+        $session->update(['input_payload' => [...$payload, 'feedback_receipts' => [(string) Str::uuid() => ['result' => ['accepted' => true]]]]]);
+        self::assertSame($claim->modelToken, app(ProjectModelRepository::class)->snapshotForPlanning($session->organization_id, $session->project_id, $session->id, 10001)['token']);
+        self::assertFalse($store->complete($claim, $this->inspectionResult($claim)));
+        self::assertFalse($store->current($actor, $session->project_id, $session->id, $request)['fresh']);
+        self::assertSame(1, $session->fresh()->state_version);
+        self::assertSame('5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', $session->fresh()->input_payload['qa_run_id']);
+        self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+        self::assertSame(2, DB::table('estimate_generation_factory_runs')->where('session_id', $session->id)->value('step_count'));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+        self::assertCount($outbound, Http::recorded());
+    }
+
+    public function test_retained_history_still_counts_toward_the_unchanged_total_source_budget(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $payload = [...$session->fresh()->input_payload, 'feedback_receipts' => ['historic' => ['result' => str_repeat('x', 16777217)]]];
+        $session->update(['input_payload' => $payload]);
+        $models = Mockery::mock(ProjectModelRepository::class);
+        $models->shouldNotReceive('snapshotForPlanning');
+        $this->app->instance(ProjectModelRepository::class, $models);
+        $result = app(InspectFactoryInputs::class)->handle($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+        self::assertSame('unavailable', $result['checkpoint']['status']);
+        self::assertSame(['input_budget_exceeded'], $result['checkpoint']['result']['limitations']);
+        self::assertFalse($result['fresh']);
+        self::assertLessThan(1048576, $result['processing_limits']['working_input_bytes']);
+        self::assertGreaterThan(16777216, $result['processing_limits']['input_bytes']);
+        self::assertSame(CanonicalPipelineJson::encode($payload), CanonicalPipelineJson::encode($session->fresh()->input_payload));
+        self::assertSame(1, $session->fresh()->state_version);
+    }
+
     public function test_role_payload_history_does_not_consume_the_metadata_read_budget_but_rows_and_source_fences_remain_bounded(): void
     {
         [$actor, $session] = $this->fixture();
@@ -407,18 +466,19 @@ final class FactoryInspectionPostgresTest extends EstimateGenerationCanonicalPos
                 'evaluation_mode' => 'universal', 'selected_sections' => ['structures'],
                 'qa_run_id' => '5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', 'qa_limit_units' => 500,
             ]]);
-        app(SaveManualProjectFacts::class)->handle($actor, $project->id, $session->id, 0, (string) Str::uuid(), ['entities' => [[
+        $input = ['entities' => [[
             'key' => 'beam', 'type' => 'foundation_beam', 'parameters' => [
                 'length' => ['value' => '10', 'unit' => 'm', 'basis' => 'measurement'],
                 'width' => ['value' => '250', 'unit' => 'mm', 'basis' => 'measurement'],
             ],
-        ]]]);
+        ]]];
+        app(SaveManualProjectFacts::class)->handle($actor, $project->id, $session->id, 0, (string) Str::uuid(), $input);
         Route::bind('project', static fn (): Project => $project);
         Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
         $route = '/_contract/factory/projects/{project}/sessions/{session}/factory';
         Route::get($route, [EstimateGenerationFactoryController::class, 'show'])->middleware(['auth:api_admin', SubstituteBindings::class]);
         Route::post($route.'/inspections', [EstimateGenerationFactoryController::class, 'inspect'])->middleware(['auth:api_admin', SubstituteBindings::class]);
 
-        return [$actor, $session, str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route)];
+        return [$actor, $session, str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route), $input];
     }
 }
