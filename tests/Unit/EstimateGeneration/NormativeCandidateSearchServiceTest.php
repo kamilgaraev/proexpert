@@ -6,6 +6,8 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitSqlCompatibility;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
@@ -13,6 +15,26 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 #[Group('postgres-contract')]
 final class NormativeCandidateSearchServiceTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_sql_unit_compatibility_matches_the_shared_normalizer_for_aliases_and_multipliers(): void
+    {
+        $units = ['м', 'm', '100 пог. м', 'км', 'мм', 'cm', '100 м²', '0,1 кв. м', 'm^2', 'sqm',
+            'м3', '100 м³', 'куб. м бетона', 'cbm', 'тыс. м3', '1000'."\u{00A0}".'м³',
+            'шт', 'тыс. шт', 'pcs', 'комплект', 'точка', 'единица', 'kg', '0,1 т', 'тонна',
+            'кВт', '100 kw', 'h', 'час', 'месяц', 'чел-ч', '100 чел/ч', 'маш-ч', 'маш/ч',
+            'мес', 'м2/м3', '', 'неизвестно', 'тыс.0,1 т', "\t100 м3\n", "\u{00A0}100 м3", 'км3'];
+        $values = implode(', ', array_fill(0, count($units), '(?)'));
+        foreach (['м', 'м2', 'м3', 'шт', 'кг', 'кВт', 'ч', 'мес', 'чел-ч', 'маш-ч'] as $workUnit) {
+            $predicate = NormativeUnitSqlCompatibility::predicate($workUnit);
+            self::assertNotNull($predicate);
+            $rows = DB::select('SELECT unit, ('.$predicate['sql'].') AS matches FROM (VALUES '.$values.') AS samples(unit)',
+                [...$predicate['bindings'], ...$units]);
+            foreach ($rows as $row) {
+                self::assertSame(NormativeUnitNormalizer::compatible($workUnit, $row->unit), $row->matches, $workUnit.' / '.$row->unit);
+            }
+        }
+        self::assertNull(NormativeUnitSqlCompatibility::predicate('неизвестно'));
+    }
+
     public function test_search_ranks_intent_matches_before_limiting_a_large_pool_without_crossing_dataset_versions(): void
     {
         $collections = [];
@@ -70,6 +92,7 @@ final class NormativeCandidateSearchServiceTest extends EstimateGenerationCanoni
             ...$target,
             'collection_id' => $collections[$versionIds[1]],
         ]);
+        DB::enableQueryLog();
         $candidates = app(NormativeCandidateSearchService::class)->search(
             EstimateDatasetVersion::query()->findOrFail($versionIds[0]),
             ['name' => 'Бетонирование фундаментов', 'unit' => 'м3'],
@@ -82,6 +105,9 @@ final class NormativeCandidateSearchServiceTest extends EstimateGenerationCanoni
         self::assertSame($targetId, (int) $candidates->first()?->id);
         self::assertCount(20, $candidates);
         self::assertNotContains($otherVersionId, $candidates->pluck('id')->all());
+        $normQueries = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimate_norms"'));
+        DB::disableQueryLog();
+        self::assertCount(1, $normQueries);
 
         $wrongUnits = [];
         for ($index = 0; $index < 130; $index++) {

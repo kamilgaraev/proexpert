@@ -131,13 +131,9 @@ final class NormativeCandidateSearchService
             });
         }
 
-        if (NormativeUnitNormalizer::parseDetailed($workUnit)->isKnown()) {
-            $compatibleUnits = (clone $query)->distinct()->pluck('unit')
-                ->filter(static fn (mixed $unit): bool => is_string($unit) && NormativeUnitNormalizer::compatible($workUnit, $unit))
-                ->values()->all();
-            if ($compatibleUnits !== []) {
-                $query->whereIn('unit', $compatibleUnits);
-            }
+        $unitPredicate = NormativeUnitSqlCompatibility::predicate($workUnit);
+        if ($unitPredicate !== null) {
+            $query->orderByRaw('CASE WHEN '.$unitPredicate['sql'].' THEN 1 ELSE 0 END DESC', $unitPredicate['bindings']);
         }
 
         $this->orderPoolByRelevance($query, $tokens, $intent, $profile);
