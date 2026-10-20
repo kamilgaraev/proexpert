@@ -39,12 +39,14 @@ final class GenerateCustomReportTool implements AIToolInterface
     {
         $string = ['type' => 'string', 'maxLength' => 80];
         $list = ['type' => 'array', 'items' => $string, 'maxItems' => 16];
-        $object = static fn (array $properties): array => ['type' => 'object', 'properties' => $properties,
-            'required' => array_keys($properties), 'additionalProperties' => false];
+        $object = static fn (array $properties, array $optional = []): array => ['type' => 'object', 'properties' => $properties,
+            'required' => array_values(array_diff(array_keys($properties), $optional)), 'additionalProperties' => false];
 
         return $object(['title' => ['type' => 'string', 'maxLength' => 120], 'format' => ['type' => 'string', 'enum' => ['xlsx', 'csv', 'pdf']],
             'sections' => ['type' => 'array', 'minItems' => 1, 'maxItems' => 5, 'items' => $object([
                 'title' => $string, 'domain' => $string, 'entity_type' => $string,
+                'scope' => ['type' => 'string', 'enum' => ['organization', 'project'],
+                    'description' => 'Область раздела. При сравнении организации с проектами обязательна для каждого раздела: organization для организации, project для явно запрошенного проекта. Заголовок не задаёт область.'],
                 'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1], 'columns' => $list,
                 'row_limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 1000, 'description' => 'Число строк в результате, например 5 для топ-5. Итоги считаются по всей выборке до ограничения. Максимум 1000 исходных записей.'],
                 'filters' => ['type' => 'array', 'maxItems' => 12, 'items' => $object(['field' => $string,
@@ -55,7 +57,7 @@ final class GenerateCustomReportTool implements AIToolInterface
                     'operation' => ['type' => 'string', 'enum' => ['count', 'sum', 'avg', 'min', 'max']], 'label' => $string])],
                 'order_by' => ['type' => 'array', 'maxItems' => 3, 'items' => $object(['field' => $string + ['description' => 'Поле источника; для итогов metric_1, metric_2 и далее по порядку metrics. В сводном отчёте поле группировки или metric_N.'],
                     'direction' => ['type' => 'string', 'enum' => ['asc', 'desc']]])],
-            ])]]);
+            ], ['scope'])]]);
     }
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string

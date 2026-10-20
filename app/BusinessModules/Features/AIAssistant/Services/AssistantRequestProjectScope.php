@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 
 final readonly class AssistantRequestProjectScope
@@ -47,12 +48,13 @@ final readonly class AssistantRequestProjectScope
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $projects = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект))';
-        $records = '(?:акт(?:ам|ов)|договор(?:ам|ов)|журнал(?:ам|ов)|сотрудник(?:ам|ов)|пользовател(?:ям|ей)|плат[её]ж(?:ам|ей)|смет(?:ам)?|задач(?:ам)?|работ(?:ам)?|документ(?:ам|ов)|тендер(?:ам|ов)|заяв(?:кам|ок)|закуп(?:кам|ок)|материал(?:ам|ов)|поставщик(?:ам|ов)|контрагент(?:ам|ов)|склад(?:ам|ов)|бригад(?:ам)?)';
-        $organization = '(?:всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех)\s+(?:наш(?:им|их)\s+)?'.$records.'\s+(?:нашей\s+)?организации(?![\pL\pN]))';
+        $records = '(?:акт(?:ы|ам|ов)|договор(?:ы|ам|ов)|журнал(?:ы|ам|ов)|сотрудник(?:и|ам|ов)|пользовател(?:и|ям|ей)|плат[её]ж(?:и|ам|ей)|смет(?:ы|ам)?|задач(?:и|ам)?|работ(?:ы|ам)?|документ(?:ы|ам|ов)|тендер(?:ы|ам|ов)|заяв(?:ки|кам|ок)|закуп(?:ки|кам|ок)|материал(?:ы|ам|ов)|поставщик(?:и|ам|ов)|контрагент(?:ы|ам|ов)|склад(?:ы|ам|ов)|бригад(?:ы|ам)?)';
+        $organization = '(?:всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех|все)\s+(?:наш(?:и|им|их)\s+)?'.$records.'\s+(?:нашей\s+)?организации(?![\pL\pN]))';
         $scope = '(?:'.$projects.'|'.$organization.')';
 
         return (preg_match('/(?<![\pL\pN])'.$projects.'/iu', $question) === 1
-            || (preg_match('/(?<![\pL\pN])'.$organization.'/iu', $question) === 1 && ! self::hasAffirmativeCurrentProject($question)))
+            || (preg_match('/(?<![\pL\pN])'.$organization.'/iu', $question) === 1
+                && (! self::hasAffirmativeCurrentProject($question) || self::comparesCurrentProject($question))))
             && preg_match('/(?<![\pL\pN])(?:не(?!\s+(?:только|забуд[а-яё]*|забыва[а-яё]*|прекраща[а-яё]*|перестава[а-яё]*|упуска[а-яё]*)(?!\pL))|кроме|исключая)\s+(?:[\pL\pN-]+\s+){0,4}(?:во?\s+)?'.$scope.'/iu', $question) !== 1;
     }
 
@@ -67,21 +69,48 @@ final readonly class AssistantRequestProjectScope
         return $arguments;
     }
 
-    public function bindReportScope(string $question, array $arguments): array
+    public function bindReportScope(string $question, array $arguments, ?callable $search = null): array
     {
         $organizationWide = ! $this->requested && self::organizationWide($question);
         if ((! $organizationWide && (! $this->requested || $this->projectId === null))
             || ! is_array($arguments['sections'] ?? null)) {
             return $arguments;
         }
-        if ($organizationWide && self::hasExplicitProjectSections($question)) {
-            return $arguments;
-        }
+        $mixed = $organizationWide && self::hasExplicitProjectSections($question);
+        $projectIds = null;
         foreach ($arguments['sections'] as $index => $section) {
             if (! is_array($section)) {
                 continue;
             }
-            if (! $organizationWide || ($this->contextProjectId !== null && self::positiveId($section['project_id'] ?? null) === $this->contextProjectId)) {
+            $scope = $section['scope'] ?? null;
+            if (($scope !== null && ! in_array($scope, ['organization', 'project'], true))
+                || ($mixed && $scope === null) || (! $organizationWide && $scope === 'organization')) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            if ($organizationWide && $scope === 'project') {
+                if (! $mixed) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                $projectIds ??= $this->reportProjectIds($question, $search);
+                $id = self::positiveId($section['project_id'] ?? null);
+                if (! in_array($id, $projectIds, true)) {
+                    if (count($projectIds) !== 1 || ($id !== null && $id !== $this->contextProjectId)) {
+                        throw new AssistantReportScopeAmbiguous;
+                    }
+                    $id = $projectIds[0];
+                }
+                $this->assertProjectFilters($section, $id);
+                $arguments['sections'][$index]['project_id'] = $id;
+
+                continue;
+            }
+            if ($organizationWide && $scope === 'organization'
+                && self::positiveId($section['project_id'] ?? null) !== null
+                && self::positiveId($section['project_id']) !== $this->contextProjectId) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            if (! $organizationWide || $scope === 'organization'
+                || ($this->contextProjectId !== null && self::positiveId($section['project_id'] ?? null) === $this->contextProjectId)) {
                 $arguments['sections'][$index]['project_id'] = $organizationWide ? null : $this->projectId;
             }
             if ($organizationWide && is_array($section['filters'] ?? null)) {
@@ -95,24 +124,101 @@ final readonly class AssistantRequestProjectScope
 
     private static function hasAffirmativeCurrentProject(string $question): bool
     {
+        return preg_match('/'.self::CURRENT_PROJECT.'/iu', self::withoutNegativeCurrentProject($question)) === 1;
+    }
+
+    private static function withoutNegativeCurrentProject(string $question): string
+    {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $negative = '(?<![\pL\pN])(?:не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+(?:ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})?|(?:кроме|исключая|за\s+исключением)\s+)';
-        $question = preg_replace('/'.$negative.'(?:(?:в|во|на|по|для|из|с|со)\s+)?'.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
 
-        return preg_match('/'.self::CURRENT_PROJECT.'/iu', $question) === 1;
+        return preg_replace('/'.$negative.'(?:(?:в|во|на|по|для|из|с|со)\s+)?'.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
+    }
+
+    private static function comparesCurrentProject(string $question): bool
+    {
+        $question = self::withoutNegativeCurrentProject($question);
+
+        return preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?!\pL)/iu', $question) === 1
+            && preg_match('/(?<![\pL\pN])(?:с|со|и|против|относительно)\s+'.self::CURRENT_PROJECT.'/iu', $question) === 1;
     }
 
     private static function hasExplicitProjectSections(string $question): bool
     {
-        if (preg_match('/(?<![\pL\pN])(?:кроме|исключая|за\s+исключением)\s+(?:[\pL-]+\s+){0,3}(?:проект|объект)[а-яё]*(?!\pL)/iu', $question) === 1) {
+        if (preg_match('/(?<![\pL\pN])(?:без|кроме|исключая|за\s+исключением)\s+(?:[\pL-]+\s+){0,3}(?:проект|объект)[а-яё]*(?!\pL)/iu', $question) === 1) {
             return false;
         }
 
-        return AssistantNamedProjectReadScope::withoutQuotedNames($question) !== $question
+        $quotedProject = preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*:?\s*[«„“"]/iu', $question) === 1;
+        $question = self::withoutNegativeCurrentProject($question);
+
+        return $quotedProject || self::comparesCurrentProject($question)
             || preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*[1-9]\d*(?![\pL\pN])/iu', $question) === 1
-            || (preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?!\pL)/iu', $question) === 1
-                && (self::hasAffirmativeCurrentProject($question) || AssistantReportEntityQuery::extract($question, 'project') !== null
-                    || AssistantReportEntityQuery::hasAmbiguousName($question, 'project')));
+            || AssistantReportEntityQuery::extract($question, 'project') !== null
+            || AssistantReportEntityQuery::hasAmbiguousName($question, 'project');
+    }
+
+    private function reportProjectIds(string $question, ?callable $search): array
+    {
+        $ids = [];
+        if (self::hasAffirmativeCurrentProject($question) && $this->contextProjectId !== null) {
+            $ids[] = $this->contextProjectId;
+        }
+        $unquoted = AssistantNamedProjectReadScope::withoutQuotedNames($question);
+        $numericProjects = '(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*([1-9]\d*(?:\s*(?:,|и|или)\s*(?:(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*)?[1-9]\d*)*)(?![\pL\pN])';
+        preg_match_all('/'.$numericProjects.'/iu', $unquoted, $groups);
+        foreach ($groups[1] as $group) {
+            preg_match_all('/[1-9]\d*/', $group, $numbers);
+            foreach ($numbers[0] as $number) {
+                $id = self::positiveId($number);
+                if ($id !== null) {
+                    $ids[] = $id;
+                }
+            }
+        }
+        $quotes = '«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"';
+        $nameQuestion = preg_replace('/(?:'.$quotes.')(*SKIP)(*F)|(?:'.self::CURRENT_PROJECT.'|'.$numericProjects.')/iu', ' ', $question) ?? $question;
+        if (AssistantReportEntityQuery::hasAmbiguousName($nameQuestion, 'project', preservePrepositions: true)) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+        $name = AssistantReportEntityQuery::extract($nameQuestion, 'project', preservePrepositions: true);
+        if ($name === null) {
+            if ($ids !== [] && preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])/iu', $nameQuestion) !== 1) {
+                return array_values(array_unique($ids));
+            }
+            throw new AssistantReportScopeAmbiguous;
+        }
+        if ($search === null) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+        $result = $search(['query' => $name, 'name_match' => 'exact', 'limit' => 2]);
+        $rows = is_array($result) ? ($result['results'] ?? null) : null;
+        if (! is_array($result) || ($result['status'] ?? null) !== 'success' || ! is_array($rows) || count($rows) !== 1
+            || ($result['result_window']['has_more'] ?? null) !== false || ! is_int($rows[0]['id'] ?? null) || $rows[0]['id'] < 1) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+
+        return array_values(array_unique([...$ids, $rows[0]['id']]));
+    }
+
+    private function assertProjectFilters(array $section, int $projectId): void
+    {
+        foreach (is_array($section['filters'] ?? null) ? $section['filters'] : [] as $filter) {
+            if (! is_array($filter) || ($filter['field'] ?? null) !== 'project_id') {
+                continue;
+            }
+            $value = $filter['value'] ?? null;
+            $conflicts = match ($filter['operator'] ?? null) {
+                'eq' => self::positiveId($value) !== $projectId,
+                'neq' => self::positiveId($value) === $projectId,
+                'in' => ! is_array($value) || ! in_array($projectId, array_map(self::positiveId(...), $value), true),
+                'is_null' => true,
+                default => false,
+            };
+            if ($conflicts) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+        }
     }
 
     private function isSelectedProjectFilter(array $filter): bool

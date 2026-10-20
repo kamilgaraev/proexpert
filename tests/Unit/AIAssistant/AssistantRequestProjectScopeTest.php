@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use PHPUnit\Framework\TestCase;
 
@@ -91,7 +92,7 @@ final class AssistantRequestProjectScopeTest extends TestCase
         $arguments = ['sections' => [['project_id' => null, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]]]];
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
         $question = 'Сводка по всем актам организации. Сравни проекты 52 и 100 по отдельности.';
-        $arguments = ['sections' => [['project_id' => 52, 'filters' => []], ['project_id' => 100, 'filters' => []]]];
+        $arguments = ['sections' => [['scope' => 'project', 'project_id' => 52, 'filters' => []], ['scope' => 'project', 'project_id' => 100, 'filters' => []]]];
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
     }
 
@@ -140,11 +141,11 @@ final class AssistantRequestProjectScopeTest extends TestCase
     {
         foreach (['Сравни отчёт по всем актам организации с проектом СевГУ',
             'Сопоставь сводку всех актов организации и проекта Учебный ПТО',
-            'Сравнение всех актов организации с объектом Ремонт офиса',
-            'Сравни отчёт по всем актам организации с проектом СевГУ и проектом Учебный ПТО'] as $question) {
+            'Сравнение всех актов организации с объектом Ремонт офиса'] as $question) {
             self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
-            $arguments = ['sections' => [['project_id' => null, 'filters' => []], ['project_id' => 52, 'filters' => []]]];
-            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $question);
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'filters' => []], ['scope' => 'project', 'project_id' => 52, 'filters' => []]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments,
+                static fn (array $arguments): array => ['status' => 'success', 'results' => [['id' => 52]], 'result_window' => ['has_more' => false]]), $question);
         }
         foreach (['Сравни отчёт по всем актам организации за сентябрь и октябрь',
             'Сопоставь акты всей организации с графиком', 'Сравни итоги всех актов организации и сроки проекта'] as $question) {
@@ -152,6 +153,111 @@ final class AssistantRequestProjectScopeTest extends TestCase
             $arguments = ['sections' => [['project_id' => 52, 'filters' => []]]];
             self::assertSame(['sections' => [['project_id' => null, 'filters' => []]]],
                 AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $question);
+        }
+    }
+
+    public function test_nominative_organization_records_clear_the_selected_project(): void
+    {
+        $questions = ['Сделай CSV: все акты организации по статусам', 'Покажи все наши договоры организации',
+            'Все сотрудники нашей организации', 'Все журналы организации'];
+        self::assertSame([true, true, true, true], array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+        foreach ($questions as $question) {
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true));
+            self::assertSame(['sections' => [['project_id' => null, 'filters' => []]]],
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question,
+                    ['sections' => [['project_id' => 52, 'filters' => []]]]));
+        }
+    }
+
+    public function test_organization_and_current_project_comparison_keeps_both_scopes(): void
+    {
+        $question = 'Сравни отчёт по всем актам организации с выбранным проектом';
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+        self::assertFalse($scope->requested);
+        $arguments = ['sections' => [['title' => 'По всей организации', 'scope' => 'organization', 'project_id' => null, 'filters' => []],
+            ['title' => 'Выбранный проект', 'scope' => 'project', 'project_id' => 52, 'filters' => []]]];
+        self::assertSame($arguments, $scope->bindReportScope($question, $arguments));
+    }
+
+    public function test_explicit_comparison_clears_only_the_stale_organization_section(): void
+    {
+        $question = 'Сравни отчёт по всем актам организации с проектом 100';
+        $arguments = ['sections' => [['title' => 'По всей организации', 'scope' => 'organization', 'project_id' => 52,
+            'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => 52]]],
+            ['title' => 'Проект 100', 'scope' => 'project', 'project_id' => 100, 'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => 100]]]]];
+        $expected = $arguments;
+        $expected['sections'][0]['project_id'] = null;
+        $expected['sections'][0]['filters'] = [];
+        self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+    }
+
+    public function test_mixed_scope_requires_section_metadata_and_does_not_infer_it_from_titles(): void
+    {
+        $question = 'Сравни отчёт по всем актам организации с выбранным проектом';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question,
+            ['sections' => [['title' => 'По всей организации', 'project_id' => 52], ['title' => 'Выбранный проект', 'project_id' => 52]]]);
+    }
+
+    public function test_mixed_named_scope_uses_only_a_complete_unique_exact_search(): void
+    {
+        $question = 'Сравни все акты организации с проектом «СевГУ»';
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => 52, 'filters' => []],
+            ['scope' => 'project', 'project_id' => null, 'filters' => []]]];
+        $expected = $arguments;
+        $expected['sections'][0]['project_id'] = null;
+        $expected['sections'][1]['project_id'] = 100;
+        $calls = [];
+        self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments,
+            static function (array $arguments) use (&$calls): array {
+                $calls[] = $arguments;
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            }));
+        self::assertSame([['query' => 'СевГУ', 'name_match' => 'exact', 'limit' => 2]], $calls);
+    }
+
+    public function test_mixed_scope_rejects_ambiguous_or_unavailable_names_and_conflicting_ids(): void
+    {
+        $named = 'Сравни все акты организации с проектом СевГУ';
+        $sections = [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 52]];
+        foreach ([null, ['status' => 'error'], ['status' => 'success', 'results' => [], 'result_window' => ['has_more' => false]],
+            ['status' => 'success', 'results' => [['id' => 52]], 'result_window' => ['has_more' => true]],
+            ['status' => 'success', 'results' => [['id' => 52], ['id' => 100]], 'result_window' => ['has_more' => false]]] as $result) {
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($named))->bindReportScope($named, ['sections' => $sections], static fn (): mixed => $result);
+                self::fail('Unproven named scope was accepted');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+        $question = 'Сравни все акты организации с проектом 100';
+        foreach ([['scope' => 'organization', 'project_id' => 100], ['scope' => 'project', 'project_id' => 200],
+            ['scope' => 'project', 'project_id' => 100, 'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => 52]]]] as $section) {
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [$section]]);
+                self::fail('Conflicting section scope was accepted');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_current_or_literal_project_does_not_bypass_a_named_comparison_lookup(): void
+    {
+        foreach (['выбранным проектом', 'проектом 52'] as $first) {
+            $question = 'Сравни все акты организации с '.$first.' и проектом СевГУ';
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null],
+                ['scope' => 'project', 'project_id' => 52], ['scope' => 'project', 'project_id' => 100]]];
+            $calls = [];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments,
+                static function (array $arguments) use (&$calls): array {
+                    $calls[] = $arguments;
+
+                    return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+                }));
+            self::assertSame([['query' => 'СевГУ', 'name_match' => 'exact', 'limit' => 2]], $calls);
         }
     }
 

@@ -2371,7 +2371,8 @@ class AIAssistantService
                 }
             }
             if ($toolName === 'generate_custom_report') {
-                $args = $requestProjectScope->bindReportScope($requestQuery, $args);
+                $args = $requestProjectScope->bindReportScope($requestQuery, $args,
+                    fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
             }
             $this->toolArguments->validate($args, $schema);
             $toolFailureStage = 'request_policy';
@@ -2565,6 +2566,10 @@ class AIAssistantService
                 throw $exception;
             }
             $this->executionCheckpoint();
+            if ($exception instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous) {
+                return ['status' => 'error', 'message' => trans_message('ai_custom_reports.failed'), 'needs_clarification' => true,
+                    'validation_errors' => ['sections.scope' => [trans_message('ai_custom_reports.scope_clarification')]], 'source_refs' => []];
+            }
             if ($exception instanceof \Illuminate\Validation\ValidationException) {
                 $allowedCodes = ['unsupported_domain', 'unsupported_entity', 'unsupported_field', 'unsupported_predicate', 'unsupported_project_filter', 'unsupported_parent_projection'];
                 $errors = [];

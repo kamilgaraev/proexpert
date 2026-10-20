@@ -42,11 +42,16 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'organization not in selected project' => [true, true, false, 4, 4, true, 'Не в выбранном проекте.'],
             'organization without selected project' => [true, true, false, 4, 4, true, 'Без выбранного проекта.'],
             'organization except current project' => [true, true, false, 4, 4, true, 'За исключением текущего проекта.'],
+            'nominative organization' => [true, true, false, 7, 5, false, '', 'nominative'],
+            'organization and current project' => [true, true, false, 7, 5, false, '', 'current'],
+            'organization and explicit project' => [true, true, false, 7, 5, false, '', 'explicit'],
+            'organization and named selected project' => [true, true, false, 7, 5, false, '', 'named'],
+            'mixed scope without section metadata' => [true, true, false, 7, 5, false, '', 'ambiguous'],
         ];
     }
 
     #[DataProvider('reportCases')]
-    public function test_real_dispatch_keeps_organization_scope_and_current_permissions(bool $sectionProject, bool $nestedProject, bool $filtered, int $sourceRows, int $outputRows, bool $excludeFirst = false, string $projectExclusion = ''): void
+    public function test_real_dispatch_keeps_organization_scope_and_current_permissions(bool $sectionProject, bool $nestedProject, bool $filtered, int $sourceRows, int $outputRows, bool $excludeFirst = false, string $projectExclusion = '', string $variant = ''): void
     {
         Queue::fake();
         config(['cache.default' => 'array']);
@@ -60,6 +65,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $org = $fixture->organization;
         $projects = Model::withoutEvents(fn () => Project::factory()->count(3)->create(['organization_id' => $org->id, 'is_archived' => false]));
         [$first, $second, $private] = $projects->all();
+        $first->updateQuietly(['name' => 'СевГУ '.bin2hex(random_bytes(4))]);
         foreach ([$first, $second] as $project) {
             $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
         }
@@ -78,7 +84,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         self::assertFalse($policy->canReadEntity($actor, $org->id, 'project', $foreign->id));
         $csv = null;
         $files = $this->createMock(FileService::class);
-        $files->expects($this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
+        $files->expects($variant === 'ambiguous' ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
 
@@ -101,22 +107,81 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($excludeFirst) {
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
-        $result = $this->dispatch($arguments, $question, $first, $org, $actor);
-        self::assertSame('success', $result['status'], json_encode($result, JSON_UNESCAPED_UNICODE));
-        self::assertSame([['title' => 'По статусам и валютам', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows]], $result['sections']);
-        self::assertIsString($csv);
-        self::assertStringStartsWith("\xEF\xBB\xBF", $csv);
-        self::assertStringNotContainsString('9000', $csv);
-        self::assertStringNotContainsString('8000', $csv);
-        $stream = fopen('php://temp', 'w+b');
-        fwrite($stream, substr($csv, 3));
-        rewind($stream);
-        $rows = [];
-        while (($row = fgetcsv($stream, null, ';', '"', '')) !== false) {
-            $rows[] = $row;
+        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous'], true);
+        if ($variant === 'nominative') {
+            $question = 'Сделай CSV: все акты организации по статусам и валютам, включая черновики.';
         }
-        fclose($stream);
-        self::assertSame(['Статус', 'Валюта', 'Количество актов', 'Общая сумма'], array_shift($rows));
+        if ($comparison) {
+            $question = match ($variant) {
+                'explicit' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
+                'named' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$first->name,
+                default => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с выбранным проектом',
+            };
+            $organizationSection = $arguments['sections'][0];
+            $organizationSection['title'] = 'Организация';
+            $organizationSection['scope'] = 'organization';
+            $projectSection = $organizationSection;
+            $projectSection['title'] = 'Проект';
+            $projectSection['scope'] = 'project';
+            $projectSection['project_id'] = $variant === 'explicit' ? $second->id : $first->id;
+            $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']]];
+            if ($variant === 'ambiguous') {
+                unset($organizationSection['scope'], $projectSection['scope']);
+            }
+            $arguments['format'] = 'xlsx';
+            $arguments['sections'] = [$organizationSection, $projectSection];
+        }
+        $result = $this->dispatch($arguments, $question, $first, $org, $actor);
+        if ($variant === 'ambiguous') {
+            self::assertSame('error', $result['status']);
+            self::assertTrue($result['needs_clarification']);
+            self::assertArrayHasKey('sections.scope', $result['validation_errors']);
+            self::assertSame([], $result['source_refs']);
+            self::assertNull($csv);
+
+            return;
+        }
+        self::assertSame('success', $result['status'], json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame($comparison ? [['title' => 'Организация', 'source_row_count' => 7, 'output_rows' => 5],
+            ['title' => 'Проект', 'source_row_count' => $variant === 'explicit' ? 4 : 3, 'output_rows' => $variant === 'explicit' ? 4 : 3]]
+            : [['title' => 'По статусам и валютам', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows]], $result['sections']);
+        self::assertIsString($csv);
+        if ($comparison) {
+            self::assertStringStartsWith('PK', $csv);
+            $temporary = tempnam(sys_get_temp_dir(), 'most-scope-');
+            self::assertIsString($temporary);
+            file_put_contents($temporary, $csv);
+            $workbook = null;
+            try {
+                $workbook = \PhpOffice\PhpSpreadsheet\IOFactory::load($temporary);
+                self::assertSame(2, $workbook->getSheetCount());
+                $sheetRows = [];
+                foreach ($workbook->getAllSheets() as $sheet) {
+                    $sheetRows[] = array_values(array_filter($sheet->toArray(), static fn (array $row): bool => in_array($row[1] ?? null, ['RUB', 'USD', 'EUR'], true)));
+                }
+                $rows = $sheetRows[0];
+                $projectGroups = array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $sheetRows[1]);
+                self::assertEqualsCanonicalizing($variant === 'explicit'
+                    ? [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']]
+                    : [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']], $projectGroups);
+            } finally {
+                $workbook?->disconnectWorksheets();
+                unlink($temporary);
+            }
+        } else {
+            self::assertStringStartsWith("\xEF\xBB\xBF", $csv);
+            self::assertStringNotContainsString('9000', $csv);
+            self::assertStringNotContainsString('8000', $csv);
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, substr($csv, 3));
+            rewind($stream);
+            $rows = [];
+            while (($row = fgetcsv($stream, null, ';', '"', '')) !== false) {
+                $rows[] = $row;
+            }
+            fclose($stream);
+            self::assertSame(['Статус', 'Валюта', 'Количество актов', 'Общая сумма'], array_shift($rows));
+        }
         $groups = array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $rows);
         $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00'], ['USD', 2, '10.00']];
         if (! $filtered) {
