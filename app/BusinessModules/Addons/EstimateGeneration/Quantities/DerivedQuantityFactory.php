@@ -1145,14 +1145,14 @@ final class DerivedQuantityFactory
         return $this->issues([$this->issue($code, $operand, $factId)]);
     }
 
-    /** @param list<array{code: string, operand: string, fact_id: string|null}> $issues */
+    /** @param list<array{code: string, operand: string, fact_id?: string|null}> $issues */
     private function issues(array $issues): QuantityReadiness
     {
-        usort($issues, static fn (array $left, array $right): int => [$left['operand'], $left['fact_id'], $left['code'], $left['entity_id'] ?? '', $left['missing_operand'] ?? '']
-            <=> [$right['operand'], $right['fact_id'], $right['code'], $right['entity_id'] ?? '', $right['missing_operand'] ?? '']);
+        usort($issues, static fn (array $left, array $right): int => [$left['operand'], $left['fact_id'] ?? null, $left['code'], $left['entity_id'] ?? '', $left['missing_operand'] ?? '', $left['relation'] ?? '']
+            <=> [$right['operand'], $right['fact_id'] ?? null, $right['code'], $right['entity_id'] ?? '', $right['missing_operand'] ?? '', $right['relation'] ?? '']);
         $unique = [];
         foreach ($issues as $issue) {
-            $unique[implode('|', [$issue['code'], $issue['operand'], $issue['fact_id'] ?? '', $issue['entity_id'] ?? '', $issue['missing_operand'] ?? ''])] = $issue;
+            $unique[implode('|', [$issue['code'], $issue['operand'], $issue['fact_id'] ?? '', $issue['entity_id'] ?? '', $issue['missing_operand'] ?? '', $issue['relation'] ?? ''])] = $issue;
         }
         $issues = array_values($unique);
         $questions = array_map(static fn (array $issue): array => [

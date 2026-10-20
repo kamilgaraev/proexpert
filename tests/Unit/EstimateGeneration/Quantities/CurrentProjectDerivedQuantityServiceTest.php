@@ -23,6 +23,24 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     private const SOURCE = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
+    public function input_preview_keeps_both_missing_roof_coverage_relations_without_calculating_an_area(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $roof = new Entity('roof:1', 10, 20, 30, self::SOURCE, 'equipment', 'roof:1', ['semantic_type' => 'roof']);
+        $evidence = $this->nativeEvidence('evidence:roof-plan', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'roof:1');
+        $repository->saveSourceModel([$roof], [
+            $this->nativeFact('fact:roof-plan', 10, 20, 30, self::SOURCE, $roof->id, 'plan_area', '40', 'm2', 1.0, 'document', 'confirmed', [$evidence->id]),
+        ], [$evidence]);
+        $result = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->previewInput(10, 20, 30);
+        self::assertArrayNotHasKey('roof_area', $result['quantities']);
+        self::assertCount(1, $result['warnings']);
+        $issues = $result['warnings'][0]['inputs'];
+        self::assertSame(['geometry_coverage_unknown', 'geometry_coverage_unknown'], array_column($issues, 'code'));
+        self::assertSame([$roof->id, $roof->id], array_column($issues, 'entity_id'));
+        self::assertSame(['roof_facets', 'roof_openings'], array_column($issues, 'relation'));
+    }
+
+    #[Test]
     public function aggregate_planning_scope_preserves_document_quantity_versions_and_stale_runs_remove_their_active_projections(): void
     {
         $repository = new InMemoryProjectModelRepository;
