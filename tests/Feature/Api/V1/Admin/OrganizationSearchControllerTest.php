@@ -143,6 +143,67 @@ class OrganizationSearchControllerTest extends TestCase
         $this->assertSame([$cityMatch->id, $countryMatch->id], array_column($response->json('data'), 'id'));
     }
 
+    public function test_search_filters_interaction_modes_before_counting_and_paginating(): void
+    {
+        $this->allowAdminAccess();
+        $context = AdminApiTestContext::create([], [
+            'city' => 'Mode City',
+            'capabilities' => [OrganizationCapability::MATERIALS_SUPPLY->value],
+        ]);
+        Organization::factory()->create([
+            'name' => 'A Project Only', 'city' => 'Mode City',
+            'capabilities' => [OrganizationCapability::SUBCONTRACTING->value],
+        ]);
+        Organization::factory()->inactive()->create([
+            'city' => 'Mode City', 'capabilities' => [OrganizationCapability::MATERIALS_SUPPLY->value],
+        ]);
+        $supplier = Organization::factory()->create([
+            'name' => 'B Supplier', 'city' => 'Mode City',
+            'capabilities' => [OrganizationCapability::MATERIALS_SUPPLY->value],
+        ]);
+        $service = Organization::factory()->create([
+            'name' => 'C Service', 'city' => 'Mode City',
+            'capabilities' => [OrganizationCapability::CONSULTING->value],
+        ]);
+        $hybrid = Organization::factory()->create([
+            'name' => 'D Hybrid', 'city' => 'Mode City',
+            'capabilities' => [OrganizationCapability::FACILITY_MANAGEMENT->value, OrganizationCapability::MATERIALS_SUPPLY->value],
+        ]);
+        $query = http_build_query([
+            'city' => 'Mode City', 'sort_by' => 'name', 'per_page' => 2,
+            'interaction_modes' => ['procurement_counterparty', 'service_counterparty'],
+        ]);
+        $first = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/organizations/search?'.$query);
+        $first->assertOk()->assertJsonPath('meta.total', 3)->assertJsonPath('meta.last_page', 2);
+        $this->assertSame([$supplier->id, $service->id], array_column($first->json('data'), 'id'));
+        $second = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/organizations/search?'.$query.'&page=2');
+        $second->assertOk()->assertJsonPath('meta.current_page', 2)->assertJsonPath('meta.total', 3);
+        $this->assertSame([$hybrid->id], array_column($second->json('data'), 'id'));
+    }
+
+    public function test_search_cached_pages_remain_distinct(): void
+    {
+        $this->allowAdminAccess();
+        $context = AdminApiTestContext::create();
+        $firstOrg = Organization::factory()->create(['name' => 'A Page', 'city' => 'Pagination City']);
+        $secondOrg = Organization::factory()->create(['name' => 'B Page', 'city' => 'Pagination City']);
+        $query = '/api/v1/admin/organizations/search?city=Pagination%20City&sort_by=name&per_page=1';
+        $first = $this->withHeaders($context->authHeaders())->getJson($query);
+        $first->assertOk()->assertJsonPath('meta.total', 2)->assertJsonPath('data.0.id', $firstOrg->id);
+        $second = $this->withHeaders($context->authHeaders())->getJson($query.'&page=2');
+        $second->assertOk()->assertJsonPath('meta.current_page', 2)->assertJsonPath('data.0.id', $secondOrg->id);
+        $this->withHeaders($context->authHeaders())->getJson($query)->assertJsonPath('data.0.id', $firstOrg->id);
+    }
+
+    public function test_search_rejects_unknown_interaction_modes(): void
+    {
+        $this->allowAdminAccess();
+        $context = AdminApiTestContext::create();
+        $query = http_build_query(['interaction_modes' => ['unsupported_mode']]);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/organizations/search?'.$query)
+            ->assertUnprocessable()->assertJsonValidationErrors('interaction_modes.0');
+    }
+
     public function test_recommendations_ignore_cached_results_from_before_the_exclusion_fix(): void
     {
         $this->allowAdminAccess();

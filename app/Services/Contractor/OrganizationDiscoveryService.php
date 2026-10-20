@@ -5,6 +5,7 @@ namespace App\Services\Contractor;
 use App\Models\Organization;
 use App\Models\ContractorInvitation;
 use App\Models\Contractor;
+use App\Support\Organization\OrganizationWorkspaceProfileCatalog;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -16,16 +17,18 @@ class OrganizationDiscoveryService
         int $excludeOrganizationId,
         array $filters = [],
         int $perPage = 20,
-        string $sortBy = 'relevance'
+        string $sortBy = 'relevance',
+        int $page = 1
     ): LengthAwarePaginator {
-        $cacheKey = $this->getSearchCacheKey($excludeOrganizationId, $filters, $perPage, $sortBy);
+        $cacheKey = $this->getSearchCacheKey($excludeOrganizationId, $filters, $perPage, $sortBy, $page);
         
-        return Cache::remember($cacheKey, 600, function () use ($excludeOrganizationId, $filters, $perPage, $sortBy) {
+        return Cache::remember($cacheKey, 600, function () use ($excludeOrganizationId, $filters, $perPage, $sortBy, $page) {
             $query = $this->buildSearchQuery($excludeOrganizationId, $filters);
             
             $this->applySorting($query, $sortBy, $filters);
+            $query->orderBy('id');
             
-            return $query->paginate($perPage);
+            return $query->paginate($perPage, ['*'], 'page', $page);
         });
     }
 
@@ -160,6 +163,19 @@ class OrganizationDiscoveryService
 
         if (isset($filters['verified']) && $filters['verified']) {
             $query->where('is_verified', true);
+        }
+
+        if (!empty($filters['interaction_modes'])) {
+            $capabilities = OrganizationWorkspaceProfileCatalog::capabilitiesForInteractionModes($filters['interaction_modes']);
+            $query->where(static function (Builder $modeQuery) use ($capabilities): void {
+                if ($capabilities === []) {
+                    $modeQuery->whereRaw('1 = 0');
+                    return;
+                }
+                foreach ($capabilities as $capability) {
+                    $modeQuery->orWhereJsonContains('capabilities', $capability);
+                }
+            });
         }
 
         if (!empty($filters['exclude_invited'])) {
@@ -301,9 +317,9 @@ class OrganizationDiscoveryService
         ];
     }
 
-    protected function getSearchCacheKey(int $excludeOrganizationId, array $filters, int $perPage, string $sortBy): string
+    protected function getSearchCacheKey(int $excludeOrganizationId, array $filters, int $perPage, string $sortBy, int $page): string
     {
         $filterHash = md5(serialize($filters));
-        return "org_search:{$excludeOrganizationId}:{$filterHash}:{$perPage}:{$sortBy}";
+        return "org_search:v2:{$excludeOrganizationId}:{$filterHash}:{$perPage}:{$sortBy}:{$page}";
     }
 }

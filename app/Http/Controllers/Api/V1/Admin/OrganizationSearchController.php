@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Admin\SearchOrganizationsRequest;
 use App\Http\Responses\AdminResponse;
 use App\Services\Contractor\OrganizationDiscoveryService;
 use App\Support\Organization\OrganizationWorkspaceProfileCatalog;
@@ -20,7 +21,7 @@ class OrganizationSearchController extends Controller
     ) {
     }
 
-    public function search(Request $request): JsonResponse
+    public function search(SearchOrganizationsRequest $request): JsonResponse
     {
         $organizationId = $this->resolveOrganizationId($request);
 
@@ -31,16 +32,7 @@ class OrganizationSearchController extends Controller
             );
         }
 
-        $validated = $request->validate([
-            'search' => 'nullable|string|max:255',
-            'city' => 'nullable|string|max:100',
-            'country' => 'nullable|string|max:100',
-            'verified' => 'nullable|in:true,false,1,0',
-            'exclude_invited' => 'nullable|in:true,false,1,0',
-            'exclude_existing_contractors' => 'nullable|in:true,false,1,0',
-            'sort_by' => 'nullable|string|in:relevance,name,city,connections,verified',
-            'per_page' => 'nullable|integer|min:1|max:50',
-        ]);
+        $validated = $request->validated();
 
         $validated['verified'] = isset($validated['verified']) ? filter_var($validated['verified'], FILTER_VALIDATE_BOOLEAN) : null;
         $validated['exclude_invited'] = isset($validated['exclude_invited']) ? filter_var($validated['exclude_invited'], FILTER_VALIDATE_BOOLEAN) : null;
@@ -49,7 +41,7 @@ class OrganizationSearchController extends Controller
             : null;
 
         $filters = collect($validated)
-            ->except(['sort_by', 'per_page'])
+            ->except(['sort_by', 'per_page', 'page'])
             ->filter(static fn (mixed $value): bool => $value !== null)
             ->toArray();
         $sortBy = $validated['sort_by'] ?? 'relevance';
@@ -60,7 +52,8 @@ class OrganizationSearchController extends Controller
                 $organizationId,
                 $filters,
                 $perPage,
-                $sortBy
+                $sortBy,
+                (int) ($validated['page'] ?? 1)
             );
 
             $availabilityStatuses = $this->resolveAvailabilityStatuses(
