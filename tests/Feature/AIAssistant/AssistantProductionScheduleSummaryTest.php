@@ -6,6 +6,8 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectProductionScheduleSummaryTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
+use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
@@ -24,12 +26,14 @@ use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Repositories\Schedule\ProjectScheduleRepository;
+use App\Services\Credits\AICreditService;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
@@ -63,6 +67,129 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
             DB::beginTransaction();
         }
         parent::tearDown();
+    }
+
+    public function test_real_production_schedule_reference_remains_readable_inside_writable_completion_transaction(): void
+    {
+        $work = $this->work('100.0000', 'м²');
+        $schedule = $this->schedule();
+        $this->task($schedule, 'Контрольная веха', ['task_type' => 'milestone', 'planned_end_date' => '2026-10-13']);
+        $reader = app(AssistantProjectProductionScheduleReader::class);
+        $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, ['project_id' => $this->project->id]);
+        $guard = app(AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($this->fixture->owner, $this->fixture->organization->id, $read['source_refs']));
+        $connections = array_keys(DB::getConnections());
+        $default = DB::getDefaultConnection();
+        $sourceModes = [];
+        $observeReads = true;
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $event) use (&$sourceModes, &$observeReads): void {
+            if ($observeReads && preg_match('/\b(?:from|join)\s+"?(?:completed_works|project_schedules|schedule_tasks)"?\b/i', $event->sql) === 1) {
+                $sourceModes[] = $event->connection->getPdo()->query("SELECT current_setting('transaction_read_only') AS read_only, current_setting('transaction_isolation') AS isolation")->fetch(\PDO::FETCH_ASSOC);
+            }
+        });
+        DB::transaction(function () use ($reader, $guard, $read, $default): void {
+            $pid = DB::selectOne('SELECT pg_backend_pid() AS pid')->pid;
+            $inside = $reader->read($this->fixture->owner, $this->fixture->organization->id, ['project_id' => $this->project->id]);
+            self::assertSame($read['source_refs'][0]['source_version'], $inside['source_refs'][0]['source_version']);
+            self::assertTrue($guard->fresh($this->fixture->owner, $this->fixture->organization->id, $read['source_refs']));
+            self::assertSame('off', DB::selectOne('SHOW transaction_read_only')->transaction_read_only);
+            self::assertSame($default, DB::getDefaultConnection());
+            self::assertSame($pid, DB::selectOne('SELECT pg_backend_pid() AS pid')->pid);
+            self::assertSame(1, DB::transactionLevel());
+        });
+        $observeReads = false;
+        self::assertNotEmpty($sourceModes);
+        foreach ($sourceModes as $mode) {
+            self::assertSame(['read_only' => 'on', 'isolation' => 'repeatable read'], $mode);
+        }
+        self::assertSame($connections, array_keys(DB::getConnections()));
+        $work->updateQuietly(['completed_quantity' => '99.0000']);
+        DB::transaction(function () use ($guard, $read): void {
+            self::assertFalse($guard->fresh($this->fixture->owner, $this->fixture->organization->id, $read['source_refs']));
+        });
+        $current = $reader->read($this->fixture->owner, $this->fixture->organization->id, ['project_id' => $this->project->id]);
+        UserRoleAssignment::query()->where('user_id', $this->fixture->owner->id)->update(['is_active' => false]);
+        DB::transaction(function () use ($guard, $current): void {
+            self::assertFalse($guard->fresh($this->fixture->owner, $this->fixture->organization->id, $current['source_refs']));
+            self::assertSame('off', DB::selectOne('SHOW transaction_read_only')->transaction_read_only);
+        });
+        self::assertSame($connections, array_keys(DB::getConnections()));
+    }
+
+    public function test_original_schedule_question_completes_with_real_sources_despite_another_ui_project(): void
+    {
+        $name = 'Учебный ПТО — ремонт офиса 100 м² — 13.10.2026';
+        $this->project->updateQuietly(['name' => $name]);
+        for ($index = 0; $index < 3; $index++) {
+            $this->work('100.0000', 'м²');
+        }
+        $schedule = $this->schedule();
+        $milestone = $this->task($schedule, 'Контрольная веха', ['task_type' => 'milestone', 'planned_end_date' => '2026-10-13']);
+        $this->task($schedule, 'Готовая работа', ['status' => 'completed', 'progress_percent' => 100]);
+        $this->task($schedule, 'Суммарная задача', ['task_type' => 'summary', 'status' => 'completed', 'progress_percent' => 100]);
+        $before = [$this->project->fresh()->getAttributes(), $schedule->fresh()->getAttributes(), $milestone->fresh()->getAttributes()];
+        $ui = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'is_archived' => false]));
+        $query = 'В проекте «'.$name.'» ремонт уже сделан? По выполненным работам всё выглядит готовым. Сверь с графиком: что осталось незавершённым, какой плановый срок и кто отвечает?';
+        config(['ai-assistant.enabled' => true, 'ai-assistant-credits.enforce' => true]);
+        $actor = $this->fixture->owner;
+        $org = $this->fixture->organization;
+        $this->actingAs($actor);
+        app(AICreditService::class)->grant($org, 100000, 'purchase', null, 'production-completion-'.Str::uuid());
+        $calls = 0;
+        $projectId = $this->project->id;
+        $arguments = ['project_id' => $projectId];
+        $provider = $this->createMock(ProductionScheduleCompletionResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->method('isAvailable')->willReturn(true);
+        $provider->method('countTokens')->willReturn(100);
+        $provider->expects(self::never())->method('chat');
+        $provider->expects(self::atLeastOnce())->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls, &$arguments): array {
+            self::assertLessThanOrEqual(2, ++$calls);
+            self::assertContains(GetProjectProductionScheduleSummaryTool::NAME, array_column($options['tools'] ?? [], 'name'));
+            $output = $calls === 1 ? [['type' => 'function_call', 'id' => 'production-completion-read', 'call_id' => 'production-completion-read', 'status' => 'completed',
+                'name' => GetProjectProductionScheduleSummaryTool::NAME, 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)]] : [];
+
+            return ['content' => $calls === 1 ? '' : 'Непроверенный текст модели.', 'output' => $output, 'function_calls' => $output,
+                'input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        });
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false,
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => $ui->id]]]];
+        $payload['quote_id'] = app(AICreditService::class)->quote($org, $actor, $payload)['quote_id'];
+        $response = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null])->ask($query, $org->id, $actor, null, $payload);
+        self::assertSame('completed', AssistantRequest::query()->where('request_id', $response['request_id'])->sole()->status);
+        $metadata = $response['message']['metadata'];
+        self::assertFalse($metadata['needs_clarification']);
+        self::assertSame([], $metadata['artifacts']);
+        self::assertSame([], $metadata['telemetry']['tool_failures']);
+        self::assertCount(1, $metadata['source_refs']);
+        self::assertSame(AssistantProjectProductionScheduleReader::TYPE, $metadata['source_refs'][0]['entity_type']);
+        self::assertSame($projectId, $metadata['source_refs'][0]['project_id']);
+        self::assertSame($org->id, $metadata['source_refs'][0]['organization_id']);
+        self::assertStringContainsString('завершение работ не подтверждено', $response['message']['content']);
+        self::assertStringContainsString('Контрольная веха', $response['message']['content']);
+        self::assertStringContainsString('2026-10-13', $response['message']['content']);
+        self::assertStringContainsString('не назначен', $response['message']['content']);
+        self::assertStringNotContainsString('Непроверенный текст модели', $response['message']['content']);
+        foreach (['Подробнее.', 'Сверь выполненные работы с графиком проекта «'.$name.'» за сентябрь 2026 года.'] as $index => $followup) {
+            $calls = 0;
+            $arguments = ['project_id' => $projectId] + ($index === 1 ? ['period_start' => '2026-09-01', 'period_end' => '2026-09-30'] : []);
+            $payload['request_id'] = (string) Str::uuid();
+            $payload['message'] = $followup;
+            $payload['conversation_id'] = $response['conversation_id'];
+            unset($payload['quote_id']);
+            $payload['quote_id'] = app(AICreditService::class)->quote($org, $actor, $payload)['quote_id'];
+            $response = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null])->ask($followup, $org->id, $actor, $response['conversation_id'], $payload);
+            self::assertSame('completed', AssistantRequest::query()->where('request_id', $response['request_id'])->sole()->status);
+            self::assertFalse($response['message']['metadata']['needs_clarification']);
+            self::assertSame([], $response['message']['metadata']['telemetry']['tool_failures']);
+            self::assertSame($projectId, $response['message']['metadata']['source_refs'][0]['project_id']);
+            self::assertStringContainsString('Контрольная веха', $response['message']['content']);
+            self::assertStringNotContainsString('Непроверенный текст модели', $response['message']['content']);
+            if ($index === 1) {
+                self::assertSame($arguments, $response['message']['metadata']['source_refs'][0]['_read_arguments']);
+            }
+        }
+        self::assertSame($before, [$this->project->fresh()->getAttributes(), $schedule->fresh()->getAttributes(), $milestone->fresh()->getAttributes()]);
     }
 
     public function test_full_aggregates_precede_examples_and_keep_units_and_schedule_statuses_separate(): void
@@ -492,4 +619,9 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
             'task_type' => 'task', 'progress_percent' => 0, 'planned_start_date' => '2026-10-01',
             'planned_end_date' => '2026-10-20', 'planned_duration_days' => 19], $overrides)));
     }
+}
+
+interface ProductionScheduleCompletionResponsesProvider extends \App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface
+{
+    public function responses(array $input, array $options = []): array;
 }
