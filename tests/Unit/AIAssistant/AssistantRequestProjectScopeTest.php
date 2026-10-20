@@ -10,6 +10,45 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_work_organization_phrases_do_not_expand_the_selected_project(): void
+    {
+        $questions = ['Покажи все задачи организации работ', 'Все задачи организации строительства',
+            'По всем задачам организации строительных работ', 'Покажи все просроченные задачи организации работ'];
+        self::assertSame(array_fill(0, count($questions), false), array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+        foreach ($questions as $question) {
+            self::assertSame(['project_id' => 52], AssistantRequestProjectScope::bindSearchScope($question, [], 52, true), $question);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => []]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $question);
+        }
+    }
+
+    public function test_estimate_child_entities_use_the_organization_scope(): void
+    {
+        $questions = ['Все позиции смет организации', 'По всем позициям смет нашей организации',
+            'Сводка всех ресурсов организации', 'Все ресурсы смет организации', 'Все разделы смет организации'];
+        self::assertSame(array_fill(0, count($questions), true), array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+        foreach ($questions as $question) {
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
+            self::assertSame(['sections' => [['project_id' => null, 'filters' => []]]],
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [['project_id' => 52, 'filters' => []]]]), $question);
+        }
+    }
+
+    public function test_record_definitions_keep_organization_scope_and_report_filters(): void
+    {
+        $questions = ['Все просроченные задачи организации', 'По всем действующим договорам организации',
+            'Все утверждённые акты нашей организации', 'Все частично оплаченные договоры организации',
+            'Все активные незавершённые задачи организации', 'По всем нашим действующим договорам организации',
+            'Все не подписанные договоры организации', 'Все доступные позиции смет организации'];
+        self::assertSame(array_fill(0, count($questions), true), array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+        foreach ($questions as $question) {
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
+            $filters = [['field' => 'status', 'operator' => 'eq', 'value' => 'active']];
+            self::assertSame(['sections' => [['project_id' => null, 'filters' => $filters]]],
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [['project_id' => 52, 'filters' => $filters]]]), $question);
+        }
+    }
+
     public function test_all_organization_acts_do_not_inherit_the_project_from_a_negated_limit(): void
     {
         $question = 'Нужна сводка по всем актам организации в CSV: по каждому статусу и каждой валюте — количество актов и общая сумма. Валюты не смешивай, черновики тоже посчитай. Не ограничивайся выбранным проектом.';

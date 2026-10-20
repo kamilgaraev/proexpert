@@ -56,6 +56,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'named comparison with final grouping' => [true, true, false, 7, 5, false, '', 'named_grouping'],
             'project exclusion and another compared project' => [true, true, false, 4, 4, true, '', 'explicit_exclusion'],
             'negated draft filter keeps organization scope' => [true, true, false, 5, 4, false, '', 'without_drafts'],
+            'record definition keeps organization scope' => [true, true, false, 3, 2, false, '', 'defined_records'],
+            'work organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_organization'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
             'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
@@ -164,6 +166,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($variant === 'without_drafts') {
             $filters[] = ['field' => 'status', 'operator' => 'neq', 'value' => 'draft'];
         }
+        if ($variant === 'defined_records') {
+            $filters[] = ['field' => 'status', 'operator' => 'eq', 'value' => 'approved'];
+        }
         $arguments = ['title' => 'Акты организации', 'format' => 'csv', 'sections' => [[
             'title' => 'По статусам и валютам', 'domain' => 'acts', 'entity_type' => 'performance_act',
             'project_id' => $sectionProject ? $first->id : null, 'columns' => ['status', 'currency'], 'filters' => $filters,
@@ -188,6 +193,12 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($variant === 'without_drafts') {
             $question = 'Сформируй CSV. Не включай черновики в отчет по всем актам организации, группируй по статусам и валютам.';
+        }
+        if ($variant === 'defined_records') {
+            $question = 'Сформируй CSV по всем утверждённым актам организации с группировкой по статусам и валютам.';
+        }
+        if ($variant === 'process_organization') {
+            $question = 'Сформируй CSV: все акты организации работ по статусам и валютам.';
         }
         if ($comparison) {
             $question = match ($variant) {
@@ -278,6 +289,12 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($variant === 'without_drafts') {
             $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
+        }
+        if ($variant === 'defined_records') {
+            $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00']];
+        }
+        if ($variant === 'process_organization') {
+            $expected = [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']];
         }
         self::assertEqualsCanonicalizing($expected, $groups);
         $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
