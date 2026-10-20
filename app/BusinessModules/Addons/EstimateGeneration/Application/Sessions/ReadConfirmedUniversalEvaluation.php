@@ -87,7 +87,13 @@ final readonly class ReadConfirmedUniversalEvaluation
                     'norms.material', 'norms.technology', 'norms.structure', 'norms.object_type', 'norms.region_code',
                     'norms.valid_from', 'norms.valid_to', 'collections.id as collection_id', 'collections.code as collection_code',
                     'collections.name as collection_name', 'collections.norm_type'])->keyBy('id');
-            if (! $version || count($nativeItems) !== count($nativeKeys) || $norms->count() !== count($normIds)
+            try {
+                $resourceChoicesCurrent = app(\App\BusinessModules\Addons\EstimateGeneration\Pricing\AcceptedResourceCataloguePrices::class)
+                    ->frozenMatches($session, array_column($nativeItems, 'item'), $snapshot);
+            } catch (\InvalidArgumentException|\DomainException|\Brick\Math\Exception\MathException) {
+                return null;
+            }
+            if (! $version || ! $resourceChoicesCurrent || count($nativeItems) !== count($nativeKeys) || $norms->count() !== count($normIds)
                 || ! (new VerifyCurrentNormativeResourcePrices)->verify(array_column($nativeItems, 'item'), $regional)) {
                 return null;
             }

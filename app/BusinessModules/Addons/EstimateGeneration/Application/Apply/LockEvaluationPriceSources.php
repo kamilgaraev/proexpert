@@ -48,7 +48,7 @@ final class LockEvaluationPriceSources
 
     private function lockNormative(EstimateGenerationSession $session, array $positions): void
     {
-        $priceIds = $versionIds = $normIds = [];
+        $priceIds = $versionIds = $normIds = $catalogIds = [];
         $items = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope)->items($session->draft_payload ?? []);
         foreach ($positions as $position) {
             $price = $position['price_snapshot'];
@@ -60,8 +60,14 @@ final class LockEvaluationPriceSources
             $normIds[$normId] = $normId;
             $versionIds[$price['price_version_id']] = $price['price_version_id'];
             foreach ($price['resource_sources'] as $resource) {
-                if (! is_string($resource['source_reference'] ?? null)
-                    || preg_match('/\Aestimate_resource_prices:([1-9][0-9]*)\z/', $resource['source_reference'], $match) !== 1) {
+                $reference = $resource['source_reference'] ?? null;
+                if (is_string($reference) && preg_match('/\Acatalog:([1-9][0-9]*)\z/', $reference, $match) === 1
+                    && ($resource['source_type'] ?? null) === 'catalog_resource') {
+                    $catalogIds[(int) $match[1]] = (int) $match[1];
+
+                    continue;
+                }
+                if (! is_string($reference) || preg_match('/\Aestimate_resource_prices:([1-9][0-9]*)\z/', $reference, $match) !== 1) {
                     $this->rejectNormative();
                 }
                 $priceIds[(int) $match[1]] = (int) $match[1];
@@ -80,6 +86,17 @@ final class LockEvaluationPriceSources
         if ($norms->count() !== count($normIds) || $versions->count() !== count($versionIds)
             || $prices->count() !== count($priceIds) || $parsed->count() !== $datasets->count()) {
             $this->rejectNormative();
+        }
+        if ($catalogIds !== []) {
+            $catalogs = EstimatePositionCatalog::query()->where('organization_id', $session->organization_id)->where('is_active', true)
+                ->where('item_type', 'material')->whereIn('id', array_values($catalogIds))->orderBy('id')->sharedLock()->get(['id', 'measurement_unit_id']);
+            $unitIds = $catalogs->pluck('measurement_unit_id')->unique()->values();
+            $units = MeasurementUnit::query()->whereIn('id', $unitIds)
+                ->where(fn ($query) => $query->whereNull('organization_id')->orWhere('organization_id', $session->organization_id))
+                ->orderBy('id')->sharedLock()->get(['id']);
+            if ($catalogs->count() !== count($catalogIds) || $units->count() !== $unitIds->count()) {
+                $this->rejectNormative();
+            }
         }
     }
 

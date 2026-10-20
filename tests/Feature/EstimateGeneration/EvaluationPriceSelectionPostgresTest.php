@@ -288,6 +288,48 @@ final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanon
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
+    public function test_batch_catalogue_reads_preserve_source_hashes_and_do_not_expose_foreign_or_inactive_sources(): void
+    {
+        [$actor, $session, $catalog] = $this->fixture();
+        $reader = app(CataloguePriceSnapshotReader::class);
+        $reference = 'catalog:'.$catalog->id;
+        $expected = $reader->read((int) $session->organization_id, $reference);
+        $foreign = $catalog->replicate();
+        $foreign->organization_id = Organization::factory()->create()->id;
+        $foreign->code = 'foreign-'.Str::random(6);
+        $foreign->save();
+        $inactive = $catalog->replicate();
+        $inactive->code = 'inactive-'.Str::random(6);
+        $inactive->is_active = false;
+        $inactive->save();
+        $references = [...array_fill(0, 100, $reference), 'catalog:'.$foreign->id, 'catalog:'.$inactive->id];
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $prices = $reader->readMany((int) $session->organization_id, $references);
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        self::assertSame([$reference => $expected], $prices);
+        self::assertLessThanOrEqual(3, count($queries));
+        $catalog->update(['unit_price' => '1200']);
+        self::assertNotSame($expected['source_hash'], $reader->readMany((int) $session->organization_id, [$reference])[$reference]['source_hash']);
+    }
+
+    public function test_material_product_code_and_specification_changes_invalidate_the_material_quote_without_changing_the_work_price_contract(): void
+    {
+        [$actor, $session, $catalog] = $this->fixture();
+        $catalog->update(['item_type' => 'material']);
+        $reader = app(CataloguePriceSnapshotReader::class);
+        $reference = 'catalog:'.$catalog->id;
+        $base = $reader->read((int) $session->organization_id, $reference);
+        $material = $reader->readMaterialPrices((int) $session->organization_id, [$reference])[$reference];
+        $catalog->update(['code' => 'OTHER-SKU']);
+        self::assertSame($base['source_hash'], $reader->read((int) $session->organization_id, $reference)['source_hash']);
+        $otherSku = $reader->readMaterialPrices((int) $session->organization_id, [$reference])[$reference];
+        self::assertNotSame($material['source_hash'], $otherSku['source_hash']);
+        $catalog->update(['metadata' => [...$catalog->metadata, 'product_specification' => ['grade' => 'other']]]);
+        self::assertNotSame($otherSku['source_hash'], $reader->readMaterialPrices((int) $session->organization_id, [$reference])[$reference]['source_hash']);
+    }
+
     private function fixture(): array
     {
         config(['estimate-generation.universal_enabled' => true]);

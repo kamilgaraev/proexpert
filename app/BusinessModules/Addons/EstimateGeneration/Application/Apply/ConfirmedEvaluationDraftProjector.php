@@ -149,6 +149,7 @@ final readonly class ConfirmedEvaluationDraftProjector
         if (isset($projection['totals']['contingency'])) {
             $projection['totals']['contingency'] = ['kind' => 'fixed', 'amount' => $projection['contingency_amount']];
         }
+
         return (new BuildMostEstimateDraft)->seal($projection);
     }
 
@@ -179,7 +180,7 @@ final readonly class ConfirmedEvaluationDraftProjector
             || ! is_string($price['source_hash'] ?? null)
             || ($price['calculation_basis']['source_hash'] ?? null) !== $price['source_hash']
             || ! in_array($price['vat_mode'] ?? null, ['excluded', 'not_applicable'], true)
-            || ($item['price_snapshot']['source_type'] ?? null) !== 'regional_resource_aggregate'
+            || ! in_array($item['price_snapshot']['source_type'] ?? null, ['regional_resource_aggregate', 'mixed_resource_aggregate'], true)
             || ($item['price_snapshot']['source_reference'] ?? null) !== ($price['source_reference'] ?? null)
             || ($item['price_snapshot']['final_amount'] ?? null) !== ($item['total_cost'] ?? null)
             || ! is_string($item['quantity'] ?? null) || ! is_string($item['total_cost'] ?? null)

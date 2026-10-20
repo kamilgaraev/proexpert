@@ -96,16 +96,20 @@ final class GeometryInventory
     }
 
     /** Trusted source anchors survive user parameter corrections, but not document replacement/exclusion. */
-    public static function currentDocumentVersions(ProjectModelSnapshot $snapshot): array
+    public static function currentDocumentVersions(ProjectModelSnapshot $snapshot, bool $lockDocuments = true): array
     {
         $record = $snapshot->entities[0] ?? $snapshot->facts[0] ?? null;
         if ($record === null) {
             return [];
         }
         $documents = [];
-        foreach (\App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()
+        $query = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()
             ->where('organization_id', $record->organizationId)->where('project_id', $record->projectId)->where('session_id', $record->sessionId)
-            ->whereNull('ignored_at')->where('status', '<>', 'ignored')->orderBy('id')->sharedLock()->get() as $document) {
+            ->whereNull('ignored_at')->where('status', '<>', 'ignored')->orderBy('id');
+        if ($lockDocuments) {
+            $query->sharedLock();
+        }
+        foreach ($query->get() as $document) {
             if (preg_match('/\A[a-f0-9]{64}\z/i', (string) $document->checksum_sha256) === 1) {
                 $documents[(int) $document->id] = \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion::fromDocument($document);
             }

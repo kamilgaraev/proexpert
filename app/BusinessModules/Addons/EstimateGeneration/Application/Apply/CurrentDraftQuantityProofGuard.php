@@ -43,7 +43,7 @@ final readonly class CurrentDraftQuantityProofGuard
         $quantities = $universal
             ? $this->current->simulateInput($snapshot, $capture['token'], $decisions)['quantities']
             : $this->current->previewInput($organizationId, $projectId, $sessionId)['quantities'];
-        $documentVersions = GeometryInventory::currentDocumentVersions($snapshot);
+        $documentVersions = GeometryInventory::currentDocumentVersions($snapshot, $lockEvidence);
         $wallScopes = WallEstimateScope::select($snapshot, $decisions, $documentVersions);
         $openingSnapshot = GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
             : GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);

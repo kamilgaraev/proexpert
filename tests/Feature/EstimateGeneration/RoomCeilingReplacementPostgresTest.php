@@ -223,7 +223,50 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
-    private function fixture(int $roomCount = 5): array
+    public function test_a_different_seven_room_plan_uses_its_own_dimensions_and_covers_every_room_once(): void
+    {
+        [$actor, $session, $url] = $this->fixture(roomValues: [
+            ['annex', '1.25', '3.2'], ['hall', '4.125', '2.4'], ['studio', '7.8', '3.05'],
+            ['store', '0.95', '1.6'], ['wash', '2.135', '1.025'], ['nursery', '5.4', '4.8'], ['landing', '2.2', '2.75'],
+        ]);
+        $area = $this->getJson($url.'?parent_work_item_key=ceiling:rough')->assertOk()->json('data');
+        self::assertCount(7, $area['rooms']);
+        self::assertSame('73.368375', $area['replacement_total']);
+        self::assertCount(7, array_unique(array_column($area['rooms'], 'entity_id')));
+        $this->postJson($url, $this->input($area))->assertOk();
+        $perimeter = $this->getJson($url.'?parent_work_item_key=ceiling:cornice')->assertOk()->json('data');
+        self::assertCount(7, $perimeter['rooms']);
+        self::assertSame('85.37', $perimeter['replacement_total']);
+        self::assertSame('m', $perimeter['replacement_unit']);
+        $this->postJson($url, $this->input($perimeter))->assertOk();
+        $saved = $session->fresh();
+        $rows = RoomCeilingReplacement::rows($saved->draft_payload);
+        self::assertCount(18, $rows);
+        self::assertCount(18, array_unique(array_column($rows, 'key')));
+        $children = array_values(array_filter($rows, static fn (array $row): bool => isset($row['metadata']['room_ceiling_replacement'])));
+        self::assertCount(14, $children);
+        foreach ($children as $child) {
+            self::assertSame('estimated', $child['quantity_basis_details']['source']);
+            self::assertNotEmpty($child['quantity_basis_details']['assumptions']);
+            self::assertNull($child['unit_price']);
+        }
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertNotEmpty(app(RoomCeilingReplacementProof::class)->evidenceIds($saved, $rows, $snapshot));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_missing_width_in_one_room_prevents_a_partial_ceiling_replacement(): void
+    {
+        [$actor, $session, $url] = $this->fixture(roomValues: [['complete', '3', '2'], ['incomplete', '4', null]]);
+        $before = $session->fresh()->getRawOriginal();
+        $this->getJson($url.'?parent_work_item_key=ceiling:rough')->assertUnprocessable()
+            ->assertJsonPath('errors.ceiling.0', trans_message('estimate_ceiling.room_dimensions'));
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    private function fixture(int $roomCount = 5, ?array $roomValues = null): array
     {
         Http::preventStrayRequests();
         Http::fake();
@@ -253,9 +296,12 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
                 'quantity_selections' => ['ceiling:rough' => ['old' => true]], 'price_selections' => ['ceiling:rough' => ['old' => true]],
                 'scope_selection' => ['old' => true], 'scenario_selections' => ['old' => true], 'confirmed_evaluation' => ['old' => true]], 'draft_payload' => $draft]);
         $entities = [];
-        foreach (array_slice([['bedroom-one', '2.92', '2.915'], ['bedroom-two', '2.92', '2.915'], ['bathroom', '1.8', '1.85'], ['entry', '1.12', '1.85'], ['living', '3.06', '3.98']], 0, $roomCount) as [$key, $length, $width]) {
-            $entities[] = ['key' => $key, 'type' => 'room', 'name' => $key, 'parameters' => [
-                'length' => ['value' => $length, 'unit' => 'm', 'basis' => 'measurement'], 'width' => ['value' => $width, 'unit' => 'm', 'basis' => 'measurement']]];
+        foreach ($roomValues ?? array_slice([['bedroom-one', '2.92', '2.915'], ['bedroom-two', '2.92', '2.915'], ['bathroom', '1.8', '1.85'], ['entry', '1.12', '1.85'], ['living', '3.06', '3.98']], 0, $roomCount) as [$key, $length, $width]) {
+            $parameters = ['length' => ['value' => $length, 'unit' => 'm', 'basis' => 'measurement']];
+            if ($width !== null) {
+                $parameters['width'] = ['value' => $width, 'unit' => 'm', 'basis' => 'measurement'];
+            }
+            $entities[] = ['key' => $key, 'type' => 'room', 'name' => $key, 'parameters' => $parameters];
         }
         app(SaveManualProjectFacts::class)->handle($actor, $project->id, $session->id, 1, (string) Str::uuid(), ['entities' => $entities]);
         $session->refresh();

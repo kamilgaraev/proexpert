@@ -17,6 +17,7 @@ final class EvaluationInputFingerprint
             'generation_mode', 'evaluation_mode', 'price_policy', 'profile_id', 'selected_sections', 'regional_context',
             'manual_input_revision', 'price_selection_revision', 'technology_selection_revision', 'scope_selection_revision',
             'price_selections', 'technology_selections', 'scenario_selections', 'scope_selection', 'currency_selections',
+            'resource_price_selections', 'resource_price_selection_revision',
             'quantity_selections', 'quantity_selection_revision',
             'composition_selections', 'composition_selection_revision',
             'room_ceiling_replacements', 'room_ceiling_replacement_revision',

@@ -299,7 +299,7 @@ final readonly class UniversalEvaluationBuilder
         }
         $price = $item['price_snapshot'] ?? null;
         $quantity = $item['quantity'] ?? null;
-        if (! is_array($price) || ($price['source_type'] ?? null) !== 'regional_resource_aggregate'
+        if (! is_array($price) || ! in_array($price['source_type'] ?? null, ['regional_resource_aggregate', 'mixed_resource_aggregate'], true)
             || ! in_array($item['pricing_status'] ?? null, ['calculated', 'calculated_review_required'], true)
             || ! in_array($item['pricing_blocker'] ?? null, [null, '', 'none'], true)
             || ! is_string($quantity) || ! BigDecimal::of($quantity)->isGreaterThan(0)
@@ -317,6 +317,17 @@ final readonly class UniversalEvaluationBuilder
         $basis = ['kind' => 'normative_resource_sum', 'quantity' => $quantity,
             'work_cost' => $price['coefficients']['work_cost'] ?? '0.00', 'resources' => $resources,
             'source_hash' => hash('sha256', CanonicalPipelineJson::encode($this->priceIdentity($price)))];
+        if ($price['source_type'] === 'mixed_resource_aggregate') {
+            $mixed = (new \App\BusinessModules\Addons\EstimateGeneration\Pricing\MixedResourcePriceTerms)->resolve($price, $draft['regional_context'] ?? [], $regionalTerms);
+            if ($mixed === null) {
+                return null;
+            }
+
+            return ['source_type' => 'normative', 'source_reference' => $price['source_reference'], 'verified' => true,
+                'source_hash' => $basis['source_hash'], 'unit' => $item['unit'], 'currency' => $price['currency'],
+                'unit_price' => (string) BigDecimal::of($price['final_amount'])->dividedBy($quantity, 18, RoundingMode::HalfUp),
+                'resource_sources' => $basis['resources'], 'calculation_basis' => $basis, ...$mixed];
+        }
         $regionalOnly = array_filter($basis['resources'], static fn ($resource): bool => ! is_array($resource)
             || in_array($resource['source_type'] ?? null, ['fsnb_base', 'fsbc_base', 'fsnb_2022', 'fsbc', 'normative_rate_base'], true)
             || str_starts_with((string) ($resource['coefficients']['price_kind'] ?? ''), 'base_catalog')
