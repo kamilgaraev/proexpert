@@ -107,6 +107,14 @@ final class AssistantDataAccessPolicy
             && $this->canCurrentGrant($actor, $organizationId, $permission);
     }
 
+    public function canCurrentProjectPermission(User $actor, int $organizationId, int $projectId, string $permission): bool
+    {
+        return $projectId > 0 && $this->belongsToOrganization($actor, $organizationId)
+            && $this->accessibleProjects($actor, $organizationId)->whereKey($projectId)->exists()
+            && $this->currentAuthorization()->canCurrent($actor, $permission,
+                ['organization_id' => $organizationId, 'project_id' => $projectId, 'strict_project_scope' => true]);
+    }
+
     private function canCurrentGrant(User $actor, int $organizationId, string $permission): bool
     {
         $authorization = $this->currentAuthorization();
@@ -1306,6 +1314,40 @@ final class AssistantDataAccessPolicy
             ->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns));
     }
 
+    private function constructionJournalQuery(Builder $query, User $user, int $organizationId): Builder
+    {
+        $pairs = $this->rememberCurrent($user, $organizationId, 'construction-journal:visible-performers', function () use ($user, $organizationId): array {
+            $projects = $this->accessibleProjects($user, $organizationId)->whereHas('journals')
+                ->select(['projects.id', 'projects.organization_id']);
+            $rows = $this->finishAclDiscovery($projects, $projects->toBase())->useWritePdo()->get();
+            $projects = Project::hydrate($rows->map(static fn ($row): array => (array) $row)->all());
+            $participants = app(\App\Services\Project\ProjectParticipantService::class);
+            $pairs = [];
+            foreach ($projects->chunk(250) as $batch) {
+                $this->currentCheckpoint?->__invoke();
+                $facts = $participants->getHierarchiesWithActivity($batch->all());
+                foreach ($batch as $project) {
+                    $this->currentCheckpoint?->__invoke();
+                    if (! $this->currentAuthorization()->canCurrent($user, 'construction-journal.view', [
+                        'organization_id' => $organizationId, 'project_id' => (int) $project->id, 'strict_project_scope' => true,
+                    ])) {
+                        continue;
+                    }
+                    foreach (\App\Services\ConstructionJournal\ConstructionJournalPerformerVisibility::ids($organizationId, $facts[(int) $project->id]) as $performerId) {
+                        $pairs[] = ['project_id' => (int) $project->id, 'performing_organization_id' => $performerId];
+                    }
+                }
+            }
+
+            return $pairs;
+        });
+        $table = $query->getModel()->getTable();
+
+        return $query->whereRaw('('.$table.'.project_id, '.$table.'.performing_organization_id) IN '
+            .'(SELECT project_id, performing_organization_id FROM jsonb_to_recordset(CAST(? AS jsonb)) '
+            .'AS journal_visibility(project_id bigint, performing_organization_id bigint))', [json_encode($pairs, JSON_THROW_ON_ERROR)]);
+    }
+
     private function buildEntityQuery(User $user, int $organizationId, string $type, bool $skipBusinessReferences = false): ?Builder
     {
         $definition = $this->entities()[$type] ?? null;
@@ -1330,6 +1372,7 @@ final class AssistantDataAccessPolicy
             return null;
         }
         foreach (AssistantExtendedDomainRegistry::values('entityPermissions')[$type] ?? [] as $permission) {
+            if (in_array($type, ['construction_journal', 'construction_journal_entry'], true) && $permission === 'construction-journal.view') { continue; }
             if (! $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return null; }
         }
         $model = new $definition[1];
@@ -1388,6 +1431,11 @@ final class AssistantDataAccessPolicy
             $query->where($table.'.'.$actorColumn, $user->id);
         }
         if (! AssistantExtendedDomainRegistry::applyActorScopes($type, $query, $user, $organizationId, $this->currentAuthorization(), $this)) { return null; }
+        if ($type === 'construction_journal') {
+            if (in_array('deleted_at', $columns, true)) { $query->whereNull($table.'.deleted_at'); }
+
+            return $this->constructionJournalQuery($query, $user, $organizationId);
+        }
         if ($type === 'site_request') {
             (new \App\BusinessModules\Features\SiteRequests\Models\SiteRequest)->scopeVisibleToActor($query, (int) $user->id);
         }
