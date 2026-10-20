@@ -308,7 +308,7 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
             $snapshot->entities, array_fill(0, $count, $snapshot->facts[0]), $snapshot->evidence, $snapshot->conflicts)];
         $modelReader = Mockery::mock(ProjectModelRepository::class);
         $modelReader->shouldReceive('snapshotForPlanning')->times(7)->with(...[...$scope, 10001])
-            ->andReturn($bounded(9997), $bounded(9997), $bounded(9998), $bounded(9999), $bounded(10000), $bounded(10001), $bounded(9997));
+            ->andReturn($bounded(9986), $bounded(9986), $bounded(9987), $bounded(9997), $bounded(10000), $bounded(10001), $bounded(9986));
         $preview = new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationCompositionPreview($modelReader,
             app(BuildMostEstimateDraft::class), app(EvaluationInputFingerprint::class),
             new \App\BusinessModules\Addons\EstimateGeneration\Planning\SupplementaryWorkCatalog);
@@ -335,7 +335,7 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         $accepted = $composition->accept($actor, $session->project_id, $session->id, $this->input($offered, ['roof.rafters']));
         self::assertSame('0', $accepted['cost_units']);
         $pendingReader = Mockery::mock(ProjectModelRepository::class);
-        $pendingReader->shouldReceive('snapshotForPlanning')->once()->with(...[...$scope, 10001])->andReturn($bounded(9997));
+        $pendingReader->shouldReceive('snapshotForPlanning')->once()->with(...[...$scope, 10001])->andReturn($bounded(9986));
         $pendingPreview = new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationCompositionPreview($pendingReader,
             app(BuildMostEstimateDraft::class), app(EvaluationInputFingerprint::class),
             new \App\BusinessModules\Addons\EstimateGeneration\Planning\SupplementaryWorkCatalog);

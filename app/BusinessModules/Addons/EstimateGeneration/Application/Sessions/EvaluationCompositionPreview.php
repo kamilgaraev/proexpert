@@ -18,6 +18,10 @@ final readonly class EvaluationCompositionPreview
 {
     public const CONTRACT = 'evaluation-composition-preview:v1';
 
+    private const COMPOSITION_AND_CONFIRMATION_FACT_RESERVE = 4;
+
+    private const NEW_WORK_FACT_RESERVE = 7;
+
     public function __construct(private ProjectModelRepository $models, private BuildMostEstimateDraft $artifacts,
         private EvaluationInputFingerprint $inputs, private SupplementaryWorkCatalog $catalog) {}
 
@@ -40,13 +44,22 @@ final readonly class EvaluationCompositionPreview
         $existing = [];
         $rowCount = 0;
         $pendingQuantities = 0;
+        $priceReviews = 0;
+        $pendingBindings = 0;
         foreach ($restored['local_estimates'] ?? [] as $local) {
             foreach ($local['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $item) {
                     $rowCount++;
-                    if (($item['metadata']['generation_source'] ?? null) === 'accepted_supplementary_work'
-                        && ($item['quantity'] ?? null) === null) {
-                        $pendingQuantities++;
+                    if (($item['item_type'] ?? null) === 'priced_work') {
+                        $priceReviews++;
+                    }
+                    if (($item['metadata']['generation_source'] ?? null) === 'accepted_supplementary_work') {
+                        if (($item['quantity'] ?? null) === null) {
+                            $pendingQuantities++;
+                        }
+                        if (! isset($item['metadata']['scope_entity_id'], $item['metadata']['scope_entity_binding'])) {
+                            $pendingBindings++;
+                        }
                     }
                     $work = $item['metadata']['composition_work_key'] ?? $item['work_key'] ?? $item['metadata']['quantity_key'] ?? null;
                     if (is_string($work)) {
@@ -64,7 +77,8 @@ final readonly class EvaluationCompositionPreview
             }
         }
         $capture = $this->models->snapshotForPlanning((int) $session->organization_id, (int) $session->project_id, (int) $session->id, 10001);
-        $factCapacity = intdiv(max(0, 10000 - count($capture['snapshot']->facts) - 1), 2) - $pendingQuantities;
+        $reservedFacts = self::COMPOSITION_AND_CONFIRMATION_FACT_RESERVE + 2 * $rowCount + 2 * $pendingQuantities + $priceReviews + 2 * $pendingBindings;
+        $factCapacity = intdiv(max(0, 10000 - count($capture['snapshot']->facts) - $reservedFacts), self::NEW_WORK_FACT_RESERVE);
         if ($factCapacity < 1) {
             throw ValidationException::withMessages(['composition' => trans_message('estimate_composition.unavailable')]);
         }
