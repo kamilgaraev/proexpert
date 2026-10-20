@@ -14,6 +14,27 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkItemQuantityMapperTest extends TestCase
 {
+    public function test_wall_volume_area_coefficients_require_explicit_legacy_compatibility(): void
+    {
+        $mapper = new WorkItemQuantityMapper;
+        $floor = ['floor_area' => $this->quantity('floor_area', 'm2', '40')];
+        self::assertNull($mapper->map('walls.external_volume', $floor));
+        $legacy = $mapper->map('walls.external_volume', $floor, true);
+        self::assertSame('18.000000', $legacy?->amount);
+        self::assertSame('m3', $legacy?->unit);
+        self::assertSame(QuantitySource::Estimated, $legacy?->source);
+        self::assertSame('floor_area', $legacy?->formulaInputs['source_quantity']['key']);
+        self::assertSame('0.45', $legacy?->formulaInputs['factor']);
+        self::assertSame('preliminary_quantity_coefficients:v1', $legacy?->formulaInputs['scenario_id']);
+        self::assertContains('preliminary_work_quantity:walls.external_volume', $legacy?->assumptions ?? []);
+        $gross = ['gross_wall_area' => $this->quantity('gross_wall_area', 'm2', '80'), ...$floor];
+        self::assertNull($mapper->map('walls.external_volume', $gross));
+        self::assertSame('24.000000', $mapper->map('walls.external_volume', $gross, true)?->amount);
+        $volume = ['net_wall_volume' => $this->quantity('net_wall_volume', 'm3', '2.1'), ...$gross];
+        self::assertSame('2.100000', $mapper->map('walls.external_volume', $volume, true)?->amount);
+        self::assertSame('2.100000', $mapper->map('walls.external_volume', $volume)?->amount);
+    }
+
     public function test_entity_fallback_uses_only_the_matching_formula_without_global_aliases_or_wall_ratios(): void
     {
         $floor = new QuantityData('quantity:floor', 'm2', '20', 'direct_floor_area', '1', ['entity_id' => 'room:1'],

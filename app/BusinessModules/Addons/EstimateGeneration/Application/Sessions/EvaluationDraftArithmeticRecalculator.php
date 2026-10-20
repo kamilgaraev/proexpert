@@ -62,7 +62,8 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         $quantityKey = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding::key($item['key']);
                         $item['metadata']['quantity_key'] = $quantityKey;
                     }
-                    $quantity = is_string($quantityKey) ? $this->mapper->map($quantityKey, $quantities) : null;
+                    $quantity = is_string($quantityKey) ? $this->mapper->map($quantityKey, $quantities,
+                        ! $universal && ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::isAssemblyWork($item)) : null;
                     if (! $explicitQuantity && ($item['metadata']['quantity_reset_required'] ?? false) === true) {
                         $quantity = null;
                     }

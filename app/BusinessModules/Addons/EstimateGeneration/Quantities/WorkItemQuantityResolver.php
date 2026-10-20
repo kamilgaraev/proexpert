@@ -24,7 +24,8 @@ final readonly class WorkItemQuantityResolver
             return null;
         }
         $quantity = $this->directTakeoff->make($workItem, $generationIdentity)
-            ?? $this->mapper->map($key, $quantities);
+            ?? $this->mapper->map($key, $quantities, ($generationIdentity['evaluation_mode'] ?? null) !== 'universal'
+                && ! WallWorkItemExpander::isAssemblyWork($workItem));
         if ($quantity === null && is_string($entity) && $entity !== '') {
             $quantity = $this->mapper->mapForEntity($key, $quantities, $entity);
         }

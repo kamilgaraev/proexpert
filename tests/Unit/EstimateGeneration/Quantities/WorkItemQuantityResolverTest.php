@@ -11,6 +11,22 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkItemQuantityResolverTest extends TestCase
 {
+    public function test_legacy_area_based_wall_estimate_never_enters_universal_or_canonical_wall_generation(): void
+    {
+        $resolver = new WorkItemQuantityResolver;
+        $item = ['key' => 'legacy-wall', 'unit' => 'm3', 'metadata' => ['quantity_key' => 'walls.external_volume']];
+        $floor = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData('floor_area', 'm2', '40', 'floor_area', '1',
+            [], QuantitySource::Evidenced, ['evidence:1'], 'current');
+        self::assertSame('18.000000', $resolver->resolve($item, ['floor_area' => $floor])?->amount);
+        self::assertSame(QuantitySource::Estimated, $resolver->resolve($item, ['floor_area' => $floor])?->source);
+        self::assertNull($resolver->resolve($item, ['floor_area' => $floor], ['evaluation_mode' => 'universal']));
+        $item['metadata']['generation_source'] = 'canonical_wall_assembly';
+        self::assertNull($resolver->resolve($item, ['floor_area' => $floor]));
+        $item['metadata']['scope_entity_id'] = 'entity:wall';
+        $item['metadata']['wall_assembly']['fact_id'] = 'fact:wall';
+        self::assertNull($resolver->resolve($item, ['floor_area' => $floor]));
+    }
+
     #[Test]
     public function legacy_wall_document_takeoff_is_preserved_while_universal_requires_an_assembly(): void
     {

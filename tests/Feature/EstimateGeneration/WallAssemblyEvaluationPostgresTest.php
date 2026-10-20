@@ -26,6 +26,31 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_legacy_area_based_wall_recalculation_remains_estimated_and_cannot_bypass_apply_proof(): void
+    {
+        [$actor, $session] = $this->fixture(false, false);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => [[
+            'key' => 'room', 'type' => 'room', 'parameters' => ['area' => ['value' => '40', 'unit' => 'm2', 'basis' => 'measurement']],
+        ]]]);
+        $item = ['key' => 'legacy:area-wall', 'unit' => 'm3', 'metadata' => ['quantity_key' => 'walls.external_volume',
+            'composition_work_key' => 'walls.external_volume']];
+        $draft = ['evaluation_policy' => ['price_policy' => 'normative'], 'local_estimates' => [['sections' => [['work_items' => [$item]]]]]];
+        $updated = $this->recalculate($draft, $actor, $session->fresh());
+        $row = $updated['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('18', $row['quantity']);
+        self::assertSame('assumed', $row['quantity_status']);
+        self::assertSame('floor_area', $row['quantity_evidence']['formula_inputs']['source_quantity']['key']);
+        self::assertSame('0.45', $row['quantity_evidence']['formula_inputs']['factor']);
+        $this->assertRejected(app(CurrentDraftQuantityProofGuard::class), $scope, $updated);
+        $draft['generation_contract'] = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT;
+        self::assertNull($this->recalculate($draft, $actor, $session->fresh())['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+        unset($draft['generation_contract']);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['generation_source'] = 'canonical_wall_assembly';
+        self::assertNull($this->recalculate($draft, $actor, $session->fresh())['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_legacy_apply_preserves_preview_quantities_above_the_universal_decision_limit(): void
     {
         [$actor, $session, $walls] = $this->fixture(false);
@@ -242,7 +267,7 @@ final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonic
         }
     }
 
-    private function fixture(bool $assembly = true): array
+    private function fixture(bool $assembly = true, bool $includeThickness = true): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -258,8 +283,8 @@ final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonic
         $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
         $writer = app(SaveManualProjectFacts::class);
         $writer->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => array_map(static fn ($key): array => [
-            'key' => $key, 'type' => 'wall', 'parameters' => array_combine(['length', 'height', 'thickness'], array_map(
-                static fn ($value): array => ['value' => $value, 'unit' => 'm', 'basis' => 'measurement'], ['5', '3', '0.14'])),
+            'key' => $key, 'type' => 'wall', 'parameters' => array_combine($includeThickness ? ['length', 'height', 'thickness'] : ['length', 'height'], array_map(
+                static fn ($value): array => ['value' => $value, 'unit' => 'm', 'basis' => 'measurement'], $includeThickness ? ['5', '3', '0.14'] : ['5', '3'])),
             'coverage' => ['wall_openings' => 'covered_empty'],
         ], ['wall-1', 'wall-2'])]);
         $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
