@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationDraftArithmeticRecalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
@@ -12,9 +13,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDra
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ConvertEvaluationPriceUnit;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -30,6 +33,45 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationArithmeticRecalculationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_arithmetic_reads_session_input_once_for_the_whole_draft_and_preserves_replay_history(): void
+    {
+        $models = Mockery::mock(ProjectModelRepository::class);
+        $models->shouldReceive('snapshotForPlanning')->with(10, 20, 30, 10001)
+            ->andReturn(['snapshot' => new ProjectModelSnapshot([], [], [], []), 'token' => hash('sha256', 'empty-model')]);
+        $models->shouldReceive('decisionsForSelectedFacts')->with(10, 20, 30, [])->andReturn([]);
+        $this->app->instance(ProjectModelRepository::class, $models);
+        $session = new class extends EstimateGenerationSession
+        {
+            public int $inputReads = 0;
+
+            public function getAttribute($key): mixed
+            {
+                if ($key === 'input_payload') {
+                    $this->inputReads++;
+                }
+
+                return parent::getAttribute($key);
+            }
+        };
+        $session->forceFill(['id' => 30, 'organization_id' => 10, 'project_id' => 20, 'input_payload' => [
+            'manual_fact_receipts' => ['retained-request' => ['fingerprint' => hash('sha256', 'retained-response'),
+                'result' => ['quantities' => array_fill(0, 100, ['value' => '12.34', 'unit' => 'm'])]]],
+        ]]);
+        $session->syncOriginal();
+        $originalInput = $session->getRawOriginal('input_payload');
+        $session->inputReads = 0;
+        $items = array_map(static fn (int $index): array => ['key' => 'work:'.$index, 'work_key' => 'installation.test',
+            'name' => 'Монтаж', 'unit' => 'pcs', 'quantity' => null], range(1, 100));
+        $draft = ['generation_contract' => UniversalDraftProjector::CONTRACT,
+            'local_estimates' => [['sections' => [['work_items' => $items]]]]];
+        $result = app(EvaluationDraftArithmeticRecalculator::class)->recalculate($draft,
+            new PipelineContext(30, 10, 20, 55, 'sha256:'.str_repeat('a', 64), 'input_review_required'),
+            new ProjectModelSnapshot([], [], [], []), [], new User, $session);
+        self::assertSame(1, $session->inputReads);
+        self::assertCount(100, $result['local_estimates'][0]['sections'][0]['work_items']);
+        self::assertSame($originalInput, $session->getRawOriginal('input_payload'));
+    }
+
     public function test_equipment_count_updates_exact_catalog_money_without_a_paid_role(): void
     {
         config(['estimate-generation.universal_enabled' => true]);

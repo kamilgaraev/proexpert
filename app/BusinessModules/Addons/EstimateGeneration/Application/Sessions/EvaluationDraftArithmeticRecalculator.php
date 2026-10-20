@@ -34,6 +34,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
     public function recalculate(array $draft, PipelineContext $context, ProjectModelSnapshot $snapshot, array $decisions = [],
         ?User $actor = null, ?EstimateGenerationSession $session = null): array
     {
+        $sessionInput = $session === null ? [] : $session->input_payload;
         $preview = $this->quantities->previewInput($context->organizationId, $context->projectId, $context->sessionId);
         $quantities = $preview['quantities'];
         $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
@@ -57,7 +58,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         continue;
                     }
                     $quantityKey = $item['metadata']['quantity_key'] ?? $item['quantity_basis_details']['key'] ?? null;
-                    $explicitQuantity = $session !== null && isset($session->input_payload['quantity_selections'][$item['key']]);
+                    $explicitQuantity = $session !== null && isset($sessionInput['quantity_selections'][$item['key']]);
                     if ($explicitQuantity) {
                         $quantityKey = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding::key($item['key']);
                         $item['metadata']['quantity_key'] = $quantityKey;
@@ -109,7 +110,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     $changed = $oldAmount !== $item['quantity'] || $oldUnit !== ($item['unit'] ?? null)
                         || \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['basis' => $oldBasis])
                         !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['basis' => $item['quantity_basis_details']]);
-                    if ($actor !== null && $session !== null && isset($session->input_payload['price_selections'][$item['key']])) {
+                    if ($actor !== null && $session !== null && isset($sessionInput['price_selections'][$item['key']])) {
                         $price = $this->commercial->resolve($actor, $session, $item, $snapshot, $decisions);
                         if ($price === null) {
                             unset($item['commercial_price_snapshot'], $item['price_snapshot'], $item['evaluation_price_basis_quantity']);
@@ -131,7 +132,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         $item['pricing_status'] = 'not_calculated';
                         $item['pricing_blocker'] = $item['quantity'] === null ? 'quantity_unknown' : 'price_unknown';
                     }
-                    $explicitPrice = $session !== null && isset($session->input_payload['price_selections'][$item['key']]);
+                    $explicitPrice = $session !== null && isset($sessionInput['price_selections'][$item['key']]);
                     if (! $explicitPrice && $item['quantity'] !== null && isset($item['normative_match']['norm_id']) && is_string($regional['normative_dataset_version'] ?? null)) {
                         $decisionContext = [
                             'organization_id' => $context->organizationId, 'project_id' => $context->projectId,
