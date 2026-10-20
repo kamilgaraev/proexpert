@@ -111,6 +111,60 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         self::assertCount($outbound, Http::recorded());
     }
 
+    public function test_normative_composition_retains_catalog_units_and_reaches_free_quantity_recalculation(): void
+    {
+        [$actor, $session, $prefix] = $this->fixture();
+        $payload = $session->input_payload;
+        $payload['price_policy'] = 'normative';
+        $draft = $session->draft_payload;
+        $draft['evaluation_policy']['price_policy'] = 'normative';
+        $session->update(['input_payload' => $payload, 'draft_payload' => app(BuildMostEstimateDraft::class)->seal($draft)]);
+        $outbound = count(Http::recorded());
+        $preview = $this->getJson($prefix)->assertOk()->json('data');
+        $input = $this->input($preview, ['roof.rafters', 'roof.battens', 'ceiling.hatch']);
+        $result = $this->postJson($prefix, $input)->assertOk()->json('data');
+        self::assertSame('0', $result['cost_units']);
+        $added = array_values(array_filter($this->items($session->fresh()->draft_payload),
+            static fn ($row): bool => in_array($row['key'], $result['added_work_item_keys'], true)));
+        $byWork = array_column($added, null, 'work_key');
+        foreach (['roof.rafters' => 'm3', 'roof.battens' => 'm2', 'ceiling.hatch' => 'count'] as $work => $unit) {
+            self::assertSame($unit, $byWork[$work]['unit']);
+            self::assertNotContains('unit_requires_confirmation', $byWork[$work]['validation_flags']);
+            self::assertNull($byWork[$work]['quantity']);
+            self::assertContains('quantity_review_required', $byWork[$work]['validation_flags']);
+        }
+        self::assertSame(CanonicalPipelineJson::encode($result), CanonicalPipelineJson::encode($this->postJson($prefix, $input)->assertOk()->json('data')));
+        foreach (['roof.rafters' => ['0.75', 'm3'], 'ceiling.hatch' => ['1', 'count']] as $work => [$value, $unit]) {
+            $receipt = app(SaveEvaluationWorkQuantity::class)->handle($actor, $session->project_id, $session->id, [
+                'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+                'work_item_key' => $byWork[$work]['key'], 'value' => $value, 'unit' => $unit,
+                'reason' => 'Количество принято по исходному обмеру для сметного расчёта']);
+            self::assertSame('0', $receipt['cost_units']);
+        }
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $recalculated = DB::transaction(function () use ($actor, $session, $scope): array {
+            $current = $session->fresh();
+            $models = app(ProjectModelRepository::class);
+            $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+            $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($capture['snapshot']->facts, 'id')]);
+            $version = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($current);
+            $context = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext($scope[2], $scope[0], $scope[1],
+                (int) $current->state_version, $version, $current->status->value, baseInputVersion: $version);
+
+            return app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationDraftArithmeticRecalculator::class)
+                ->recalculate($current->draft_payload, $context, $capture['snapshot'], $decisions, $actor, $current);
+        });
+        $rows = array_column($this->items($recalculated), null, 'key');
+        self::assertSame('0.75', $rows[$byWork['roof.rafters']['key']]['quantity']);
+        self::assertSame('1', $rows[$byWork['ceiling.hatch']['key']]['quantity']);
+        self::assertNull($rows[$byWork['roof.battens']['key']]['quantity']);
+        self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+        self::assertSame('5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', $session->fresh()->input_payload['qa_run_id']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+        self::assertCount($outbound, Http::recorded());
+    }
+
     public function test_preview_filters_selected_sections_and_does_not_reintroduce_existing_or_previously_removed_works(): void
     {
         [$actor, $session] = $this->fixture();

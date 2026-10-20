@@ -89,18 +89,20 @@ final readonly class EvaluationWorkComposition
             $proof = $this->choices->write($actor, $session, 'work-composition:'.$input['request_id'], 'evaluation_answer',
                 ['answer_kind' => 'work_composition', 'catalog_version' => SupplementaryWorkCatalog::VERSION,
                     'work_keys' => $works, 'preview_fingerprint' => $input['preview_fingerprint']], $input['reason'], $input['request_id']);
+            $normative = in_array('normative', [$payload['price_policy'] ?? null, $draft['evaluation_policy']['price_policy'] ?? null], true);
             $added = [];
             foreach ($works as $work) {
                 $candidate = $candidates[$work];
+                $unit = $normative ? $candidate['suggested_unit'] : null;
                 $key = 'supplementary-work:'.hash('sha256', $sessionId."\0".$work);
                 $item = ['key' => $key, 'work_key' => $work, 'name' => $candidate['name'],
                     'work_category' => $candidate['package'], 'quantity_formula' => $work,
                     'normative_search_text' => $candidate['normative_search_text'], 'normative_rate_code' => null,
-                    'item_type' => 'priced_work', 'unit' => null, 'quantity' => null, 'quantity_status' => 'unknown',
+                    'item_type' => 'priced_work', 'unit' => $unit, 'quantity' => null, 'quantity_status' => 'unknown',
                     'quantity_basis_details' => null, 'unit_price' => null, 'total_cost' => null,
                     'pricing_status' => 'not_calculated', 'pricing_blocker' => 'quantity_unknown',
                     'materials' => [], 'labor' => [], 'machinery' => [], 'equipment' => [], 'other_resources' => [],
-                    'validation_flags' => ['normative_required', 'quantity_review_required', 'unit_requires_confirmation'],
+                    'validation_flags' => ['normative_required', 'quantity_review_required', ...($unit === null ? ['unit_requires_confirmation'] : [])],
                     'evaluation_section' => $candidate['section'],
                     'metadata' => ['generation_source' => 'accepted_supplementary_work', 'composition_work_key' => $work,
                         'quantity_key' => $work, 'package_key' => $candidate['package'], 'display_role' => 'work',
