@@ -25,15 +25,17 @@ final readonly class CurrentDraftQuantityProofGuard
 
     public function assertCurrent(int $organizationId, int $projectId, int $sessionId, array $draft, bool $lockEvidence = true): void
     {
+        $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
         $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
         $snapshot = $capture['snapshot'];
         $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
-        if (count($snapshot->facts) > 10000 || count($decisions) > 256) {
+        if (count($snapshot->facts) > 10000 || ($universal && count($decisions) > 256)) {
             $this->reject();
         }
-        $quantities = $this->current->simulateInput($snapshot, $capture['token'], $decisions)['quantities'];
+        $quantities = $universal
+            ? $this->current->simulateInput($snapshot, $capture['token'], $decisions)['quantities']
+            : $this->current->previewInput($organizationId, $projectId, $sessionId)['quantities'];
         $wallScopes = WallEstimateScope::select($snapshot, $decisions, GeometryInventory::currentDocumentVersions($snapshot));
-        $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
         $ids = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {

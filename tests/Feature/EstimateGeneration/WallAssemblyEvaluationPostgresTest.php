@@ -26,6 +26,48 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_legacy_apply_preserves_preview_quantities_above_the_universal_decision_limit(): void
+    {
+        [$actor, $session, $walls] = $this->fixture(false);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $factIds = array_column($capture['snapshot']->facts, 'id');
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, $factIds]);
+        $sourceDecision = $decisions[0];
+        for ($index = 0; $index < 257; $index++) {
+            $decisions[] = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision('decision:legacy-'.$index,
+                ...[...$scope, $sourceDecision->sourceVersion, $sourceDecision->targetType, $sourceDecision->targetId,
+                    $sourceDecision->selectedFactId, $sourceDecision->actorType, $sourceDecision->actorId,
+                    $sourceDecision->reason, $sourceDecision->version, $sourceDecision->evidenceIds]);
+        }
+        $previewModels = Mockery::mock(ProjectModelRepository::class);
+        $previewModels->shouldReceive('snapshotForPlanning')->with(...[...$scope, 10001])->andReturn($capture);
+        $previewModels->shouldReceive('decisionsForSelectedFacts')->with(...[...$scope, $factIds])->andReturn($decisions);
+        $preview = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService($previewModels,
+            new \App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory);
+        $quantities = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'];
+        $items = [];
+        foreach ($walls as $wall) {
+            $source = array_values(array_filter($quantities, static fn ($quantity): bool => $quantity->formulaKey === 'wall_net_area'
+                && ($quantity->formulaInputs['entity_id'] ?? null) === $wall->id))[0];
+            $items[] = ['key' => 'legacy:'.$wall->id, 'unit' => 'm2', 'metadata' => ['quantity_key' => $source->key,
+                'composition_work_key' => 'finishing.rough_walls', 'scope_entity_id' => $wall->id]];
+        }
+        $draft = $this->recalculate(['evaluation_policy' => ['price_policy' => 'normative'],
+            'local_estimates' => [['sections' => [['work_items' => $items]]]]], $actor, $session);
+        self::assertSame(['15', '15'], array_column($draft['local_estimates'][0]['sections'][0]['work_items'], 'quantity'));
+        self::assertSame(array_keys($quantities), array_keys($preview->previewInput(...$scope)['quantities']));
+        $guard = new CurrentDraftQuantityProofGuard($preview,
+            app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper::class),
+            app(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class), $previewModels);
+        DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $draft]));
+        self::addToAssertionCount(1);
+        $draft['generation_contract'] = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT;
+        $this->assertRejected($guard, $scope, $draft);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_legacy_wall_recalculation_and_apply_preserve_real_quantities_without_an_assembly(): void
     {
         [$actor, $session, $walls] = $this->fixture(false);
