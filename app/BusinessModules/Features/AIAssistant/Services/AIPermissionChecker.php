@@ -212,6 +212,11 @@ class AIPermissionChecker
                 return false;
             }
         }
+        if ($toolName === 'get_organization_calculation_health') {
+            return in_array('budgeting', $policy->effectiveModuleSlugs($user, $organizationId), true)
+                && $policy->canCurrentPermission($user, $organizationId, 'budgeting.cfo.view')
+                && app(\App\Services\Project\UserProjectAccessService::class)->modeFor($user, $organizationId) === \App\Enums\UserProjectAccessMode::ALL_PROJECTS;
+        }
         if ($toolName === 'get_organization_advance_settings') {
             return in_array('advance-accounting', $policy->effectiveModuleSlugs($user, $organizationId), true)
                 && $policy->canCurrentPermission($user, $organizationId, 'advance_settings.view')
@@ -386,7 +391,7 @@ class AIPermissionChecker
             'get_project_daily_staff' => ['projects', 'workforce'],
             'get_own_project_access' => ['assistant'],
             'get_organization_user_counts', 'get_assignable_user_roles', 'get_own_admin_permissions', 'get_organization_business_profile', 'get_own_report_workspace', 'get_own_organization_roles', 'get_organization_verification', 'get_own_report_subscriptions', 'get_report_subscription_catalog', 'get_organization_contacts', 'get_own_notification_preferences', 'get_organization_credit_balance' => ['assistant'],
-            'get_organization_advance_settings', 'get_organization_active_packages', 'get_organization_effective_modules' => ['assistant'],
+            'get_organization_calculation_health', 'get_organization_advance_settings', 'get_organization_active_packages', 'get_organization_effective_modules' => ['assistant'],
             'get_organization_purchase_orders' => ['assistant'],
             'get_catalog_lookup' => ['assistant'],
             'get_project_deliveries' => ['projects', 'warehouse'],
