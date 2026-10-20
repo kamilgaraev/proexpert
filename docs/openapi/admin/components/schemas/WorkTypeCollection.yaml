@@ -1,6 +1,26 @@
 type: object
 description: Пагинированная коллекция видов работ.
 properties:
+  summary:
+    type: object
+    description: Сводка по всем видам работ текущей организации, соответствующим фильтрам name, category и is_active, до разбиения на страницы. Поле добавлено без изменения data и meta.
+    required: [total, active, categories]
+    properties:
+      total:
+        type: integer
+        minimum: 0
+        description: Количество видов работ во всём выбранном отборе.
+        example: 35
+      active:
+        type: integer
+        minimum: 0
+        description: Количество активных видов работ в выбранном отборе.
+        example: 30
+      categories:
+        type: integer
+        minimum: 0
+        description: Количество различных непустых категорий в выбранном отборе; null и пустая строка не учитываются.
+        example: 4
   data:
     type: array
     items:
