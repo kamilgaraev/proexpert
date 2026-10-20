@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots;
 
+use App\Services\Monitoring\RuntimeReleaseSha;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 final class AssistantStatusSnapshotFootprint
 {
@@ -49,6 +51,8 @@ final class AssistantStatusSnapshotFootprint
         }
         $resolvedNames = [];
         $seen = [];
+        $planProfile = new AssistantStatusSnapshotPlanProfile;
+        $planOrdinal = 0;
         foreach ($queries as [$sql, $bindings, $sameConnection]) {
             if ($sameConnection && preg_match("/^SET LOCAL (?:statement_timeout = [0-9]+|jit = off|work_mem = '16MB')$/iD", $sql) === 1) { continue; }
             if (! $sameConnection) { return ['value' => $value, 'relations' => null, 'reason' => 'unsupported_connection']; }
@@ -110,10 +114,23 @@ final class AssistantStatusSnapshotFootprint
                 elseif (! in_array($relation->schema_name, ['pg_catalog', 'information_schema'], true)) { return ['value' => $value, 'relations' => null, 'reason' => 'unsupported_schema']; }
             }
             try {
-                $row = $connection->selectOne('EXPLAIN (FORMAT JSON, VERBOSE) '.$sql, $bindings);
-                $plan = json_decode((string) ((array) $row)['QUERY PLAN'], true, 512, JSON_THROW_ON_ERROR);
+                $planOrdinal++;
+                $selectStarted = hrtime(true);
+                $row = $connection->selectOne('EXPLAIN (FORMAT JSON, VERBOSE, SUMMARY TRUE) '.$sql, $bindings);
+                $selectMs = (hrtime(true) - $selectStarted) / 1_000_000;
+                $planJson = (string) ((array) $row)['QUERY PLAN'];
+                $decodeStarted = hrtime(true);
+                $plan = json_decode($planJson, true, 512, JSON_THROW_ON_ERROR);
+                $decodeMs = (hrtime(true) - $decodeStarted) / 1_000_000;
             } catch (\Throwable $exception) {
                 return ['value' => $value, 'relations' => null, 'reason' => 'plan_unavailable:'.get_class($exception)];
+            }
+            try {
+                $summary = $planProfile->sample($plan, $selectMs, $decodeMs, strlen($planJson), strlen($sql), count($bindings), $planOrdinal);
+                if ($summary !== null) {
+                    Log::channel('api_latency')->info('assistant.status_snapshot.plan_profile', ['release_sha' => RuntimeReleaseSha::current()] + $summary);
+                }
+            } catch (\Throwable) {
             }
             if (! $this->collectRelations($plan, $relations)) { return ['value' => $value, 'relations' => null]; }
         }
