@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CurrentWorkEntityBindingProof;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
@@ -24,7 +26,8 @@ use Illuminate\Validation\ValidationException;
 final readonly class CurrentDraftQuantityProofGuard
 {
     public function __construct(private CurrentProjectDerivedQuantityService $current,
-        private WorkItemQuantityMapper $mapper, private EvidenceRepository $evidence, private ProjectModelRepository $models) {}
+        private WorkItemQuantityMapper $mapper, private EvidenceRepository $evidence, private ProjectModelRepository $models,
+        private ?CurrentWorkEntityBindingProof $bindings = null) {}
 
     public function assertCurrent(int $organizationId, int $projectId, int $sessionId, array $draft, bool $lockEvidence = true): void
     {
@@ -47,6 +50,7 @@ final readonly class CurrentDraftQuantityProofGuard
         $openingScopes = OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         $openingSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions);
         $ids = [];
+        $bound = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
             foreach ($estimate['sections'] ?? [] as $section) {
@@ -56,6 +60,10 @@ final readonly class CurrentDraftQuantityProofGuard
                     }
                     if (++$rows > 10000) {
                         $this->reject();
+                    }
+                    if (isset($item['metadata']['scope_entity_binding'])
+                        || ($item['metadata']['generation_source'] ?? null) === 'accepted_supplementary_work') {
+                        $bound[] = $item;
                     }
                     $basis = $item['quantity_evidence'] ?? $item['quantity_basis_details'] ?? [];
                     $key = $item['metadata']['quantity_key'] ?? $basis['key'] ?? null;
@@ -117,6 +125,13 @@ final readonly class CurrentDraftQuantityProofGuard
                         $ids[(int) $match[1]] = (int) $match[1];
                     }
                 }
+            }
+        }
+        if ($bound !== []) {
+            $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)->whereKey($sessionId)->firstOrFail();
+            foreach (($this->bindings ?? app(CurrentWorkEntityBindingProof::class))->evidenceIds($session, $bound, $snapshot, requireBindings: true) as $id) {
+                $ids[(int) substr($id, 9)] = (int) substr($id, 9);
             }
         }
         if ($rows === 0 || $ids === []) {

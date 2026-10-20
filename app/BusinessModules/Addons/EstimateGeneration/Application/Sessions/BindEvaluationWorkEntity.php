@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkEntityScopePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
@@ -18,7 +19,7 @@ use Illuminate\Validation\ValidationException;
 final readonly class BindEvaluationWorkEntity
 {
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
-        private CurrentRoomIdentitySources $sources, private UserEvaluationChoiceWriter $choices,
+        private CurrentWorkEntitySources $sources, private UserEvaluationChoiceWriter $choices,
         private EvaluationInputFingerprint $inputs, private UniversalReviewSummaryProjector $reviews, private BuildMostEstimateDraft $artifacts) {}
 
     public function handle(User $actor, int $projectId, int $sessionId, array $input): array
@@ -30,7 +31,7 @@ final readonly class BindEvaluationWorkEntity
             || ! is_string($input['source_value_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/', $input['source_value_hash']) !== 1
             || ! is_string($input['reason'] ?? null) || mb_strlen(trim($input['reason'])) < 12 || strlen($input['reason']) > 1000
             || array_diff(array_keys($input), ['request_id', 'state_version', 'work_item_key', 'source_fact_id', 'source_fact_version', 'source_value_hash', 'reason']) !== []) {
-            throw ValidationException::withMessages(['entity' => trans_message('estimate_generation.room_identity.binding_invalid')]);
+            throw ValidationException::withMessages(['entity' => trans_message('estimate_work_entity.binding_invalid')]);
         }
 
         return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $input): array {
@@ -62,7 +63,7 @@ final readonly class BindEvaluationWorkEntity
             $draft = $session->draft_payload ?? [];
             $item = $locator->find($draft, $payload, $input['work_item_key']);
             $selected = null;
-            foreach ($this->sources->rows($session, true) as $row) {
+            foreach ($this->sources->rows($session, $item) as $row) {
                 if ($row['source_fact_id'] === $input['source_fact_id'] && $row['source_fact_version'] === $input['source_fact_version']
                     && hash_equals($row['source_value_hash'], $input['source_value_hash']) && $row['status'] === 'confirmed') {
                     $selected = $row;
@@ -70,12 +71,16 @@ final readonly class BindEvaluationWorkEntity
                 }
             }
             if ($selected === null) {
-                throw ValidationException::withMessages(['entity' => trans_message('estimate_generation.room_identity.binding_source_invalid')]);
+                throw ValidationException::withMessages(['entity' => trans_message('estimate_work_entity.binding_source_invalid')]);
             }
             $previous = $payload['work_entity_selections'][$item['key']] ?? null;
             $changed = ! is_array($previous) || ($previous['entity_id'] ?? null) !== $selected['entity_id']
-                || ($previous['source_fact_id'] ?? null) !== $selected['source_fact_id'];
-            $selection = ['answer_kind' => 'work_entity_binding', 'work_item_key' => $item['key'], 'entity_id' => $selected['entity_id'],
+                || ($previous['source_fact_id'] ?? null) !== $selected['source_fact_id']
+                || ($previous['source_fact_version'] ?? null) !== $selected['source_fact_version']
+                || ($previous['source_value_hash'] ?? null) !== $selected['source_value_hash']
+                || ($previous['source_version'] ?? null) !== $selected['source_version'];
+            $selection = ['answer_kind' => 'work_entity_binding', 'binding_contract' => WorkEntityScopePolicy::BINDING_CONTRACT,
+                'work_item_key' => $item['key'], 'entity_id' => $selected['entity_id'], 'source_entity_type' => $selected['entity_type'],
                 'source_fact_id' => $selected['source_fact_id'], 'source_fact_version' => $selected['source_fact_version'],
                 'source_value_hash' => $selected['source_value_hash'], 'source_version' => $selected['source_version']];
             $proof = $this->choices->write($actor, $session, 'work-entity:'.$item['key'], 'evaluation_answer', $selection, $input['reason'], $input['request_id']);
@@ -89,12 +94,18 @@ final readonly class BindEvaluationWorkEntity
                 $this->choices->write($actor, $session, 'work:'.$item['key'], 'evaluation_answer',
                     ['answer_kind' => 'quantity_scope_invalidated', 'work_item_key' => $item['key'], 'entity_id' => $selected['entity_id']],
                     $input['reason'], $input['request_id']);
+                if (isset($payload['price_selections'][$item['key']])) {
+                    $this->choices->write($actor, $session, 'work:'.$item['key'], 'evaluation_price',
+                        ['answer_kind' => 'price_scope_invalidated', 'work_item_key' => $item['key'], 'entity_id' => $selected['entity_id']],
+                        $input['reason'], $input['request_id']);
+                    $payload['price_selection_revision'] = ($payload['price_selection_revision'] ?? 0) + 1;
+                }
                 if (isset($payload['scenario_selections'])) {
                     $this->choices->write($actor, $session, 'scenario-set', 'evaluation_scenario',
                         ['answer_kind' => 'scenario_scope_invalidated', 'affected_work_item_key' => $item['key']],
                         $input['reason'], $input['request_id']);
                 }
-                unset($payload['quantity_selections'][$item['key']], $payload['scenario_selections']);
+                unset($payload['quantity_selections'][$item['key']], $payload['price_selections'][$item['key']], $payload['scenario_selections']);
                 $payload['quantity_selection_revision'] = ($payload['quantity_selection_revision'] ?? 0) + 1;
                 $item['quantity'] = null;
                 $item['quantity_status'] = 'unknown';
@@ -106,7 +117,7 @@ final readonly class BindEvaluationWorkEntity
                 foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'labor_cost', 'machinery_cost', 'other_cost'] as $money) {
                     $item[$money] = null;
                 }
-                unset($item['price_snapshot'], $item['evaluation_price_basis_quantity']);
+                unset($item['price_snapshot'], $item['commercial_price_snapshot'], $item['evaluation_price_basis_quantity']);
                 $item['pricing_status'] = 'not_calculated';
                 $item['pricing_blocker'] = 'quantity_unknown';
                 foreach (['quantity_evidence', 'quantity_evidence_id', 'quantity_evidence_fingerprint', 'quantity_evidence_source_version',
