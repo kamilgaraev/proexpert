@@ -29,7 +29,7 @@ class NormalizeAdminResponse
         $request->attributes->set(AdminResponse::DECODED_ARRAY_ATTRIBUTE, get_class($response) === JsonResponse::class);
 
         try {
-            return $this->normalizeResponse($response);
+            return $this->normalizeResponse($response, $request);
         } finally {
             if ($hadNormalizationMarker) {
                 $request->attributes->set(AdminResponse::NORMALIZATION_ATTRIBUTE, $previousNormalizationMarker);
@@ -45,7 +45,7 @@ class NormalizeAdminResponse
         }
     }
 
-    private function normalizeResponse(Response $response): Response
+    private function normalizeResponse(Response $response, Request $request): Response
     {
         if (
             $response instanceof BinaryFileResponse
@@ -56,11 +56,12 @@ class NormalizeAdminResponse
             return $response;
         }
 
-        $payload = $response->getData(true);
+        $nativePayload = $this->nativePositivePayload($response, $request);
+        $payload = $nativePayload ?? $response->getData(true);
         $statusCode = $response->getStatusCode();
 
         if ($this->isStandardResponse($payload)) {
-            if (get_class($response) === JsonResponse::class && $payload['success'] && array_key_exists('data', $payload)) {
+            if ($nativePayload === null && get_class($response) === JsonResponse::class && $payload['success'] && array_key_exists('data', $payload)) {
                 $payload['data'] = $response->getData()->data;
             }
 
@@ -102,6 +103,37 @@ class NormalizeAdminResponse
             $this->extractOptionalMessage($payload),
             $statusCode
         ));
+    }
+
+    private function nativePositivePayload(JsonResponse $response, Request $request): ?array
+    {
+        if (get_class($response) !== JsonResponse::class || ! $request->isMethod('GET')
+            || ! $request->is('api/v1/admin/design-management/packages')) {
+            return null;
+        }
+
+        $native = $response->getData();
+        if (! $native instanceof \stdClass || ($native->success ?? null) !== true || ! property_exists($native, 'data')) {
+            return null;
+        }
+
+        $payload = (array) $native;
+        foreach ($payload as $key => $value) {
+            if ($key !== 'data') {
+                $payload[$key] = $this->nativeAssociativeValue($value);
+            }
+        }
+
+        return $payload;
+    }
+
+    private function nativeAssociativeValue(mixed $value): mixed
+    {
+        if ($value instanceof \stdClass) {
+            $value = (array) $value;
+        }
+
+        return is_array($value) ? array_map($this->nativeAssociativeValue(...), $value) : $value;
     }
 
     private function isStandardResponse(mixed $payload): bool
