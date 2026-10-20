@@ -127,7 +127,9 @@ final class AssistantNamedProjectReadScope
     {
         $candidate = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
         $periodHead = $candidate === null ? null : AssistantProductionSchedulePeriod::withoutSuffix('текущий '.$candidate);
-        if ($candidate !== null && (preg_match('/^(?:сегодня|вчера|позавчера)[.!?]*$/iu', $candidate) === 1
+        $nameHead = $candidate === null ? null : AssistantProductionSchedulePeriod::withoutSuffix($candidate);
+        if ($candidate !== null && (preg_match('/^(?:этот|этого|весь|всем|все|текущ[а-яё]*|выполн[а-яё]*(?:\s+работ[а-яё]*)?)[.!?]*$/iu', $nameHead) === 1
+            || preg_match('/^(?:сегодня|вчера|позавчера)[.!?]*$/iu', $candidate) === 1
             || preg_match('/^с\s+график[а-яё]*(?:\s|[.!?;:,]|$)/iu', $candidate) === 1
             || preg_match('/^(?:без|с|со)\s+(?:(?:назначенн|указанн)[а-яё]*\s+)?(?:ответственн|исполнител)[а-яё]*(?=\s|[.!?]|$)/iu', $candidate) === 1
             || preg_match('/^(?:онлайн|офлайн|оффлайн|online|offline|(?:не\s+)?в\s+сети|вне\s+сети)(?=\s|[.!?]|$)/iu', $candidate) === 1

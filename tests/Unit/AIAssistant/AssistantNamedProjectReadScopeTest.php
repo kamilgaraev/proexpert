@@ -11,10 +11,60 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantProjectClarificat
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_service_word_prefixes_keep_explicit_project_names_before_ui_scope(): void
+    {
+        foreach (['Текущий дом', 'Весь мир', 'Выполненный этап', 'Этот дом'] as $name) {
+            self::assertNull(AssistantReportEntityQuery::extract('Сверь выполненные работы с графиком проекта '.$name, 'project'));
+            foreach (['Сверь выполненные работы с графиком проекта '.$name, 'Какие камеры проекта '.$name.'?'] as $query) {
+                self::assertSame($name, AssistantNamedProjectReadScope::name($this->plan($query)), $query);
+                $calls = 0;
+                $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name, &$calls): array {
+                    $calls++;
+                    self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return $this->projectSearchResult([['id' => 102]], false);
+                });
+                self::assertSame(1, $calls);
+                self::assertSame(102, AssistantRequestProjectScope::fromPlan($bound)->projectId);
+                self::assertSame(102, AssistantRequiredProjectRead::fromPlan($bound)['arguments']['project_id']);
+                foreach ([$this->projectSearchResult([], false), $this->projectSearchResult([], true),
+                    $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $failure) {
+                    $failed = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $failure);
+                    self::assertNull(AssistantRequestProjectScope::fromPlan($failed)->projectId, $query);
+                    self::assertNull(AssistantRequiredProjectRead::fromPlan($failed), $query);
+                }
+            }
+        }
+    }
+
+    public function test_pure_service_words_use_ui_only_after_a_complete_empty_exact_lookup(): void
+    {
+        foreach (['текущий', 'весь', 'этот', 'выполненные работы'] as $phrase) {
+            $query = 'Сверь выполненные работы с графиком проекта '.$phrase;
+            $calls = 0;
+            $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($phrase, &$calls): array {
+                $calls++;
+                self::assertSame(['query' => $phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([], false);
+            });
+            self::assertSame(1, $calls);
+            self::assertSame(104, AssistantRequestProjectScope::fromPlan($bound)->projectId);
+            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($literal)->projectId);
+            foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $failure) {
+                $failed = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $failure);
+                self::assertNull(AssistantRequestProjectScope::fromPlan($failed)->projectId);
+                self::assertNull(AssistantRequiredProjectRead::fromPlan($failed));
+            }
+        }
+    }
+
     public function test_unquoted_project_clarification_keeps_the_original_period_and_comparison(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-20 10:00:00', 'Europe/Moscow'));
