@@ -12,6 +12,23 @@ use PHPUnit\Framework\TestCase;
 final class WorkItemQuantityResolverTest extends TestCase
 {
     #[Test]
+    public function legacy_wall_document_takeoff_is_preserved_while_universal_requires_an_assembly(): void
+    {
+        $resolver = new WorkItemQuantityResolver;
+        foreach (\App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::WORKS as $work) {
+            $item = ['key' => $work, 'quantity' => '2', 'unit' => $work === 'walls.external_volume' ? 'm3' : 'm2',
+                'quantity_formula' => $work, 'source_refs' => [['document_id' => 17, 'page_number' => 1]],
+                'metadata' => ['quantity_key' => $work, 'quantity_source' => 'drawing_takeoff']];
+            self::assertSame('2.000000', $resolver->resolve($item, [], $this->generationIdentity())?->amount);
+            self::assertTrue(\App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, [], false));
+            self::assertNull($resolver->resolve($item, [], [...$this->generationIdentity(), 'evaluation_mode' => 'universal']));
+            $item['metadata']['generation_source'] = 'canonical_wall_assembly';
+            self::assertNull($resolver->resolve($item, [], $this->generationIdentity()));
+            self::assertFalse(\App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, [], false));
+        }
+    }
+
+    #[Test]
     public function foundation_sources_require_the_exact_element_and_never_use_floor_area_as_beam_height(): void
     {
         $resolver = new WorkItemQuantityResolver;

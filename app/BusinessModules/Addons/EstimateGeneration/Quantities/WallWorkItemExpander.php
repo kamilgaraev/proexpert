@@ -25,8 +25,11 @@ final class WallWorkItemExpander
         };
     }
 
-    public static function permits(array $item, array $scopes): bool
+    public static function permits(array $item, array $scopes, bool $requireAssembly = true): bool
     {
+        if (! $requireAssembly && ! self::isAssemblyWork($item)) {
+            return true;
+        }
         $work = $item['metadata']['composition_work_key'] ?? $item['metadata']['quantity_key'] ?? null;
         if (! in_array($work, self::WORKS, true)) {
             return ($item['metadata']['generation_source'] ?? null) !== 'canonical_wall_assembly'
@@ -37,6 +40,13 @@ final class WallWorkItemExpander
 
         return is_array($scope) && CanonicalPipelineJson::encode($item['metadata']['wall_assembly'] ?? null) === CanonicalPipelineJson::encode($scope)
             && in_array($item['metadata']['wall_surface'] ?? null, self::surfaces($work, $scope), true);
+    }
+
+    public static function isAssemblyWork(array $item): bool
+    {
+        return isset($item['metadata']['wall_assembly'])
+            || ($item['metadata']['generation_source'] ?? null) === 'canonical_wall_assembly'
+            || str_starts_with((string) ($item['key'] ?? ''), 'wall-work:');
     }
 
     public function expand(array $draft, ProjectModelSnapshot $snapshot, array $scopes, array $quantities,

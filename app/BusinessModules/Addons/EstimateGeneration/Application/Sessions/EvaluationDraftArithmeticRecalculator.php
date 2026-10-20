@@ -36,10 +36,13 @@ final readonly class EvaluationDraftArithmeticRecalculator
     {
         $preview = $this->quantities->previewInput($context->organizationId, $context->projectId, $context->sessionId);
         $quantities = $preview['quantities'];
+        $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
         $documentVersions = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($snapshot);
         $wallScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, $documentVersions);
-        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander)->expand($draft,
-            $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
+        if ($universal) {
+            $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander)->expand($draft,
+                $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
+        }
         $quantitiesByEntity = [];
         foreach ($quantities as $quantity) {
             if ($quantity instanceof QuantityData && is_string($quantity->formulaInputs['entity_id'] ?? null)) {
@@ -72,7 +75,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         $workKey = $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'];
                         $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity);
                     }
-                    if (! \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, $wallScopes)) {
+                    if (! \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, $wallScopes, $universal)) {
                         $quantity = null;
                     }
                     $oldUnit = $item['unit'] ?? null;
@@ -137,7 +140,6 @@ final readonly class EvaluationDraftArithmeticRecalculator
                             'object_type' => $draft['object_profile']['object_type'] ?? null,
                             'source_refs' => $item['source_refs'] ?? [],
                         ];
-                        $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
                         $resolved = $universal
                             ? $this->normatives->resolve($item, (int) $item['normative_match']['norm_id'], $decisionContext)
                             : $this->resolveLegacyResources($item, $draft, $regional);

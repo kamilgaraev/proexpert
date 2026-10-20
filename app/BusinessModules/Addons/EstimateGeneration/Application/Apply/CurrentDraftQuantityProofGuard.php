@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
@@ -32,6 +33,7 @@ final readonly class CurrentDraftQuantityProofGuard
         }
         $quantities = $this->current->simulateInput($snapshot, $capture['token'], $decisions)['quantities'];
         $wallScopes = WallEstimateScope::select($snapshot, $decisions, GeometryInventory::currentDocumentVersions($snapshot));
+        $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
         $ids = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
@@ -65,7 +67,7 @@ final readonly class CurrentDraftQuantityProofGuard
                             }
                         }
                     }
-                    if (! WallWorkItemExpander::permits($item, $wallScopes)) {
+                    if (! WallWorkItemExpander::permits($item, $wallScopes, $universal)) {
                         $this->reject();
                     }
                     if (isset($item['metadata']['wall_assembly'])) {

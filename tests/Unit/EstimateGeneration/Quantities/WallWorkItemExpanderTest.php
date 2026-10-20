@@ -80,7 +80,7 @@ final class WallWorkItemExpanderTest extends TestCase
             $quantities[$key] = new QuantityData($key, $key === 'net_wall_volume' ? 'm3' : 'm2', '40', 'floor_area', '1', [], QuantitySource::Evidenced, [], 'model');
         }
         foreach (array_slice($this->draft()['local_estimates'][0]['sections'][0]['work_items'], 0, 5) as $item) {
-            $bound = (new CanonicalWorkItemQuantityBinder)->bind($item, $quantities);
+            $bound = (new CanonicalWorkItemQuantityBinder)->bind($item, $quantities, generationIdentity: ['evaluation_mode' => 'universal']);
             self::assertArrayNotHasKey('quantity', $bound);
             self::assertArrayNotHasKey('quantity_evidence', $bound);
         }

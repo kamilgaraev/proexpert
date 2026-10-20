@@ -26,6 +26,36 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_legacy_wall_recalculation_and_apply_preserve_real_quantities_without_an_assembly(): void
+    {
+        [$actor, $session, $walls] = $this->fixture(false);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $quantities = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'];
+        $items = [];
+        foreach (WallWorkItemExpander::WORKS as $work) {
+            $formula = $work === 'walls.external_volume' ? 'wall_net_volume' : 'wall_net_area';
+            $source = array_values(array_filter($quantities, static fn ($quantity): bool => $quantity->formulaKey === $formula
+                && ($quantity->formulaInputs['entity_id'] ?? null) === $walls[0]->id))[0];
+            $items[] = ['key' => 'legacy:'.$work, 'unit' => $source->unit, 'metadata' => ['quantity_key' => $source->key,
+                'composition_work_key' => $work, 'scope_entity_id' => $walls[0]->id]];
+        }
+        $draft = ['evaluation_policy' => ['price_policy' => 'normative'],
+            'local_estimates' => [['sections' => [['work_items' => $items]]]]];
+        $updated = $this->recalculate($draft, $actor, $session);
+        $rows = $updated['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(5, $rows);
+        self::assertSame(['2.1', '15', '15', '15', '15'], array_column($rows, 'quantity'));
+        DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent(...[...$scope, $updated]));
+        self::addToAssertionCount(1);
+        $universal = $draft;
+        $universal['generation_contract'] = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT;
+        $universal = $this->recalculate($universal, $actor, $session);
+        self::assertSame([null, null, null, null, null], array_column($universal['local_estimates'][0]['sections'][0]['work_items'], 'quantity'));
+        $updated['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['generation_source'] = 'canonical_wall_assembly';
+        $this->assertRejected(app(CurrentDraftQuantityProofGuard::class), $scope, $updated);
+        self::assertNull($this->recalculate($updated, $actor, $session)['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+    }
+
     public function test_free_recalculation_expands_verified_walls_and_apply_rejects_forged_surfaces_or_stale_geometry(): void
     {
         [$actor, $session, $walls] = $this->fixture();
@@ -153,7 +183,7 @@ final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonic
         }
     }
 
-    private function fixture(): array
+    private function fixture(bool $assembly = true): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -175,12 +205,14 @@ final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonic
         ], ['wall-1', 'wall-2'])]);
         $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
         $walls = $snapshot->entities;
-        $writer->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => array_map(static fn ($wall, $index): array => [
-            'key' => 'assembly-'.$index, 'type' => 'wall', 'existing_entity_id' => $wall->id,
-            'wall_assembly' => ['role' => $index === 0 ? 'external' : 'partition',
-                'finished_surfaces' => $index === 0 ? ['inside', 'outside'] : ['side_a', 'side_b'],
-                'entity_fingerprint' => GeometryInventory::entityFingerprint($wall, []), 'reason' => 'Принято для предварительной оценки'],
-        ], $walls, array_keys($walls))]);
+        if ($assembly) {
+            $writer->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => array_map(static fn ($wall, $index): array => [
+                'key' => 'assembly-'.$index, 'type' => 'wall', 'existing_entity_id' => $wall->id,
+                'wall_assembly' => ['role' => $index === 0 ? 'external' : 'partition',
+                    'finished_surfaces' => $index === 0 ? ['inside', 'outside'] : ['side_a', 'side_b'],
+                    'entity_fingerprint' => GeometryInventory::entityFingerprint($wall, []), 'reason' => 'Принято для предварительной оценки'],
+            ], $walls, array_keys($walls))]);
+        }
 
         return [$actor, $session->fresh(), $walls];
     }
@@ -192,6 +224,7 @@ final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonic
                 'quantity_source' => 'unknown', 'generation_source' => 'qualitative_work_catalog']], WallWorkItemExpander::WORKS);
         $items[] = ['key' => 'note', 'name' => 'Preserve my note', 'item_type' => 'review_note'];
 
-        return ['evaluation_policy' => ['price_policy' => 'normative'], 'local_estimates' => [['key' => 'structures', 'sections' => [['key' => 'walls', 'work_items' => $items]]]]];
+        return ['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+            'evaluation_policy' => ['price_policy' => 'normative'], 'local_estimates' => [['key' => 'structures', 'sections' => [['key' => 'walls', 'work_items' => $items]]]]];
     }
 }
