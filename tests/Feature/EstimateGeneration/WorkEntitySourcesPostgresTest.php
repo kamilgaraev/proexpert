@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\Evaluatio
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetWorkEntitySources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
@@ -179,6 +180,36 @@ final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPos
         self::assertSame([], app(GetWorkEntitySources::class)->handle($actor, $scope[1], $scope[2], 'target')['sources']);
         $this->expectException(ValidationException::class);
         DB::transaction(fn () => app(CurrentWorkEntityBindingProof::class)->evidenceIds($session->fresh(), [$this->item($session)], requireBindings: true));
+    }
+
+    public function test_existing_room_binding_without_a_new_contract_remains_valid_and_active_evidence_is_required(): void
+    {
+        [$actor, $session] = $this->fixture('ceiling.hatch');
+        $scope = $this->scope($session);
+        $source = app(GetWorkEntitySources::class)->handle($actor, $scope[1], $scope[2], 'target')['sources'][0];
+        $selection = ['answer_kind' => 'work_entity_binding', 'work_item_key' => 'target', 'entity_id' => $source['entity_id'],
+            'source_fact_id' => $source['source_fact_id'], 'source_fact_version' => $source['source_fact_version'],
+            'source_value_hash' => $source['source_value_hash'], 'source_version' => $source['source_version']];
+        $proof = app(UserEvaluationChoiceWriter::class)->write($actor, $session, 'work-entity:target', 'evaluation_answer',
+            $selection, 'Existing room binding from the previous contract.', (string) Str::uuid());
+        $binding = [...$selection, 'fact_id' => $proof['fact_id'], 'decision_id' => $proof['decision_id'], 'ledger_entity_id' => $proof['entity_id']];
+        $payload = $session->fresh()->input_payload;
+        $payload['work_entity_selections']['target'] = $binding;
+        $session->input_payload = $payload;
+        $draft = $session->draft_payload;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata'] += [
+            'scope_entity_id' => $source['entity_id'], 'scope_entity_binding' => $binding];
+        $draft['source_input_version'] = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session);
+        $session->update(['input_payload' => $payload,
+            'draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft))]);
+        $ids = DB::transaction(fn () => app(CurrentWorkEntityBindingProof::class)->evidenceIds($session->fresh(), [$this->item($session)], requireBindings: true));
+        self::assertCount(2, $ids);
+        $result = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $this->quantityInput($session));
+        self::assertSame('0', $result['cost_units']);
+        $bindingFact = app(ProjectModelRepository::class)->fact(...[...$scope, $proof['fact_id']]);
+        app(EvidenceRepository::class)->invalidate(...[...$scope, [(int) substr($bindingFact->evidenceIds[0], 9)], 'Binding decision was withdrawn']);
+        $this->expectException(ValidationException::class);
+        app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $this->quantityInput($session));
     }
 
     public static function workTypes(): array
