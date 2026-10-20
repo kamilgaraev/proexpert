@@ -680,6 +680,37 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
+    public function test_all_time_details_keep_the_original_read_without_inventing_dates_or_rewriting_new_intent(): void
+    {
+        $message = 'Сверь выполненные работы с графиком проекта «Северный дом»';
+        $saved = ['last_request' => ['message' => $message,
+            'production_period_override' => ['project_id' => 102, 'message_sha256' => hash('sha256', $message)]]];
+        foreach (['Подробнее.', 'Покажи подробнее', 'а подробнее', 'поясни это', 'разверни по этому вопросу'] as $reply) {
+            $resume = AssistantProductionSchedulePeriod::clarification($reply, $saved);
+            self::assertSame(['query' => $message, 'project_id' => 102], $resume);
+            self::assertSame($message, AssistantProjectClarificationIntent::query($reply, [], $saved));
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => $resume['query']]]));
+            self::assertSame($reply, AssistantProjectClarificationIntent::query($reply, ['allow_actions' => true], $saved));
+        }
+        foreach (['По деньгам', 'Оплати счета', 'Подробнее по проекту «Другой дом»', 'Сверь работы за сентябрь 2026 года'] as $reply) {
+            self::assertNull(AssistantProductionSchedulePeriod::clarification($reply, $saved));
+            self::assertSame($reply, AssistantProjectClarificationIntent::query($reply, [], $saved));
+        }
+        $stale = $saved;
+        $stale['last_request']['message'] = 'Другой вопрос';
+        self::assertNull(AssistantProductionSchedulePeriod::clarification('Подробнее.', $stale));
+        $foreignIntent = $saved;
+        $foreignIntent['last_request']['message'] = 'Покажи платежи';
+        $foreignIntent['last_request']['production_period_override']['message_sha256'] = hash('sha256', 'Покажи платежи');
+        self::assertNull(AssistantProductionSchedulePeriod::clarification('Подробнее.', $foreignIntent));
+        foreach ([['project_id' => 0], ['project_id' => 102, 'period_start' => null, 'period_end' => null],
+            ['project_id' => 102, 'period_start' => '2026-09-01']] as $invalid) {
+            $broken = $saved;
+            $broken['last_request']['production_period_override'] = $invalid + ['message_sha256' => hash('sha256', $message)];
+            self::assertNull(AssistantProductionSchedulePeriod::clarification('Подробнее.', $broken));
+        }
+    }
+
     public function test_supported_neutral_details_keep_period_without_rewriting_new_financial_intent(): void
     {
         $message = 'Сверь выполненные работы с графиком проекта «Северный дом» с 2026-10-01 по 2026-10-10';

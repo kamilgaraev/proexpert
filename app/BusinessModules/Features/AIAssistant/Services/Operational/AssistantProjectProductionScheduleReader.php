@@ -11,6 +11,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomRep
 use App\Models\User;
 use App\Support\Reporting\StableReportingSourceView;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Connection;
+use Illuminate\Support\Facades\DB;
 
 final readonly class AssistantProjectProductionScheduleReader extends AssistantProjectOperationalReader
 {
@@ -49,10 +51,42 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     public function read(User $actor, int $organizationId, array $arguments): array
     {
-        $read = fn (): array => $this->stableView->capture(fn (): array => parent::read($actor, $organizationId, $arguments));
+        $read = fn (): array => $this->capture(fn (): array => parent::read($actor, $organizationId, $arguments));
 
         return app()->bound(AssistantRequestExecutionContext::class)
             ? app(AssistantRequestExecutionContext::class)->withOperationBudget($read, 30_000, 'pgsql') : $read();
+    }
+
+    private function capture(callable $capture): array
+    {
+        $outer = DB::connection();
+        if ($outer->transactionLevel() === 0) {
+            return $this->stableView->capture($capture);
+        }
+        $name = 'assistant_production_schedule_read';
+        if (isset(DB::getConnections()[$name]) || config('database.connections.'.$name) !== null) {
+            throw new \LogicException('assistant_production_read_connection_in_use');
+        }
+        $searchPath = $outer->selectOne("SELECT current_setting('search_path') AS value")->value;
+        $temporary = DB::build([...$outer->getConfig(), 'name' => $name]);
+        try {
+            $read = fn (): array => DB::usingConnection($name, function () use ($capture, $searchPath): array {
+                DB::selectOne("SELECT set_config('search_path', ?, false)", [$searchPath]);
+
+                return $this->stableView->capture(function () use ($capture): array {
+                    DB::statement('SET TRANSACTION READ ONLY');
+
+                    return $capture();
+                });
+            });
+            if ($temporary instanceof Connection && app()->bound(AssistantRequestExecutionContext::class)) {
+                return app(AssistantRequestExecutionContext::class)->withTemporaryDatabaseConnection($temporary, $read);
+            }
+
+            return $read();
+        } finally {
+            DB::purge($name);
+        }
     }
 
     protected function domain(): string
