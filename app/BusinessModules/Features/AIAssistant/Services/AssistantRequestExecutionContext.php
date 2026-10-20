@@ -183,6 +183,33 @@ final class AssistantRequestExecutionContext
         $this->databaseGuardsActive = false;
     }
 
+    public function withTemporaryDatabaseConnection(Connection $connection, callable $operation): mixed
+    {
+        $this->remainingMilliseconds();
+        $connectionId = spl_object_id($connection);
+        if (isset($this->originalStatementTimeouts[$connectionId])) {
+            throw new \LogicException('temporary_database_connection_already_registered');
+        }
+        $wasActive = $this->databaseGuardsActive;
+        $this->databaseGuardsActive = true;
+        try {
+            $this->registerConnection($connection);
+
+            return $operation();
+        } finally {
+            $state = $this->originalStatementTimeouts[$connectionId] ?? null;
+            if ($state !== null) {
+                try {
+                    $statement = $connection->getPdo()->prepare("SELECT set_config('statement_timeout', ?, false)");
+                    $statement->execute([$state['statement_timeout']]);
+                } catch (\Throwable) {
+                }
+            }
+            unset($this->originalStatementTimeouts[$connectionId]);
+            $this->databaseGuardsActive = $wasActive;
+        }
+    }
+
     private function registerConnection(Connection $connection): void
     {
         if ($connection->getDriverName() !== 'pgsql') {

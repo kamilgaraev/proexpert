@@ -45,6 +45,7 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_rag_index_status' => AssistantRagIndexStatusReader::class,
         'get_organization_calculation_health' => AssistantOrganizationCalculationHealthReader::class,
         'get_organization_advance_settings' => AssistantAdvanceSettingsReader::class,
         'get_organization_contacts' => AssistantOrganizationContactsReader::class,
@@ -196,6 +197,7 @@ final class AssistantOperationalReaderRegistry
             }
         }
         $organizationMatches = [];
+        $organizationIntentQuery = AssistantRagIndexStatusReader::matches($query) ? AssistantRagIndexStatusReader::intentQuery($query) : $query;
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
             if ($class === AssistantReportSubscriptionsReader::class && $subscriptionCatalog) {
                 continue;
@@ -219,7 +221,7 @@ final class AssistantOperationalReaderRegistry
             if ($purchaseOrders && $class === AssistantOrganizationSuppliersReader::class) {
                 continue;
             }
-            if ($class::hasIntent($query)) {
+            if ($class::hasIntent($organizationIntentQuery)) {
                 $organizationMatches[] = $class::matches($query) ? ['name' => $name, 'reader' => $class] : null;
             }
         }

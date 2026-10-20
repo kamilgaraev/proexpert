@@ -22,6 +22,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Connection;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -175,8 +176,12 @@ final class AssistantIndexStatusService
         return config('ai-assistant.status_snapshots', app()->environment('production')) && DB::connection()->getDriverName() === 'pgsql';
     }
 
-    private function snapshotStatus(int $organizationId, User $actor, string $section): array
+    private function snapshotStatus(int $organizationId, User $actor, string $section, ?Connection $refreshConnection = null): array
     {
+        $connection = DB::connection();
+        if ($connection->transactionLevel() > 0 && $refreshConnection === null) {
+            return $this->snapshotStatusOutsideTransaction($organizationId, $actor, $section, $connection);
+        }
         $surface = $this->currentSurface();
         $ip = request()->ip();
         $epoch = $this->snapshotEpoch ?? app(AssistantStatusSnapshotEpoch::class);
@@ -237,7 +242,12 @@ final class AssistantIndexStatusService
             AssistantStatusSnapshotDiagnostics::request($refresh['phase'], $section, $refresh['key'], $refresh['age'], $queued);
             if ($queued) {
                 try {
-                    RefreshAssistantIndexStatusJob::dispatch($organizationId, $refresh['actor_id'], $surface, $refresh['key'], $section, $ip)->afterCommit();
+                    $dispatch = static fn () => RefreshAssistantIndexStatusJob::dispatch($organizationId, $refresh['actor_id'], $surface, $refresh['key'], $section, $ip)->afterCommit();
+                    if ($refreshConnection !== null && $refreshConnection->transactionLevel() > 0) {
+                        $refreshConnection->afterCommit($dispatch);
+                    } else {
+                        $dispatch();
+                    }
                 } catch (Throwable $exception) {
                     Cache::forget($refresh['key'].':queued');
                     throw $exception;
@@ -246,6 +256,30 @@ final class AssistantIndexStatusService
         }
 
         return $result;
+    }
+
+    private function snapshotStatusOutsideTransaction(int $organizationId, User $actor, string $section, Connection $outer): array
+    {
+        $name = 'assistant_status_snapshot_read';
+        if (isset(DB::getConnections()[$name]) || config('database.connections.'.$name) !== null) {
+            throw new \LogicException('assistant_status_read_connection_in_use');
+        }
+        $searchPath = $outer->selectOne("SELECT current_setting('search_path') AS value")->value;
+        $temporary = DB::build([...$outer->getConfig(), 'name' => $name]);
+        try {
+            $read = fn (): array => DB::usingConnection($name, function () use ($organizationId, $actor, $section, $outer, $searchPath): array {
+                DB::selectOne("SELECT set_config('search_path', ?, false)", [$searchPath]);
+
+                return $this->snapshotStatus($organizationId, $actor, $section, $outer);
+            });
+            if ($temporary instanceof Connection && app()->bound(AssistantRequestExecutionContext::class)) {
+                return app(AssistantRequestExecutionContext::class)->withTemporaryDatabaseConnection($temporary, $read);
+            }
+
+            return $read();
+        } finally {
+            DB::purge($name);
+        }
     }
 
     private function snapshotLookupKey(int $organizationId, User $actor, string $section, KnowledgeSurface $surface, ?string $ip, AssistantStatusSnapshotInputs $inputs): ?string
