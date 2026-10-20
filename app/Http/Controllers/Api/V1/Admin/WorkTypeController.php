@@ -49,7 +49,7 @@ class WorkTypeController extends Controller
                 ],
                 null,
                 Response::HTTP_OK,
-                null,
+                $this->workTypeService->getWorkTypeSummary($request),
                 [
                     'first' => $workTypes->url(1),
                     'last' => $workTypes->url($workTypes->lastPage()),

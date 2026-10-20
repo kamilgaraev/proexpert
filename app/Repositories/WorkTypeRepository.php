@@ -5,6 +5,7 @@ namespace App\Repositories;
 use App\Models\WorkType;
 use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 class WorkTypeRepository extends BaseRepository implements WorkTypeRepositoryInterface
@@ -42,12 +43,31 @@ class WorkTypeRepository extends BaseRepository implements WorkTypeRepositoryInt
         array $filters = [],
         string $sortBy = 'name',
         string $sortDirection = 'asc'
-    ): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+    ): LengthAwarePaginator
     {
-        $query = $this->model->where('organization_id', $organizationId)
-                              ->with('measurementUnit');
+        return $this->filteredWorkTypes($organizationId, $filters)
+            ->with('measurementUnit')
+            ->orderBy($sortBy, $sortDirection)
+            ->paginate($perPage);
+    }
 
-        // Фильтры
+    public function getWorkTypeSummaryForOrganization(int $organizationId, array $filters = []): array
+    {
+        $summary = $this->filteredWorkTypes($organizationId, $filters)->toBase()
+            ->selectRaw("COUNT(*) AS total, COUNT(*) FILTER (WHERE is_active) AS active, COUNT(DISTINCT category) FILTER (WHERE category <> '') AS categories")
+            ->first();
+
+        return [
+            'total' => (int) ($summary->total ?? 0),
+            'active' => (int) ($summary->active ?? 0),
+            'categories' => (int) ($summary->categories ?? 0),
+        ];
+    }
+
+    private function filteredWorkTypes(int $organizationId, array $filters): Builder
+    {
+        $query = $this->model->where('organization_id', $organizationId);
+
         if (!empty($filters['name'])) {
             $query->where('name', 'ilike', '%' . $filters['name'] . '%');
         }
@@ -58,11 +78,7 @@ class WorkTypeRepository extends BaseRepository implements WorkTypeRepositoryInt
             $query->where('is_active', (bool)$filters['is_active']);
         }
 
-        // Сортировка
-        $query->orderBy($sortBy, $sortDirection);
-
-        // Пагинация
-        return $query->paginate($perPage);
+        return $query;
     }
 
     // Implementations for methods from the old RepositoryInterface
@@ -86,4 +102,4 @@ class WorkTypeRepository extends BaseRepository implements WorkTypeRepositoryInt
         return parent::delete($id);
     }
     // End of RepositoryInterface methods
-} 
+}

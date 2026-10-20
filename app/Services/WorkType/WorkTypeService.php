@@ -70,19 +70,7 @@ class WorkTypeService
         try {
             $organizationId = $this->getCurrentOrgId($request);
 
-            $filters = [
-                'name' => $request->query('name'),
-                'category' => $request->query('category'),
-                'is_active' => $request->query('is_active'),
-            ];
-
-            if (array_key_exists('is_active', $filters) && $filters['is_active'] !== null) {
-                $filters['is_active'] = filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-            } else {
-                unset($filters['is_active']);
-            }
-
-            $processedFilters = array_filter($filters, static fn ($value) => $value !== null && $value !== '');
+            $processedFilters = $this->registryFilters($request);
 
             $sortBy = $request->query('sort_by', 'name');
             $sortDirection = $request->query('sort_direction', 'asc');
@@ -122,6 +110,29 @@ class WorkTypeService
 
             throw new BusinessLogicException(trans_message('work_type.internal_error_list'), 500, $e);
         }
+    }
+
+    public function getWorkTypeSummary(Request $request): array
+    {
+        return $this->workTypeRepository->getWorkTypeSummaryForOrganization(
+            $this->getCurrentOrgId($request),
+            $this->registryFilters($request)
+        );
+    }
+
+    private function registryFilters(Request $request): array
+    {
+        $filters = [
+            'name' => $request->query('name'),
+            'category' => $request->query('category'),
+            'is_active' => $request->query('is_active'),
+        ];
+
+        if ($filters['is_active'] !== null) {
+            $filters['is_active'] = filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        }
+
+        return array_filter($filters, static fn ($value) => $value !== null && $value !== '');
     }
 
     public function createWorkType(array $data, Request $request)
