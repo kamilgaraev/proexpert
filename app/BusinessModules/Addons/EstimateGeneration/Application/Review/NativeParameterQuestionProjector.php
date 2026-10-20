@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabu
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 
 final class NativeParameterQuestionProjector
 {
@@ -16,7 +17,7 @@ final class NativeParameterQuestionProjector
     public function __construct(private readonly ?\Closure $translate = null) {}
 
     public function project(ProjectModelSnapshot $snapshot, string $token, array $sections, array $warnings,
-        array $documentVersions, int $stateVersion, bool $editable): array
+        array $documentVersions, int $stateVersion, bool $editable, array $estimatingContext = []): array
     {
         $entities = array_column($snapshot->entities, null, 'id');
         $facts = array_column($snapshot->facts, null, 'id');
@@ -45,6 +46,7 @@ final class NativeParameterQuestionProjector
             }
         }
         $questions = $limitations = [];
+        $singleStoreyHouse = $this->singleStoreyHouse($snapshot, $estimatingContext);
         foreach ($warnings as $warning) {
             if (($warning['code'] ?? null) !== 'canonical_quantity_unresolved') {
                 $limitations['additional_review_required'] = true;
@@ -117,10 +119,18 @@ final class NativeParameterQuestionProjector
                         'decimal_places' => $unit === 'count' ? 0 : 4]];
                 $questions[$key]['can_answer'] = $questions[$key]['can_answer'] && $writable;
                 $questions[$key]['formula_ids'][$formula] = $formula;
+                if ($singleStoreyHouse && $type === 'foundation_beam' && $parameter === 'height'
+                    && $formula === 'foundation_beam_volume' && $reason === 'operand_missing' && $previous === [] && $writable) {
+                    $questions[$key]['estimating_suggestion'] = ['value' => '0.4', 'unit' => 'm', 'basis' => 'assumption',
+                        'description' => $this->text('estimate_generation.native_questions.estimating_suggestions.single_storey_foundation_height')];
+                }
             }
         }
         ksort($questions, SORT_STRING);
         foreach ($questions as &$question) {
+            if (! $question['can_answer']) {
+                unset($question['estimating_suggestion']);
+            }
             sort($question['formula_ids'], SORT_STRING);
             $question['formula_ids'] = array_values($question['formula_ids']);
             $question['answer']['version'] = hash('sha256', CanonicalPipelineJson::encode([
@@ -138,6 +148,31 @@ final class NativeParameterQuestionProjector
         return ['contract_version' => self::CONTRACT, 'available' => true, 'input_fingerprint' => $token,
             'questions' => array_slice(array_values($questions), 0, 50), 'total_questions' => $total,
             'truncated' => $total > 50, 'limitations' => array_keys($limitations), 'cost_units' => '0'];
+    }
+
+    private function singleStoreyHouse(ProjectModelSnapshot $snapshot, array $context): bool
+    {
+        $type = $context['building_type'] ?? null;
+        if (! is_string($type) || ! ObjectTypeSignalClassifier::isResidential($type)
+            || ObjectTypeSignalClassifier::isIndustrial($type) || ! in_array($context['floors'] ?? null, [1, '1'], true)) {
+            return false;
+        }
+        foreach ($snapshot->facts as $fact) {
+            if ($fact->type === 'floor_count' && ($fact->status !== 'confirmed' || ! in_array($fact->value, [1, '1', 1.0, '1.0'], true))) {
+                return false;
+            }
+        }
+        foreach ($snapshot->conflicts as $conflict) {
+            if ($conflict->status === 'unresolved') {
+                foreach ($conflict->facts as $fact) {
+                    if ($fact->type === 'floor_count') {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
     }
 
     private function text(string $key, array $parameters = []): string
