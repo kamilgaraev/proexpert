@@ -116,6 +116,19 @@ final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonic
         self::assertSame([], $row['materials']);
         DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $updated]));
         self::addToAssertionCount(1);
+        $currentSnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $currentWall = array_values(array_filter($currentSnapshot->entities, static fn ($wall): bool => $wall->id === $walls[0]->id))[0];
+        app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], 3, (string) Str::uuid(), ['entities' => [[
+            'key' => 'choice-confirmed-again', 'type' => 'wall', 'existing_entity_id' => $currentWall->id,
+            'wall_assembly' => ['role' => 'external', 'finished_surfaces' => ['inside', 'outside'],
+                'entity_fingerprint' => GeometryInventory::entityFingerprint($currentWall, []), 'reason' => 'Повторно принято то же назначение'],
+        ]]]);
+        $rebound = $this->recalculate($updated, $actor, $session->fresh());
+        self::assertCount(10, $rebound['local_estimates'][0]['sections'][0]['work_items']);
+        self::assertNotSame($row['metadata']['wall_assembly']['fact_id'], $rebound['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['wall_assembly']['fact_id']);
+        self::assertSame('2.52', $rebound['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+        DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $rebound]));
+        self::addToAssertionCount(1);
         self::assertSame($beforeCalls, count(Http::recorded()));
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
@@ -150,11 +163,15 @@ final class WallAssemblyEvaluationPostgresTest extends EstimateGenerationCanonic
         $this->assertRejected(app(CurrentDraftQuantityProofGuard::class), $scope,
             ['local_estimates' => [['sections' => [['work_items' => [$facade]]]]]]);
         $updated = $this->recalculate($session->fresh()->draft_payload, $actor, $session->fresh());
-        $row = array_values(array_filter($updated['local_estimates'][0]['sections'][0]['work_items'],
-            static fn ($item): bool => $item['key'] === $facade['key']))[0];
-        self::assertNull($row['quantity']);
-        self::assertNull($row['unit_price']);
-        self::assertSame([], $row['materials']);
+        $items = $updated['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertNotContains($facade['key'], array_column($items, 'key'));
+        $bodies = array_values(array_filter($items, static fn ($item): bool => ($item['metadata']['composition_work_key'] ?? null) === 'walls.internal'));
+        self::assertCount(2, $bodies);
+        foreach ($bodies as $row) {
+            self::assertNotNull($row['quantity']);
+            self::assertNull($row['unit_price']);
+            self::assertSame([], $row['materials']);
+        }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 

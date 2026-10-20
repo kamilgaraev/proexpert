@@ -69,7 +69,8 @@ final class WallWorkItemExpanderTest extends TestCase
         $deleted = $generated[0]['key'];
         $items = array_values(array_filter($items, static fn ($item): bool => $item['key'] !== $deleted));
         $again = $expander->expand($built, $this->snapshot(), $scopes, $this->quantities(), 20, []);
-        self::assertSame($built, $again);
+        self::assertSame($built['local_estimates'][0]['sections'][0]['work_items'], $again['local_estimates'][0]['sections'][0]['work_items']);
+        self::assertSame($again, $expander->expand($again, $this->snapshot(), $scopes, $this->quantities(), 20, []));
         self::assertNotContains($deleted, array_column($again['local_estimates'][0]['sections'][0]['work_items'], 'key'));
     }
 
@@ -92,10 +93,89 @@ final class WallWorkItemExpanderTest extends TestCase
         (new WallWorkItemExpander(fn ($key) => $key))->expand($this->draft(), $this->snapshot(), $this->scopes(), $this->quantities(), 9, []);
     }
 
-    private function snapshot(): ProjectModelSnapshot
+    public function test_completed_templates_rebind_changed_choices_and_include_a_new_wall(): void
+    {
+        $expander = new WallWorkItemExpander(fn ($key) => $key);
+        $scopes = $this->scopes();
+        $built = $expander->expand($this->draft(), $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        self::assertCount(5, $built['local_estimates'][0]['sections'][0]['wall_work_templates']);
+        $built['local_estimates'][0]['sections'][0]['work_items'][0]['normative_match'] = ['norm_id' => 123, 'selected_by_user' => true];
+        $built['local_estimates'][0]['sections'][0]['work_items'][0]['materials'] = [['quantity' => '999']];
+        $scopes['wall:external']['fact_id'] = 'fact:replacement';
+        $rebound = $expander->expand($built, $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        $first = $rebound['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('fact:replacement', $first['metadata']['wall_assembly']['fact_id']);
+        self::assertArrayNotHasKey('normative_match', $first);
+        self::assertSame([], $first['materials']);
+        $scopes['wall:external'] = ['role' => 'partition', 'finished_surfaces' => ['side_a'], 'fact_id' => 'fact:partition-now'];
+        $changed = $expander->expand($rebound, $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        $items = $changed['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(9, $items);
+        foreach ($items as $item) {
+            self::assertTrue(WallWorkItemExpander::permits($item, $scopes));
+            self::assertNotContains($item['metadata']['composition_work_key'] ?? null, ['walls.external_volume', 'facade.area']);
+        }
+        $snapshot = $this->snapshot(['external', 'partition', 'new']);
+        $partial = $expander->expand($changed, $snapshot, $scopes, $this->quantities(), 20, []);
+        self::assertCount(14, $partial['local_estimates'][0]['sections'][0]['work_items']);
+        $scopes['wall:new'] = ['role' => 'external', 'finished_surfaces' => ['inside'], 'fact_id' => 'fact:new'];
+        $quantities = $this->quantities();
+        $quantities['new-area'] = new QuantityData('new-area', 'm2', '7', 'wall_net_area', '1', ['entity_id' => 'wall:new'], QuantitySource::Evidenced, [], 'model');
+        $quantities['new-volume'] = new QuantityData('new-volume', 'm3', '0.98', 'wall_net_volume', '1', ['entity_id' => 'wall:new'], QuantitySource::Evidenced, [], 'model');
+        $complete = $expander->expand($partial, $snapshot, $scopes, $quantities, 20, []);
+        $items = $complete['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(12, $items);
+        $new = array_values(array_filter($items, static fn ($item): bool => ($item['entity_id'] ?? null) === 'wall:new'));
+        self::assertCount(3, $new);
+        foreach ($new as $row) {
+            self::assertSame($row['unit'] === 'm3' ? 'new-volume' : 'new-area', $row['metadata']['quantity_key']);
+        }
+        self::assertSame($complete, $expander->expand($complete, $snapshot, $scopes, $quantities, 20, []));
+    }
+
+    public function test_a_deleted_completed_row_stays_deleted_but_retired_surfaces_can_return(): void
+    {
+        $expander = new WallWorkItemExpander(fn ($key) => $key);
+        $scopes = $this->scopes();
+        $built = $expander->expand($this->draft(), $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        $items = &$built['local_estimates'][0]['sections'][0]['work_items'];
+        $deleted = array_values(array_filter($items, static fn ($item): bool => ($item['metadata']['composition_work_key'] ?? null) === 'facade.area'))[0]['key'];
+        $body = $items[0]['key'];
+        $items = array_values(array_filter($items, static fn ($item): bool => $item['key'] !== $deleted));
+        $built = $expander->expand($built, $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        $scopes['wall:external'] = ['role' => 'partition', 'finished_surfaces' => ['side_a'], 'fact_id' => 'fact:changed'];
+        $changed = $expander->expand($built, $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        self::assertNotContains($body, array_column($changed['local_estimates'][0]['sections'][0]['work_items'], 'key'));
+        $scopes = $this->scopes();
+        $returned = $expander->expand($changed, $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        $keys = array_column($returned['local_estimates'][0]['sections'][0]['work_items'], 'key');
+        self::assertContains($body, $keys);
+        self::assertNotContains($deleted, $keys);
+        $unassigned = $expander->expand($returned, $this->snapshot(), [], $this->quantities(), 20, []);
+        self::assertCount(6, $unassigned['local_estimates'][0]['sections'][0]['work_items']);
+        self::assertSame($unassigned, $expander->expand($unassigned, $this->snapshot(), [], $this->quantities(), 20, []));
+    }
+
+    public function test_deleting_an_incomplete_placeholder_stops_new_rows_for_that_template(): void
+    {
+        $expander = new WallWorkItemExpander(fn ($key) => $key);
+        $scopes = ['wall:external' => $this->scopes()['wall:external']];
+        $built = $expander->expand($this->draft(), $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        $items = &$built['local_estimates'][0]['sections'][0]['work_items'];
+        $items = array_values(array_filter($items, static fn ($item): bool => $item['key'] !== 'rough.walls'));
+        $partial = $expander->expand($built, $this->snapshot(), $scopes, $this->quantities(), 20, []);
+        self::assertNotContains('rough.walls', array_column($partial['local_estimates'][0]['sections'][0]['work_items'], 'key'));
+        $complete = $expander->expand($partial, $this->snapshot(), $this->scopes(), $this->quantities(), 20, []);
+        $rows = array_values(array_filter($complete['local_estimates'][0]['sections'][0]['work_items'],
+            static fn ($item): bool => ($item['metadata']['composition_work_key'] ?? null) === 'rough.walls'));
+        self::assertCount(1, $rows);
+        self::assertSame('wall:external', $rows[0]['entity_id']);
+    }
+
+    private function snapshot(array $names = ['external', 'partition']): ProjectModelSnapshot
     {
         $entities = array_map(static fn ($name): Entity => new Entity('wall:'.$name, 1, 2, 3, 'sha256:'.str_repeat('a', 64),
-            'wall', 'wall:'.$name, ['identity' => ['manual_key' => $name]]), ['external', 'partition']);
+            'wall', 'wall:'.$name, ['identity' => ['manual_key' => $name]]), $names);
 
         return new ProjectModelSnapshot($entities, array_map(static fn ($wall): Fact => new Fact('fact:'.$wall->id, 1, 2, 3,
             $wall->sourceVersion, $wall->id, 'entity_identity', ['name' => $wall->id], null, 0, 'user_assumption', 'confirmed', []), $entities), [], []);
