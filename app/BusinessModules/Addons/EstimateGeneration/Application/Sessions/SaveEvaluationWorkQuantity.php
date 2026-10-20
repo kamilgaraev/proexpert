@@ -29,7 +29,7 @@ final readonly class SaveEvaluationWorkQuantity
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
         private ProjectModelRepository $models, private UserWorkQuantityFactWriter $numbers, private UserEvaluationChoiceWriter $choices,
         private EvaluationInputFingerprint $inputs, private BuildMostEstimateDraft $artifacts,
-        private UniversalReviewSummaryProjector $reviews) {}
+        private UniversalReviewSummaryProjector $reviews, private CurrentWorkEntityBindingProof $bindings) {}
 
     public function handle(User $actor, int $projectId, int $sessionId, array $input): array
     {
@@ -70,6 +70,7 @@ final readonly class SaveEvaluationWorkQuantity
                 throw ValidationException::withMessages(['quantity' => 'Предел подтверждений в этой сессии превышен.']);
             }
             $item = (new EvaluationWorkItemLocator)->find($session->draft_payload ?? [], $payload, $input['work_item_key']);
+            $this->bindings->evidenceIds($session, [$item], requireBindings: true);
             $confirmUnit = ! $native && ($item['unit'] ?? null) === null;
             if ($confirmUnit && (! config('estimate-generation.universal_enabled', false)
                 || ($payload['evaluation_mode'] ?? null) !== 'universal' || ! in_array($payload['price_policy'] ?? null, ['catalog', 'mixed'], true)

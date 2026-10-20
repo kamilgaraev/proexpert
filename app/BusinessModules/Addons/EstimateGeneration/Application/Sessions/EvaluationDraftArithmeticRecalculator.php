@@ -29,7 +29,8 @@ final readonly class EvaluationDraftArithmeticRecalculator
         private AcceptedQuantityEvidenceMaterializer $evidence, private ResolveSelectedNormativeResources $normatives,
         private EstimatePricingService $pricing, private ResolveCommercialWorkPrice $commercial,
         private EstimateNormativeMatcher $legacyNormatives, private ResourceAssemblyService $legacyResources,
-        private AssembleMatchedResources $legacyMaterials = new AssembleMatchedResources) {}
+        private AssembleMatchedResources $legacyMaterials = new AssembleMatchedResources,
+        private ?CurrentWorkEntityBindingProof $bindings = null) {}
 
     public function recalculate(array $draft, PipelineContext $context, ProjectModelSnapshot $snapshot, array $decisions = [],
         ?User $actor = null, ?EstimateGenerationSession $session = null): array
@@ -48,6 +49,22 @@ final readonly class EvaluationDraftArithmeticRecalculator
                 $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander)->expand($draft,
                 $openingSnapshot, $openingScopes, $quantities, 1000, $documentVersions);
+        }
+        $bound = [];
+        foreach ($draft['local_estimates'] ?? [] as $estimate) {
+            foreach ($estimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $item) {
+                    if (isset($item['metadata']['scope_entity_binding'])) {
+                        $bound[] = $item;
+                    }
+                }
+            }
+        }
+        if ($bound !== []) {
+            if ($session === null) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['entity' => trans_message('estimate_work_entity.binding_source_invalid')]);
+            }
+            ($this->bindings ?? app(CurrentWorkEntityBindingProof::class))->evidenceIds($session, $bound, $snapshot);
         }
         $quantitiesByEntity = [];
         foreach ($quantities as $quantity) {

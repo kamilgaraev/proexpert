@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvaluationWorkEntity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmRoomIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetRoomIdentitySources;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetWorkEntitySources;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\BindEvaluationWorkEntityRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ConfirmRoomIdentityRequest;
@@ -36,6 +37,15 @@ final class EstimateGenerationRoomIdentityController extends Controller
 
         return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id,
             $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25), (bool) ($input['include_manual'] ?? false)))->header('Cache-Control', 'private, no-store');
+    }
+
+    public function workSources(Request $request, Project $project, EstimateGenerationSession $session, GetWorkEntitySources $sources): JsonResponse
+    {
+        $input = $request->validate(['work_item_key' => ['required', 'string', 'max:160'], 'search' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'min:1', 'max:50']]);
+
+        return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id, $input['work_item_key'],
+            $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25)))->header('Cache-Control', 'private, no-store');
     }
 
     public function confirm(ConfirmRoomIdentityRequest $request, Project $project, EstimateGenerationSession $session, ConfirmRoomIdentity $confirmation): JsonResponse
