@@ -13,6 +13,23 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateValidationServiceTest extends TestCase
 {
+    public function test_missing_local_source_references_remain_an_explicit_warning(): void
+    {
+        $draft = $this->draft([[
+            'key' => 'supplementary-work', 'item_type' => 'priced_work', 'name' => 'Устройство бетонной отмостки',
+            'quantity' => null, 'unit' => null, 'total_cost' => null, 'pricing_status' => 'quantity_unknown',
+        ]]);
+        unset($draft['local_estimates'][0]['source_refs']);
+
+        $validated = $this->service()->validate($draft);
+
+        self::assertContains('weak_source_reference', $validated['local_estimates'][0]['validation_flags']);
+        self::assertArrayNotHasKey('source_refs', $validated['local_estimates'][0]);
+        $item = $validated['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertNull($item['quantity']);
+        self::assertSame(0, $validated['quality_summary']['priced_work_items']);
+    }
+
     public function test_validation_refreshes_the_canonical_review_projection_and_freshness_fence(): void
     {
         $draft = $this->service()->validate($this->draft([[

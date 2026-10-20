@@ -24,6 +24,12 @@ final class GeometryInventory
         return $entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type;
     }
 
+    public static function isBuildingFloor(?Entity $entity): bool
+    {
+        return $entity !== null
+            && ($entity->attributes['document_role'] ?? $entity->attributes['properties']['document_role'] ?? null) === 'building_floor';
+    }
+
     /** @return array<string, Entity> */
     public static function entities(ProjectModelSnapshot $snapshot, ?array $documentVersions = null): array
     {

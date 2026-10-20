@@ -39,7 +39,7 @@ final class RoomCeilingScope
         }
         $result = [];
         foreach ($snapshot->entities as $room) {
-            if (($roomId !== null && $room->id !== $roomId) || GeometryInventory::type($room) !== 'room'
+            if (($roomId !== null && $room->id !== $roomId) || GeometryInventory::type($room) !== 'room' || GeometryInventory::isBuildingFloor($room)
                 || ($room->attributes['contextual_only'] ?? false) || ($room->attributes['excluded_by_document_note'] ?? false)
                 || ($room->attributes['properties']['contextual_only'] ?? false) || ($room->attributes['properties']['excluded_by_document_note'] ?? false)) {
                 continue;
@@ -71,7 +71,7 @@ final class RoomCeilingScope
     {
         $ids = [];
         foreach ($snapshot->entities as $room) {
-            if (GeometryInventory::type($room) === 'room'
+            if (GeometryInventory::type($room) === 'room' && ! GeometryInventory::isBuildingFloor($room)
                 && ! ($room->attributes['contextual_only'] ?? false) && ! ($room->attributes['excluded_by_document_note'] ?? false)
                 && ! ($room->attributes['properties']['contextual_only'] ?? false) && ! ($room->attributes['properties']['excluded_by_document_note'] ?? false)) {
                 $ids[] = $room->id;

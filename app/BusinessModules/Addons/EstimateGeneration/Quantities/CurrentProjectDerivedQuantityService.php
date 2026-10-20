@@ -822,7 +822,7 @@ final readonly class CurrentProjectDerivedQuantityService
             if (is_string($warning['formula'] ?? null)) {
                 $purpose = $aliases[$warning['formula']] ?? $warning['formula'];
                 $unresolvedPurposes[$purpose] = true;
-                if ($purpose === 'floor_area' && $this->isBuildingFloor($entities[$warning['entity_id'] ?? ''] ?? null)) {
+                if ($purpose === 'floor_area' && GeometryInventory::isBuildingFloor($entities[$warning['entity_id'] ?? ''] ?? null)) {
                     $unresolvedBuildingFloor = true;
                 }
             }
@@ -839,7 +839,7 @@ final readonly class CurrentProjectDerivedQuantityService
             $hasGlobal = false;
             if ($purpose === 'floor_area' && ! $unresolvedBuildingFloor) {
                 $buildingFloors = array_values(array_filter($items,
-                    fn (DerivedQuantity $quantity): bool => $this->isBuildingFloor($entities[$quantity->entityId] ?? null)));
+                    fn (DerivedQuantity $quantity): bool => GeometryInventory::isBuildingFloor($entities[$quantity->entityId] ?? null)));
                 if (count($buildingFloors) === 1) {
                     $global = $buildingFloors[0];
                     $result[$purpose] = $this->quantityData($global, $modelVersion, $purpose, $facts);
@@ -885,19 +885,13 @@ final readonly class CurrentProjectDerivedQuantityService
         $rooms = [];
         foreach ($snapshot->entities as $entity) {
             if (($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type) === 'room'
-                && ! $this->isBuildingFloor($entity)) {
+                && ! GeometryInventory::isBuildingFloor($entity)) {
                 $rooms[$entity->id] = true;
             }
         }
         ksort($rooms, SORT_STRING);
 
         return array_keys($rooms);
-    }
-
-    private function isBuildingFloor(?Entity $entity): bool
-    {
-        return $entity !== null
-            && ($entity->attributes['document_role'] ?? $entity->attributes['properties']['document_role'] ?? null) === 'building_floor';
     }
 
     private function quantityData(DerivedQuantity $quantity, string $modelVersion, string $key, array $facts): QuantityData
