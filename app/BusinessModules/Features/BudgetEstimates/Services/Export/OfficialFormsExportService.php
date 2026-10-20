@@ -8,6 +8,7 @@ use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Services\Acting\ActingPriceService;
 use App\Services\Storage\FileService;
+use App\Support\OrganizationBusinessTimezone;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -42,8 +43,7 @@ class OfficialFormsExportService
         $this->setKS2Footer($sheet, $act, $contract);
         $this->applyKS2Styles($sheet);
 
-        $actNumber = $act->act_document_number ?? $act->id;
-        $filename = "KS-2_{$actNumber}_{$contract->number}.xlsx";
+        $filename = $this->actFilename($act, $contract, 'KS-2', 'xlsx');
         $path = "exports/acts/ks2/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
@@ -60,8 +60,7 @@ class OfficialFormsExportService
         $this->setKS3Footer($sheet, $act, $contract);
         $this->applyKS3Styles($sheet);
 
-        $actNumber = $act->act_document_number ?? $act->id;
-        $filename = "KS-3_{$actNumber}_{$contract->number}.xlsx";
+        $filename = $this->actFilename($act, $contract, 'KS-3', 'xlsx');
         $path = "exports/acts/ks3/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
@@ -88,12 +87,12 @@ class OfficialFormsExportService
         $this->assertActApprovedForExport($act, $preview);
         $data = $this->prepareKS2Data($act, $contract);
         $data['is_draft'] = $preview;
+        $data['documentGeneratedAt'] = $this->pdfGeneratedAt($contract);
         $pdf = Pdf::loadView('estimates.exports.ks2', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
-        $actNumber = $act->act_document_number ?? $act->id;
-        $filename = "KS-2_{$actNumber}_{$contract->number}.pdf";
+        $filename = $this->actFilename($act, $contract, 'KS-2', 'pdf');
         $path = $preview
             ? 'exports/acts/previews/ks2/'.\Illuminate\Support\Str::uuid().'_'.$filename
             : "exports/acts/ks2/{$filename}";
@@ -105,12 +104,12 @@ class OfficialFormsExportService
     {
         $this->assertActApprovedForExport($act, $preview);
         $data = $this->prepareKS3Data($act, $contract, $preview);
+        $data['documentGeneratedAt'] = $this->pdfGeneratedAt($contract);
         $pdf = Pdf::loadView('estimates.exports.ks3', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
-        $actNumber = $act->act_document_number ?? $act->id;
-        $filename = "KS-3_{$actNumber}_{$contract->number}.pdf";
+        $filename = $this->actFilename($act, $contract, 'KS-3', 'pdf');
         $path = $preview
             ? 'exports/acts/previews/ks3/'.\Illuminate\Support\Str::uuid().'_'.$filename
             : "exports/acts/ks3/{$filename}";
@@ -127,7 +126,7 @@ class OfficialFormsExportService
         $this->setKS3DatasetItems($sheet, $data);
         $this->applyKS3Styles($sheet);
 
-        $filename = 'KS-3_'.$data['document_number'].'.xlsx';
+        $filename = 'KS-3_'.$this->filenameComponent((string) $data['document_number']).'.xlsx';
         $path = "exports/acts/ks3/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $data['contract']->organization);
@@ -136,14 +135,41 @@ class OfficialFormsExportService
     public function exportCertificateKS3ToPdf(\App\Models\ContractPeriodCertificate $certificate): string
     {
         $data = $this->prepareKS3CertificateData($certificate);
+        $data['documentGeneratedAt'] = $this->pdfGeneratedAt($data['contract']);
         $pdf = Pdf::loadView('estimates.exports.ks3', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
-        $filename = 'KS-3_'.$data['document_number'].'.pdf';
+        $filename = 'KS-3_'.$this->filenameComponent((string) $data['document_number']).'.pdf';
         $path = "exports/acts/ks3/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $data['contract']->organization);
+    }
+
+    private function pdfGeneratedAt(Contract $contract): string
+    {
+        $generatedAt = now()->setTimezone((new OrganizationBusinessTimezone)->resolve($contract->organization));
+
+        return $generatedAt->format('d.m.Y H:i').' (UTC'.$generatedAt->format('P').')';
+    }
+
+    private function actFilename(ContractPerformanceAct $act, Contract $contract, string $form, string $extension): string
+    {
+        $actNumber = $this->filenameComponent((string) ($act->act_document_number ?? $act->id));
+        $contractNumber = $this->filenameComponent((string) $contract->number);
+
+        return "{$form}_{$actNumber}_{$contractNumber}.{$extension}";
+    }
+
+    private function filenameComponent(string $number): string
+    {
+        $normalized = str_replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], '-', $number);
+        $normalized = preg_replace('/\p{C}+/u', '-', $normalized) ?? '';
+        $normalized = trim(mb_strcut($normalized, 0, 100, 'UTF-8'), '. ');
+
+        return $normalized === $number && $normalized !== ''
+            ? $normalized
+            : ($normalized !== '' ? $normalized : 'document').'-'.substr(hash('sha256', $number), 0, 12);
     }
 
     public function prepareKS3CertificateData(\App\Models\ContractPeriodCertificate $certificate): array

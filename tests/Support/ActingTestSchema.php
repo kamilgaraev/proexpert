@@ -99,6 +99,7 @@ trait ActingTestSchema
             $table->string('city')->nullable();
             $table->string('postal_code')->nullable();
             $table->string('country')->nullable();
+            $table->jsonb('multi_org_settings')->nullable();
             $table->boolean('is_active')->default(true);
             $table->boolean('is_verified')->default(false);
             $table->string('verification_status')->nullable();
@@ -230,6 +231,7 @@ trait ActingTestSchema
             $table->char('currency', 3)->default('RUB');
             $table->string('status')->default('draft');
             $table->boolean('is_fixed_amount')->default(false);
+            $table->boolean('is_self_execution')->default(false);
             $table->boolean('is_multi_project')->default(false);
             $table->timestamps();
             $table->softDeletes();
