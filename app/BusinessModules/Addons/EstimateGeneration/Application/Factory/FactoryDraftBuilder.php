@@ -96,6 +96,7 @@ final readonly class FactoryDraftBuilder
         $analysis['document_context']['canonical_building_quantities'] = array_map(static fn (QuantityData $quantity): array => $quantity->toArray(), array_values($quantities));
         $analysis['document_context']['quantity_coverage_warnings'] = $projection['warnings'];
         $draft = $this->compiler->compile($analysis, null, true, self::MAX_ROWS);
+        $draft['quantity_coverage_warnings'] = $projection['warnings'];
         $items = $this->technology->planPackages($planning['work_packages'] ?? []);
         if ($items !== []) {
             $draft['local_estimates'][] = ['key' => 'stage5-technology-packages',

@@ -31,6 +31,53 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class FactoryInspectionPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_role_payload_history_does_not_consume_the_metadata_read_budget_but_rows_and_source_fences_remain_bounded(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = ['organization_id' => $session->organization_id, 'project_id' => $session->project_id, 'session_id' => $session->id];
+        $seed = static function (int $index, string $subjectVersion, int $bytes = 1) use ($scope, $session): array {
+            return [...$scope, 'subject_type' => 'estimate_session', 'subject_id' => (string) $session->id,
+                'subject_version' => $subjectVersion, 'role' => $index % 2 === 0 ? 'arbiter' : 'geometry_expert',
+                'status' => 'completed', 'model' => 'test-model', 'prompt_contract_version' => 'factory-fixture:v1',
+                'input_fingerprint' => hash('sha256', 'factory-role-input:'.$index),
+                'identity_fingerprint' => hash('sha256', $session->id.':factory-role:'.$index),
+                'result_payload' => json_encode(['result' => str_repeat('x', $bytes)], JSON_THROW_ON_ERROR),
+                'completed_at' => now(), 'created_at' => now(), 'updated_at' => now()];
+        };
+        $rows = [];
+        for ($index = 0; $index < 66; $index++) {
+            $rows[] = $seed($index, 'sha256:'.hash('sha256', 'historic-role:'.$index), 260000);
+        }
+        DB::table('estimate_generation_ai_role_runs')->insert($rows);
+        $bytes = DB::table('estimate_generation_ai_role_runs')->where($scope)->selectRaw('sum(octet_length(result_payload::text)) AS bytes')->first()->bytes;
+        self::assertGreaterThan(16777216, (int) $bytes);
+        $before = $session->fresh()->getRawOriginal();
+        $outbound = count(Http::recorded());
+        $result = app(InspectFactoryInputs::class)->handle($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+        self::assertSame('awaiting_input', $result['checkpoint']['status']);
+        self::assertTrue($result['fresh']);
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        $store = app(FactoryInspectionStore::class);
+        $claim = $store->claim($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+        self::assertInstanceOf(FactoryInspectionClaim::class, $claim);
+        DB::table('estimate_generation_ai_role_runs')->insert($seed(66, $claim->snapshot->facts[0]->sourceVersion));
+        self::assertNotSame($claim->modelToken, app(ProjectModelRepository::class)->snapshotForPlanning($session->organization_id, $session->project_id, $session->id, 10001)['token']);
+        self::assertFalse($store->complete($claim, $this->inspectionResult($claim)));
+        $rows = [];
+        for ($index = 67; $index < 513; $index++) {
+            $rows[] = $seed($index, 'sha256:'.hash('sha256', 'historic-role:'.$index));
+        }
+        DB::table('estimate_generation_ai_role_runs')->insert($rows);
+        $capture = DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput::class)->capture($session->fresh()));
+        self::assertFalse($capture['within_budget']);
+        self::assertSame(['input_budget_exceeded'], $capture['limitations']);
+        self::assertSame(513, DB::table('estimate_generation_ai_role_runs')->where($scope)->count());
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+        self::assertCount($outbound, Http::recorded());
+    }
+
     public function test_native_http_inspection_persists_a_free_receipt_without_changing_session_model_or_finances(): void
     {
         [$actor, $session, $prefix] = $this->fixture();

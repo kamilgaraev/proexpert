@@ -42,7 +42,12 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
 
     public function test_free_materialization_creates_the_first_sealed_draft_and_replays_without_paid_attempts_or_duplicate_revision(): void
     {
-        [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1]);
+        [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1], [[
+            'key' => 'slab', 'type' => 'foundation_slab', 'parameters' => [
+                'area' => ['value' => '4', 'unit' => 'm2', 'basis' => 'measurement'],
+                'thickness' => ['value' => '0.25', 'unit' => 'm', 'basis' => 'assumption'],
+            ],
+        ]]);
         $this->withToken(auth('api_admin')->login($actor));
         $planning = $this->postJson($prefix.'/planning', ['request_id' => (string) Str::uuid(), 'state_version' => 1,
             'source_checkpoint_id' => $source['checkpoint']['id']])->assertOk()->json('data');
@@ -88,8 +93,10 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
                 }
             }
         }
-        self::assertCount(1, $concrete);
+        self::assertCount(2, $concrete);
+        self::assertContains('canonical_quantity_aggregate_unresolved', array_column($draft['quantity_coverage_warnings'] ?? [], 'code'));
         self::assertSame('1', $concrete[0]['quantity']);
+        self::assertSame('1', $concrete[1]['quantity']);
         self::assertSame('assumed', $concrete[0]['quantity_status']);
         self::assertNotEmpty($concrete[0]['metadata']['scope_entity_id']);
         $revisionCount = DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count();
@@ -352,7 +359,7 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
         )->all(), JSON_THROW_ON_ERROR));
     }
 
-    private function fixture(array $inputOverrides = []): array
+    private function fixture(array $inputOverrides = [], array $extraEntities = []): array
     {
         Http::preventStrayRequests();
         Http::fake();
@@ -376,7 +383,7 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
                 'width' => ['value' => '250', 'unit' => 'mm', 'basis' => 'measurement'],
                 'height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'assumption'],
             ],
-        ]]]);
+        ], ...$extraEntities]]);
         $source = app(InspectFactoryInputs::class)->handle($actor, $project->id, $session->id, 1, (string) Str::uuid());
         self::assertSame('planning_required', $source['checkpoint']['status']);
         $this->outboundBefore = count(Http::recorded());

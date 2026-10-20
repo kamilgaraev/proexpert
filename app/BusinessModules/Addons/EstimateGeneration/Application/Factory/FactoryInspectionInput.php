@@ -43,7 +43,8 @@ final readonly class FactoryInspectionInput
             $query = $this->database->table($table)->where('organization_id', $scope[0])
                 ->where('project_id', $scope[1])->where('session_id', $scope[2]);
             if ($table === 'estimate_generation_ai_role_runs') {
-                $query->where('status', 'completed')->whereIn('role', ['arbiter', 'geometry_expert']);
+                $query->where('status', 'completed')->whereIn('role', ['arbiter', 'geometry_expert'])
+                    ->select(['role', 'subject_version', 'input_fingerprint']);
             }
             $query->limit($cap + 1);
             $aggregate = $this->database->query()->fromSub($query, 'bounded')
