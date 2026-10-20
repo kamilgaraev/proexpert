@@ -45,7 +45,7 @@ final class OpeningWorkItemExpander
     }
 
     public function expand(array $draft, ProjectModelSnapshot $snapshot, array $scopes, array $quantities,
-        ?int $workLimit, array $documentVersions): array
+        ?int $workLimit, array $documentVersions, array $systems = []): array
     {
         $openings = OpeningEstimateScope::openings($snapshot, $documentVersions);
         $scopes = array_intersect_key($scopes, $openings);
@@ -120,6 +120,7 @@ final class OpeningWorkItemExpander
                             $name = $names[$entity] ?? $openings[$entity]->attributes['name'] ?? $entity;
                             $row = $previous !== null ? $previous
                                 : $this->makeRow($template, $templateKey, $key, $entity, $scope, $work, $kind, (string) $name, $quantities);
+                            $row = OpeningSystemScope::bind($row, $systems);
                             if ($previous !== null && is_string($previous['name'] ?? null)) {
                                 $row['name'] = $previous['name'];
                             }
@@ -200,6 +201,8 @@ final class OpeningWorkItemExpander
         $row['metadata']['opening_template_key'] = $templateKey;
         $row['metadata']['opening_scope'] = $scope;
         $row['metadata']['opening_kind'] = $kind;
+        unset($row['metadata']['specialization_scenario'], $row['metadata']['material_assumption'], $row['metadata']['material_scenario_work_key']);
+        unset($row['specialization_scenario'], $row['specialization_evidence'], $row['work_intent']);
         $row['name'] = $template['name'].' — '.mb_substr($name, 0, 160);
         $row['unit'] = 'm2';
         $row['validation_flags'] = array_values(array_diff($row['validation_flags'] ?? [], ['unit_requires_confirmation']));

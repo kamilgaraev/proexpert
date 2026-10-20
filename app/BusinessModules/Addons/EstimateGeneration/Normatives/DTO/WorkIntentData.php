@@ -38,6 +38,8 @@ final readonly class WorkIntentData
         public string $workObject = '',
         public array $specializationEvidence = [],
         public ?array $specializationScenario = null,
+        public ?string $openingSystem = null,
+        public bool $openingSystemRequired = false,
     ) {
         EvidenceBounds::assert($sourceEvidence);
     }
