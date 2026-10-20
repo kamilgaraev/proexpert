@@ -113,6 +113,39 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_foundation_concreting_distinguishes_reinforced_foundations_from_concrete_preparation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = ['scope' => 'foundation', 'action' => 'concreting'];
+        $work = 'Бетонирование железобетонных фундаментов';
+
+        self::assertTrue($service->isCompatible(
+            'Устройство железобетонных фундаментов общего назначения объемом более 5 до 25 м3',
+            $work,
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство монолитных железобетонных фундаментов',
+            $work,
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство бетонной подготовки',
+            $work,
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство бетонной подготовки',
+            'Устройство бетонной подготовки под фундаменты',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Монтаж сборных железобетонных фундаментов',
+            $work,
+            $intent,
+        ));
+    }
+
     #[DataProvider('incompatibleResidentialNorms')]
     public function test_rejects_norms_that_do_not_match_residential_work_semantics(
         string $workText,

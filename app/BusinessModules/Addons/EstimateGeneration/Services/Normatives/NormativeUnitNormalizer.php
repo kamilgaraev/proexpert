@@ -9,6 +9,55 @@ use Brick\Math\BigDecimal;
 
 final class NormativeUnitNormalizer
 {
+    private const UNIT_RULES = [
+        ['length', 'м', 1000.0, ['км', 'km', 'километр', 'километра', 'километры'], []],
+        ['length', 'м', 0.001, ['мм', 'mm'], []],
+        ['length', 'м', 0.01, ['см', 'cm'], []],
+        ['length', 'м', 1.0, ['м', 'мп', 'пм', 'погм', 'метр', 'метра', 'метры', 'm', 'lm', 'rm', 'linm', 'linearmeter'], []],
+        ['volume', 'м3', 1.0, [], ['м3', 'm3', 'cbm', 'кубм']],
+        ['area', 'м2', 1.0, [], ['м2', 'm2', 'sqm', 'квм']],
+        ['labor_time', 'чел-ч', 1.0, [], ['чел-ч', 'чел/ч', 'челч']],
+        ['machine_time', 'маш-ч', 1.0, [], ['маш-ч', 'маш/ч', 'машч']],
+        ['piece', 'шт', 1.0, ['pcs', 'piece', 'pieces', 'item', 'count', 'точка', 'точки', 'точек', 'точ', 'шт', 'ед'], ['компл', 'точк', 'штук', 'единиц']],
+        ['time', 'ч', 1.0, ['h', 'hour', 'hours', 'ч', 'час', 'часа', 'часов'], []],
+        ['mass', 'кг', 1.0, ['kg', 'кг', 'килограмм', 'килограмма', 'килограммы'], []],
+        ['power', 'кВт', 1.0, ['kw', 'квт', 'киловатт', 'киловатта', 'киловатты'], []],
+        ['mass', 'кг', 1000.0, ['т', 't'], ['тонн']],
+        ['time', 'мес', 1.0, ['мес', 'месяц', 'месяца', 'месяцев'], []],
+    ];
+
+    /** @return array<string, string> */
+    public static function normalizationReplacements(): array
+    {
+        return ["\u{00A0}" => ' ', '³' => '3', '²' => '2', '^3' => '3', '^2' => '2',
+            'куб. м' => 'м3', 'куб.м' => 'м3', 'куб м' => 'м3', 'кв. м' => 'м2', 'кв.м' => 'м2',
+            'кв м' => 'м2', 'пог. м' => 'м', 'пог.м' => 'м'];
+    }
+
+    public static function compatibleSearchPattern(string $workUnit): ?string
+    {
+        $work = self::parseDetailed($workUnit);
+        if (! $work->isKnown()) {
+            return null;
+        }
+        $exact = [];
+        $prefixes = [];
+        foreach (self::UNIT_RULES as [$dimension, $base, , $aliases, $starts]) {
+            if ($dimension === $work->dimension && $base === $work->baseUnit) {
+                array_push($exact, ...$aliases);
+                array_push($prefixes, ...$starts);
+            }
+        }
+        $patterns = [];
+        foreach ([[$exact, '$'], [$prefixes, '']] as [$aliases, $end]) {
+            if ($aliases !== []) {
+                $patterns[] = '^('.implode('|', array_map(static fn (string $alias): string => preg_quote($alias), $aliases)).')'.$end;
+            }
+        }
+
+        return implode('|', $patterns);
+    }
+
     /**
      * @return array{base: string, multiplier: float}
      */
@@ -126,53 +175,26 @@ final class NormativeUnitNormalizer
     {
         $unit = self::compact($unit);
 
-        return match (true) {
-            in_array($unit, ['км', 'km', 'километр', 'километра', 'километры'], true) => ['length', 'м', 1000.0],
-            in_array($unit, ['мм', 'mm'], true) => ['length', 'м', 0.001],
-            in_array($unit, ['см', 'cm'], true) => ['length', 'м', 0.01],
-            in_array($unit, ['м', 'мп', 'пм', 'погм', 'метр', 'метра', 'метры', 'm', 'lm', 'rm', 'linm', 'linearmeter'], true) => ['length', 'м', 1.0],
-            str_starts_with($unit, 'м3'),
-            str_starts_with($unit, 'm3'),
-            str_starts_with($unit, 'cbm'),
-            str_starts_with($unit, 'кубм') => ['volume', 'м3', 1.0],
-            str_starts_with($unit, 'м2'),
-            str_starts_with($unit, 'm2'),
-            str_starts_with($unit, 'sqm'),
-            str_starts_with($unit, 'квм') => ['area', 'м2', 1.0],
-            str_starts_with($unit, 'чел-ч'),
-            str_starts_with($unit, 'чел/ч'),
-            str_starts_with($unit, 'челч') => ['labor_time', 'чел-ч', 1.0],
-            str_starts_with($unit, 'маш-ч'),
-            str_starts_with($unit, 'маш/ч'),
-            str_starts_with($unit, 'машч') => ['machine_time', 'маш-ч', 1.0],
-            in_array($unit, ['pcs', 'piece', 'pieces', 'item', 'count'], true) => ['piece', 'шт', 1.0],
-            str_starts_with($unit, 'компл') => ['piece', 'шт', 1.0],
-            in_array($unit, ['точка', 'точки', 'точек', 'точ'], true),
-            str_starts_with($unit, 'точк') => ['piece', 'шт', 1.0],
-            $unit === 'шт',
-            str_starts_with($unit, 'штук') => ['piece', 'шт', 1.0],
-            $unit === 'ед',
-            str_starts_with($unit, 'единиц') => ['piece', 'шт', 1.0],
-            in_array($unit, ['h', 'hour', 'hours', 'ч', 'час', 'часа', 'часов'], true) => ['time', 'ч', 1.0],
-            in_array($unit, ['kg', 'кг', 'килограмм', 'килограмма', 'килограммы'], true) => ['mass', 'кг', 1.0],
-            in_array($unit, ['kw', 'квт', 'киловатт', 'киловатта', 'киловатты'], true) => ['power', 'кВт', 1.0],
-            in_array($unit, ['т', 't'], true),
-            str_starts_with($unit, 'тонн') => ['mass', 'кг', 1000.0],
-            in_array($unit, ['мес', 'месяц', 'месяца', 'месяцев'], true) => ['time', 'мес', 1.0],
-            default => ['', '', 1.0],
-        };
+        foreach (self::UNIT_RULES as [$dimension, $base, $multiplier, $aliases, $prefixes]) {
+            if (in_array($unit, $aliases, true)) {
+                return [$dimension, $base, $multiplier];
+            }
+            foreach ($prefixes as $prefix) {
+                if (str_starts_with($unit, $prefix)) {
+                    return [$dimension, $base, $multiplier];
+                }
+            }
+        }
+
+        return ['', '', 1.0];
     }
 
     private static function normalize(string $unit): string
     {
         $unit = mb_strtolower(trim($unit));
-        $unit = str_replace(["\u{00A0}", '³', '²', '^3', '^2'], [' ', '3', '2', '3', '2'], $unit);
+        $replacements = self::normalizationReplacements();
 
-        return str_replace(
-            ['куб. м', 'куб.м', 'куб м', 'кв. м', 'кв.м', 'кв м', 'пог. м', 'пог.м'],
-            ['м3', 'м3', 'м3', 'м2', 'м2', 'м2', 'м', 'м'],
-            $unit
-        );
+        return str_replace(array_keys($replacements), array_values($replacements), $unit);
     }
 
     private static function compact(string $unit): string
