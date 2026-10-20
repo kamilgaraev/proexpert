@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CurrentWo
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationDraftArithmeticRecalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetWorkEntitySources;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationPriceSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter;
@@ -22,7 +23,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\EstimatePositionCatalog;
+use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -212,6 +216,62 @@ final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPos
         app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $this->quantityInput($session));
     }
 
+    #[DataProvider('priceScopeChanges')]
+    public function test_changed_scope_revokes_the_saved_price_and_frozen_snapshot_but_preserves_its_history(bool $differentEntity): void
+    {
+        [$actor, $session] = $this->fixture('roof.membrane');
+        $scope = $this->scope($session);
+        $reader = app(GetWorkEntitySources::class);
+        $source = $reader->handle($actor, $scope[1], $scope[2], 'target')['sources'][0];
+        app(BindEvaluationWorkEntity::class)->handle($actor, $scope[1], $scope[2], $this->bindingInput($session, $source));
+        app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $this->quantityInput($session));
+        $unit = MeasurementUnit::query()->create(['organization_id' => $scope[0], 'name' => 'Square metre', 'short_name' => 'm2', 'type' => 'area']);
+        $catalog = EstimatePositionCatalog::query()->create(['organization_id' => $scope[0], 'name' => 'Membrane installation',
+            'code' => 'P-'.Str::random(6), 'item_type' => 'work', 'measurement_unit_id' => $unit->id, 'unit_price' => '10',
+            'is_active' => true, 'created_by_user_id' => $actor->id, 'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01',
+                'price_region' => 'Москва', 'vat_mode' => 'not_applicable', 'delivery_included' => true]]);
+        $price = app(CataloguePriceSnapshotReader::class)->read($scope[0], 'catalog:'.$catalog->id);
+        $priceInput = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'work_item_key' => 'target', 'source_reference' => $price['source_reference'], 'source_hash' => $price['source_hash']];
+        $priceReceipt = app(SaveEvaluationPriceSelection::class)->handle($actor, $scope[1], $scope[2], $priceInput);
+        $priced = $this->recalculate($session, $actor);
+        $pricedItem = $priced['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertArrayHasKey('commercial_price_snapshot', $pricedItem);
+        self::assertTrue(\Brick\Math\BigDecimal::of($pricedItem['commercial_price_snapshot']['unit_price'])->isEqualTo('10'));
+        $session->refresh();
+        $priced['source_input_version'] = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session);
+        $session->update(['draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($priced))]);
+        $revision = $session->input_payload['price_selection_revision'];
+        app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], $session->fresh()->state_version,
+            (string) Str::uuid(), ['entities' => [['key' => $differentEntity ? 'roof-two' : 'roof-one', 'type' => 'roof', 'name' => 'Second roof source']]]);
+        $new = array_values(array_filter($reader->handle($actor, $scope[1], $scope[2], 'target')['sources'],
+            static fn (array $row): bool => $row['name'] === 'Second roof source'))[0];
+        self::assertSame($differentEntity, $new['entity_id'] !== $source['entity_id']);
+        self::assertTrue(app(BindEvaluationWorkEntity::class)->handle($actor, $scope[1], $scope[2], $this->bindingInput($session, $new))['quantity_reset']);
+        self::assertArrayNotHasKey('target', $session->fresh()->input_payload['price_selections']);
+        self::assertSame($revision + 1, $session->fresh()->input_payload['price_selection_revision']);
+        self::assertArrayNotHasKey('commercial_price_snapshot', $this->item($session));
+        self::assertArrayNotHasKey('price_snapshot', $this->item($session));
+        self::assertNull($this->item($session)['unit_price']);
+        app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $this->quantityInput($session));
+        $recalculated = $this->recalculate($session, $actor)['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertArrayNotHasKey('commercial_price_snapshot', $recalculated);
+        self::assertNull($recalculated['unit_price']);
+        $models = app(ProjectModelRepository::class);
+        $oldFact = $models->fact(...[...$scope, $priceReceipt['fact_id']]);
+        self::assertNotNull($oldFact);
+        $currentPrices = array_values(array_filter($models->snapshot(...$scope)->facts, static fn ($fact): bool => $fact->type === 'evaluation_price'));
+        self::assertCount(1, $currentPrices);
+        self::assertSame('price_scope_invalidated', $currentPrices[0]->value['answer_kind']);
+        self::assertSame($oldFact->id, $currentPrices[0]->supersedesFactId);
+        self::assertArrayHasKey($priceInput['request_id'], $session->fresh()->input_payload['evaluation_price_receipts']);
+    }
+
+    public static function priceScopeChanges(): array
+    {
+        return [[true], [false]];
+    }
+
     public static function workTypes(): array
     {
         return [['roof.membrane', 'roof'], ['site.apron', 'site'], ['ceiling.insulation', 'room']];
@@ -235,9 +295,9 @@ final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPos
         return $session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
     }
 
-    private function recalculate(EstimateGenerationSession $session): array
+    private function recalculate(EstimateGenerationSession $session, ?User $actor = null): array
     {
-        return DB::transaction(function () use ($session): array {
+        return DB::transaction(function () use ($session, $actor): array {
             $session = $session->fresh();
             $scope = $this->scope($session);
             $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
@@ -245,7 +305,7 @@ final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPos
             $version = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session);
             $context = new PipelineContext($scope[2], $scope[0], $scope[1], $session->state_version, $version, $session->status->value, baseInputVersion: $version);
 
-            return app(EvaluationDraftArithmeticRecalculator::class)->recalculate($session->draft_payload, $context, $snapshot, $decisions, session: $session);
+            return app(EvaluationDraftArithmeticRecalculator::class)->recalculate($session->draft_payload, $context, $snapshot, $decisions, $actor, $session);
         });
     }
 
@@ -269,7 +329,7 @@ final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPos
             ['key' => 'neighbor', 'name' => 'Existing work', 'quantity' => null, 'unit' => 'm2']];
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'state_version' => 0, 'status' => 'draft', 'input_payload' => ['evaluation_mode' => 'universal',
-                'price_policy' => 'mixed', 'qa_limit_units' => 500, 'qa_run_id' => '5ac504c5-5ca3-41dc-95b0-f3c8745ccc44'],
+                'price_policy' => 'mixed', 'region' => 'Москва', 'qa_limit_units' => 500, 'qa_run_id' => '5ac504c5-5ca3-41dc-95b0-f3c8745ccc44'],
             'draft_payload' => ['local_estimates' => [['sections' => [['work_items' => $items]]]]]]);
         app(SaveManualProjectFacts::class)->handle($actor, (int) $project->id, (int) $session->id, 0, (string) Str::uuid(),
             ['entities' => [['key' => 'roof-one', 'type' => 'roof', 'name' => 'Roof'],

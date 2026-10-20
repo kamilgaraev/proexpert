@@ -6,9 +6,12 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryWorkingInput;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvaluationWorkEntity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationWorkComposition;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetWorkEntitySources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationChoiceProof;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
@@ -102,10 +105,12 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
             self::assertSame(0, DB::table($table)->where('session_id', $session->id)->count());
         }
         self::assertCount($outbound, Http::recorded());
+        $this->bindSource($actor, $session, $result['added_work_item_keys'][0], 'roof');
+        $quantityState = $session->fresh()->state_version;
         $quantity = app(SaveEvaluationWorkQuantity::class)->handle($actor, $session->project_id, $session->id, [
-            'request_id' => (string) Str::uuid(), 'state_version' => 2, 'work_item_key' => $result['added_work_item_keys'][0],
+            'request_id' => (string) Str::uuid(), 'state_version' => $quantityState, 'work_item_key' => $result['added_work_item_keys'][0],
             'value' => '0.75', 'unit' => 'm3', 'reason' => 'Для сметной оценки принят условный объём древесины; это допущение.']);
-        self::assertSame(3, $quantity['state_version']);
+        self::assertSame($quantityState + 1, $quantity['state_version']);
         $fact = $models->fact(...[...$scope, $quantity['source_fact_id']]);
         self::assertSame('user_assumption', $fact->origin);
         self::assertSame('0.75', $fact->value);
@@ -137,6 +142,7 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         }
         self::assertSame(CanonicalPipelineJson::encode($result), CanonicalPipelineJson::encode($this->postJson($prefix, $input)->assertOk()->json('data')));
         foreach (['roof.rafters' => ['0.75', 'm3'], 'ceiling.hatch' => ['1', 'count']] as $work => [$value, $unit]) {
+            $this->bindSource($actor, $session, $byWork[$work]['key'], $work === 'roof.rafters' ? 'roof' : 'room');
             $receipt = app(SaveEvaluationWorkQuantity::class)->handle($actor, $session->project_id, $session->id, [
                 'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
                 'work_item_key' => $byWork[$work]['key'], 'value' => $value, 'unit' => $unit,
@@ -183,8 +189,9 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
             $rows = array_column($this->items($session->fresh()->draft_payload), null, 'key');
             self::assertNull($rows[$key]['unit']);
             self::assertContains('unit_requires_confirmation', $rows[$key]['validation_flags']);
+            $this->bindSource($actor, $session, $key, 'room');
             $quantity = app(SaveEvaluationWorkQuantity::class)->handle($actor, $session->project_id, $session->id, [
-                'request_id' => (string) Str::uuid(), 'state_version' => 2, 'work_item_key' => $key,
+                'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'work_item_key' => $key,
                 'value' => '0.36', 'unit' => 'm2', 'reason' => 'Для сметной оценки площадь люка принята 0,6 × 0,6 м как явное допущение']);
             self::assertSame('0', $quantity['cost_units']);
             $fact = app(ProjectModelRepository::class)->fact($session->organization_id, $session->project_id, $session->id, $quantity['source_fact_id']);
@@ -410,6 +417,27 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         $proof = $session->fresh()->input_payload['composition_selections']['roof.rafters'];
         $decisions = $models->decisionsForSelectedFacts($session->organization_id, $session->project_id, $session->id, [$proof['fact_id']]);
         self::assertSame($input['reason'], $decisions[0]->reason);
+    }
+
+    private function bindSource(User $actor, EstimateGenerationSession $session, string $key, string $type): void
+    {
+        $reader = app(GetWorkEntitySources::class);
+        $sources = $reader->handle($actor, $session->project_id, $session->id, $key)['sources'];
+        if ($sources === []) {
+            app(SaveManualProjectFacts::class)->handle($actor, $session->project_id, $session->id,
+                $session->fresh()->state_version, (string) Str::uuid(), ['entities' => [[
+                    'key' => 'composition-'.$type, 'type' => $type, 'name' => 'Confirmed '.$type,
+                ]]]);
+            $sources = $reader->handle($actor, $session->project_id, $session->id, $key)['sources'];
+        }
+        self::assertCount(1, $sources);
+        $source = $sources[0];
+        self::assertSame($type, $source['entity_type']);
+        app(BindEvaluationWorkEntity::class)->handle($actor, $session->project_id, $session->id, [
+            'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'work_item_key' => $key,
+            'source_fact_id' => $source['source_fact_id'], 'source_fact_version' => $source['source_fact_version'],
+            'source_value_hash' => $source['source_value_hash'], 'reason' => 'Work belongs to this confirmed physical object.',
+        ]);
     }
 
     private function fixture(): array

@@ -94,12 +94,18 @@ final readonly class BindEvaluationWorkEntity
                 $this->choices->write($actor, $session, 'work:'.$item['key'], 'evaluation_answer',
                     ['answer_kind' => 'quantity_scope_invalidated', 'work_item_key' => $item['key'], 'entity_id' => $selected['entity_id']],
                     $input['reason'], $input['request_id']);
+                if (isset($payload['price_selections'][$item['key']])) {
+                    $this->choices->write($actor, $session, 'work:'.$item['key'], 'evaluation_price',
+                        ['answer_kind' => 'price_scope_invalidated', 'work_item_key' => $item['key'], 'entity_id' => $selected['entity_id']],
+                        $input['reason'], $input['request_id']);
+                    $payload['price_selection_revision'] = ($payload['price_selection_revision'] ?? 0) + 1;
+                }
                 if (isset($payload['scenario_selections'])) {
                     $this->choices->write($actor, $session, 'scenario-set', 'evaluation_scenario',
                         ['answer_kind' => 'scenario_scope_invalidated', 'affected_work_item_key' => $item['key']],
                         $input['reason'], $input['request_id']);
                 }
-                unset($payload['quantity_selections'][$item['key']], $payload['scenario_selections']);
+                unset($payload['quantity_selections'][$item['key']], $payload['price_selections'][$item['key']], $payload['scenario_selections']);
                 $payload['quantity_selection_revision'] = ($payload['quantity_selection_revision'] ?? 0) + 1;
                 $item['quantity'] = null;
                 $item['quantity_status'] = 'unknown';
@@ -111,7 +117,7 @@ final readonly class BindEvaluationWorkEntity
                 foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'labor_cost', 'machinery_cost', 'other_cost'] as $money) {
                     $item[$money] = null;
                 }
-                unset($item['price_snapshot'], $item['evaluation_price_basis_quantity']);
+                unset($item['price_snapshot'], $item['commercial_price_snapshot'], $item['evaluation_price_basis_quantity']);
                 $item['pricing_status'] = 'not_calculated';
                 $item['pricing_blocker'] = 'quantity_unknown';
                 foreach (['quantity_evidence', 'quantity_evidence_id', 'quantity_evidence_fingerprint', 'quantity_evidence_source_version',
