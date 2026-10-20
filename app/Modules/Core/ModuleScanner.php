@@ -139,7 +139,7 @@ class ModuleScanner
             }
             
             // Получаем все организации
-            $organizations = \App\Models\Organization::all();
+            $organizations = \App\Models\Organization::all(['id']);
             
             foreach ($organizations as $organization) {
                 // Проверяем что модуль еще не активирован
