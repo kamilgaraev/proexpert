@@ -129,10 +129,49 @@ final class NormativeCandidateSearchService
             });
         }
 
+        $this->orderPoolByRelevance($query, $tokens, $intent, $profile);
+
         return $query
             ->orderBy('code')
+            ->orderBy('id')
             ->limit($poolLimit)
             ->get();
+    }
+
+    /** @param array<int, string> $tokens */
+    private function orderPoolByRelevance(
+        Builder $query,
+        array $tokens,
+        WorkIntentData $intent,
+        NormativeSearchProfileData $profile,
+    ): void {
+        $haystack = "LOWER(CONCAT_WS(' ', code, name, section_name, CAST(work_composition AS TEXT)))";
+        $scores = [];
+        $bindings = [];
+        $codes = [];
+        foreach ($tokens as $token) {
+            if (preg_match('/^\d{2}-\d{2}-\d{3}-\d{2}$/D', $token) === 1) {
+                $codes[] = $token;
+            }
+        }
+        if ($codes !== []) {
+            $query->orderByRaw('CASE WHEN LOWER(code) IN ('.implode(', ', array_fill(0, count($codes), '?')).') THEN 1 ELSE 0 END DESC', $codes);
+        }
+        foreach ([[12, $profile->requiredTerms], [5, $profile->synonymTerms]] as [$weight, $terms]) {
+            foreach ($terms as $term) {
+                if ($term !== '') {
+                    $scores[] = 'CASE WHEN '.$haystack.' LIKE ? THEN '.$weight.' ELSE 0 END';
+                    $bindings[] = '%'.mb_strtolower($term).'%';
+                }
+            }
+        }
+        foreach ($intent->preferredSectionPrefixes as $prefix) {
+            $scores[] = 'CASE WHEN section_code LIKE ? THEN 20 ELSE 0 END';
+            $bindings[] = $prefix.'%';
+        }
+        if ($scores !== []) {
+            $query->orderByRaw('('.implode(' + ', $scores).') DESC', $bindings);
+        }
     }
 
     /**

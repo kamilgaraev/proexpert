@@ -8,11 +8,91 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateData
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
-use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class NormativeCandidateSearchServiceTest extends EstimateGenerationPostgresTestCase
+final class NormativeCandidateSearchServiceTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_search_ranks_intent_matches_before_limiting_a_large_pool_without_crossing_dataset_versions(): void
+    {
+        $collections = [];
+        foreach (['2026-06-10', '2026-06-11'] as $versionKey) {
+            $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([
+                'source_type' => 'fsnb_2022',
+                'version_key' => $versionKey,
+                'bucket' => 'test-bucket',
+                'prefix' => 'test-prefix',
+                'status' => 'parsed',
+                'files_count' => 1,
+                'rows_read' => 131,
+                'rows_imported' => 131,
+                'errors_count' => 0,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $collections[$versionId] = (int) DB::table('estimate_norm_collections')->insertGetId([
+                'dataset_version_id' => $versionId,
+                'code' => 'gesn',
+                'name' => 'ГЭСН',
+                'norm_type' => 'gesn',
+                'source_file' => 'ГЭСН.xml',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $versionIds = array_keys($collections);
+        $collectionId = $collections[$versionIds[0]];
+        $norm = [
+            'collection_id' => $collectionId,
+            'unit' => 'м3',
+            'section_code' => '01',
+            'section_name' => 'Земляные работы',
+            'work_composition' => json_encode(['Подготовительные работы с бетоном'], JSON_UNESCAPED_UNICODE),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+        $decoys = [];
+        for ($index = 0; $index < 130; $index++) {
+            $decoys[] = [...$norm, 'code' => sprintf('01-01-%03d-01', $index + 1), 'name' => 'Устройство бетонной подготовки'];
+        }
+        DB::table('estimate_norms')->insert($decoys);
+        $target = [
+            ...$norm,
+            'code' => '06-01-005-05',
+            'name' => 'Устройство железобетонных фундаментов общего назначения объемом более 5 до 25 м3',
+            'section_code' => '06',
+            'section_name' => 'Бетонные и железобетонные конструкции',
+            'work_composition' => json_encode(['Укладка бетонной смеси в фундаменты'], JSON_UNESCAPED_UNICODE),
+        ];
+        $targetId = (int) DB::table('estimate_norms')->insertGetId($target);
+        $otherVersionId = (int) DB::table('estimate_norms')->insertGetId([
+            ...$target,
+            'collection_id' => $collections[$versionIds[1]],
+        ]);
+        $candidates = app(NormativeCandidateSearchService::class)->search(
+            EstimateDatasetVersion::query()->findOrFail($versionIds[0]),
+            ['name' => 'Бетонирование фундаментов', 'unit' => 'м3'],
+            ['scope_type' => 'foundation', 'section_title' => 'Фундамент'],
+            ['бетон', 'фундамент'],
+            20,
+            80,
+        );
+
+        self::assertSame($targetId, (int) $candidates->first()?->id);
+        self::assertCount(20, $candidates);
+        self::assertNotContains($otherVersionId, $candidates->pluck('id')->all());
+
+        $byCode = app(NormativeCandidateSearchService::class)->search(
+            EstimateDatasetVersion::query()->findOrFail($versionIds[0]),
+            ['name' => 'Бетонирование фундаментов', 'unit' => 'м3'],
+            ['scope_type' => 'foundation', 'section_title' => 'Фундамент'],
+            ['ГЭСН01-01-130-01'],
+            20,
+            80,
+        );
+        self::assertContains('01-01-130-01', $byCode->pluck('code')->all());
+    }
+
     public function test_search_finds_norm_by_work_composition_when_name_is_generic(): void
     {
         $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([

@@ -153,7 +153,7 @@ final class NormativeSemanticCompatibilityService
             'excavation' => ['разработк', 'выемк', 'котлован', 'транше'],
             'soil_haulage' => ['вывоз', 'перевоз', 'транспортир'],
             'planning' => ['планиров'],
-            'concreting' => ['бетонир', 'бетонная смес', 'бетонной смес', 'бетонную смес', 'устройство бетонн', 'укладк бетонн'],
+            'concreting' => ['бетонир', 'бетонная смес', 'бетонной смес', 'бетонную смес', 'устройство бетонн', 'укладк бетонн', 'устройство железобетонных фундаментов', 'устройство монолитных железобетонных фундаментов'],
             'reinforcement' => ['арматур', 'армирован'],
             'formwork' => ['опалуб'],
             'masonry' => ['кладк', 'кирпич', 'блок', 'перегород'],
@@ -188,6 +188,12 @@ final class NormativeSemanticCompatibilityService
 
     private function actionCompatible(string $action, string $system, string $candidateTitle, string $workText): bool
     {
+        if ($action === 'concreting'
+            && $this->containsAny($candidateTitle, ['бетонной подготов', 'бетонная подготов'])
+            && ! $this->containsAny($workText, ['бетонной подготов', 'бетонная подготов'])) {
+            return false;
+        }
+
         if ($action === 'electric_boiler_installation_analog') {
             return $this->containsAny($workText, ['электрическ'])
                 && $this->containsAny($workText, ['котел', 'котл'])
