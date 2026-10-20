@@ -28,6 +28,7 @@ final class CrmListRequest extends FormRequest
             'owner_user_id' => ['nullable', 'integer'],
             'company_id' => ['nullable', 'uuid'],
             'contact_id' => ['nullable', 'uuid'],
+            'deal_id' => ['nullable', 'uuid'],
             'source_id' => ['nullable', 'uuid'],
             'pipeline_id' => ['nullable', 'uuid'],
             'stage_id' => ['nullable', 'uuid'],
