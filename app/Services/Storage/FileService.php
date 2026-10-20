@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\HeaderUtils;
 
 class FileService
 {
@@ -97,16 +98,32 @@ class FileService
         return new CurrentStoredFile($key, $etag, $sizeBytes, $sha256, $mime);
     }
 
-    public function temporaryDownloadUrl(string $key, int $ttlSeconds): string
+    public function temporaryDownloadUrl(string $key, int $ttlSeconds, ?string $downloadFilename = null): string
     {
         $this->assertOrganizationPath($key);
         if ($ttlSeconds < 1 || $ttlSeconds > self::MAX_TEMPORARY_URL_TTL_SECONDS) {
             throw new \InvalidArgumentException('storage_temporary_url_ttl_invalid');
         }
 
+        $options = [];
+        if ($downloadFilename !== null) {
+            $filename = Str::afterLast(str_replace('\\', '/', $downloadFilename), '/');
+            $filename = trim((string) preg_replace('/[\p{Cc}\p{Cf}]/u', '', $filename));
+            if ($filename === '' || $filename === '.' || $filename === '..') {
+                $filename = 'document';
+            }
+            $asciiFilename = (string) preg_replace('/[^A-Za-z0-9._-]+/', '_', Str::ascii($filename));
+            $options['ResponseContentDisposition'] = HeaderUtils::makeDisposition(
+                HeaderUtils::DISPOSITION_ATTACHMENT,
+                $filename,
+                $asciiFilename !== '' ? $asciiFilename : 'document',
+            );
+        }
+
         $url = $this->disk()->temporaryUrl(
             $key,
             new DateTimeImmutable("+{$ttlSeconds} seconds"),
+            $options,
         );
         if (
             ! is_string($url)

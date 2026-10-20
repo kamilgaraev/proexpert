@@ -309,6 +309,7 @@ final class PersonalFileService
         return $this->files->temporaryDownloadUrl(
             (string) $file->storage_key,
             (int) config('filesystems.s3.download_ttl_seconds', self::DOWNLOAD_TTL_SECONDS),
+            $file->original_name,
         );
     }
 
