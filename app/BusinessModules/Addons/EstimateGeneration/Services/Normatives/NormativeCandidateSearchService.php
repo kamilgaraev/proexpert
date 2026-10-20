@@ -67,10 +67,11 @@ final class NormativeCandidateSearchService
         int $poolLimit
     ): Collection {
         $tokens = $this->expandedTokens($tokens, $intent, $profile);
-        $pool = $this->executePoolQuery($version, $tokens, $intent, $profile, $poolLimit);
+        $workUnit = (string) ($workItem['unit'] ?? '');
+        $pool = $this->executePoolQuery($version, $tokens, $intent, $profile, $poolLimit, $workUnit);
 
         if ($this->shouldExpandByProfile($pool, $tokens, $profile, $poolLimit)) {
-            $profilePool = $this->executePoolQuery($version, [], $intent, $profile, $poolLimit);
+            $profilePool = $this->executePoolQuery($version, [], $intent, $profile, $poolLimit, $workUnit);
             $pool = $pool
                 ->merge($profilePool)
                 ->unique(static fn (EstimateNorm $norm): int => (int) $norm->id)
@@ -92,7 +93,8 @@ final class NormativeCandidateSearchService
         array $tokens,
         WorkIntentData $intent,
         NormativeSearchProfileData $profile,
-        int $poolLimit
+        int $poolLimit,
+        string $workUnit,
     ): Collection {
         $query = EstimateNorm::query()
             ->with(['collection', 'section'])
@@ -127,6 +129,15 @@ final class NormativeCandidateSearchService
                 $query->whereNull('section_code')
                     ->orWhere('section_code', 'not like', $prefix.'%');
             });
+        }
+
+        if (NormativeUnitNormalizer::parseDetailed($workUnit)->isKnown()) {
+            $compatibleUnits = (clone $query)->distinct()->pluck('unit')
+                ->filter(static fn (mixed $unit): bool => is_string($unit) && NormativeUnitNormalizer::compatible($workUnit, $unit))
+                ->values()->all();
+            if ($compatibleUnits !== []) {
+                $query->whereIn('unit', $compatibleUnits);
+            }
         }
 
         $this->orderPoolByRelevance($query, $tokens, $intent, $profile);

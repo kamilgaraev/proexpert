@@ -58,6 +58,7 @@ final class NormativeCandidateSearchServiceTest extends EstimateGenerationCanoni
         DB::table('estimate_norms')->insert($decoys);
         $target = [
             ...$norm,
+            'unit' => '100 м³',
             'code' => '06-01-005-05',
             'name' => 'Устройство железобетонных фундаментов общего назначения объемом более 5 до 25 м3',
             'section_code' => '06',
@@ -81,6 +82,28 @@ final class NormativeCandidateSearchServiceTest extends EstimateGenerationCanoni
         self::assertSame($targetId, (int) $candidates->first()?->id);
         self::assertCount(20, $candidates);
         self::assertNotContains($otherVersionId, $candidates->pluck('id')->all());
+
+        $wrongUnits = [];
+        for ($index = 0; $index < 130; $index++) {
+            $wrongUnits[] = [
+                ...$norm,
+                'code' => sprintf('06-02-%03d-01', $index + 1),
+                'name' => 'Бетонирование монолитных фундаментов: бетон, арматура, опалубка, грунт',
+                'section_code' => '06',
+                'unit' => 'шт',
+            ];
+        }
+        DB::table('estimate_norms')->insert($wrongUnits);
+        $withWrongUnits = app(NormativeCandidateSearchService::class)->search(
+            EstimateDatasetVersion::query()->findOrFail($versionIds[0]),
+            ['name' => 'Бетонирование фундаментов', 'unit' => 'м3'],
+            ['scope_type' => 'foundation', 'section_title' => 'Фундамент'],
+            ['бетон', 'фундамент'],
+            20,
+            80,
+        );
+        self::assertSame($targetId, (int) $withWrongUnits->first()?->id);
+        self::assertNotContains('шт', $withWrongUnits->pluck('unit')->all());
 
         $byCode = app(NormativeCandidateSearchService::class)->search(
             EstimateDatasetVersion::query()->findOrFail($versionIds[0]),
