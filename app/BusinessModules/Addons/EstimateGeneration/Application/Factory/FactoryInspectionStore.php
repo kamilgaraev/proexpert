@@ -18,6 +18,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 use LogicException;
 use Ramsey\Uuid\Uuid;
 use stdClass;
@@ -275,8 +276,13 @@ final readonly class FactoryInspectionStore
             }
             try {
                 $built = $this->database->transaction(fn (): array => ($this->drafts ?? app(FactoryDraftBuilder::class))->build($session, $capture));
-            } catch (PipelineStageException $exception) {
-                if ($exception->safeCode !== 'pipeline_source_too_large') {
+            } catch (PipelineStageException|InvalidArgumentException $exception) {
+                $limitation = match (true) {
+                    $exception instanceof PipelineStageException && $exception->safeCode === 'pipeline_source_too_large' => 'input_budget_exceeded',
+                    $exception instanceof InvalidArgumentException && $exception->getMessage() === 'estimate_work_items_exceed_approved_plan' => 'planning_budget_exceeded',
+                    default => null,
+                };
+                if ($limitation === null) {
                     throw $exception;
                 }
                 $session->refresh();
@@ -288,7 +294,7 @@ final readonly class FactoryInspectionStore
                     throw new StaleEstimateGenerationState((int) $session->id, (int) $checkpoint->expected_state_version);
                 }
                 $this->finish($session, $checkpoint->id, FactoryDraftBuilder::stop('unavailable', $claim->sourceCheckpointId,
-                    (int) $session->state_version, ['input_budget_exceeded']), CarbonImmutable::now());
+                    (int) $session->state_version, [$limitation]), CarbonImmutable::now());
 
                 return;
             }

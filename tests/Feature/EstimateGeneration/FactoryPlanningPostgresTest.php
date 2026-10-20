@@ -35,6 +35,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
@@ -42,10 +43,17 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
 {
     private int $outboundBefore = 0;
 
-    public function test_materialization_source_overflow_finishes_once_without_draft_evidence_state_or_paid_changes(): void
+    public static function materializationLimits(): array
+    {
+        return ['source bytes' => ['source_bytes', 'input_budget_exceeded'], 'work rows' => ['work_rows', 'planning_budget_exceeded']];
+    }
+
+    #[DataProvider('materializationLimits')]
+    public function test_materialization_input_limits_finish_once_without_draft_evidence_state_or_paid_changes(string $limit, string $limitation): void
     {
         [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1]);
-        $text = str_repeat('x', EloquentGenerationPipelineDataGateway::MAX_SOURCE_BYTES + 1);
+        $text = $limit === 'source_bytes' ? str_repeat('x', EloquentGenerationPipelineDataGateway::MAX_SOURCE_BYTES + 1)
+            : str_repeat("ФЕР 08-02-001-01 Кладка стен 10 м2\n", 1000);
         EstimateGenerationDocument::query()->create([
             'organization_id' => $session->organization_id, 'project_id' => $session->project_id,
             'session_id' => $session->id, 'user_id' => $actor->id, 'filename' => 'oversized.pdf',
@@ -63,7 +71,7 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
         $input = ['request_id' => (string) Str::uuid(), 'state_version' => 2, 'source_checkpoint_id' => $planning['checkpoint']['id']];
         $result = $this->postJson($prefix.'/materialize', $input)->assertOk()->json('data');
         self::assertSame('unavailable', $result['checkpoint']['status']);
-        self::assertSame(['input_budget_exceeded'], $result['checkpoint']['result']['limitations']);
+        self::assertSame([$limitation], $result['checkpoint']['result']['limitations']);
         self::assertNull($result['checkpoint']['result']['draft_refs']);
         self::assertSame(2, $result['checkpoint']['result']['result_state_version']);
         self::assertSame(3, $result['run']['step_count']);
