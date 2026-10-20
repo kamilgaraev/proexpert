@@ -239,6 +239,11 @@ final class RecordApiResponseTimeTest extends TestCase
             $response = new JsonResponse(['data' => ['download_url' => 'https://storage.example.test/private-file?signature=private']]);
             $actual = (new RecordApiResponseTime)->handle($request, static function () use ($request, $response): Response {
                 ApiQueryMetrics::record($request, 3.25);
+                foreach (['file_current_disk_resolve', 'file_current_read_stream'] as $phase) {
+                    $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+                    self::assertNotNull($checkpoint);
+                    ApiQueryMetrics::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);
+                }
 
                 return $response;
             });
@@ -246,6 +251,11 @@ final class RecordApiResponseTimeTest extends TestCase
             self::assertSame($template, $captured['route']);
             self::assertSame(1, $captured['sql_count']);
             self::assertArrayHasKey('sql_sources', $captured);
+            self::assertSame(['file_current_disk_resolve', 'file_current_read_stream'], array_keys($captured['processing_phases']));
+            foreach ($captured['processing_phases'] as $phase) {
+                self::assertSame(1, $phase['count']);
+                self::assertSame(0, $phase['sql_count']);
+            }
             self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
             self::assertStringNotContainsString('storage.example.test', json_encode($captured, JSON_THROW_ON_ERROR));
         }

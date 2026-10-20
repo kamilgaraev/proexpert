@@ -6,6 +6,7 @@ namespace Tests\Unit\Storage;
 
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Storage\DTO\CurrentMultipartCompletion;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\DTO\MultipartPart;
@@ -15,6 +16,8 @@ use App\Services\Storage\FileService;
 use Aws\Result;
 use Aws\S3\S3ClientInterface;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Container\Container;
+use Illuminate\Http\Request;
 use InvalidArgumentException;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -28,6 +31,116 @@ final class FileServiceCurrentObjectTest extends TestCase
     {
         Mockery::close();
         parent::tearDown();
+    }
+
+    public function test_current_stream_records_closed_phases_without_reopening_or_rewinding_the_object(): void
+    {
+        $this->withReadMetrics('enabled', function (ApiQueryMetrics $metrics): void {
+            $key = 'org-42/reports/private-object.pdf';
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, 'private-body');
+            fseek($stream, 3);
+            $disk = Mockery::mock(FilesystemAdapter::class);
+            $disk->shouldReceive('readStream')->once()->with($key)->andReturn($stream);
+            $diskCalls = 0;
+            $files = $this->service(Mockery::mock(S3ClientInterface::class), $disk, static function () use (&$diskCalls): void { $diskCalls++; });
+            try {
+                self::assertSame($stream, $files->readCurrent($key));
+                self::assertSame(3, ftell($stream));
+                self::assertSame(1, $diskCalls);
+                $summary = $metrics->summary();
+                self::assertSame(['file_current_disk_resolve', 'file_current_read_stream'], array_keys($summary['processing_phases']));
+                self::assertSame(0, $summary['sql_count']);
+                foreach ($summary['processing_phases'] as $phase) {
+                    self::assertSame(1, $phase['count']);
+                    self::assertSame(0, $phase['sql_count']);
+                    self::assertGreaterThanOrEqual(0, $phase['total_ms']);
+                }
+                self::assertStringNotContainsString('private', json_encode($summary, JSON_THROW_ON_ERROR));
+                self::assertStringNotContainsString('org-42', json_encode($summary, JSON_THROW_ON_ERROR));
+            } finally {
+                fclose($stream);
+            }
+        });
+    }
+
+    public function test_current_stream_preserves_disk_read_and_invalid_resource_failures(): void
+    {
+        foreach (['disk', 'read', 'false'] as $failure) {
+            $this->withReadMetrics('enabled', function (ApiQueryMetrics $metrics) use ($failure): void {
+                $key = 'org-42/reports/private-object.pdf';
+                $error = new \RuntimeException('private-transport-failure');
+                $disk = Mockery::mock(FilesystemAdapter::class);
+                if ($failure === 'disk') {
+                    $disk->shouldNotReceive('readStream');
+                } elseif ($failure === 'read') {
+                    $disk->shouldReceive('readStream')->once()->with($key)->andThrow($error);
+                } else {
+                    $disk->shouldReceive('readStream')->once()->with($key)->andReturn(false);
+                }
+                $diskCalls = 0;
+                $files = $this->service(Mockery::mock(S3ClientInterface::class), $disk, static function () use (&$diskCalls, $failure, $error): void {
+                    $diskCalls++;
+                    if ($failure === 'disk') { throw $error; }
+                });
+                try {
+                    $files->readCurrent($key);
+                    self::fail('Storage failure must propagate.');
+                } catch (\RuntimeException $actual) {
+                    if ($failure === 'false') {
+                        self::assertSame('storage_object_read_failed', $actual->getMessage());
+                    } else {
+                        self::assertSame($error, $actual);
+                    }
+                }
+                self::assertSame(1, $diskCalls);
+                $phases = $metrics->summary()['processing_phases'];
+                self::assertSame($failure === 'disk' ? ['file_current_disk_resolve'] : ['file_current_disk_resolve', 'file_current_read_stream'], array_keys($phases));
+                foreach ($phases as $phase) {
+                    self::assertSame(1, $phase['count']);
+                    self::assertSame(0, $phase['sql_count']);
+                }
+                self::assertStringNotContainsString('private', json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
+            });
+        }
+    }
+
+    public function test_current_stream_without_capture_keeps_storage_calls_and_metadata_disabled(): void
+    {
+        foreach (['disabled', 'no_metrics', 'no_request'] as $mode) {
+            $this->withReadMetrics($mode, function (ApiQueryMetrics $metrics): void {
+                $key = 'org-42/reports/private-object.pdf';
+                $stream = fopen('php://temp', 'w+b');
+                $disk = Mockery::mock(FilesystemAdapter::class);
+                $disk->shouldReceive('readStream')->once()->with($key)->andReturn($stream);
+                $diskCalls = 0;
+                $files = $this->service(Mockery::mock(S3ClientInterface::class), $disk, static function () use (&$diskCalls): void { $diskCalls++; });
+                try {
+                    self::assertSame($stream, $files->readCurrent($key));
+                    self::assertSame(1, $diskCalls);
+                    self::assertSame([], $metrics->summary()['processing_phases'] ?? []);
+                } finally {
+                    fclose($stream);
+                }
+            });
+        }
+    }
+
+    public function test_current_stream_rejects_unsafe_keys_before_disk_and_metrics(): void
+    {
+        $this->withReadMetrics('enabled', function (ApiQueryMetrics $metrics): void {
+            $disk = Mockery::mock(FilesystemAdapter::class);
+            $disk->shouldNotReceive('readStream');
+            $diskCalls = 0;
+            $files = $this->service(Mockery::mock(S3ClientInterface::class), $disk, static function () use (&$diskCalls): void { $diskCalls++; });
+            try {
+                $files->readCurrent('org-42/../private-object.pdf');
+                self::fail('Unsafe storage path must be rejected.');
+            } catch (InvalidArgumentException) {
+                self::assertSame(0, $diskCalls);
+                self::assertSame([], $metrics->summary()['processing_phases']);
+            }
+        });
     }
 
     public function test_it_writes_downloads_and_deletes_current_private_object_without_version_identity(): void
@@ -52,7 +165,7 @@ final class FileServiceCurrentObjectTest extends TestCase
         $link = $files->temporaryDownloadUrl($key, 300);
         self::assertTrue($files->existsCurrent($key));
         $readStream = $files->readCurrent($key);
-        $files->deleteCurrent($key);
+        $this->withEmptyWorkforceRegistry($key, static fn () => $files->deleteCurrent($key));
 
         self::assertInstanceOf(CurrentStoredFile::class, $stored);
         self::assertSame($key, $stored->key);
@@ -224,12 +337,14 @@ final class FileServiceCurrentObjectTest extends TestCase
 
         $completion = $files->completeCurrentMultipart($upload, [$part], self::PART_SIZE);
 
-        try {
-            $files->verifyCurrentMultipart($completion);
-            self::fail('Multipart object with a mismatched size was accepted.');
-        } catch (VersionedObjectIntegrityException $exception) {
-            self::assertSame('s3_multipart_current_object_size_mismatch', $exception->getMessage());
-        }
+        $this->withEmptyWorkforceRegistry($path, static function () use ($files, $completion): void {
+            try {
+                $files->verifyCurrentMultipart($completion);
+                self::fail('Multipart object with a mismatched size was accepted.');
+            } catch (VersionedObjectIntegrityException $exception) {
+                self::assertSame('s3_multipart_current_object_size_mismatch', $exception->getMessage());
+            }
+        });
 
         self::assertSame([$path], $disk->deletedKeys);
     }
@@ -317,25 +432,72 @@ final class FileServiceCurrentObjectTest extends TestCase
         ];
     }
 
-    private function service(S3ClientInterface $client, FilesystemAdapter $disk): FileService
+    private function withEmptyWorkforceRegistry(string $key, \Closure $operation): void
+    {
+        $connection = new class(null) extends \Illuminate\Database\PostgresConnection
+        {
+            public array $guardBindings = [];
+
+            public int $guardReads = 0;
+
+            public function select($query, $bindings = [], $useReadPdo = true, array $fetchUsing = [])
+            {
+                $this->guardReads++;
+                $this->guardBindings = $bindings;
+
+                return [];
+            }
+        };
+        $previousResolver = \Illuminate\Database\Eloquent\Model::getConnectionResolver();
+        $resolver = new \Illuminate\Database\ConnectionResolver(['offline' => $connection]);
+        $resolver->setDefaultConnection('offline');
+        \Illuminate\Database\Eloquent\Model::setConnectionResolver($resolver);
+        try {
+            $operation();
+        } finally {
+            if ($previousResolver === null) {
+                \Illuminate\Database\Eloquent\Model::unsetConnectionResolver();
+            } else {
+                \Illuminate\Database\Eloquent\Model::setConnectionResolver($previousResolver);
+            }
+        }
+        self::assertSame(1, $connection->guardReads);
+        self::assertSame([$key], $connection->guardBindings);
+    }
+
+    private function withReadMetrics(string $mode, \Closure $assert): void
+    {
+        $previous = Container::getInstance();
+        $container = new Container;
+        $request = Request::create('/api/v1/admin/ai-assistant/reports/private-token/download');
+        $metrics = new ApiQueryMetrics($mode !== 'disabled');
+        if ($mode !== 'no_metrics') { $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics); }
+        if ($mode !== 'no_request') { $container->instance('request', $request); }
+        Container::setInstance($container);
+        try { $assert($metrics); } finally { Container::setInstance($previous); }
+    }
+
+    private function service(S3ClientInterface $client, FilesystemAdapter $disk, ?\Closure $onDisk = null): FileService
     {
         $logging = new class extends LoggingService
         {
             public function __construct() {}
         };
 
-        return new class($logging, $client, $disk) extends FileService
+        return new class($logging, $client, $disk, $onDisk) extends FileService
         {
             public function __construct(
                 LoggingService $logging,
                 private readonly S3ClientInterface $client,
                 private readonly FilesystemAdapter $adapter,
+                private readonly ?\Closure $onDisk,
             ) {
                 parent::__construct($logging);
             }
 
             public function disk(?Organization $organization = null): FilesystemAdapter
             {
+                if ($this->onDisk !== null) { ($this->onDisk)(); }
                 return $this->adapter;
             }
 
