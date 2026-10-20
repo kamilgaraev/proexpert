@@ -33,13 +33,13 @@ final readonly class RoomCeilingReplacementPreview
         $rows = RoomCeilingReplacement::rows($draft);
         $parents = array_values(array_filter($rows, static fn (array $row): bool => ($row['key'] ?? null) === $parentKey));
         if (count($parents) !== 1 || ! RoomCeilingReplacement::candidate($parents[0])) {
-            $this->reject();
+            $this->reject('parent_changed');
         }
         $parent = $parents[0];
         $work = RoomCeilingReplacement::work($parent);
         foreach ($rows as $row) {
             if (($row['key'] ?? null) !== $parentKey && RoomCeilingReplacement::work($row) === $work) {
-                $this->reject();
+                $this->reject('overlapping_work');
             }
         }
         $capture = $this->models->snapshotForPlanning((int) $session->organization_id, (int) $session->project_id, (int) $session->id, 10001);
@@ -51,19 +51,22 @@ final readonly class RoomCeilingReplacementPreview
                 $identities[$identity['entity_id']][] = $identity;
             }
         }
-        if ($sources === [] || array_keys($sources) !== RoomCeilingScope::roomIds($snapshot) || count($sources) > 128 || count($snapshot->facts) > 10000) {
-            $this->reject();
+        if ($sources === [] || array_keys($sources) !== RoomCeilingScope::roomIds($snapshot)) {
+            $this->reject('room_dimensions');
+        }
+        if (count($sources) > 128 || count($snapshot->facts) > 10000) {
+            $this->reject('capacity');
         }
         $decisions = $this->models->decisionsForSelectedFacts((int) $session->organization_id, (int) $session->project_id,
             (int) $session->id, NativeQuantityDecisionInputs::factIds($snapshot));
         if (count($decisions) + 2 * count($sources) + 3 > 256) {
-            $this->reject();
+            $this->reject('calculation_capacity');
         }
         $rooms = [];
         $facts = array_column($snapshot->facts, null, 'id');
         foreach ($sources as $id => $source) {
             if (count($identities[$id] ?? []) !== 1) {
-                $this->reject();
+                $this->reject('room_identity');
             }
             $request = ['quantity_id' => 'quantity:room-ceiling-preview:'.$id, 'formula_identity' => 'floor_area', 'formula_version' => '1',
                 'entity_id' => $id, 'operands' => ['length' => $source['dimensions']['length']['fact_id'], 'width' => $source['dimensions']['width']['fact_id']],
@@ -73,7 +76,7 @@ final readonly class RoomCeilingReplacementPreview
                     'rule_version' => RoomCeilingScope::CONTRACT, 'rule_hash' => hash('sha256', RoomCeilingScope::CONTRACT)]];
             $result = $this->factory->derive($snapshot, $decisions, $request);
             if (! $result->isReady() || $result->quantity === null || BigDecimal::of($result->quantity->value)->isLessThanOrEqualTo(0)) {
-                $this->reject();
+                $this->reject('room_calculation');
             }
             $values = array_column($result->quantity->operands, 'value', 'role');
             $dimensions = [];
@@ -91,11 +94,11 @@ final readonly class RoomCeilingReplacementPreview
         try {
             FrozenWorkItemLimit::assertCount(count($rows) + $additional, 1000);
         } catch (\InvalidArgumentException) {
-            $this->reject();
+            $this->reject('capacity');
         }
         $reserve = 4 + 2 * (count($rows) + $additional) + 3 * (count($rows) + $additional) + 4 * count($rooms);
         if (count($snapshot->facts) + $reserve > 10000) {
-            $this->reject();
+            $this->reject('capacity');
         }
         $preview = ['contract_version' => RoomCeilingReplacement::CONTRACT, 'state_version' => (int) $session->state_version,
             'parent_work_item_key' => $parentKey, 'work_key' => $work, 'parent_name' => $parent['name'] ?? $work,
@@ -112,8 +115,8 @@ final readonly class RoomCeilingReplacementPreview
         return [...$preview, 'preview_fingerprint' => hash('sha256', CanonicalPipelineJson::encode($binding))];
     }
 
-    private function reject(): never
+    private function reject(string $reason = 'unavailable'): never
     {
-        throw ValidationException::withMessages(['ceiling' => trans_message('estimate_ceiling.unavailable')]);
+        throw ValidationException::withMessages(['ceiling' => trans_message('estimate_ceiling.'.$reason)]);
     }
 }

@@ -20,6 +20,9 @@ class ResolveRegionalPrice
 
     public function handle(array $resource, array $regionalContext): PriceSnapshotData
     {
+        if (array_key_exists('catalog_price_selection', $resource['normative_ref'] ?? [])) {
+            return (new ResolveCatalogueResourcePrice)->handle($resource);
+        }
         $embeddedPrice = $resource['normative_ref']['embedded_price'] ?? null;
         if (is_array($embeddedPrice)) {
             return $this->embeddedCatalogPrice($resource, $regionalContext, $embeddedPrice);

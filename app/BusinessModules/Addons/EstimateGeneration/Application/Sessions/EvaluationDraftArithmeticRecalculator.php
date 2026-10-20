@@ -79,6 +79,8 @@ final readonly class EvaluationDraftArithmeticRecalculator
             }
         }
         $regional = $draft['regional_context'] ?? [];
+        $resourcePrices = $universal && $session !== null ? app(\App\BusinessModules\Addons\EstimateGeneration\Pricing\AcceptedResourceCataloguePrices::class) : null;
+        $resourcePriceContext = $resourcePrices !== null ? $resourcePrices->context($session, $snapshot) : [];
         foreach ($draft['local_estimates'] ?? [] as $estimateIndex => $estimate) {
             foreach ($estimate['sections'] ?? [] as $sectionIndex => $section) {
                 foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
@@ -147,7 +149,10 @@ final readonly class EvaluationDraftArithmeticRecalculator
 
                         continue;
                     }
-                    if ($actor !== null && $session !== null && isset($sessionInput['price_selections'][$item['key']])) {
+                    if ($resourcePrices !== null && $session !== null && ! isset($sessionInput['price_selections'][$item['key']])
+                        && $resourcePrices->uses($session, $item, $resourcePriceContext)) {
+                        unset($item['commercial_price_snapshot']);
+                    } elseif ($actor !== null && $session !== null && isset($sessionInput['price_selections'][$item['key']])) {
                         $price = $this->commercial->resolve($actor, $session, $item, $snapshot, $decisions);
                         if ($price === null) {
                             unset($item['commercial_price_snapshot'], $item['price_snapshot'], $item['evaluation_price_basis_quantity']);
@@ -185,8 +190,13 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         if ($resolved !== null) {
                             $resolved['normative_match']['selected_by_user'] = $item['normative_match']['selected_by_user'] ?? false;
                             $item = $resolved;
-                            $item = $this->pricing->price([$item], $regional, $context)[0];
-                            $item['evaluation_price_basis_quantity'] = $item['quantity'];
+                            $withResourcePrices = $resourcePrices !== null ? $resourcePrices->apply($session, $item, $resourcePriceContext) : $item;
+                            if ($withResourcePrices === null) {
+                                $item = $this->withoutResourceMoney($item);
+                            } else {
+                                $item = $this->pricing->price([$withResourcePrices], $regional, $context)[0];
+                                $item['evaluation_price_basis_quantity'] = $item['quantity'];
+                            }
                         } elseif ($universal || $changed) {
                             $item = $this->withoutPrice($item);
                             $item['pricing_status'] = 'not_calculated';
@@ -211,6 +221,24 @@ final readonly class EvaluationDraftArithmeticRecalculator
         foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'labor_cost', 'machinery_cost', 'other_cost'] as $money) {
             $item[$money] = null;
         }
+
+        return $item;
+    }
+
+    private function withoutResourceMoney(array $item): array
+    {
+        unset($item['price_snapshot'], $item['evaluation_price_basis_quantity'], $item['accepted_evaluation_price_snapshot'], $item['accepted_source_money']);
+        foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'labor_cost', 'machinery_cost', 'other_cost'] as $money) {
+            $item[$money] = null;
+        }
+        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
+            foreach ($item[$group] ?? [] as $index => $resource) {
+                $item[$group][$index]['unit_price'] = null;
+                $item[$group][$index]['total_price'] = null;
+            }
+        }
+        $item['pricing_status'] = 'not_calculated';
+        $item['pricing_blocker'] = 'selected_resource_price_source_changed';
 
         return $item;
     }

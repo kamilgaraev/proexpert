@@ -16,13 +16,69 @@ final class CataloguePriceSnapshotReader
 {
     public function read(int $organizationId, string $reference, ?DateTimeImmutable $businessDate = null): ?array
     {
-        if ($organizationId < 1 || preg_match('/\A(catalog|work_type):([1-9][0-9]*)\z/', $reference, $identity) !== 1) {
+        return $this->readMany($organizationId, [$reference], $businessDate)[$reference] ?? null;
+    }
+
+    public function readMany(int $organizationId, array $references, ?DateTimeImmutable $businessDate = null): array
+    {
+        return $this->readBatch($organizationId, $references, $businessDate, false);
+    }
+
+    public function readMaterialPrices(int $organizationId, array $references, ?DateTimeImmutable $businessDate = null): array
+    {
+        return $this->readBatch($organizationId, $references, $businessDate, true);
+    }
+
+    private function readBatch(int $organizationId, array $references, ?DateTimeImmutable $businessDate, bool $materialsOnly): array
+    {
+        if ($organizationId < 1 || count($references) > 10000) {
             throw new InvalidArgumentException('catalog_price_reference_invalid');
         }
-        $catalog = $identity[1] === 'catalog';
-        $record = ($catalog ? EstimatePositionCatalog::query() : WorkType::query())
-            ->where('organization_id', $organizationId)->where('is_active', true)->with('measurementUnit')->find((int) $identity[2]);
-        if ($record === null || $record->measurementUnit === null
+        $ids = [];
+        foreach ($references as $reference) {
+            if (! is_string($reference) || preg_match('/\A(catalog|work_type):([1-9][0-9]*)\z/', $reference, $identity) !== 1) {
+                throw new InvalidArgumentException('catalog_price_reference_invalid');
+            }
+            $ids[$identity[1]][(int) $identity[2]] = (int) $identity[2];
+        }
+        $prices = [];
+        foreach ($ids as $type => $recordIds) {
+            if ($materialsOnly && $type !== 'catalog') {
+                continue;
+            }
+            foreach (array_chunk(array_values($recordIds), 500) as $chunk) {
+                $query = ($type === 'catalog' ? EstimatePositionCatalog::query() : WorkType::query())
+                    ->where('organization_id', $organizationId)->where('is_active', true)->with('measurementUnit')->whereIn('id', $chunk);
+                if ($materialsOnly) {
+                    $query->where('item_type', 'material');
+                }
+                $records = $query->get();
+                foreach ($records as $record) {
+                    $reference = $type.':'.$record->id;
+                    $price = $this->project($organizationId, $reference, $record, $businessDate);
+                    if ($price !== null) {
+                        if ($materialsOnly) {
+                            $price['catalogue_product_code'] = (string) $record->code;
+                            $price['source_hash_contract'] = 'catalogue-material-price:v1';
+                            $price['base_source_hash'] = $price['source_hash'];
+                            $price['source_hash'] = hash('sha256', CanonicalPipelineJson::encode([
+                                'contract' => $price['source_hash_contract'], 'base_source_hash' => $price['base_source_hash'],
+                                'catalogue_product_code' => $price['catalogue_product_code'], 'catalogue_metadata' => $record->metadata ?? [],
+                            ]));
+                        }
+                        $prices[$reference] = $price;
+                    }
+                }
+            }
+        }
+
+        return $prices;
+    }
+
+    private function project(int $organizationId, string $reference, EstimatePositionCatalog|WorkType $record, ?DateTimeImmutable $businessDate): ?array
+    {
+        $catalog = str_starts_with($reference, 'catalog:');
+        if ($record->measurementUnit === null
             || ($record->measurementUnit->organization_id !== null && (int) $record->measurementUnit->organization_id !== $organizationId)) {
             return null;
         }

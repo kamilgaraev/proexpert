@@ -279,9 +279,16 @@ class EstimatePricingService
 
     private function snapshot(array $resourceSnapshots, BigDecimal $workCost, BigDecimal $total): PriceSnapshotData
     {
-
-        $first = $resourceSnapshots[0];
+        $catalogResources = array_filter($resourceSnapshots, static fn (array $snapshot): bool => $snapshot['source_type'] === 'catalog_resource');
+        $nativeResources = array_values(array_filter($resourceSnapshots, static fn (array $snapshot): bool => $snapshot['source_type'] !== 'catalog_resource'));
+        $mixed = $catalogResources !== [];
+        $first = $nativeResources[0] ?? $resourceSnapshots[0];
         foreach ($resourceSnapshots as $snapshot) {
+            if ($snapshot['currency'] !== $first['currency']) {
+                throw MissingRegionalPrice::forResource(0, 'resource_snapshot_context_mismatch');
+            }
+        }
+        foreach ($nativeResources as $snapshot) {
             if ($snapshot['region_id'] !== $first['region_id']
                 || $snapshot['zone_id'] !== $first['zone_id']
                 || $snapshot['period_id'] !== $first['period_id']
@@ -295,14 +302,16 @@ class EstimatePricingService
         foreach ($resourceSnapshots as $resourceSnapshot) {
             $base = $base->plus($resourceSnapshot['final_amount']);
         }
-        $manifest = self::canonicalEvidenceManifest($resourceSnapshots);
+        $manifest = $mixed
+            ? \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($this->withoutCaptureTimes($resourceSnapshots))
+            : self::canonicalEvidenceManifest($resourceSnapshots);
 
         return new PriceSnapshotData(
-            regionId: $first['region_id'],
-            zoneId: $first['zone_id'],
-            periodId: $first['period_id'],
-            versionId: $first['version_id'],
-            sourceType: 'regional_resource_aggregate',
+            regionId: $mixed ? 0 : $first['region_id'],
+            zoneId: $mixed ? 0 : $first['zone_id'],
+            periodId: $mixed ? 0 : $first['period_id'],
+            versionId: $mixed ? 0 : $first['version_id'],
+            sourceType: $mixed ? 'mixed_resource_aggregate' : 'regional_resource_aggregate',
             sourceReference: 'sha256:'.hash('sha256', $manifest),
             baseAmount: (string) $base->toScale(2, RoundingMode::HalfUp),
             coefficients: [
@@ -313,6 +322,18 @@ class EstimatePricingService
             currency: $first['currency'],
             capturedAt: now()->toIso8601String(),
         );
+    }
+
+    private function withoutCaptureTimes(array $value): array
+    {
+        unset($value['captured_at']);
+        foreach ($value as $key => $child) {
+            if (is_array($child)) {
+                $value[$key] = $this->withoutCaptureTimes($child);
+            }
+        }
+
+        return $value;
     }
 
     private static function canonicalEvidenceManifest(array $resourceSnapshots): string
