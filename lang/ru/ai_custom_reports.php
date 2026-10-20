@@ -19,6 +19,7 @@ return [
     'pdf_row_limit' => 'Для PDF выберите до 300 строк или используйте XLSX для полной таблицы.',
     'snapshot_source' => 'Данные отчёта',
     'counterparty_name' => 'Контрагент',
+    'self_execution' => 'Собственные силы',
     'current_project' => 'Текущий проект',
     'assignee_id' => 'Идентификатор ответственного',
     'work_unit' => 'Единица измерения',
