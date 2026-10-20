@@ -59,7 +59,7 @@ final readonly class EvaluationCompositionPreview
             }
         }
         $capture = $this->models->snapshotForPlanning((int) $session->organization_id, (int) $session->project_id, (int) $session->id, 10001);
-        if (count($capture['snapshot']->facts) > 10000) {
+        if (count($capture['snapshot']->facts) >= 10000) {
             throw ValidationException::withMessages(['composition' => trans_message('estimate_composition.unavailable')]);
         }
         $binding = ['contract' => self::CONTRACT, 'catalog_version' => SupplementaryWorkCatalog::VERSION,

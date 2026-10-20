@@ -293,6 +293,46 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         $composition->show($actor, $session->project_id, $session->id);
     }
 
+    public function test_composition_reserves_one_fact_before_offering_or_accepting_work(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        app(UserEvaluationChoiceWriter::class)->write($actor, $session, 'capacity-fixture', 'evaluation_answer',
+            ['answer_kind' => 'capacity_fixture'], 'Проверка предельной ёмкости модели', (string) Str::uuid());
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $snapshot = $capture['snapshot'];
+        $bounded = static fn (int $count): array => [...$capture, 'snapshot' => new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot(
+            $snapshot->entities, array_fill(0, $count, $snapshot->facts[0]), $snapshot->evidence, $snapshot->conflicts)];
+        $modelReader = Mockery::mock(ProjectModelRepository::class);
+        $modelReader->shouldReceive('snapshotForPlanning')->times(4)->with(...[...$scope, 10001])
+            ->andReturn($bounded(9999), $bounded(10000), $bounded(10000), $bounded(10001));
+        $preview = new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationCompositionPreview($modelReader,
+            app(BuildMostEstimateDraft::class), app(EvaluationInputFingerprint::class),
+            new \App\BusinessModules\Addons\EstimateGeneration\Planning\SupplementaryWorkCatalog);
+        $composition = $this->app->makeWith(EvaluationWorkComposition::class, ['preview' => $preview]);
+        $offered = $composition->show($actor, $session->project_id, $session->id);
+        self::assertCount(11, $offered['candidates']);
+        $raw = $session->fresh()->getRawOriginal();
+        $outbound = count(Http::recorded());
+        foreach (['preview', 'accept', 'overflow'] as $action) {
+            try {
+                if ($action === 'accept') {
+                    $composition->accept($actor, $session->project_id, $session->id, $this->input($offered, ['roof.rafters']));
+                } else {
+                    $composition->show($actor, $session->project_id, $session->id);
+                }
+                self::fail('Composition exceeded the available fact capacity: '.$action);
+            } catch (ValidationException) {
+                self::assertSame($raw, $session->fresh()->getRawOriginal());
+                self::assertCount(1, $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts);
+            }
+        }
+        self::assertCount($outbound, Http::recorded());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+    }
+
     private function fixture(): array
     {
         Http::preventStrayRequests();
