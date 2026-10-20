@@ -256,12 +256,21 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         }
     }
 
-    public function test_both_current_scopes_are_read_and_a_second_request_cannot_reuse_their_coverage(): void
+    public static function currentScopeComparisons(): array
     {
-        $response = $this->ask([$this->arguments($this->project->id), $this->arguments(null)]);
+        return [['Сравни все акты организации с выбранным проектом'],
+            ['Сравни выбранный проект со всеми актами организации'],
+            ['Сопоставь выбранный проект со всеми актами нашей организации']];
+    }
+
+    #[DataProvider('currentScopeComparisons')]
+    public function test_both_current_scopes_are_read_and_a_second_request_cannot_reuse_their_coverage(string $question): void
+    {
+        $this->act($this->secondProject);
+        $response = $this->ask([$this->arguments($this->project->id), $this->arguments(null)], $question);
         self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
-        self::assertSame([1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
-        $response = $this->ask([$this->arguments($this->project->id)]);
+        self::assertSame([1, 2], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+        $response = $this->ask([$this->arguments($this->project->id)], $question);
         self::assertTrue($response['message']['metadata']['needs_clarification']);
         self::assertSame([], $response['message']['metadata']['source_refs']);
         self::assertStringContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);

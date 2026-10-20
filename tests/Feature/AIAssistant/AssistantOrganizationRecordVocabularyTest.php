@@ -14,7 +14,9 @@ final class AssistantOrganizationRecordVocabularyTest extends TestCase
     public function test_registered_child_entity_names_request_the_whole_organization(): void
     {
         foreach (['Все строки нарядов организации', 'Все события закупки организации',
-            'Все активные строки нарядов нашей организации', 'По всем событиям закупки организации'] as $question) {
+            'Все активные строки нарядов нашей организации', 'По всем событиям закупки организации',
+            'Подготовь отчёт со всеми строками нарядов организации',
+            'Подготовь отчёт со всеми событиями закупки организации'] as $question) {
             self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
             self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
             $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'active']]]]];
@@ -40,13 +42,23 @@ final class AssistantOrganizationRecordVocabularyTest extends TestCase
         foreach (array_keys($registered) as $type) {
             self::assertIsString($labels[$type] ?? null, $type);
             $label = $labels[$type];
-            $question = 'Покажи все '.$label.' организации';
-            if (! AssistantRequestProjectScope::organizationWide($question)
-                || AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true) !== ['project_id' => null]) {
-                $failures[] = $type.': '.$label;
+            foreach (['Покажи все '.$label.' организации', 'Отчёт со всеми '.$label.' организации'] as $question) {
+                if (! AssistantRequestProjectScope::organizationWide($question)
+                    || AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true) !== ['project_id' => null]) {
+                    $failures[] = $type.': '.$question;
+                }
+            }
+            $comparison = 'Сравни выбранный проект со всеми '.$label.' организации';
+            if (! AssistantRequestProjectScope::organizationWide($comparison)
+                || AssistantRequestProjectScope::fromPlan(['request' => ['message' => $comparison]])->requested
+                || AssistantRequestProjectScope::bindSearchScope($comparison, ['project_id' => null], 52, true) !== ['project_id' => null]
+                || AssistantRequestProjectScope::bindSearchScope($comparison, ['project_id' => 52], 52, true) !== ['project_id' => 52]) {
+                $failures[] = 'comparison '.$type.': '.$comparison;
             }
             foreach (['Не показывай все '.$label.' организации', 'Покажи сведения проекта «Все '.$label.' организации»',
-                'Покажи сведения проекта Все '.$label.' организации'] as $negative) {
+                'Покажи сведения проекта Все '.$label.' организации',
+                'Покажи сведения проекта «Со всеми '.$label.' организации»',
+                'Покажи сведения проекта Со всеми '.$label.' организации'] as $negative) {
                 if (AssistantRequestProjectScope::organizationWide($negative)) {
                     $failures[] = 'negative '.$type.': '.$negative;
                 }

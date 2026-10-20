@@ -10,6 +10,29 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_instrumental_organization_records_preserve_both_comparison_scopes(): void
+    {
+        foreach (['со всеми актами организации', 'со всеми договорами организации', 'со всеми нашими журналами организации',
+            'со всеми сотрудниками организации', 'со всеми записями времени организации', 'со всеми поставками организации'] as $records) {
+            $question = 'Сравни выбранный проект '.$records;
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertFalse($scope->requested);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+            self::assertSame(['project_id' => 52], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 52]]];
+            self::assertSame($arguments, $scope->bindReportScope($question, $arguments), $question);
+        }
+    }
+
+    public function test_instrumental_records_inside_literal_project_names_do_not_expand_the_scope(): void
+    {
+        foreach (['Покажи камеры проекта «Со всеми актами организации»', 'Покажи камеры проекта Со всеми актами организации',
+            'Покажи камеры объекта: Со всеми журналами нашей организации'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+        }
+    }
+
     public function test_comparing_values_within_one_explicit_project_does_not_request_organization_comparison(): void
     {
         foreach (['Сравни статусы всех актов организации по проекту 100',

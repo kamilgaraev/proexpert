@@ -8,7 +8,7 @@ final class AssistantOrganizationRecordVocabulary
 {
     public static function normalize(string $question, bool $maskProjectNames = false): string
     {
-        preg_match_all('/(?:«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*")(*SKIP)(*F)|(?<![\pL\pN])(?:по\s+всем|всех|все|вся|всю|всей|всё|весь|всего|всему|всем)(?![\pL\pN])\s+(?:наш(?:и|им|их|а|у|ей|е|его|ему|ем)?\s+)?/iu', $question, $prefixes, PREG_OFFSET_CAPTURE);
+        preg_match_all('/(?:«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*")(*SKIP)(*F)|(?<![\pL\pN])(?:(?:(?:с|со)\s+)?всеми|по\s+всем|всех|все|вся|всю|всей|всё|весь|всего|всему|всем)(?![\pL\pN])\s+(?:наш(?:ими|и|им|их|а|у|ей|е|его|ему|ем)?\s+)?/iu', $question, $prefixes, PREG_OFFSET_CAPTURE);
         if ($prefixes[0] === [] || ! app()->bound('translator')) {
             return $question;
         }
@@ -25,7 +25,9 @@ final class AssistantOrganizationRecordVocabulary
             }
         }
         foreach (array_reverse($prefixes[0]) as [$prefix, $offset]) {
-            $projectName = preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)$/iu', substr($question, 0, $offset)) === 1;
+            $before = substr($question, 0, $offset);
+            $projectName = preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)$/iu', $before) === 1
+                && preg_match('/'.AssistantRequestProjectScope::CURRENT_PROJECT.'\s*:?\s*$/iu', $before) !== 1;
             if ($projectName && ! $maskProjectNames) {
                 continue;
             }
@@ -41,7 +43,8 @@ final class AssistantOrganizationRecordVocabulary
                     continue;
                 }
                 $length = strlen($prefix) + $endOffset + strlen($ending);
-                $question = substr_replace($question, $projectName ? 'текущий' : 'все акты организации', $offset, $length);
+                $relation = preg_match('/^(?:с|со)\s+/iu', $prefix, $match) === 1 ? $match[0] : '';
+                $question = substr_replace($question, $projectName ? 'текущий' : $relation.'все акты организации', $offset, $length);
                 break;
             }
         }
