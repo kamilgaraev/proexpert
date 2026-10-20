@@ -309,6 +309,15 @@ final class OpeningScopeEvaluationPostgresTest extends EstimateGenerationCanonic
             'key' => 'change', 'type' => 'opening', 'existing_entity_id' => $window,
             'parameters' => ['width' => ['value' => '1.2', 'unit' => 'm', 'basis' => 'measurement']],
         ]]]);
+        $staleSystem = $byWork['openings.windows'];
+        $staleSystem['metadata']['opening_system']['scope_fact_version']++;
+        try {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\CurrentOpeningSystemProofGuard::class)->assertCurrent($session->fresh(), $staleSystem);
+            self::fail('Stale opening product accepted for manual search.');
+        } catch (ValidationException $error) {
+            self::assertSame([trans_message('estimate_opening.system_invalid')], $error->errors()['work_item_key']);
+            self::assertStringNotContainsString('estimate_opening.', $error->errors()['work_item_key'][0]);
+        }
         try {
             DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent(...[...$scope, $draft]));
             self::fail('Stale opening area accepted for application.');

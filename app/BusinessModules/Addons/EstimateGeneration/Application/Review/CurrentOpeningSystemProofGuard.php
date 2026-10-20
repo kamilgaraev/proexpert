@@ -33,7 +33,7 @@ final readonly class CurrentOpeningSystemProofGuard
             $snapshot = GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
                 : GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
             if (count($snapshot->facts) > 10000 || ! OpeningSystemScope::permits($item, OpeningSystemScope::select($snapshot, $decisions, $documentVersions))) {
-                throw ValidationException::withMessages(['work_item_key' => [trans_message('estimate_opening.invalid_system')]]);
+                throw ValidationException::withMessages(['work_item_key' => [trans_message('estimate_opening.system_invalid')]]);
             }
         });
     }
