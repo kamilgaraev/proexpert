@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagExpectedSourceProjection;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
@@ -355,6 +356,95 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         self::assertSame(0, $summary['rag_source_batches_dropped_count']);
         self::assertCount(2, $this->policy->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate));
         self::assertSame([$execution], $metrics->summary()['rag_source_batches']);
+    }
+
+    public function test_expected_actor_counts_measure_real_batches_and_preserve_full_proof_parity(): void
+    {
+        $this->streamingCounterFixture();
+        foreach (RagSource::query()->where('organization_id', $this->organization->id)->get() as $source) {
+            $this->expected($this->organization->id, $this->visible->id, $source->source_type, $source->entity_type, (int) $source->entity_id);
+        }
+        $projection = new RagExpectedSourceProjection(Mockery::mock(RagIndexer::class));
+        $types = ['file_document', 'estimate'];
+        $generation = '00000000-0000-4000-8000-000000000001';
+        $fullProof = null;
+        $full = $projection->actorCounts($this->organization->id, $this->actor, $this->policy, $types, $generation, proof: $fullProof);
+        self::assertCount(2, $fullProof);
+        $normalize = static function (array $counts): array {
+            $result = [];
+            foreach ($counts as $type => $row) { $result[$type] = [(int) $row->expected_count, (int) $row->indexed_count, (string) $row->pending_since]; }
+            ksort($result);
+
+            return $result;
+        };
+        $metrics = $this->streamingMetrics();
+        $proof = ['previous-proof'];
+        $counts = $projection->actorCounts($this->organization->id, $this->actor, $this->policy, $types, $generation, proof: $proof, collectProof: false);
+        self::assertSame($normalize($full), $normalize($counts));
+        self::assertSame(['estimate' => 1, 'file_document' => 1], array_map(static fn (array $row): int => $row[0], $normalize($counts)));
+        self::assertNull($proof);
+        $batches = $metrics->summary()['rag_source_batches'] ?? [];
+        self::assertCount(2, $batches);
+        self::assertSame(['expected', 'expected'], array_column($batches, 'mode'));
+        self::assertSame([true, true], array_column($batches, 'completed'));
+        self::assertSame([true, true], array_column($batches, 'candidate_identities_complete'));
+        self::assertSame([1, 1], array_column($batches, 'sql_count'));
+        self::assertSame([
+            [['entity_type' => 'assistant_document', 'source_type' => 'file_document']],
+            [['entity_type' => 'estimate', 'source_type' => 'estimate']],
+        ], array_column($batches, 'candidate_identities'));
+    }
+
+    public function test_expected_batch_consumer_keeps_array_api_and_stops_after_real_query_failure(): void
+    {
+        $this->streamingCounterFixture();
+        foreach (RagSource::query()->where('organization_id', $this->organization->id)->get() as $source) {
+            $this->expected($this->organization->id, $this->visible->id, $source->source_type, $source->entity_type, (int) $source->entity_id);
+        }
+        $query = static fn () => RagExpectedSource::query()->where('generation', '00000000-0000-4000-8000-000000000001');
+        $columns = ['ai_rag_expected_sources.*'];
+        $aggregate = static fn ($visible) => DB::query()->fromSub($visible, 'expected')->groupBy('expected.source_type')
+            ->selectRaw('expected.source_type, COUNT(*) AS expected_count');
+        $expected = [];
+        $batches = $this->policy->aggregateExpectedSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate);
+        self::assertCount(2, $batches);
+        foreach ($batches as $batch) { foreach ($batch->get() as $row) { $expected[$row->source_type] = (int) $row->expected_count; } }
+        self::assertSame(['file_document' => 1, 'estimate' => 1], $expected);
+        $consumer = new class
+        {
+            public array $counts = [];
+
+            public function consume(\Illuminate\Database\Query\Builder $batch): void
+            {
+                foreach ($batch->get() as $row) { $this->counts[$row->source_type] = (int) $row->expected_count; }
+            }
+        };
+        self::assertCount(2, $this->policy->aggregateExpectedSourceIdentityBatches($query(), $this->actor, $this->organization->id,
+            $columns, $aggregate, consume: [$consumer, 'consume']));
+        self::assertSame($expected, $consumer->counts);
+        $metrics = $this->streamingMetrics();
+        $failure = new \RuntimeException('expected_batch_query_failure');
+        $executed = [];
+        $compilationBeforeConsumer = null;
+        try {
+            $this->policy->aggregateExpectedSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate,
+                consume: static function ($batch) use ($metrics, $failure, &$executed, &$compilationBeforeConsumer): void {
+                    $compilationBeforeConsumer = $metrics->summary()['processing_phases']['rag_acl_batch_compile'];
+                    foreach ($batch->get() as $row) { $executed[$row->source_type] = (int) $row->expected_count; }
+                    throw $failure;
+                });
+            self::fail('Expected consumer exception must propagate.');
+        } catch (\RuntimeException $actual) { self::assertSame($failure, $actual); }
+        self::assertSame(['file_document' => 1], $executed);
+        $summary = $metrics->summary();
+        self::assertSame($compilationBeforeConsumer, $summary['processing_phases']['rag_acl_batch_compile']);
+        self::assertSame(1, $summary['processing_phases']['rag_acl_batch_compile']['count']);
+        self::assertNotContains('estimate', array_column($summary['rag_entity_builds'], 'entity_type'));
+        self::assertCount(1, $summary['rag_source_batches']);
+        self::assertSame('expected', $summary['rag_source_batches'][0]['mode']);
+        self::assertFalse($summary['rag_source_batches'][0]['completed']);
+        self::assertSame(1, $summary['rag_source_batches'][0]['sql_count']);
+        self::assertNotNull($this->policy->entityQuery($this->actor, $this->organization->id, 'estimate'));
     }
 
     public function test_counts_only_coverage_stops_before_compiling_the_next_batch(): void
