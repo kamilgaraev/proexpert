@@ -34,6 +34,8 @@ class RateCoefficientDTO
             'applies_to' => $this->applies_to->value,
             'scope' => $this->scope->value,
             'is_active' => $this->is_active,
+            'valid_from' => $this->valid_from?->toDateString(),
+            'valid_to' => $this->valid_to?->toDateString(),
         ];
 
         if ($this->organization_id !== null) {
@@ -45,16 +47,10 @@ class RateCoefficientDTO
         if ($this->description !== null) {
             $data['description'] = $this->description;
         }
-        if ($this->valid_from !== null) {
-            $data['valid_from'] = $this->valid_from->toDateString();
-        }
-        if ($this->valid_to !== null) {
-            $data['valid_to'] = $this->valid_to->toDateString();
-        }
         if ($this->conditions !== null) {
             $data['conditions'] = $this->conditions; // json_encode будет в модели/репозитории при сохранении
         }
 
         return $data;
     }
-} 
+}
