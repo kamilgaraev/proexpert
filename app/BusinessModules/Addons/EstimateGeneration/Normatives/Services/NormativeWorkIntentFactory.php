@@ -20,6 +20,16 @@ final class NormativeWorkIntentFactory
 
     public function intent(array $item, array $context, string $datasetVersion): WorkIntentData
     {
+        $openingSystemRequired = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander::isOpeningWork($item);
+        $openingSystem = $item['metadata']['opening_system']['system'] ?? null;
+        $openingSystem = is_string($openingSystem) && OpeningSystemSpecification::searchText($openingSystem) !== null ? $openingSystem : null;
+        if ($openingSystemRequired) {
+            $item['name'] = OpeningSystemSpecification::searchText($openingSystem) ?? 'Установка изделия в проёме';
+            $item['normative_search_text'] = $item['name'];
+            $item['description'] = '';
+            unset($item['work_intent'], $item['specialization_scenario'], $item['specialization_evidence'], $item['normative_rate_code']);
+            unset($item['metadata']['specialization_scenario'], $item['metadata']['material_assumption'], $item['metadata']['material_scenario_work_key']);
+        }
         $recorded = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : [];
         $this->classifier ??= app(WorkIntentClassifier::class);
         $intent = $this->classifier->classify($item, $context);
@@ -70,6 +80,9 @@ final class NormativeWorkIntentFactory
             $classified['preferred_section_prefixes'] ?? [],
             static fn (mixed $section): bool => is_string($section) && $section !== '',
         ));
+        if ($openingSystemRequired) {
+            $preferredSections = [];
+        }
 
         return new WorkIntentData(
             (int) $context['organization_id'], (int) $context['project_id'], (int) $context['session_id'],
@@ -86,6 +99,8 @@ final class NormativeWorkIntentFactory
             (string) ($classified['object'] ?? ''),
             $specializationEvidence,
             $specializationScenario,
+            $openingSystem,
+            $openingSystemRequired,
         );
     }
 

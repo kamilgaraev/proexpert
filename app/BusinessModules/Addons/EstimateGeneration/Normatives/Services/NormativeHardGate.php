@@ -50,6 +50,13 @@ final class NormativeHardGate
     private function reasons(WorkIntentData $intent, NormativeCandidateData $candidate): array
     {
         $reasons = [];
+        if ($intent->openingSystemRequired) {
+            if ($intent->openingSystem === null) {
+                $reasons[] = 'opening_system_missing';
+            } elseif (! OpeningSystemSpecification::compatible($intent->openingSystem, implode(' ', [$candidate->name, ...$candidate->workComposition]))) {
+                $reasons[] = 'opening_system_mismatch';
+            }
+        }
         if ($candidate->canonicalUnit === null || $candidate->canonicalUnit === '') {
             $reasons[] = 'unit_unknown';
         } elseif (! NormativeUnitNormalizer::compatible($intent->canonicalUnit, $candidate->canonicalUnit)) {

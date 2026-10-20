@@ -12,6 +12,29 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkIntentFactoryTest extends TestCase
 {
+    public function test_per_opening_product_replaces_generic_pvc_intent_without_changing_the_selected_item(): void
+    {
+        $factory = new NormativeWorkIntentFactory(new WorkIntentClassifier(new NormativeScopeRuleCatalog));
+        $item = ['key' => 'opening-work:steel', 'name' => 'Окно ПВХ', 'unit' => 'm2', 'normative_rate_code' => '10-01-034-01',
+            'work_intent' => ['material' => 'pvc'], 'metadata' => ['generation_source' => 'canonical_opening_scope',
+                'scope_entity_id' => 'opening:1', 'opening_system' => ['system' => 'steel_glazed_window'],
+                'specialization_scenario' => (new ResidentialMaterialScenarioCatalog)->issue('openings.windows', 'residential'),
+                'material_scenario_work_key' => 'openings.windows']];
+        $original = $item;
+        $context = ['organization_id' => 1, 'project_id' => 2, 'session_id' => 3, 'object_type' => 'house',
+            'applicability_date' => '2026-10-20', 'source_refs' => ['doc:1']];
+        $intent = $factory->intent($item, $context, 'v1');
+        self::assertSame('steel_glazed_window', $intent->openingSystem);
+        self::assertTrue($intent->openingSystemRequired);
+        self::assertStringContainsString('стальных', $intent->intent);
+        self::assertNull($intent->specializationScenario);
+        self::assertNull($intent->requestedNormativeCode);
+        self::assertSame([], $intent->normativeSections);
+        self::assertSame($original, $item);
+        unset($item['metadata']['opening_system']);
+        self::assertNull($factory->intent($item, $context, 'v1')->openingSystem);
+    }
+
     public function test_building_object_type_comes_from_plan_context_not_work_structure(): void
     {
         $intent = (new NormativeWorkIntentFactory)->intent([

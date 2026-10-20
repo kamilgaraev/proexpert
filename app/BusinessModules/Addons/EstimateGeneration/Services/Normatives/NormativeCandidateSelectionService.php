@@ -72,6 +72,9 @@ class NormativeCandidateSelectionService
                     }
 
                     $found = true;
+                    if (\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander::isOpeningWork($workItem)) {
+                        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\CurrentOpeningSystemProofGuard::class)->assertCurrent($session, $workItem);
+                    }
                     $this->assertWorkItemCanSelectNorm($workItem);
                     $this->assertCandidateWasOffered($workItem, $normId, $allowCatalogSelection);
                     $originalWorkItem = $workItem;
