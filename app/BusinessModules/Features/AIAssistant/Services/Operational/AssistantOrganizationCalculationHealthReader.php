@@ -25,7 +25,7 @@ final readonly class AssistantOrganizationCalculationHealthReader extends Assist
     public static function hasIntent(string $query): bool
     {
         return preg_match('/(?:управленческ|расч[её]тн)[а-яё]*\s+данн|витрин[а-яё]*\s+(?:управленческ[а-яё]*\s+)?данн/iu', $query) === 1
-            && preg_match('/подготов|запуск|запуска|расч[её]т|пересч[её]т|актуальн|состоян|статус|успеш|ошиб/iu', $query) === 1
+            && preg_match('/подготовк|запуск|актуальност|состояни|статус|ошиб|(?:актуальн|подготовлен)[а-яё]*\s+ли|успешн[а-яё]*\s+(?:расч[её]т(?!н)|запуск)/iu', $query) === 1
             && preg_match('/бюджетирован|финансов[а-яё]*\s+центр|управленческ|витрин/iu', $query) === 1;
     }
 
