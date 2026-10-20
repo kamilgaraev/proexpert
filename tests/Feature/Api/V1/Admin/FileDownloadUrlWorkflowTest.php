@@ -18,9 +18,11 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Auth\WebAuthTokenService;
 use App\Services\Storage\FileService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
@@ -212,15 +214,28 @@ final class FileDownloadUrlWorkflowTest extends TestCase
             }
         });
         $reference = ['entity_type' => 'project', 'entity_id' => (string) $project->id];
+        $previousRequest = app('request');
+        $accessRequest = Request::create('/api/v1/admin/personal-files/'.$personal->id.'/download-url', 'GET');
+        $accessMetrics = new ApiQueryMetrics(true);
+        $accessRequest->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $accessMetrics);
+        app()->instance('request', $accessRequest);
         try {
             app(AssistantReportAccessService::class)->assertReferences($context->user, $context->organization->id, [$reference, $reference], ['projects']);
             self::fail('Revocation between report references must deny access.');
         } catch (AccessDeniedHttpException) {
             self::assertSame(2, $referenceReads);
         } finally {
+            app()->instance('request', $previousRequest);
             $watchReferences = false;
             $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
         }
+        $this->assertReportAccessPhases($accessMetrics->summary()['processing_phases']);
+        self::assertGreaterThanOrEqual($referenceReads,
+            $accessMetrics->summary()['processing_phases']['assistant_report_reference_checks']['sql_count']);
+        self::assertLessThanOrEqual($accessMetrics->summary()['sql_count'],
+            $accessMetrics->summary()['processing_phases']['assistant_report_domain_checks']['sql_count']
+            + $accessMetrics->summary()['processing_phases']['assistant_report_reference_checks']['sql_count']);
+        self::assertStringNotContainsString($personal->storage_key, json_encode($accessMetrics->summary(), JSON_THROW_ON_ERROR));
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('disk')->once()->andReturn(Storage::disk('s3'));
         $files->shouldNotReceive('temporaryDownloadUrl');
@@ -241,6 +256,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         foreach ($routes as $route) {
             $response = $this->withHeaders($context->authHeaders())->getJson($route)->assertOk();
             $this->assertDownloadStoragePhases(false, false);
+            $this->assertReportAccessPhases($this->filePhases);
             $url = $response->json('data.download_url');
             self::assertIsString($url);
             self::assertStringStartsWith('/api/v1/admin/ai-assistant/reports/', $url);
@@ -265,6 +281,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
                 }
             }
             self::assertGreaterThan(0, $this->filePhases['assistant_report_access_resolve']['sql_count']);
+            $this->assertReportAccessPhases($this->filePhases);
             self::assertSame(0, $this->filePhases['assistant_report_storage_open']['sql_count']);
             $this->assertDownloadStoragePhases(false, false);
             self::assertSame('report', $download->streamedContent());
@@ -280,6 +297,11 @@ final class FileDownloadUrlWorkflowTest extends TestCase
             DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['required_domains' => json_encode($invalidDomains, JSON_THROW_ON_ERROR)]);
             $this->withHeaders($context->authHeaders())->getJson($downloadUrls[0])->assertForbidden();
             self::assertArrayNotHasKey('assistant_report_storage_open', $this->filePhases);
+            if ($invalidDomains === ['Reports']) {
+                self::assertArrayHasKey('assistant_report_domain_checks', $this->filePhases);
+                self::assertSame(1, $this->filePhases['assistant_report_domain_checks']['count']);
+                self::assertArrayNotHasKey('assistant_report_reference_checks', $this->filePhases);
+            }
         }
         DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['required_domains' => json_encode(['reports', 'projects'], JSON_THROW_ON_ERROR)]);
         $checkedRoutes = [...array_map(fn (string $url): array => [$url, $context->authHeaders()], $routes), ...$downloads];
@@ -296,6 +318,20 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['expires_at' => now()->subSecond()]);
         foreach ($checkedRoutes as [$route, $headers]) {
             $this->withHeaders($headers)->getJson($route)->assertGone();
+        }
+    }
+
+    private function assertReportAccessPhases(array $phases): void
+    {
+        foreach (['assistant_report_domain_checks', 'assistant_report_reference_checks'] as $name) {
+            self::assertArrayHasKey($name, $phases);
+            self::assertSame(1, $phases[$name]['count']);
+            self::assertGreaterThanOrEqual(0, $phases[$name]['sql_count']);
+            foreach ($phases[$name] as $key => $value) {
+                self::assertContains($key, ['count', 'total_ms', 'max_ms', 'sql_count', 'sql_total_ms', 'process_cpu_ms']);
+                self::assertTrue(is_int($value) || is_float($value));
+                self::assertGreaterThanOrEqual(0, $value);
+            }
         }
     }
 
