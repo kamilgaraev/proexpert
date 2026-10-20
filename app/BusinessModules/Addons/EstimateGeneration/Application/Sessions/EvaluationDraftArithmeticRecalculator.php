@@ -40,9 +40,14 @@ final readonly class EvaluationDraftArithmeticRecalculator
         $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
         $documentVersions = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($snapshot);
         $wallScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, $documentVersions);
+        $openingSnapshot = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
+            : \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
+        $openingScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         if ($universal) {
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander)->expand($draft,
                 $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
+            $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander)->expand($draft,
+                $openingSnapshot, $openingScopes, $quantities, 1000, $documentVersions);
         }
         $quantitiesByEntity = [];
         foreach ($quantities as $quantity) {
@@ -77,7 +82,8 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         $workKey = $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'];
                         $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity);
                     }
-                    if (! \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, $wallScopes, $universal)) {
+                    if (! \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, $wallScopes, $universal)
+                        || ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander::permits($item, $openingScopes)) {
                         $quantity = null;
                     }
                     $oldUnit = $item['unit'] ?? null;

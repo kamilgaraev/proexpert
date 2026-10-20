@@ -871,6 +871,102 @@ final class DerivedQuantityFactoryTest extends TestCase
         self::assertSame('output_unit_incompatible', $result->unresolvedInputs[0]['code'] ?? null);
     }
 
+    #[Test]
+    public function opening_area_uses_only_confirmed_dimensions_of_the_selected_opening_and_retains_all_choice_proofs(): void
+    {
+        [$snapshot, $decisions, $request] = $this->openingFixture();
+        $result = (new DerivedQuantityFactory)->derive($snapshot, $decisions, $request, []);
+        self::assertSame('1.652016', $result->quantity?->value);
+        self::assertSame('m2', $result->quantity?->unit);
+        self::assertSame('door', $result->quantity?->snapshotIdentity['opening_scope']['opening_kind']);
+        self::assertSame(['evidence:coverage', 'evidence:height', 'evidence:scope', 'evidence:width'], $result->quantity?->evidenceIds);
+        self::assertSame(['height', 'width'], array_column($result->quantity?->operands ?? [], 'role'));
+    }
+
+    #[Test]
+    public function opening_area_rejects_forged_or_stale_choice_coverage_and_incompatible_dimensions(): void
+    {
+        foreach (['missing_scope', 'forged_scope', 'stale_scope', 'missing_decision', 'wrong_decision_version', 'missing_coverage',
+            'unconfirmed_coverage', 'stale_inventory', 'wrong_count', 'foreign_width', 'wrong_parameter', 'wrong_unit',
+            'candidate_width', 'zero_width', 'negative_width', 'multiple_widths', 'duplicate_identity', 'duplicate_locator', 'zero_actor'] as $variant) {
+            [$snapshot, $decisions, $request] = $this->openingFixture($variant);
+            $request['geometry_coverages'] = [['fact_id' => 'forged', 'evidence_ids' => ['forged']]];
+            $request['snapshot']['opening_scope'] = ['opening_kind' => 'window'];
+            $result = (new DerivedQuantityFactory)->derive($snapshot, $decisions, $request, []);
+            self::assertNull($result->quantity, $variant);
+            self::assertNotEmpty($result->unresolvedInputs, $variant);
+        }
+    }
+
+    #[Test]
+    public function opening_area_rejects_cross_scope_input_before_arithmetic(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Project model snapshot contains a cross-scope record.');
+        $this->openingFixture('foreign_coverage');
+    }
+
+    private function openingFixture(string $variant = ''): array
+    {
+        $wall = $this->entity('wall:opening', 'wall', ['identity' => ['manual_key' => 'wall']]);
+        $opening = $this->entity('opening:one', 'opening', ['identity' => ['manual_key' => 'opening'],
+            'wall_id' => $wall->id, ...($variant === 'duplicate_locator' ? [] : ['geometry_identity' => 'door:one'])]);
+        $foreign = $this->entity('opening:foreign', 'opening', ['identity' => ['manual_key' => 'foreign'], 'wall_id' => $wall->id,
+            ...($variant === 'duplicate_identity' ? ['geometry_identity' => 'door:one'] : [])]);
+        $facts = [
+            $this->fact('wall-length', $wall->id, 'length', '5', 'm', ['evidence:wall']),
+            $this->fact('width', $variant === 'foreign_width' ? $foreign->id : $opening->id,
+                $variant === 'wrong_parameter' ? 'height' : 'width', match ($variant) {
+                    'zero_width' => '0', 'negative_width' => '-1', default => '0.813'
+                },
+                $variant === 'wrong_unit' ? 'm2' : 'm', ['evidence:width'], status: $variant === 'candidate_width' ? 'candidate' : 'confirmed'),
+            $this->fact('height', $opening->id, 'height', '2.032', 'm', ['evidence:height']),
+        ];
+        $evidence = [$this->evidence('evidence:wall', 'wall:length'), $this->evidence('evidence:width', 'door:one'), $this->evidence('evidence:height', 'door:one')];
+        if (in_array($variant, ['duplicate_identity', 'duplicate_locator'], true)) {
+            $facts[] = $this->fact('peer-width', $foreign->id, 'width', '0.813', 'm', ['evidence:peer-width']);
+            $facts[] = $this->fact('peer-height', $foreign->id, 'height', '2.032', 'm', ['evidence:peer-height']);
+            $evidence[] = $this->evidence('evidence:peer-width', 'door:one');
+            $evidence[] = $this->evidence('evidence:peer-height', 'door:one');
+        }
+        $base = $this->snapshot([$wall, $opening, $foreign], $facts, $evidence);
+        $reason = 'Тип двери подтверждён по ведомости чертежа';
+        $scope = ['contract' => \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::CONTRACT,
+            'opening_kind' => 'door', 'entity_fingerprint' => $variant === 'stale_scope' ? str_repeat('f', 64)
+                : \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::entityFingerprint($opening, []),
+            'target_source_version' => self::SOURCE_VERSION, 'decision_id' => 'decision:scope', 'reason' => $reason];
+        $scopeProof = new Evidence('evidence:scope', 1, 2, 3, self::SOURCE_VERSION, 'input:3', 'user_input',
+            nativeReference: 'input_payload.manual_facts', producerName: 'user_input_normalizer', sourceReference: 'input:3',
+            choiceHash: $variant === 'forged_scope' ? str_repeat('f', 64) : hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($scope)));
+        $scopeFact = new Fact('scope', 1, 2, 3, self::SOURCE_VERSION, $opening->id, 'opening_scope', $scope, null, 0.0, 'user_input', 'confirmed', [$scopeProof->id], 1);
+        if ($variant !== 'missing_scope') {
+            $facts[] = $scopeFact;
+            $evidence[] = $scopeProof;
+        }
+        $inventory = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::capture($base, $wall->id, 'wall_openings', []);
+        $coverageOrganization = $variant === 'foreign_coverage' ? 99 : 1;
+        $coverage = new Fact('coverage', $coverageOrganization, 2, 3, self::SOURCE_VERSION, $wall->id, 'geometry_coverage_wall_openings',
+            ['relation' => 'wall_openings', 'status' => 'covered_with_entities', 'entity_count' => $variant === 'wrong_count' ? 99 : count($inventory['member_ids']),
+                'representation' => ['type' => 'manual', 'id' => $wall->id, 'source_artifact_id' => 'input:3', 'source_version' => self::SOURCE_VERSION,
+                    'inventory_contract' => 'geometry-inventory:v1', 'inventory_fingerprint' => $variant === 'stale_inventory' ? str_repeat('f', 64) : $inventory['fingerprint']]],
+            null, 0.0, 'user_input', 'confirmed', ['evidence:coverage'], 1);
+        if ($variant !== 'missing_coverage') {
+            $facts[] = $coverage;
+            $evidence[] = new Evidence('evidence:coverage', $coverageOrganization, 2, 3, self::SOURCE_VERSION, 'input:3', 'user_input', nativeReference: 'input_payload.manual_facts');
+        }
+        $decisions = [];
+        if ($variant !== 'missing_decision') {
+            $decisions[] = new Decision('decision:scope', 1, 2, 3, self::SOURCE_VERSION, 'fact', 'scope', 'scope', 'user', $variant === 'zero_actor' ? '0' : '42', $reason,
+                $variant === 'wrong_decision_version' ? 2 : 1, ['evidence:scope']);
+        }
+        if ($variant !== 'unconfirmed_coverage') {
+            $decisions[] = new Decision('decision:coverage', $coverageOrganization, 2, 3, self::SOURCE_VERSION, 'fact', 'coverage', 'coverage', 'user', '42', 'Состав проёмов подтверждён', 1, ['evidence:coverage']);
+        }
+        $request = $this->request('opening_area', $opening->id, ['width' => $variant === 'multiple_widths' ? ['width', 'height'] : 'width', 'height' => 'height'], 'm2', 8);
+
+        return [$this->snapshot([$wall, $opening, $foreign], $facts, $evidence), $decisions, $request];
+    }
+
     private function request(
         string $formula,
         string $entityId,

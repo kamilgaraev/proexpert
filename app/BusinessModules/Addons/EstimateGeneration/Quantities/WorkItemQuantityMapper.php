@@ -34,6 +34,9 @@ final class WorkItemQuantityMapper
         if ($sourcePurpose === 'equipment.count' && in_array($workKey, ['equipment.purchase', 'equipment.install'], true)) {
             return true;
         }
+        if ($sourcePurpose === 'opening_area' && in_array($workKey, ['openings.windows', 'openings.doors'], true)) {
+            return true;
+        }
         $canonicalFloorGeometry = $workKey === 'rough.floor' && $sourcePurpose === 'floor_area';
         if (DirectTakeoffRequiredWorkItems::contains($workKey) && ! $canonicalFloorGeometry
             && ! in_array($workKey, ['roof.area', 'roof.flat_area'], true)) {
@@ -60,6 +63,10 @@ final class WorkItemQuantityMapper
                 || ($workKey === 'rough.floor' && $quantity->source !== QuantitySource::Evidenced)
                 || ($purpose === 'equipment.count' && in_array($workKey, ['equipment.purchase', 'equipment.install'], true)
                     && BigDecimal::of($quantity->amount)->isLessThanOrEqualTo(0))
+                || ($purpose === 'opening_area' && ($quantity->formulaInputs['opening_scope']['opening_kind'] ?? null)
+                    !== match ($workKey) {
+                        'openings.windows' => 'window', 'openings.doors' => 'door', default => null
+                    })
                 || ! $this->acceptsExactSource($workKey, $purpose, $quantity->unit)) {
                 continue;
             }
@@ -292,20 +299,7 @@ final class WorkItemQuantityMapper
             'stairs.landings' => $floorArea('0.015'),
             'networks.external' => $floorLength('0.20'),
 
-            'openings.windows' => [
-                'sources' => [
-                    ['key' => 'opening_area', 'factor' => '0.55'],
-                    ['key' => 'floor_area', 'factor' => '0.08'],
-                ],
-                'unit' => 'm2',
-            ],
-            'openings.doors' => [
-                'sources' => [
-                    ['key' => 'opening_area', 'factor' => '0.45'],
-                    ['key' => 'floor_area', 'factor' => '0.12'],
-                ],
-                'unit' => 'm2',
-            ],
+            'openings.windows', 'openings.doors' => ['sources' => [], 'unit' => 'm2'],
             'walls.lintels' => $floorCount('0.12'),
             'warehouse.gates', 'warehouse.loading_nodes' => $floorCount('0.005'),
 
