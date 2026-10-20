@@ -143,13 +143,14 @@ class ProjectPulseProcurementFactSource implements ProjectPulseFactSourceInterfa
             'purchase_requests.id as purchase_request_id',
             'purchase_requests.request_number',
             'purchase_requests.status as purchase_request_status',
+            ...$this->siteRequestLabelColumns(),
         ])->map(function ($row) use ($context): ProjectPulseFact {
             $purchaseRequestId = $row->purchase_request_id !== null ? (int) $row->purchase_request_id : null;
             $entityId = $purchaseRequestId ?? (int) $row->site_request_id;
             $route = $purchaseRequestId !== null
                 ? '/procurement/purchase-requests/' . $purchaseRequestId
                 : '/site-requests/' . $row->site_request_id;
-            $number = $row->request_number ?: ('заявке "' . ($row->title ?? ('#' . $row->site_request_id)) . '"');
+            $number = $row->request_number ?: ('"' . $this->siteRequestTitle($row) . '"');
 
             return new ProjectPulseFact(
                 id: ($purchaseRequestId !== null ? 'purchase_request:' . $purchaseRequestId : 'site_request:' . $row->site_request_id) . ':no_order',
@@ -162,7 +163,7 @@ class ProjectPulseProcurementFactSource implements ProjectPulseFactSourceInterfa
                 relatedEntity: [
                     'type' => $purchaseRequestId !== null ? 'purchase_request' : 'site_request',
                     'id' => $entityId,
-                    'label' => $purchaseRequestId !== null ? 'Заявка на закупку ' . $number : 'Заявка с объекта #' . $row->site_request_id,
+                    'label' => $purchaseRequestId !== null ? 'Заявка на закупку ' . $number : $this->siteRequestLabel($row),
                     'route' => $route,
                 ],
                 occurredAt: $this->dateString($row->created_at),

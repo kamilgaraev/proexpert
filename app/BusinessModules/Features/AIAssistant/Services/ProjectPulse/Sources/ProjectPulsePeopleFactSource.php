@@ -37,19 +37,22 @@ class ProjectPulsePeopleFactSource implements ProjectPulseFactSourceInterface
             ->whereNull('site_requests.assigned_to')
             ->whereNotIn('site_requests.status', ['completed', 'closed', 'cancelled'])
             ->limit($this->limit())
-            ->get(['site_requests.id', 'site_requests.project_id', 'site_requests.title', 'site_requests.status', 'site_requests.created_at'])
+            ->get([
+                'site_requests.id', 'site_requests.project_id', 'site_requests.title', 'site_requests.status', 'site_requests.created_at',
+                ...$this->siteRequestLabelColumns(),
+            ])
             ->map(fn ($row) => new ProjectPulseFact(
                 id: 'people:site_request:' . $row->id . ':no_assignee',
                 type: 'assignment',
                 priority: 'warning',
                 title: 'Нет ответственного по заявке',
-                text: 'По заявке "' . ($row->title ?? ('#' . $row->id)) . '" не назначен ответственный.',
+                text: 'По заявке "' . $this->siteRequestTitle($row) . '" не назначен ответственный.',
                 projectId: $row->project_id !== null ? (int) $row->project_id : null,
                 projectName: $this->projectName($row->project_id !== null ? (int) $row->project_id : null),
                 relatedEntity: [
                     'type' => 'site_request',
                     'id' => (int) $row->id,
-                    'label' => 'Заявка #' . $row->id,
+                    'label' => $this->siteRequestLabel($row),
                     'route' => '/site-requests/' . $row->id,
                 ],
                 occurredAt: $this->dateString($row->created_at),

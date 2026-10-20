@@ -26,6 +26,149 @@ use Tests\TestCase;
 
 class ProjectPulseReportTest extends TestCase
 {
+    public function test_site_request_label_uses_typed_locations_with_generic_fallback(): void
+    {
+        $formatter = new class {
+            use \App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns\BuildsProjectPulseFacts {
+                siteRequestLabel as public label;
+            }
+        };
+        foreach (['material' => 'delivery_address', 'equipment' => 'equipment_location', 'personnel' => 'work_location'] as $type => $field) {
+            $row = (object) ['title' => 'Учебная заявка', 'request_type' => $type, $field => 'Профильная площадка'];
+            self::assertStringContainsString('Профильная площадка', $formatter->label($row));
+            $row->location = 'Общая локация';
+            self::assertStringContainsString('Профильная площадка', $formatter->label($row));
+            self::assertStringNotContainsString('Общая локация', $formatter->label($row));
+            $row->$field = '   ';
+            self::assertStringContainsString('Общая локация', $formatter->label($row));
+            $row->$field = null;
+            self::assertStringContainsString('Общая локация', $formatter->label($row));
+        }
+    }
+
+    public function test_site_request_label_bounds_long_multibyte_locations(): void
+    {
+        $formatter = new class {
+            use \App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns\BuildsProjectPulseFacts {
+                siteRequestLabel as public label;
+            }
+        };
+        $location = 'Учебная площадка: '.str_repeat('многоэтажный корпус ', 1000).'LOCATION_TAIL_SENTINEL';
+        foreach (['personnel', 'material'] as $type) {
+            $row = (object) [
+                'title' => 'Учебная заявка', 'request_type' => $type,
+                'personnel_type' => 'engineer', 'personnel_count' => 3,
+                'work_location' => $location, 'location' => $location,
+                'work_start_date' => '2026-10-21', 'work_end_date' => '2026-10-23',
+            ];
+            $label = $formatter->label($row);
+            self::assertLessThanOrEqual(500, mb_strlen($label));
+            self::assertStringContainsString('Учебная площадка:', $label);
+            self::assertStringContainsString('…', $label);
+            self::assertStringNotContainsString('LOCATION_TAIL_SENTINEL', $label);
+            self::assertSame(1, preg_match('//u', $label));
+            if ($type === 'personnel') {
+                self::assertStringContainsString('21.10.2026 — 23.10.2026', $label);
+            }
+            $row->work_location = $row->location = 'Короткое место';
+            self::assertStringContainsString('Короткое место', $formatter->label($row));
+            self::assertStringNotContainsString('…', $formatter->label($row));
+        }
+    }
+
+    public function test_site_request_fact_labels_use_business_context_without_internal_numbers(): void
+    {
+        $context = $this->context(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreign = $this->context(roleSlug: 'organization_owner');
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        $ids = [];
+        foreach ([
+            'engineer' => [$context, $project, 'engineer', 3, 'Учебный офис'],
+            'worker' => [$context, $project, 'general_worker', 2, 'Учебная площадка'],
+            'other_project' => [$context, $otherProject, 'engineer', 5, 'Другой проект'],
+            'foreign' => [$foreign, $foreignProject, 'engineer', 9, 'Другая организация'],
+        ] as $key => [$actor, $targetProject, $personnelType, $count, $location]) {
+            $ids[$key] = DB::table('site_requests')->insertGetId([
+                'organization_id' => $actor->organization->id,
+                'project_id' => $targetProject->id,
+                'user_id' => $actor->user->id,
+                'title' => 'Учебный персонал',
+                'request_type' => 'personnel',
+                'status' => 'pending',
+                'personnel_type' => $personnelType,
+                'personnel_count' => $count,
+                'work_location' => $location,
+                'work_start_date' => '2026-10-21',
+                'work_end_date' => '2026-10-23',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $ids['material'] = DB::table('site_requests')->insertGetId([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => '',
+            'request_type' => 'material',
+            'status' => 'approved',
+            'delivery_address' => 'Учебный адрес доставки',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $ids['equipment'] = DB::table('site_requests')->insertGetId([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Учебная техника',
+            'request_type' => 'equipment',
+            'status' => 'pending',
+            'equipment_location' => 'Учебное место техники',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $pulseContext = ProjectPulseContext::fromValidated(
+            ['project_id' => $project->id, 'use_ai' => false],
+            $context->organization->id,
+            $context->user->id,
+        );
+        foreach ([
+            \App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseSiteRequestFactSource::class,
+            \App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulsePeopleFactSource::class,
+            \App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseProcurementFactSource::class,
+        ] as $source) {
+            $facts = app($source)->collect($pulseContext)
+                ->filter(fn (ProjectPulseFact $fact) => ($fact->relatedEntity['type'] ?? null) === 'site_request');
+            self::assertNotEmpty($facts, $source);
+            self::assertEqualsCanonicalizing(
+                str_ends_with($source, 'ProjectPulseProcurementFactSource')
+                    ? [$ids['material']]
+                    : [$ids['engineer'], $ids['worker'], $ids['material'], $ids['equipment']],
+                $facts->map(fn (ProjectPulseFact $fact) => $fact->relatedEntity['id'])->all(),
+            );
+            foreach ($facts as $fact) {
+                $entity = $fact->relatedEntity;
+                self::assertNotContains($entity['id'], [$ids['other_project'], $ids['foreign']]);
+                self::assertStringNotContainsString('#' . $entity['id'], $entity['label']);
+                self::assertStringNotContainsString('#' . $entity['id'], $fact->text);
+                self::assertSame('/site-requests/' . $entity['id'], $entity['route']);
+                if ($entity['id'] === $ids['material']) {
+                    self::assertSame('Заявка с объекта · Заявка на материалы · Учебный адрес доставки', $entity['label']);
+                } elseif ($entity['id'] === $ids['equipment']) {
+                    self::assertSame('Учебная техника · Заявка на технику · Учебное место техники', $entity['label']);
+                } else {
+                    self::assertStringContainsString('Учебный персонал · Заявка на персонал', $entity['label']);
+                    self::assertStringContainsString('21.10.2026 — 23.10.2026', $entity['label']);
+                    self::assertStringContainsString(
+                        $entity['id'] === $ids['engineer'] ? 'Инженер · 3 чел. · Учебный офис' : 'Разнорабочий · 2 чел. · Учебная площадка',
+                        $entity['label'],
+                    );
+                }
+            }
+        }
+    }
+
     public function test_owner_can_load_current_project_pulse_report(): void
     {
         $context = $this->context(roleSlug: 'organization_owner');
