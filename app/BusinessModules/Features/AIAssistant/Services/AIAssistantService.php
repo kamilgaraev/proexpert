@@ -505,7 +505,8 @@ class AIAssistantService
             ? AssistantProjectClarificationIntent::query($query, $requestPayload, $continuationContext)
             : $query;
         $periodClarification = AssistantProductionSchedulePeriod::clarification($query, $continuationContext);
-        if ($periodClarification !== null && $routingQuery === $periodClarification['query']) {
+        $canonicalPeriodResume = $periodClarification !== null && $routingQuery === $periodClarification['query'];
+        if ($canonicalPeriodResume) {
             $requestPayload = AssistantProductionSchedulePeriod::resumePayload($requestPayload, $periodClarification);
         }
         $planningQuery = ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === []
@@ -513,15 +514,20 @@ class AIAssistantService
         $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($planningQuery, $requestPayload, $accessContext));
         $taskPlan['request']['message'] = $routingQuery;
         unset($taskPlan['production_period_override'], $taskPlan['request']['production_period_override']);
-        if ($periodClarification !== null && $routingQuery === $periodClarification['query']
+        if ($canonicalPeriodResume
             && array_key_exists('period_start', $periodClarification) && isset($periodClarification['period_end'])
             && AssistantProductionSchedulePeriod::validArguments(array_intersect_key($periodClarification, array_flip(['project_id', 'period_start', 'period_end'])))) {
             $taskPlan['production_period_override'] = $periodClarification + ['message_sha256' => hash('sha256', $routingQuery)];
             $taskPlan['request']['production_period_override'] = $taskPlan['production_period_override'];
         }
         if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && ! ($taskPlan['section_navigation'] ?? false)) {
-            $taskPlan = AssistantNamedProjectReadScope::bind($taskPlan,
-                fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+            if ($canonicalPeriodResume && AssistantNamedProjectReadScope::name($taskPlan) === null
+                && ! \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::hasAmbiguousName($routingQuery, 'project', preservePrepositions: true)) {
+                unset($taskPlan['named_project_scope']);
+            } else {
+                $taskPlan = AssistantNamedProjectReadScope::bind($taskPlan,
+                    fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+            }
         }
         $taskPlan['image_discussion'] = $imageDiscussion;
         $this->logRequestUnderstanding($taskPlan, $organizationId, $user);

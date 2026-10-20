@@ -14,6 +14,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_past_planned_obligations_do_not_select_confirmed_production(): void
+    {
+        foreach (['Какие работы должны были быть выполнены по графику сегодня?',
+            'Какая работа должна была быть выполнена по графику вчера?',
+            'Какой объём должен был быть выполнен по графику?',
+            'Какие работы должны были быть полностью приняты по графику?',
+            'Какие работы должны будут быть выполнены по графику завтра?'] as $query) {
+            self::assertFalse(AssistantProjectProductionScheduleReader::hasIntent($query), $query);
+            self::assertNotSame('get_project_production_schedule_summary', AssistantRequiredProjectRead::fromPlan([
+                'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]],
+            ])['name'] ?? null, $query);
+        }
+    }
+
+    public function test_worded_ordinal_dates_keep_the_whole_date_out_of_project_names(): void
+    {
+        foreach (['первого октября 2026', 'за двадцать первое октября 2026', 'с тридцать первого октября 2026',
+            'со второго октября', 'с первого по двадцать пятое октября 2026',
+            'с первого октября по пятнадцатое ноября 2026'] as $phrase) {
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+            $this->assertPeriodScope($phrase, null, null);
+        }
+    }
+
     public function test_without_location_restrictions_keeps_the_requested_project_period(): void
     {
         foreach (['без ограничений по этажам', 'без ограничения по этажам', 'без ограничений на 5 этажах',

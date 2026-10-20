@@ -28,7 +28,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     public static function hasIntent(string $query): bool
     {
         $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
-        $query = preg_replace('/\b(?:буд(?:у|ешь|ет|ем|ете|ут)|долж(?:ен|на|но|ны)|нужно|надо|следует|необходимо|предстоит)(?:\s+(?:быть|полностью|уже|своевременно|фактически|окончательно|обязательно|сегодня|завтра)){0,3}\s+'.self::COMPLETED_WORK_PARTICIPLE.'\b/iu', ' ', $query) ?? $query;
+        $query = preg_replace('/\b(?:буд(?:у|ешь|ет|ем|ете|ут)|долж(?:ен|на|но|ны)|нужно|надо|следует|необходимо|предстоит)(?:\s+(?:был(?:а|о|и)?|буд(?:у|ешь|ет|ем|ете|ут)))?(?:\s+(?:быть|полностью|уже|своевременно|фактически|окончательно|обязательно|сегодня|завтра)){0,3}\s+'.self::COMPLETED_WORK_PARTICIPLE.'\b/iu', ' ', $query) ?? $query;
 
         return preg_match('/\b(?:'.self::COMPLETED_WORK_FORM.'\s+работ[а-яё]*|работ[а-яё]*.*\b'.self::COMPLETED_WORK_FORM.')\b/iu', $query) === 1
             && preg_match('/график|планов[а-яё]*\s+срок/iu', $query) === 1;
