@@ -56,9 +56,14 @@ final readonly class NativeParameterBacklog
             $documentVersions, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session),
             array_intersect_key($payload, array_flip(['building_type', 'floors'])));
 
-        return ($session->draft_payload ?? []) === [] ? $backlog
-            : (new WallAssemblyQuestions)->append($backlog, $snapshot, $decisions, $documentVersions,
+        if (($session->draft_payload ?? []) !== []) {
+            $backlog = (new WallAssemblyQuestions)->append($backlog, $snapshot, $decisions, $documentVersions,
                 $token, $sections, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session));
+            $backlog = (new OpeningScopeQuestions)->append($backlog, $snapshot, $decisions, $documentVersions,
+                $token, $sections, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session));
+        }
+
+        return $backlog;
     }
 
     public function validateAnswer(EstimateGenerationSession $session, ProjectModelSnapshot $snapshot, string $token, array $input): void
@@ -81,7 +86,10 @@ final readonly class NativeParameterBacklog
                         && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'parameters', 'native_question']) === [])
                     || (($answer['kind'] ?? null) === 'wall_assembly' && is_array($row['wall_assembly'] ?? null)
                         && ($row['wall_assembly']['entity_fingerprint'] ?? null) === $answer['entity_fingerprint']
-                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'wall_assembly', 'native_question']) === []))) {
+                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'wall_assembly', 'native_question']) === [])
+                    || (($answer['kind'] ?? null) === 'opening_scope' && is_array($row['opening_scope'] ?? null)
+                        && ($row['opening_scope']['entity_fingerprint'] ?? null) === $answer['entity_fingerprint']
+                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'opening_scope', 'native_question']) === []))) {
                 return;
             }
         }

@@ -20,6 +20,7 @@ final readonly class CurrentProjectDerivedQuantityService
         'direct_floor_area' => 'floor_area',
         'wall_net_area' => 'net_wall_area',
         'wall_net_volume' => 'net_wall_volume',
+        'opening_area' => 'opening_area',
         'sloped_roof_area' => 'roof_area',
         'earthwork_volume' => 'earthwork_volume',
         'foundation_beam_volume' => 'foundation_volume',
@@ -168,10 +169,14 @@ final readonly class CurrentProjectDerivedQuantityService
         ?array $completeness,
         array $decisions,
     ): array {
-        if (GeometryRelationOverlay::factIds($snapshot) !== []) {
-            $snapshot = GeometryRelationOverlay::apply($snapshot, $decisions, GeometryInventory::currentDocumentVersions($snapshot));
+        $relations = GeometryRelationOverlay::factIds($snapshot);
+        $needsInventory = $relations !== [] || array_filter($snapshot->facts, static fn (Fact $fact): bool => in_array($fact->type, ['wall_assembly', 'opening_scope'], true)
+            || (is_array($fact->value) && isset($fact->value['representation']['inventory_contract']))) !== [];
+        $documentVersions = $needsInventory ? GeometryInventory::currentDocumentVersions($snapshot) : null;
+        if ($relations !== []) {
+            $snapshot = GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions ?? []);
         }
-        $requests = $this->requests($snapshot, $projectModelToken, $technology, $completeness, $decisions);
+        $requests = $this->requests($snapshot, $projectModelToken, $technology, $completeness, $decisions, $documentVersions);
         if (count($requests) > self::MAX_FORMULAS) {
             return [
                 'derived' => [],
@@ -185,7 +190,7 @@ final readonly class CurrentProjectDerivedQuantityService
         $warnings = [];
         $inactiveLogicalIds = [];
         foreach ($requests as $request) {
-            $readiness = $this->factory->derive($snapshot, $decisions, $request);
+            $readiness = $this->factory->derive($snapshot, $decisions, $request, $documentVersions);
             if (! $readiness->isReady()) {
                 $inactiveLogicalIds[] = $request['quantity_id'];
                 $warnings[] = [
@@ -223,13 +228,14 @@ final readonly class CurrentProjectDerivedQuantityService
                 'room_floor_entity_ids' => $this->roomFloorEntityIds($snapshot),
                 'equipment_entity_ids' => array_keys($equipmentScopes),
                 'equipment_estimate_scopes' => $equipmentScopes,
+                'opening_estimate_scopes' => OpeningEstimateScope::select($snapshot, $decisions, $documentVersions ?? []),
                 'work_packages' => $this->workPackageContext($completeness, $requests, $decisions),
             ],
         ];
     }
 
     /** @return list<array<string, mixed>> */
-    private function requests(ProjectModelSnapshot $snapshot, string $token, array $technology, array $completeness, array $decisions): array
+    private function requests(ProjectModelSnapshot $snapshot, string $token, array $technology, array $completeness, array $decisions, ?array $inventoryDocumentVersions): array
     {
         $facts = [];
         foreach ($snapshot->facts as $fact) {
@@ -242,7 +248,6 @@ final readonly class CurrentProjectDerivedQuantityService
                 $reviewedRelations[$fact->entityId][$fact->value['relation']] = true;
             }
         }
-        $inventoryDocumentVersions = $reviewedRelations === [] ? null : GeometryInventory::currentDocumentVersions($snapshot);
         $currentInventoryEntities = $reviewedRelations === [] ? [] : GeometryInventory::entities($snapshot, $inventoryDocumentVersions);
         $openingsByWall = [];
         $roofChildrenByRoof = [];
@@ -271,9 +276,8 @@ final readonly class CurrentProjectDerivedQuantityService
         unset($childrenByParent);
 
         $requests = [];
-        $volumeDocumentVersions = $inventoryDocumentVersions ?? (array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'wall_assembly') === []
-            ? [] : GeometryInventory::currentDocumentVersions($snapshot));
-        $volumeWalls = WallEstimateScope::volumeWalls($snapshot, $decisions, $volumeDocumentVersions);
+        $volumeWalls = WallEstimateScope::volumeWalls($snapshot, $decisions, $inventoryDocumentVersions ?? []);
+        $openingScopes = OpeningEstimateScope::select($snapshot, $decisions, $inventoryDocumentVersions ?? []);
         foreach ($snapshot->entities as $entity) {
             $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
             foreach (FactVocabulary::foundationFormulas() as $formula => $definition) {
@@ -308,6 +312,8 @@ final readonly class CurrentProjectDerivedQuantityService
                         2,
                     )
                     : $this->binaryRequest($entity, $facts, 'floor_area', 'length', 'width', $token, $technology, $completeness, 'm2', 2);
+            } elseif ($semanticType === 'opening' && isset($openingScopes[$entity->id])) {
+                $request = $this->binaryRequest($entity, $facts, 'opening_area', 'width', 'height', $token, $technology, $completeness, 'm2', 8);
             } elseif ($semanticType === 'wall') {
                 $request = $this->wallRequest(
                     $entity,
@@ -908,6 +914,7 @@ final readonly class CurrentProjectDerivedQuantityService
                 ],
                 'snapshot_identity' => $quantity->snapshotIdentity,
                 'technology_decision_id' => $quantity->technologyDecisionId,
+                ...($quantity->formulaIdentity === 'opening_area' ? ['opening_scope' => $quantity->snapshotIdentity['opening_scope'] ?? null] : []),
             ],
             source: $assumptions === [] ? QuantitySource::Evidenced : QuantitySource::Estimated,
             evidenceIds: $quantity->evidenceIds,

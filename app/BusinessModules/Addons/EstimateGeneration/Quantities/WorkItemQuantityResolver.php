@@ -23,6 +23,11 @@ final readonly class WorkItemQuantityResolver
             && (! is_string($entity) || $entity === '' || ! isset($workItem['metadata']['wall_assembly']['fact_id']))) {
             return null;
         }
+        if (OpeningWorkItemExpander::isOpeningWork($workItem)
+            && in_array($work, OpeningWorkItemExpander::WORKS, true)
+            && (! is_string($entity) || $entity === '' || ! isset($workItem['metadata']['opening_scope']['fact_id']))) {
+            return null;
+        }
         $quantity = $this->directTakeoff->make($workItem, $generationIdentity)
             ?? $this->mapper->map($key, $quantities, ($generationIdentity['evaluation_mode'] ?? null) !== 'universal'
                 && ! WallWorkItemExpander::isAssemblyWork($workItem));
@@ -30,6 +35,13 @@ final readonly class WorkItemQuantityResolver
             $quantity = $this->mapper->mapForEntity($key, $quantities, $entity);
         }
         if ($quantity === null) {
+            return null;
+        }
+        if ($quantity->formulaKey === 'opening_area'
+            && (($quantity->formulaInputs['opening_scope']['opening_kind'] ?? null) !== match ($work) {
+                'openings.windows' => 'window', 'openings.doors' => 'door', default => null,
+            } || \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($quantity->formulaInputs['opening_scope'] ?? null)
+                !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($workItem['metadata']['opening_scope'] ?? null))) {
             return null;
         }
         $sourceEntity = $quantity->formulaInputs['entity_id'] ?? null;

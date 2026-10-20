@@ -11,6 +11,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
@@ -35,7 +38,11 @@ final readonly class CurrentDraftQuantityProofGuard
         $quantities = $universal
             ? $this->current->simulateInput($snapshot, $capture['token'], $decisions)['quantities']
             : $this->current->previewInput($organizationId, $projectId, $sessionId)['quantities'];
-        $wallScopes = WallEstimateScope::select($snapshot, $decisions, GeometryInventory::currentDocumentVersions($snapshot));
+        $documentVersions = GeometryInventory::currentDocumentVersions($snapshot);
+        $wallScopes = WallEstimateScope::select($snapshot, $decisions, $documentVersions);
+        $openingSnapshot = GeometryRelationOverlay::factIds($snapshot) === [] ? $snapshot
+            : GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
+        $openingScopes = OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         $ids = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
@@ -69,7 +76,7 @@ final readonly class CurrentDraftQuantityProofGuard
                             }
                         }
                     }
-                    if (! WallWorkItemExpander::permits($item, $wallScopes, $universal)) {
+                    if (! WallWorkItemExpander::permits($item, $wallScopes, $universal) || ! OpeningWorkItemExpander::permits($item, $openingScopes)) {
                         $this->reject();
                     }
                     if (isset($item['metadata']['wall_assembly'])) {
