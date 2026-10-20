@@ -11,6 +11,7 @@ use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Logging\LoggingService;
+use App\Services\Modules\PackageCatalogService;
 use App\Modules\Core\AccessController;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
@@ -18,6 +19,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Carbon;
 use LogicException;
 use Mockery;
 use PHPUnit\Framework\TestCase;
@@ -57,6 +59,122 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         $resolver = $this->resolver()->withCurrentEntitlementSource($injected)->forCurrentChecks()
             ->forReadScope(new Repository(new ArrayStore()));
         self::assertTrue($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+    }
+
+    public function testModuleReadSourcesShareOnlyIdenticalCatalogsOrTheSameOverride(): void
+    {
+        $catalog = new PackageCatalogService();
+        $first = new OrganizationEntitlementService($catalog);
+        $equivalent = new OrganizationEntitlementService($catalog);
+        $different = new OrganizationEntitlementService(new PackageCatalogService());
+        $override = new class($catalog) extends OrganizationEntitlementService {};
+        $secondOverride = new class($catalog) extends OrganizationEntitlementService {};
+
+        self::assertTrue($first->sharesModuleReadSourceWith($first));
+        self::assertTrue($first->sharesModuleReadSourceWith($equivalent));
+        self::assertTrue($equivalent->sharesModuleReadSourceWith($first));
+        self::assertFalse($first->sharesModuleReadSourceWith($different));
+        self::assertFalse($first->sharesModuleReadSourceWith($override));
+        self::assertFalse($override->sharesModuleReadSourceWith($first));
+        self::assertTrue($override->sharesModuleReadSourceWith($override));
+        self::assertFalse($override->sharesModuleReadSourceWith($secondOverride));
+    }
+
+    public function testUnscopedModuleSnapshotDoesNotLoadOrResolveEitherSource(): void
+    {
+        $this->application->bind(OrganizationEntitlementService::class,
+            static function (): never { throw new LogicException('global_entitlement_resolution_forbidden'); });
+        $source = Mockery::mock(OrganizationEntitlementService::class);
+        $source->shouldNotReceive('getEffectiveModuleSlugs');
+        self::assertNull($this->resolver()->memoizedCurrentModuleSlugs(37, $source));
+        self::assertNull($this->resolver()->forCurrentChecks()->memoizedCurrentModuleSlugs(37, $source));
+        self::assertNull($this->resolver()->forReadScope(new Repository(new ArrayStore()))->memoizedCurrentModuleSlugs(37, $source));
+    }
+
+    public function testPolicyAndResolverOverridesKeepSeparateSnapshotsWithoutGlobalResolution(): void
+    {
+        $this->application->bind(OrganizationEntitlementService::class,
+            static function (): never { throw new LogicException('global_entitlement_resolution_forbidden'); });
+        $policySource = Mockery::mock(OrganizationEntitlementService::class);
+        $policySource->shouldReceive('getEffectiveModuleSlugs')->once()->with(37)->andReturn([]);
+        $resolverSource = Mockery::mock(OrganizationEntitlementService::class);
+        $resolverSource->shouldReceive('getEffectiveModuleSlugs')->once()->with(37)->andReturn(['ai-assistant']);
+        $scope = $this->resolver()->withCurrentEntitlementSource($resolverSource)->forCurrentChecks()
+            ->forReadScope(new Repository(new ArrayStore()));
+
+        self::assertSame([], $scope->memoizedCurrentModuleSlugs(37, $policySource));
+        self::assertTrue($scope->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+        self::assertSame([], $scope->memoizedCurrentModuleSlugs(37, $policySource));
+        self::assertSame(['ai-assistant'], $scope->memoizedCurrentModuleSlugs(37, $resolverSource));
+    }
+
+    public function testEmptySnapshotIsSharedAcrossClonesButNotOrganizationsOrFreshStores(): void
+    {
+        $source = Mockery::mock(OrganizationEntitlementService::class);
+        $source->shouldReceive('getEffectiveModuleSlugs')->twice()->with(37)->andReturn([], ['ai-assistant']);
+        $source->shouldReceive('getEffectiveModuleSlugs')->once()->with(38)->andReturn(['reports']);
+        $store = new Repository(new ArrayStore());
+        $original = $this->resolver()->withCurrentEntitlementSource($source);
+        $scope = $original->forCurrentChecks()->forReadScope($store);
+
+        self::assertSame([], $scope->memoizedCurrentModuleSlugs(37, $source));
+        self::assertSame([], $scope->forReadScope($store)->memoizedCurrentModuleSlugs(37, $source));
+        self::assertSame(['reports'], $scope->memoizedCurrentModuleSlugs(38, $source));
+        self::assertSame(['ai-assistant'], $original->forCurrentChecks()->forReadScope(new Repository(new ArrayStore()))
+            ->memoizedCurrentModuleSlugs(37, $source));
+    }
+
+    public function testSnapshotExpiresAfterThreeHundredSecondsWithoutExtensionByAnotherSource(): void
+    {
+        $previousTime = Carbon::getTestNow();
+        $startedAt = Carbon::now();
+        $first = Mockery::mock(OrganizationEntitlementService::class);
+        $first->shouldReceive('getEffectiveModuleSlugs')->twice()->with(37)->andReturn(['ai-assistant'], []);
+        $second = Mockery::mock(OrganizationEntitlementService::class);
+        $second->shouldReceive('getEffectiveModuleSlugs')->twice()->with(37)->andReturn(['reports'], []);
+        $scope = $this->resolver()->forCurrentChecks()->forReadScope(new Repository(new ArrayStore()));
+        try {
+            Carbon::setTestNow($startedAt);
+            self::assertSame(['ai-assistant'], $scope->memoizedCurrentModuleSlugs(37, $first));
+            Carbon::setTestNow($startedAt->copy()->addSeconds(200));
+            self::assertSame(['reports'], $scope->memoizedCurrentModuleSlugs(37, $second));
+            Carbon::setTestNow($startedAt->copy()->addSeconds(300)->subMillisecond());
+            self::assertSame(['ai-assistant'], $scope->memoizedCurrentModuleSlugs(37, $first));
+            Carbon::setTestNow($startedAt->copy()->addSeconds(300));
+            self::assertSame([], $scope->memoizedCurrentModuleSlugs(37, $first));
+            self::assertSame(['reports'], $scope->memoizedCurrentModuleSlugs(37, $second));
+            Carbon::setTestNow($startedAt->copy()->addSeconds(500));
+            self::assertSame([], $scope->memoizedCurrentModuleSlugs(37, $second));
+        } finally {
+            Carbon::setTestNow($previousTime);
+        }
+    }
+
+    public function testSnapshotFailureAndReentrantReadsKeepTheOriginalExceptionAndOtherSource(): void
+    {
+        $scope = $this->resolver()->forCurrentChecks()->forReadScope(new Repository(new ArrayStore()));
+        $other = Mockery::mock(OrganizationEntitlementService::class);
+        $other->shouldReceive('getEffectiveModuleSlugs')->once()->with(37)->andReturn(['reports']);
+        $source = Mockery::mock(OrganizationEntitlementService::class);
+        $failure = new LogicException('original_entitlement_failure');
+        $attempts = 0;
+        $source->shouldReceive('getEffectiveModuleSlugs')->twice()->with(37)
+            ->andReturnUsing(function () use ($scope, $other, $failure, &$attempts): array {
+                self::assertSame(['reports'], $scope->memoizedCurrentModuleSlugs(37, $other));
+                if (++$attempts === 1) { throw $failure; }
+
+                return ['ai-assistant'];
+            });
+        try {
+            $scope->memoizedCurrentModuleSlugs(37, $source);
+            self::fail('The entitlement failure must propagate.');
+        } catch (LogicException $actual) {
+            self::assertSame($failure, $actual);
+        }
+        self::assertSame(['ai-assistant'], $scope->memoizedCurrentModuleSlugs(37, $source));
+        self::assertSame(['reports'], $scope->memoizedCurrentModuleSlugs(37, $other));
+        self::assertSame(['ai-assistant'], $scope->memoizedCurrentModuleSlugs(37, $source));
+        self::assertSame(2, $attempts);
     }
 
     public function testDiagnosticSubphasesKeepFreshEntitlementsAndOriginalFailure(): void
@@ -141,7 +259,7 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         self::assertSame(2, $reads['module_load_full']['frames']);
         self::assertSame(2, $reads['module_load_full']['stores']);
         self::assertSame(1, $reads['module_load_full']['organizations']);
-        self::assertSame(['other' => 2], $reads['module_load_full']['callers']);
+        self::assertSame(['permission_resolver' => 2], $reads['module_load_full']['callers']);
     }
 
     public function testNewCurrentCloneReloadsChangedEntitlementsInsteadOfReusingDecision(): void

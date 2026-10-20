@@ -577,9 +577,16 @@ final class AssistantDataAccessPolicy
     private function currentEffectiveModuleSlugs(User $user, int $organizationId, ?string $candidate = null): array
     {
         ApiQueryMetrics::recordAccessRead('policy_module_lookup', $this, null, $organizationId);
-        $loadModules = function () use ($organizationId, $candidate): array {
+        $loadModules = function () use ($user, $organizationId, $candidate): array {
             ApiQueryMetrics::recordAccessRead('policy_module_load', $this, null, $organizationId);
             $source = $this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class);
+
+            if ($this->batchIdentity === [(int) $user->id, $organizationId] && $this->aclCompiler === null) {
+                $modules = $this->currentAuthorization()->memoizedCurrentModuleSlugs($organizationId, $source);
+                if ($modules !== null) {
+                    return $modules;
+                }
+            }
 
             return $candidate !== null && $this->batchIdentity === null && $this->aclCompiler === null
                 && get_class($source) === \App\Services\Entitlements\OrganizationEntitlementService::class

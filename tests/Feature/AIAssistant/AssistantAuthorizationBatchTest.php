@@ -100,7 +100,7 @@ final class AssistantAuthorizationBatchTest extends TestCase
 
         $subscriptionReads = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'organization_package_subscriptions'));
         $moduleReads = array_filter($queries, static fn (array $query): bool => preg_match('/\bmodules\b/', $query['query']) === 1);
-        self::assertLessThanOrEqual(2, count($subscriptionReads), 'Scoped identities should share one policy entitlement read and one authorization module read');
+        self::assertCount(1, $subscriptionReads, 'Policy and authorization must share one entitlement read inside the same current frame');
         self::assertLessThanOrEqual(6, count($moduleReads), 'Module table reads should not grow with each operations asset identity');
 
         $ownerModules = $access->withCurrentChecks($fixture->owner, $fixture->organization->id,
@@ -145,6 +145,44 @@ final class AssistantAuthorizationBatchTest extends TestCase
         $fixture->subscription->update(['status' => 'expired']);
         self::assertFalse($checker->canUseAssistant($fixture->member, $fixture->organization->id));
         self::assertFalse($checker->canExecuteTool($fixture->member, 'assistant_domain_discover_capabilities'));
+    }
+
+    public function test_policy_and_resolver_share_full_entitlements_only_inside_each_fresh_frame(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $access = app(AssistantDataAccessPolicy::class);
+        $actor = $fixture->member;
+        $organizationId = $fixture->organization->id;
+        foreach ([false, true] as $resolverFirst) {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            try {
+                $access->withCurrentChecks($actor, $organizationId,
+                    function (AuthorizationService $authorization) use ($access, $actor, $organizationId, $resolverFirst): void {
+                        if ($resolverFirst) {
+                            self::assertTrue($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                        }
+                        self::assertTrue($access->canReadDomain($actor, $organizationId, 'assistant'));
+                        self::assertContains('ai-assistant', $access->effectiveModuleSlugs($actor, $organizationId));
+                        self::assertTrue($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                    }, true);
+                $queries = DB::getQueryLog();
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+            $subscriptionReads = array_filter($queries,
+                static fn (array $query): bool => str_contains($query['query'], 'organization_package_subscriptions'));
+            self::assertCount(1, $subscriptionReads, 'Policy and resolver must share the same full entitlement read in either call order');
+        }
+
+        $fixture->subscription->update(['status' => 'expired']);
+        $access->withCurrentChecks($actor, $organizationId,
+            function (AuthorizationService $authorization) use ($access, $actor, $organizationId): void {
+                self::assertFalse($access->canReadDomain($actor, $organizationId, 'assistant'));
+                self::assertFalse($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                self::assertNotContains('ai-assistant', $access->effectiveModuleSlugs($actor, $organizationId));
+            }, true);
     }
 
     public function test_fresh_nested_check_invalidates_outer_allow_after_role_revocation(): void
