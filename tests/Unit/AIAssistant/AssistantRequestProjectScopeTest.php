@@ -530,6 +530,62 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_negated_record_filters_do_not_negate_the_organization_scope(): void
+    {
+        foreach (['Не включай черновики в отчет по всем актам организации',
+            'Не показывай отклонённые акты в отчёте по всей организации',
+            'Не добавляй черновики в отчёт по всем проектам',
+            'Не учитывай отменённые договоры в сводке всех договоров организации'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true));
+            $sections = [['project_id' => 52, 'filters' => [['field' => 'status', 'operator' => 'neq', 'value' => 'draft']]]];
+            $expected = $sections;
+            $expected[0]['project_id'] = null;
+            self::assertSame(['sections' => $expected], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+        }
+        foreach (['Не всех актов организации', 'Не по всей организации', 'Не показывай все акты организации',
+            'Кроме всех журналов организации', 'Исключая все проекты', 'Не ищи по всем проектам',
+            'Не надо искать по всем проектам', 'Не работай по всем проектам', 'Не выполняй поиск по всем проектам'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+        }
+    }
+
+    public function test_mixed_search_preserves_each_explicit_project_side_and_the_organization_side(): void
+    {
+        foreach (['Сравни просроченные задачи выбранного проекта и во всех проектах' => 52,
+            'Сравни все акты организации с выбранным проектом' => 52,
+            'Сравни все акты организации с проектом 100' => 100,
+            'Сравни выбранный проект со всей организацией' => 52] as $question => $id) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, [], 52, true));
+            self::assertSame(['project_id' => $id], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => $id], 52, true));
+        }
+    }
+
+    public function test_mixed_named_search_rechecks_the_exact_name_and_rejects_unproven_ids(): void
+    {
+        $question = 'Сравни все акты организации с проектом СевГУ за октябрь';
+        $calls = [];
+        self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 100], 52, true,
+            static function (array $arguments) use (&$calls): array {
+                $calls[] = $arguments;
+
+                return ['status' => 'success', 'results' => $arguments['query'] === 'СевГУ' ? [['id' => 100]] : [], 'result_window' => ['has_more' => false]];
+            }));
+        self::assertSame([['query' => 'СевГУ за октябрь', 'name_match' => 'exact', 'limit' => 2], ['query' => 'СевГУ', 'name_match' => 'exact', 'limit' => 2]], $calls);
+        foreach ([['project_id' => 52], ['project_id' => 200]] as $arguments) {
+            try {
+                AssistantRequestProjectScope::bindSearchScope('Сравни все акты организации с проектом 100', $arguments, 52, true);
+                self::fail('An unrequested search project was accepted');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 100], 52, true, static fn (): array => ['status' => 'error']);
+    }
+
     private function plan(string $question): array
     {
         return ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];

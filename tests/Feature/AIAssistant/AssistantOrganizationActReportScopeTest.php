@@ -54,6 +54,11 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'named comparison with final period' => [true, true, true, 5, 3, false, '', 'named_period'],
             'named comparison with final grouping' => [true, true, false, 7, 5, false, '', 'named_grouping'],
             'project exclusion and another compared project' => [true, true, false, 4, 4, true, '', 'explicit_exclusion'],
+            'negated draft filter keeps organization scope' => [true, true, false, 5, 4, false, '', 'without_drafts'],
+            'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
+            'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
+            'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
+            'mixed domain search unrequested ID clarification' => [false, false, false, 7, 5, false, '', 'search_unrequested'],
         ];
     }
 
@@ -92,17 +97,71 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $csv = null;
         $files = $this->createMock(FileService::class);
         $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter'], true);
-        $files->expects($rejectedScope ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
+        $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
 
             return new CurrentStoredFile($path, 'etag', strlen($csv), $hash, $mime);
         });
         $this->app->instance(FileService::class, $files);
+        if (str_starts_with($variant, 'search_')) {
+            $technicalErrors = [];
+            $logging = $this->createMock(\App\Services\Logging\LoggingService::class);
+            $logging->method('technical')->willReturnCallback(static function (string $event, array $context = [], string $level = 'info') use (&$technicalErrors): void {
+                if ($event === 'ai.tool.error') {
+                    $technicalErrors[] = $context;
+                }
+            });
+            $this->app->instance(\App\Services\Logging\LoggingService::class, $logging);
+            $question = match ($variant) {
+                'search_numeric', 'search_unrequested' => 'Сравни все акты организации с проектом '.$second->id,
+                'search_named' => 'Сравни все акты организации с проектом '.$first->name,
+                default => 'Сравни акты выбранного проекта и во всех проектах',
+            };
+            $searchArguments = ['domain' => 'acts', 'entity_type' => 'performance_act', 'query' => '', 'project_id' => null,
+                'limit' => 20, 'predicate' => null, 'cursor' => null, 'fields' => ['id', 'project_id', 'status', 'currency']];
+            $all = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
+            self::assertArrayHasKey('result_window', $all, json_encode($all, JSON_UNESCAPED_UNICODE));
+            self::assertSame(7, $all['result_window']['total']);
+            $project = $variant === 'search_numeric' ? $second : $first;
+            $searchArguments['project_id'] = $project->id;
+            $result = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
+            if ($variant === 'search_unrequested') {
+                self::assertSame('insufficient_data', $result['status']);
+                self::assertSame('current_project_scope_mismatch', $result['reason']);
+                self::assertTrue($result['needs_clarification']);
+                self::assertSame([], $result['source_refs']);
+            } else {
+                self::assertArrayHasKey('result_window', $result, json_encode($result, JSON_UNESCAPED_UNICODE));
+                self::assertSame($variant === 'search_numeric' ? 4 : 3, $result['result_window']['total']);
+                foreach ($result['source_refs'] as $reference) {
+                    self::assertSame($project->id, $reference['project_id']);
+                }
+                $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+                $denied = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
+                if ($variant === 'search_named') {
+                    self::assertSame('current_project_scope_mismatch', $denied['reason']);
+                } else {
+                    self::assertContains($technicalErrors[array_key_last($technicalErrors)]['exception_class'] ?? null,
+                        [\Illuminate\Auth\Access\AuthorizationException::class, \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException::class],
+                        json_encode($technicalErrors, JSON_UNESCAPED_UNICODE));
+                    self::assertSame(trans_message('ai_assistant.tool_execute_failed'), $denied['error'] ?? null,
+                        json_encode($denied, JSON_UNESCAPED_UNICODE));
+                }
+                self::assertSame([], $denied['results'] ?? []);
+                self::assertSame([], $denied['source_refs'] ?? []);
+            }
+            self::assertNull($csv);
+
+            return;
+        }
         $filters = $nestedProject ? [['field' => 'project_id', 'operator' => $excludeFirst ? 'neq' : 'eq', 'value' => $first->id]] : [];
         if ($filtered) {
             $filters = [...$filters, ['field' => 'date', 'operator' => 'gte', 'value' => '2026-10-01'],
                 ['field' => 'date', 'operator' => 'lte', 'value' => '2026-10-31'], ['field' => 'status', 'operator' => 'neq', 'value' => 'rejected']];
+        }
+        if ($variant === 'without_drafts') {
+            $filters[] = ['field' => 'status', 'operator' => 'neq', 'value' => 'draft'];
         }
         $arguments = ['title' => 'Акты организации', 'format' => 'csv', 'sections' => [[
             'title' => 'По статусам и валютам', 'domain' => 'acts', 'entity_type' => 'performance_act',
@@ -125,6 +184,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($variant === 'nominative') {
             $question = 'Сделай CSV: все акты организации по статусам и валютам, включая черновики.';
+        }
+        if ($variant === 'without_drafts') {
+            $question = 'Сформируй CSV. Не включай черновики в отчет по всем актам организации, группируй по статусам и валютам.';
         }
         if ($comparison) {
             $question = match ($variant) {
@@ -213,6 +275,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($excludeFirst) {
             $expected = [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
         }
+        if ($variant === 'without_drafts') {
+            $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
+        }
         self::assertEqualsCanonicalizing($expected, $groups);
         $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
         OrganizationCustomRole::query()->findOrFail($assignment->custom_role_id)->updateQuietly(['system_permissions' => ['reports.view']]);
@@ -232,12 +297,12 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         });
     }
 
-    private function dispatch(array $arguments, string $question, Project $project, Organization $organization, User $actor): array
+    private function dispatch(array $arguments, string $question, Project $project, Organization $organization, User $actor, string $toolName = 'generate_custom_report'): array
     {
         $service = app(AIAssistantService::class);
         $plan = ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => $project->id]]]],
             'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($question)->toArray()];
-        $call = ['name' => 'generate_custom_report', 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)];
+        $call = ['name' => $toolName, 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)];
         $executed = null;
         $evidence = [];
         $failures = [];

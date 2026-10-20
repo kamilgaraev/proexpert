@@ -66,13 +66,21 @@ final readonly class AssistantRequestProjectScope
         return (preg_match('/(?<![\pL\pN])'.$projects.'/iu', $question) === 1
             || (preg_match('/(?<![\pL\pN])'.$organization.'/iu', $question) === 1
                 && (! self::hasAffirmativeCurrentProject($question) || self::comparesCurrentProject($question))))
-            && preg_match('/(?<![\pL\pN])(?:не(?!\s+(?:только|забуд[а-яё]*|забыва[а-яё]*|прекраща[а-яё]*|перестава[а-яё]*|упуска[а-яё]*)(?!\pL))|кроме|исключая)\s+(?:[\pL\pN-]+\s+){0,4}(?:во?\s+)?'.$scope.'/iu', $question) !== 1;
+            && preg_match('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?(?:(?:показыва|покажи|включ|учитыва|учти|добав|бери|брать|ищи|искать|работа)[а-яё]*\s+|(?:выполня|проводи)[а-яё]*\s+поиск\s+)?|(?:кроме|исключая)\s+)(?:(?:в|во|на|по|для|из|с|со)\s+)?'.$scope.'/iu', $question) !== 1;
     }
 
-    public static function bindSearchScope(string $question, array $arguments, ?int $contextProjectId, bool $projectFilterSupported): array
+    public static function bindSearchScope(string $question, array $arguments, ?int $contextProjectId, bool $projectFilterSupported, ?callable $search = null): array
     {
         if (self::organizationWide($question)) {
-            $arguments['project_id'] = null;
+            $id = self::positiveId($arguments['project_id'] ?? null);
+            if ($id !== null && self::hasExplicitProjectSections($question)) {
+                $scope = new self(false, null, $contextProjectId);
+                if (! in_array($id, $scope->reportProjectIds($question, $search), true)) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+            } else {
+                $arguments['project_id'] = null;
+            }
         } elseif (! array_key_exists('project_id', $arguments) && $projectFilterSupported) {
             $arguments['project_id'] = $contextProjectId;
         }
@@ -174,7 +182,8 @@ final readonly class AssistantRequestProjectScope
         $question = self::withoutNegativeCurrentProject($question);
 
         return preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?!\pL)/iu', $question) === 1
-            && preg_match('/(?<![\pL\pN])(?:с|со|и|против|относительно)\s+'.self::CURRENT_PROJECT.'/iu', $question) === 1;
+            && (preg_match('/(?<![\pL\pN])(?:с|со|и|против|относительно)\s+'.self::CURRENT_PROJECT.'/iu', $question) === 1
+                || preg_match('/'.self::CURRENT_PROJECT.'\s+(?:и|с|со|против|относительно)\s+(?:(?:в|во|на|по)\s+)?(?:всех|всем|все|всей)(?![\pL\pN])/iu', $question) === 1);
     }
 
     private static function hasExplicitProjectSections(string $question): bool

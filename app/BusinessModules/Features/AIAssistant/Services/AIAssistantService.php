@@ -2335,12 +2335,6 @@ class AIAssistantService
                 || AssistantBimModelSelector::isProjectQuestion(is_string($args['model_query'] ?? null) ? $args['model_query'] : null, $requestQuery);
         }
         $requestProjectScope = AssistantRequestProjectScope::fromPlan($taskPlan);
-        if ($toolName === 'assistant_domain_search') {
-            $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
-            $args = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
-                $this->resolveRagProjectId($taskPlan['request']['context'] ?? []),
-                $definition !== null && in_array('project_id', $definition->fields, true));
-        }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
         $tool = $this->toolRegistry->getTool($toolName);
 
@@ -2355,6 +2349,13 @@ class AIAssistantService
         $toolFailureStage = 'argument_validation';
         try {
             $schema = $tool->getParametersSchema();
+            if ($toolName === 'assistant_domain_search') {
+                $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
+                $args = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
+                    $this->resolveRagProjectId($taskPlan['request']['context'] ?? []),
+                    $definition !== null && in_array('project_id', $definition->fields, true),
+                    fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+            }
             if ($toolName === 'search_projects') {
                 unset($args['project_id']);
             }
@@ -2567,6 +2568,10 @@ class AIAssistantService
             }
             $this->executionCheckpoint();
             if ($exception instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous) {
+                if ($toolName === 'assistant_domain_search') {
+                    return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                }
+
                 return ['status' => 'error', 'message' => trans_message('ai_custom_reports.failed'), 'needs_clarification' => true,
                     'validation_errors' => ['sections.scope' => [trans_message('ai_custom_reports.scope_clarification')]], 'source_refs' => []];
             }
