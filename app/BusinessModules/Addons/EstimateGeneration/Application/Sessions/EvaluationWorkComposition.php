@@ -134,7 +134,8 @@ final readonly class EvaluationWorkComposition
                     $sectionIndex = array_key_last($draft['local_estimates'][$localIndex]['sections']);
                 }
                 $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][] = $item;
-                $payload['composition_selections'][$work] = ['work_item_key' => $key, ...$proof];
+                $payload['composition_selections'][$work] = ['work_item_key' => $key,
+                    'generation_id' => $payload['composition_generation_id'] ?? null, ...$proof];
                 $added[] = $key;
             }
             FrozenWorkItemLimit::assertDraft($draft, 1000);

@@ -145,6 +145,74 @@ final class EvaluationRevisionsPostgresTest extends EstimateGenerationCanonicalP
         self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
     }
 
+    public function test_full_publication_reopens_missing_supplementary_work_without_losing_receipts_or_staling_the_revision(): void
+    {
+        config(['estimate-generation.universal_enabled' => true]);
+        [$actor, $session] = $this->fixture();
+        $session->update(['status' => 'estimate_review_required', 'input_payload' => [...$session->input_payload,
+            'evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'renovation', 'selected_sections' => ['finishing'],
+            'qa_run_id' => '5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', 'qa_limit_units' => 500]]);
+        $inputs = app(EvaluationInputFingerprint::class);
+        $original = ['source_input_version' => 'sha256:'.$inputs->fromSession($session),
+            'generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+            'evaluation_result' => $this->evaluationResultFixture(), 'local_estimates' => [['key' => 'finishing', 'sections' => [[
+                'key' => 'finish', 'work_items' => [['key' => 'finish:1', 'name' => 'Потолок', 'item_type' => 'priced_work',
+                    'quantity' => '20', 'unit' => 'm2', 'unit_price' => null, 'metadata' => ['composition_work_key' => 'ceiling.brandering']]],
+            ]]]]];
+        $projector = new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
+        $artifacts = app(BuildMostEstimateDraft::class);
+        $session->update(['draft_payload' => $artifacts->seal($projector->project($original))]);
+        $composition = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationWorkComposition::class);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $preview = $composition->show($actor, $scope[1], $scope[2]);
+        $request = ['request_id' => (string) Str::uuid(), 'state_version' => $preview['state_version'],
+            'preview_fingerprint' => $preview['preview_fingerprint'], 'work_keys' => ['ceiling.insulation'],
+            'reason' => 'Дополнительное утепление потолка принято по заданию на сметный расчёт.'];
+        $accepted = $composition->accept($actor, $scope[1], $scope[2], $request);
+        $beforeInput = $session->fresh()->input_payload;
+        $beforeDraft = $session->fresh()->draft_payload;
+        self::assertNotContains('ceiling.insulation', array_column($composition->show($actor, $scope[1], $scope[2])['candidates'], 'work_key'));
+        $operation = (string) Str::uuid();
+        $hash = $inputs->fromSession($session->fresh());
+        $session->update(['status' => 'generating', 'input_payload' => [...$beforeInput, 'generation_actor_type' => 'user',
+            'generation_actor_id' => $actor->id, 'generation_attempt_id' => $operation, 'generation_evaluation_input_hash' => $hash]]);
+        $claim = CheckpointClaim::acquired(new PipelineContext($scope[2], $scope[0], $scope[1], $accepted['state_version'],
+            'sha256:'.$hash, 'generating', generationAttemptId: $operation, baseInputVersion: 'sha256:'.$hash),
+            ProcessingStage::ValidateDraft, (string) Str::uuid());
+        $original['source_input_version'] = 'sha256:'.$hash;
+        $replacement = $artifacts->seal($projector->project($original));
+        try {
+            DB::transaction(function () use ($claim, $replacement): void {
+                app(PublishUniversalEvaluation::class)->publish($claim, $replacement);
+                throw new \RuntimeException('rollback_composition_reopening');
+            });
+            self::fail('Injected rollback did not occur.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('rollback_composition_reopening', $exception->getMessage());
+        }
+        self::assertSame($beforeDraft, $session->fresh()->draft_payload);
+        self::assertSame($beforeInput['evaluation_composition_receipts'], $session->fresh()->input_payload['evaluation_composition_receipts']);
+        self::assertSame($beforeInput['composition_generation_id'] ?? null, $session->fresh()->input_payload['composition_generation_id'] ?? null);
+        DB::transaction(fn () => app(PublishUniversalEvaluation::class)->publish($claim, $replacement));
+        $offered = array_column($composition->show($actor, $scope[1], $scope[2])['candidates'], 'work_key');
+        self::assertContains('ceiling.insulation', $offered);
+        self::assertNotContains('ceiling.brandering', $offered);
+        $current = app(GetCurrentEvaluation::class)->handle($actor, $scope[1], $scope[2]);
+        self::assertFalse($current['result_stale']);
+        self::assertSame($hash, $inputs->fromSession($session->fresh()));
+        self::assertSame($operation, $session->fresh()->input_payload['composition_generation_id']);
+        self::assertSame($beforeInput['composition_selections'], $session->fresh()->input_payload['composition_selections']);
+        self::assertSame($beforeInput['evaluation_composition_receipts'], $session->fresh()->input_payload['evaluation_composition_receipts']);
+        self::assertEquals($accepted, $composition->accept($actor, $scope[1], $scope[2], $request));
+        $preview = $composition->show($actor, $scope[1], $scope[2]);
+        $composition->accept($actor, $scope[1], $scope[2], [...$request, 'request_id' => (string) Str::uuid(),
+            'state_version' => $preview['state_version'], 'preview_fingerprint' => $preview['preview_fingerprint']]);
+        self::assertSame($operation, $session->fresh()->input_payload['composition_selections']['ceiling.insulation']['generation_id']);
+        self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
+    }
+
     public function test_information_only_publication_preserves_history_and_is_atomic_without_a_new_revision(): void
     {
         [$actor, $session] = $this->fixture();

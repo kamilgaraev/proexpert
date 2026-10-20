@@ -71,7 +71,10 @@ final readonly class EvaluationCompositionPreview
         $selected = $payload['selected_sections'] ?? [];
         $candidates = [];
         foreach ($this->catalog->all() as $work => $row) {
-            if (! isset($existing[$work]) && ! isset($payload['composition_selections'][$work])
+            $selection = $payload['composition_selections'][$work] ?? null;
+            $selectedInGeneration = is_array($selection)
+                && ($selection['generation_id'] ?? null) === ($payload['composition_generation_id'] ?? null);
+            if (! isset($existing[$work]) && ! $selectedInGeneration
                 && (in_array($row['section'], $selected, true) || in_array($row['package'], $selected, true))) {
                 $candidates[] = $row;
             }
