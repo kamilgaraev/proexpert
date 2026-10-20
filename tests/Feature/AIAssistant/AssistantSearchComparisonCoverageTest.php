@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\Support\MachineryOperationsAssetFactory;
 use Tests\TestCase;
 
 final class AssistantSearchComparisonCoverageTest extends TestCase
@@ -83,6 +84,38 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
     public static function nominativeProjectQuestions(): array
     {
         return [['Покажи все проекты организации'], ['Все объекты организации']];
+    }
+
+    public function test_collective_machinery_list_clears_model_ui_scope_with_real_project_access(): void
+    {
+        $this->actor = Model::withoutEvents(fn () => $this->fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],
+            'machinery-operations' => ['machinery-operations.view'],
+        ]));
+        foreach ([$this->project, $this->secondProject] as $project) {
+            $this->actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        }
+        $this->actingAs($this->actor);
+        $privateProject = Model::withoutEvents(fn () => Project::factory()->create([
+            'organization_id' => $this->fixture->organization->id, 'is_archived' => false,
+        ]));
+        $foreignProject = Model::withoutEvents(fn () => Project::factory()->create([
+            'organization_id' => $this->fixture->foreignOrganization->id, 'is_archived' => false,
+        ]));
+        $assets = [];
+        foreach ([$this->project, $this->secondProject, $privateProject, $foreignProject] as $index => $project) {
+            $assets[] = Model::withoutEvents(fn () => MachineryOperationsAssetFactory::create((int) $project->organization_id, [
+                'asset_code' => 'SCOPE-'.Str::uuid(), 'name' => 'Техника '.($index + 1), 'current_project_id' => (int) $project->id,
+            ]));
+        }
+        $arguments = array_replace($this->arguments($this->project->id), [
+            'domain' => 'machinery', 'entity_type' => 'machinery_asset', 'fields' => ['id', 'name'],
+        ]);
+        $response = $this->ask([$arguments], 'Покажи всю технику организации');
+        $result = array_values($this->observedResults)[0] ?? [];
+        self::assertSame(2, $result['result_window']['total'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertEqualsCanonicalizing([(int) $assets[0]->id, (int) $assets[1]->id], array_column($result['results'] ?? [], 'id'));
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
 
     #[DataProvider('nominativeProjectQuestions')]

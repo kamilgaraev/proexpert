@@ -44,7 +44,8 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
 
     public function test_literal_all_project_names_keep_exact_lookup_before_organization_scope(): void
     {
-        foreach (['Все проекты организации', 'Все наши объекты', 'Все активные проекты организации'] as $name) {
+        foreach (['Все проекты организации', 'Все наши объекты', 'Все активные проекты организации',
+            'Вся техника организации', 'Всё оборудование организации', 'Вся проектная документация организации'] as $name) {
             $query = 'Сверь выполненные работы с графиком проекта '.$name;
             self::assertSame($name, AssistantNamedProjectReadScope::name($this->plan($query)), $query);
             $calls = 0;

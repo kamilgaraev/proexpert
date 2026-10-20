@@ -10,6 +10,39 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_collective_organization_entities_clear_the_selected_project(): void
+    {
+        foreach (['Покажи всю технику организации', 'Вся техника организации', 'По всей технике нашей организации',
+            'Сводка всего оборудования организации', 'Покажи всё наше оборудование организации',
+            'Покажи всю исправную технику организации', 'Вся арендованная техника нашей организации',
+            'Покажи весь персонал организации', 'По всему персоналу нашей организации',
+            'Вся выработка организации за октябрь', 'Покажи всю подтверждённую выработку организации',
+            'Всё рабочее время организации', 'По всему рабочему времени организации',
+            'Вся документация организации', 'Всю исполнительную документацию нашей организации в Excel',
+            'Вся проектная документация организации', 'Всё качество организации', 'Вся безопасность организации'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertNull(AssistantRequestProjectScope::fromPlan($this->plan($question))->projectId, $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'active']]]]];
+            $expected = $arguments;
+            $expected['sections'][0]['project_id'] = null;
+            self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $question);
+        }
+    }
+
+    public function test_collective_phrases_keep_project_names_negation_and_process_boundaries(): void
+    {
+        foreach (['Всю технику другой организации', 'Всю технику организаций', 'Покажи всю технику организации работ',
+            'Вся документация организации строительства', 'Всё оборудование организации документооборота',
+            'Не показывай всю технику организации', 'Кроме всего оборудования организации',
+            'Вся техника организации, только выбранного проекта',
+            'Покажи технику проекта «Вся техника организации»', 'Покажи технику проекта Вся техника организации',
+            'Покажи технику объекта: Всё оборудование организации', 'Покажи всю неизвестную сущность организации'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => 52], AssistantRequestProjectScope::bindSearchScope($question, [], 52, true), $question);
+        }
+    }
+
     public function test_work_organization_phrases_do_not_expand_the_selected_project(): void
     {
         $questions = ['Покажи все задачи организации работ', 'Все задачи организации строительства',
