@@ -31,7 +31,9 @@ final readonly class CurrentDraftQuantityProofGuard
         $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
         $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
         $snapshot = $capture['snapshot'];
-        $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
+        $factIds = $universal ? \App\BusinessModules\Addons\EstimateGeneration\Quantities\NativeQuantityDecisionInputs::factIds($snapshot)
+            : array_column($snapshot->facts, 'id');
+        $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, $factIds);
         if (count($snapshot->facts) > 10000 || ($universal && count($decisions) > 256)) {
             $this->reject();
         }
