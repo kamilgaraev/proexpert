@@ -45,6 +45,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
                 'api/v1/admin/report-files',
                 'api/v1/admin/personal-files/{id}/download-url',
                 'api/v1/admin/report-files/{id}/download-url',
+                'api/v1/admin/ai-assistant/reports/{token}/download',
             ], true)) {
                 $this->filePhases = $event->context['processing_phases'] ?? [];
             }
@@ -221,12 +222,25 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         }
         foreach ($downloadUrls as $url) {
             $download = $this->withHeaders($context->authHeaders())->get($url)->assertOk();
+            foreach (['assistant_report_access_resolve', 'assistant_report_storage_open'] as $phase) {
+                self::assertArrayHasKey($phase, $this->filePhases);
+                self::assertSame(1, $this->filePhases[$phase]['count']);
+                foreach ($this->filePhases[$phase] as $key => $value) {
+                    self::assertContains($key, ['count', 'total_ms', 'max_ms', 'sql_count', 'sql_total_ms', 'process_cpu_ms']);
+                    self::assertTrue(is_int($value) || is_float($value));
+                    self::assertGreaterThanOrEqual(0, $value);
+                }
+            }
+            self::assertGreaterThan(0, $this->filePhases['assistant_report_access_resolve']['sql_count']);
+            self::assertSame(0, $this->filePhases['assistant_report_storage_open']['sql_count']);
+            $this->assertDownloadStoragePhases(false, false);
             self::assertSame('report', $download->streamedContent());
         }
 
         $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
         foreach ([...$routes, ...$downloadUrls] as $route) {
             $this->withHeaders($context->authHeaders())->getJson($route)->assertForbidden();
+            self::assertArrayNotHasKey('assistant_report_storage_open', $this->filePhases);
         }
         $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
         $this->moduleSlugs = array_values(array_diff($this->moduleSlugs, ['reports']));

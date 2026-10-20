@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Http\Controllers;
 
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService;
 use App\Http\Controllers\Controller;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Storage\FileService;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Request;
@@ -23,11 +24,11 @@ class AiReportsDownloadController extends Controller
             throw new AccessDeniedHttpException;
         }
         try {
-            $report = $this->access->resolve($token, $user);
+            $report = ApiQueryMetrics::measureProcessingPhase('assistant_report_access_resolve', fn () => $this->access->resolve($token, $user));
         } catch (DecryptException) {
             throw new AccessDeniedHttpException;
         }
-        $stream = $this->files->readCurrent($report->storage_path);
+        $stream = ApiQueryMetrics::measureProcessingPhase('assistant_report_storage_open', fn () => $this->files->readCurrent($report->storage_path));
 
         return response()->streamDownload(static function () use ($stream): void {
             try {
