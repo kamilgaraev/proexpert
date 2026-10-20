@@ -21,6 +21,10 @@ final class ApiQueryMetrics
 
     private const MAX_REPORTED_ENTITY_BUILDS = 16;
 
+    private const MAX_SOURCE_BATCHES = 16;
+
+    private const MAX_BATCH_IDENTITIES = 32;
+
     private int $count = 0;
 
     private float $total = 0;
@@ -38,6 +42,12 @@ final class ApiQueryMetrics
     private array $processingPhases = [];
 
     private array $entityBuilds = [];
+
+    private array $sourceBatches = [];
+
+    private int $sourceBatchOrdinal = 0;
+
+    private int $sourceBatchesDropped = 0;
 
     private array $accessReads = [];
 
@@ -108,6 +118,83 @@ final class ApiQueryMetrics
         } finally {
             self::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint, $entityType);
         }
+    }
+
+    public static function measureRagSourceBatch(array $identities, bool $expectedProjection, callable $operation): mixed
+    {
+        $request = app()->bound('request') ? app('request') : null;
+        $checkpoint = $request instanceof Request ? self::processingCheckpoint($request) : null;
+        if ($checkpoint === null) { return $operation(); }
+
+        $ordinal = ++$checkpoint['metrics']->sourceBatchOrdinal;
+        $completed = false;
+        try {
+            $result = $operation();
+            $completed = true;
+
+            return $result;
+        } finally {
+            self::recordRagSourceBatch($request, $checkpoint, $ordinal, $identities, $expectedProjection, $completed);
+        }
+    }
+
+    private static function recordRagSourceBatch(Request $request, array $checkpoint, int $ordinal, array $identities, bool $expectedProjection, bool $completed): void
+    {
+        try {
+            $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
+            if (! $metrics instanceof self || ! $metrics->captureSources || $checkpoint['metrics'] !== $metrics) { return; }
+            if ($ordinal > self::MAX_SOURCE_BATCHES) {
+                $metrics->sourceBatchesDropped++;
+
+                return;
+            }
+            $milliseconds = (hrtime(true) - $checkpoint['started_at']) / 1_000_000;
+            $sqlTotal = $metrics->total - $checkpoint['sql_total_ms'];
+            if (! is_finite($milliseconds) || $milliseconds < 0 || ! is_finite($sqlTotal) || $sqlTotal < 0
+                || $metrics->count < $checkpoint['sql_count']) { return; }
+            $cpu = self::processCpuMilliseconds();
+            try {
+                [$pairs, $complete] = self::sourceBatchIdentities($identities);
+            } catch (\Throwable) {
+                [$pairs, $complete] = [[], false];
+            }
+            $measurement = ['ordinal' => $ordinal, 'mode' => $expectedProjection ? 'expected' : 'stored',
+                'candidate_identities' => $pairs, 'candidate_identities_complete' => $complete, 'completed' => $completed,
+                'duration_ms' => round($milliseconds, 2), 'sql_count' => $metrics->count - $checkpoint['sql_count'],
+                'sql_total_ms' => round($sqlTotal, 2)];
+            $startedCpu = $checkpoint['process_cpu_ms'];
+            if ($cpu !== null && is_float($startedCpu) && is_finite($startedCpu) && $startedCpu >= 0 && $cpu >= $startedCpu) {
+                $measurement['process_cpu_ms'] = round($cpu - $startedCpu, 2);
+            }
+            $metrics->sourceBatches[$ordinal] = $measurement;
+        } catch (\Throwable) {
+        }
+    }
+
+    private static function sourceBatchIdentities(array $identities): array
+    {
+        $definitions = AssistantEntityAccessCatalog::entityDefinitions();
+        $pairs = [];
+        $complete = true;
+        $entitiesExamined = 0;
+        $pairsExamined = 0;
+        foreach ($identities as $entityType => $sources) {
+            if (++$entitiesExamined > 128) { $complete = false; break; }
+            if (! is_string($entityType) || preg_match('/^[a-z][a-z0-9_]{0,127}$/D', $entityType) !== 1
+                || ! is_array($sources)) { $complete = false; continue; }
+            $canonicalSource = $definitions[$entityType][0] ?? null;
+            $allowedSources = $entityType === 'assistant_document' ? ['file_document']
+                : (is_string($canonicalSource) ? AssistantEntityAccessCatalog::indexedSourceTypes($entityType, $canonicalSource) : []);
+            foreach ($sources as $sourceType => $_) {
+                if (++$pairsExamined > 128) { $complete = false; break 2; }
+                if (! is_string($sourceType) || preg_match('/^[a-z][a-z0-9_]{0,127}$/D', $sourceType) !== 1
+                    || ! in_array($sourceType, $allowedSources, true)) { $complete = false; continue; }
+                if (count($pairs) >= self::MAX_BATCH_IDENTITIES) { $complete = false; break 2; }
+                $pairs[] = ['entity_type' => $entityType, 'source_type' => $sourceType];
+            }
+        }
+
+        return [$pairs, $complete];
     }
 
     public static function recordAccessRead(string $event, ?object $frame = null, ?object $store = null, ?int $organizationId = null): void
@@ -322,6 +409,10 @@ final class ApiQueryMetrics
             $summary['role_catalog_redis_get']['total_ms'] = round($this->roleCatalogRedisGet['total_ms'], 2);
             $summary['role_catalog_redis_get']['max_ms'] = round($this->roleCatalogRedisGet['max_ms'], 2);
             $summary['rag_entity_builds'] = $this->entityBuildSummary();
+            $batches = $this->sourceBatches;
+            ksort($batches);
+            $summary['rag_source_batches'] = array_values($batches);
+            $summary['rag_source_batches_dropped_count'] = $this->sourceBatchesDropped;
             $summary['sql_sources'] = array_map(static function (array $source): array {
                 $source['total_ms'] = round($source['total_ms'], 2);
                 $source['max_ms'] = round($source['max_ms'], 2);

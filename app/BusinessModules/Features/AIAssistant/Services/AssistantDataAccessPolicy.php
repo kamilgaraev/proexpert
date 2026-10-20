@@ -769,7 +769,10 @@ final class AssistantDataAccessPolicy
                         }
                     }
                     $nextProcessingPhase(null);
-                    if ($consume !== null) { $consume($compiled[array_key_last($compiled)]); }
+                    if ($consume !== null) {
+                        ApiQueryMetrics::measureRagSourceBatch($batchIdentities, $expectedProjection,
+                            static fn () => $consume($compiled[array_key_last($compiled)]));
+                    }
                 }
 
                 return null;

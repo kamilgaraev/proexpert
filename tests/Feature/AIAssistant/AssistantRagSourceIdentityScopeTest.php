@@ -342,7 +342,19 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         self::assertSame(1, $summary['processing_phases']['rag_acl_batch_compile']['count']);
         self::assertSame($compilationBeforeConsumer, $summary['processing_phases']['rag_acl_batch_compile']);
         self::assertNotContains('estimate', array_column($summary['rag_entity_builds'], 'entity_type'));
+        self::assertCount(1, $summary['rag_source_batches'] ?? []);
+        $execution = $summary['rag_source_batches'][0];
+        self::assertSame(1, $execution['ordinal']);
+        self::assertSame('stored', $execution['mode']);
+        self::assertSame([['entity_type' => 'assistant_document', 'source_type' => 'file_document']], $execution['candidate_identities']);
+        self::assertTrue($execution['candidate_identities_complete']);
+        self::assertFalse($execution['completed']);
+        self::assertSame(1, $execution['sql_count']);
+        self::assertGreaterThanOrEqual(0, $execution['sql_total_ms']);
+        self::assertGreaterThanOrEqual(0, $execution['duration_ms']);
+        self::assertSame(0, $summary['rag_source_batches_dropped_count']);
         self::assertCount(2, $this->policy->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate));
+        self::assertSame([$execution], $metrics->summary()['rag_source_batches']);
     }
 
     public function test_counts_only_coverage_stops_before_compiling_the_next_batch(): void
