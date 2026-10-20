@@ -14,11 +14,13 @@ final class AssistantProductionScheduleLocationScope
 
     private const PREFIX = '(?:на|в|во|по|с|со|для)';
 
-    private const NEGATION = 'не\s+(?:(?:ограничивай(?:ся|тесь)|ограничиваться)(?:\s+только)?\s+)?';
+    private const NEGATION = '(?:не\s+(?:(?:ограничивай(?:ся|тесь)|ограничиваться)(?:\s+только)?\s+)?|без\s+ограничени(?:й|я)\s+)';
 
-    private const QUALIFIER = '(?!(?:не|'.self::PREFIX.')\b)[\pL\pN-]+';
+    private const QUALIFIER = '(?!(?:не|без|'.self::PREFIX.')\b)[\pL\pN-]+';
 
-    private const FILTER = '(?:'.self::NEGATION.')?(?:(?:'.self::PREFIX.'\s+)?(?:'.self::NUMBERS.'\s+'.self::UNIT.'|'.self::UNIT.'\s+(?:№\s*)?'.self::NUMBERS.')|'.self::PREFIX.'\s+(?:'.self::QUALIFIER.'\s+){0,3}'.self::UNIT.')(?![\pL\pN])';
+    private const RANGE = '(?:с|со)\s+(?:'.self::QUALIFIER.'\s+){1,3}(?:по|до)\s+(?:'.self::QUALIFIER.'\s+){1,3}'.self::UNIT;
+
+    private const FILTER = '(?:'.self::NEGATION.')?(?:'.self::RANGE.'|(?:'.self::PREFIX.'\s+)?(?:'.self::NUMBERS.'\s+'.self::UNIT.'|'.self::UNIT.'\s+(?:№\s*)?'.self::NUMBERS.')|'.self::PREFIX.'\s+(?:'.self::QUALIFIER.'\s+){0,3}'.self::UNIT.')(?![\pL\pN])';
 
     public static function matches(string $query): bool
     {

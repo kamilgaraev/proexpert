@@ -14,6 +14,48 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_without_location_restrictions_keeps_the_requested_project_period(): void
+    {
+        foreach (['без ограничений по этажам', 'без ограничения по этажам', 'без ограничений на 5 этажах',
+            'без ограничений по корпусам', 'без ограничений с первого по пятый этаж'] as $phrase) {
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase.' за октябрь 2026',
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'], AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+        }
+        self::assertSame(['project_id' => 102, 'scope_clarification' => 'location'], AssistantProductionSchedulePeriod::arguments(102,
+            ['request' => ['message' => 'Сверь выполненные работы с графиком без ограничений по этажам, но в корпусе 3']]));
+    }
+
+    public function test_worded_location_ranges_keep_the_whole_suffix_out_of_project_names(): void
+    {
+        foreach (['с первого по пятый этаж', 'со второго до четвёртого этажа', 'с третьего по седьмой корпус',
+            'с двадцать первого по двадцать пятый этаж'] as $phrase) {
+            $expected = ['project_id' => 102, 'scope_clarification' => 'location'];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            self::assertSame('Сверь выполненные работы с графиком проекта «Другой дом» '.$phrase.' за октябрь 2026',
+                AssistantNamedProjectReadScope::clarifiedQuery($plan['request']['message'].' за октябрь 2026', 'Другой дом'));
+            foreach (['', '«'] as $quote) {
+                $plan['request']['message'] = 'Сверь выполненные работы с графиком проекта '.$quote.'Северный дом '.$phrase.($quote === '' ? '' : '»');
+                $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                    self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+                });
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+            }
+        }
+    }
+
     public function test_location_scope_keeps_worded_constraints_and_floor_ranges(): void
     {
         foreach (['по этажам', 'на первом этаже', 'на пяти верхних этажах', 'в трёх корпусах',
