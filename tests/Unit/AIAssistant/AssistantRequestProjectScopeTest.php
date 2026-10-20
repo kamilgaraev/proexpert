@@ -120,6 +120,41 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_direct_current_project_exclusions_keep_the_organization_scope(): void
+    {
+        $questions = array_map(static fn (string $clause): string => 'По всем актам организации '.$clause,
+            ['без выбранного проекта', 'за исключением текущего проекта', 'кроме этого объекта', 'исключая данный проект']);
+        self::assertSame([true, true, true, true], array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+        foreach ($questions as $question) {
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertFalse($scope->requested, $question);
+            self::assertNull($scope->projectId);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]]]];
+            $expected = $arguments;
+            $expected['sections'][0]['project_id'] = null;
+            self::assertSame($expected, $scope->bindReportScope($question, $arguments));
+        }
+    }
+
+    public function test_unquoted_project_comparison_keeps_its_explicit_section(): void
+    {
+        foreach (['Сравни отчёт по всем актам организации с проектом СевГУ',
+            'Сопоставь сводку всех актов организации и проекта Учебный ПТО',
+            'Сравнение всех актов организации с объектом Ремонт офиса',
+            'Сравни отчёт по всем актам организации с проектом СевГУ и проектом Учебный ПТО'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $arguments = ['sections' => [['project_id' => null, 'filters' => []], ['project_id' => 52, 'filters' => []]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $question);
+        }
+        foreach (['Сравни отчёт по всем актам организации за сентябрь и октябрь',
+            'Сопоставь акты всей организации с графиком', 'Сравни итоги всех актов организации и сроки проекта'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => []]]];
+            self::assertSame(['sections' => [['project_id' => null, 'filters' => []]]],
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $question);
+        }
+    }
+
     public function test_genitive_all_projects_scope_clears_selected_project_and_preserves_negation(): void
     {
         $question = 'Сделай Excel по просроченным задачам всех проектов организации';

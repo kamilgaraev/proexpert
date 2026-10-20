@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
+
 final readonly class AssistantRequestProjectScope
 {
     private const CURRENT_PROJECT = '(?<![\pL\pN])(?:(?:текущ|выбран|эт|данн)[а-яё]*|наш(?:его|ему|ем|им)?)\s+(?:проект|объект)[а-яё]*(?![\pL\pN])';
@@ -94,7 +96,7 @@ final readonly class AssistantRequestProjectScope
     private static function hasAffirmativeCurrentProject(string $question): bool
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
-        $negative = '(?<![\pL\pN])(?:не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})';
+        $negative = '(?<![\pL\pN])(?:не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+(?:ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})?|(?:кроме|исключая|за\s+исключением)\s+)';
         $question = preg_replace('/'.$negative.'(?:(?:в|во|на|по|для|из|с|со)\s+)?'.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
 
         return preg_match('/'.self::CURRENT_PROJECT.'/iu', $question) === 1;
@@ -108,7 +110,9 @@ final readonly class AssistantRequestProjectScope
 
         return AssistantNamedProjectReadScope::withoutQuotedNames($question) !== $question
             || preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*[1-9]\d*(?![\pL\pN])/iu', $question) === 1
-            || (preg_match('/(?<![\pL\pN])сравн[а-яё]*(?!\pL)/iu', $question) === 1 && self::hasAffirmativeCurrentProject($question));
+            || (preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?!\pL)/iu', $question) === 1
+                && (self::hasAffirmativeCurrentProject($question) || AssistantReportEntityQuery::extract($question, 'project') !== null
+                    || AssistantReportEntityQuery::hasAmbiguousName($question, 'project')));
     }
 
     private function isSelectedProjectFilter(array $filter): bool

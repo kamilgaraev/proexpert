@@ -39,12 +39,14 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'both with date and status filters' => [true, true, true, 5, 3],
             'organization except selected project' => [false, true, false, 4, 4, true],
             'organization except stale section project' => [true, true, false, 4, 4, true],
-            'organization not in selected project' => [true, true, false, 4, 4, true, true],
+            'organization not in selected project' => [true, true, false, 4, 4, true, 'Не в выбранном проекте.'],
+            'organization without selected project' => [true, true, false, 4, 4, true, 'Без выбранного проекта.'],
+            'organization except current project' => [true, true, false, 4, 4, true, 'За исключением текущего проекта.'],
         ];
     }
 
     #[DataProvider('reportCases')]
-    public function test_real_dispatch_keeps_organization_scope_and_current_permissions(bool $sectionProject, bool $nestedProject, bool $filtered, int $sourceRows, int $outputRows, bool $excludeFirst = false, bool $negatedCurrentProject = false): void
+    public function test_real_dispatch_keeps_organization_scope_and_current_permissions(bool $sectionProject, bool $nestedProject, bool $filtered, int $sourceRows, int $outputRows, bool $excludeFirst = false, string $projectExclusion = ''): void
     {
         Queue::fake();
         config(['cache.default' => 'array']);
@@ -97,7 +99,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         ]]];
         $question = self::QUESTION.($filtered ? ' Только за октябрь 2026 года, без отклонённых актов.' : '');
         if ($excludeFirst) {
-            $question .= $negatedCurrentProject ? ' Не в выбранном проекте.' : ' Кроме проекта '.$first->id.'.';
+            $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
         $result = $this->dispatch($arguments, $question, $first, $org, $actor);
         self::assertSame('success', $result['status'], json_encode($result, JSON_UNESCAPED_UNICODE));
