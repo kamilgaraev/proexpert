@@ -14,6 +14,44 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_location_scope_keeps_worded_constraints_and_floor_ranges(): void
+    {
+        foreach (['по этажам', 'на первом этаже', 'на пяти верхних этажах', 'в трёх корпусах',
+            'с 1-го по 5-й этаж', 'со 2-го до 4-го этажа', 'с 1 до 5 этажей'] as $phrase) {
+            $expected = ['project_id' => 102, 'scope_clarification' => 'location'];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
+    public function test_negated_location_constraints_keep_the_requested_project_period(): void
+    {
+        foreach (['не на 5 этажах', 'не по этажам', 'не ограничивайся 3 корпусами', 'не ограничивайтесь только 3 корпусами'] as $phrase) {
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase.' за октябрь 2026',
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'], AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+        }
+        foreach (['не только на 5 этажах', 'не на 5 этажах, а по 3 корпусам'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'scope_clarification' => 'location'], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
     public function test_numeric_subject_constraints_do_not_create_date_filters(): void
     {
         foreach (['на 5 этажах', 'по 3 корпусам', 'на 5-м этаже', 'в корпусе 3', 'на 5–7 этажах'] as $phrase) {

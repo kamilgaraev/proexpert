@@ -280,7 +280,7 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         }
     }
 
-    public function test_location_constraint_requests_scope_without_showing_project_totals(): void
+    public function test_location_constraint_explains_limit_and_accepts_a_new_explicit_project_request(): void
     {
         $this->work('999.0000', 'м²');
         $reader = app(AssistantProjectProductionScheduleReader::class);
@@ -292,10 +292,22 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertStringContainsString('по этажам и корпусам', $read['server_formatted_answer']);
         self::assertStringNotContainsString('Уточните год', $read['server_formatted_answer']);
         self::assertStringNotContainsString('999', $read['server_formatted_answer']);
-        self::assertTrue($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
+        self::assertStringContainsString('новый вопрос', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('Уточните, нужна ли', $read['server_formatted_answer']);
+        self::assertFalse($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
         $read['data']['location_unresolved'] = false;
-        self::assertTrue($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
+        self::assertFalse($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
         self::assertArrayHasKey('scope_clarification', app(GetProjectProductionScheduleSummaryTool::class)->getParametersSchema()['properties']);
+        $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта «Учебный ПТО» за октябрь 2026',
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => $this->project->id]]]]];
+        $search = app(SearchProjectsTool::class);
+        $bound = AssistantNamedProjectReadScope::bind($plan, fn (array $args): array => $search->execute($args, $this->fixture->owner, $this->fixture->organization));
+        $nextArguments = AssistantRequiredProjectRead::fromPlan($bound)['arguments'];
+        self::assertSame(['project_id' => $this->project->id, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'], $nextArguments);
+        $next = $reader->read($this->fixture->owner, $this->fixture->organization->id, $nextArguments);
+        self::assertSame(1, $next['data']['confirmed_works']);
+        self::assertStringNotContainsString('по этажам и корпусам', $next['server_formatted_answer']);
+        self::assertFalse($reader->verifiedAnswer($next, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
     }
 
     public function test_unresolved_period_requests_dates_without_showing_all_time_totals(): void

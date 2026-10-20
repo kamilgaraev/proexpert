@@ -84,8 +84,8 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     {
         $answer = parent::verifiedAnswer($result, $actor, $organizationId);
         $arguments = $result['source_refs'][0]['_read_arguments'] ?? [];
-        if ($answer !== null && (($arguments['scope_clarification'] ?? null) === 'location'
-            || array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null)) {
+        if ($answer !== null && ($arguments['scope_clarification'] ?? null) !== 'location'
+            && array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null) {
             $answer['needs_clarification'] = true;
         }
 
