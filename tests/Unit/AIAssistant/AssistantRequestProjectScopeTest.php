@@ -13,12 +13,35 @@ final class AssistantRequestProjectScopeTest extends TestCase
     public function test_work_organization_phrases_do_not_expand_the_selected_project(): void
     {
         $questions = ['Покажи все задачи организации работ', 'Все задачи организации строительства',
-            'По всем задачам организации строительных работ', 'Покажи все просроченные задачи организации работ'];
+            'По всем задачам организации строительных работ', 'Покажи все просроченные задачи организации работ',
+            'Все задачи организации проекта', 'Все задачи организации документооборота',
+            'Все задачи организации хранения', 'Все задачи организации безопасности',
+            'Все задачи организации безопасного обращения с материалами', 'Все задачи организации мобилизации',
+            'Все задачи организации снабжения', 'Все задачи организации отчётности',
+            'Все задачи организации не завершённых работ'];
         self::assertSame(array_fill(0, count($questions), false), array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
         foreach ($questions as $question) {
             self::assertSame(['project_id' => 52], AssistantRequestProjectScope::bindSearchScope($question, [], 52, true), $question);
             $arguments = ['sections' => [['project_id' => 52, 'filters' => []]]];
             self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $question);
+        }
+    }
+
+    public function test_organization_record_scope_allows_filters_commands_and_output_after_the_company(): void
+    {
+        $questions = ['Все акты организации в CSV', 'Все акты организации по статусам',
+            'Все задачи организации за октябрь', 'Все договоры организации с группировкой по статусам',
+            'Все акты организации без черновиков', 'Все акты организации, включая черновики',
+            'Все акты организации сгруппируй по статусам', 'По всем актам организации подготовьте CSV',
+            'Все акты организации не включай черновики', 'Все акты организации нужны в CSV',
+            'Все акты организации пожалуйста подготовь Excel', 'Все акты организации CSV',
+            'Все акты организации утверждённые', 'Все договоры организации частично оплаченные',
+            'Все акты организации не подписанные', 'Все акты организации отчёт в CSV',
+            'Все акты организации не ограничивайся выбранным проектом', 'Все акты организации экспортируй в CSV',
+            'Все акты организации сохраните в Excel'];
+        self::assertSame(array_fill(0, count($questions), true), array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+        foreach ($questions as $question) {
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
         }
     }
 

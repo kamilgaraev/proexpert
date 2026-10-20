@@ -58,6 +58,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'negated draft filter keeps organization scope' => [true, true, false, 5, 4, false, '', 'without_drafts'],
             'record definition keeps organization scope' => [true, true, false, 3, 2, false, '', 'defined_records'],
             'work organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_organization'],
+            'project organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_project'],
+            'document flow organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_document_flow'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
             'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
@@ -197,8 +199,11 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($variant === 'defined_records') {
             $question = 'Сформируй CSV по всем утверждённым актам организации с группировкой по статусам и валютам.';
         }
-        if ($variant === 'process_organization') {
-            $question = 'Сформируй CSV: все акты организации работ по статусам и валютам.';
+        if (in_array($variant, ['process_organization', 'process_project', 'process_document_flow'], true)) {
+            $process = match ($variant) {
+                'process_project' => 'проекта', 'process_document_flow' => 'документооборота', default => 'работ',
+            };
+            $question = 'Сформируй CSV: все акты организации '.$process.' по статусам и валютам.';
         }
         if ($comparison) {
             $question = match ($variant) {
@@ -293,7 +298,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($variant === 'defined_records') {
             $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00']];
         }
-        if ($variant === 'process_organization') {
+        if (in_array($variant, ['process_organization', 'process_project', 'process_document_flow'], true)) {
             $expected = [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']];
         }
         self::assertEqualsCanonicalizing($expected, $groups);
