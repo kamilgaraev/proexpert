@@ -33,7 +33,7 @@ class OrganizationDiscoveryService
         int $organizationId,
         int $limit = 10
     ): array {
-        $cacheKey = "organization_recommendations:{$organizationId}:{$limit}";
+        $cacheKey = "organization_recommendations:v2:{$organizationId}:{$limit}";
         
         return Cache::remember($cacheKey, 1800, function () use ($organizationId, $limit) {
             $currentOrg = Organization::find($organizationId);
@@ -237,8 +237,10 @@ class OrganizationDiscoveryService
 
     protected function applyRecommendationLogic(Builder $query, Organization $currentOrg): void
     {
-        $query->where('city', $currentOrg->city)
-              ->orWhere('country', $currentOrg->country);
+        $query->where(static function (Builder $locationQuery) use ($currentOrg): void {
+            $locationQuery->where('city', $currentOrg->city)
+                ->orWhere('country', $currentOrg->country);
+        });
 
         $query->orderByRaw("
             CASE 
