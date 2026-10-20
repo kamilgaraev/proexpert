@@ -99,6 +99,63 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
         $this->assertNoPaidCalls($session);
     }
 
+    public function test_mixed_thickness_walls_materialize_then_inspect_typed_choices_without_requiring_partition_volume(): void
+    {
+        $walls = [];
+        foreach (['one', 'two', 'three'] as $index => $key) {
+            $walls[] = ['key' => 'wall-'.$key, 'type' => 'wall', 'parameters' => [
+                'length' => ['value' => '5', 'unit' => 'm', 'basis' => 'measurement'],
+                'height' => ['value' => '3', 'unit' => 'm', 'basis' => 'measurement'],
+                ...($index < 2 ? ['thickness' => ['value' => '0.14', 'unit' => 'm', 'basis' => 'measurement']] : []),
+            ], 'coverage' => ['wall_openings' => 'covered_empty']];
+        }
+        [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1], $walls);
+        $this->withToken(auth('api_admin')->login($actor));
+        $plan = $this->postJson($prefix.'/planning', ['request_id' => (string) Str::uuid(), 'state_version' => 1,
+            'source_checkpoint_id' => $source['checkpoint']['id']])->assertOk()->json('data');
+        $this->postJson($prefix.'/materialize', ['request_id' => (string) Str::uuid(), 'state_version' => 2,
+            'source_checkpoint_id' => $plan['checkpoint']['id']])->assertOk()->assertJsonPath('data.checkpoint.status', 'draft_materialized');
+        $route = '/_contract/wall-inspect/projects/{project}/sessions/{session}/factory/inspections';
+        Route::post($route, [EstimateGenerationFactoryController::class, 'inspect'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        $inspectPath = str_replace(['{project}', '{session}'], [(string) $session->project_id, (string) $session->id], $route);
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => 3];
+        $inspected = $this->postJson($inspectPath, $input)->assertOk()->assertJsonPath('data.checkpoint.status', 'awaiting_input')->json('data');
+        self::assertCount(3, $inspected['checkpoint']['result']['question_refs']);
+        self::assertSame(['wall_assembly'], array_values(array_unique(array_column($inspected['checkpoint']['result']['question_refs'], 'parameter'))));
+        $this->postJson($inspectPath, $input)->assertOk()->assertJsonPath('data', $inspected);
+        $capture = app(ProjectModelRepository::class)->snapshotForPlanning($session->organization_id, $session->project_id, $session->id, 10001);
+        $entities = array_values(array_filter($capture['snapshot']->entities, static fn ($entity): bool => $entity->type === 'wall'));
+        $answers = [];
+        foreach ($entities as $entity) {
+            $hasThickness = count(array_filter($capture['snapshot']->facts, static fn ($fact): bool => $fact->entityId === $entity->id && $fact->type === 'thickness')) === 1;
+            $answers[] = ['key' => 'assembly-'.$entity->id, 'type' => 'wall', 'existing_entity_id' => $entity->id,
+                'wall_assembly' => ['role' => $hasThickness ? 'external' : 'partition',
+                    'finished_surfaces' => $hasThickness ? ['inside', 'outside'] : ['side_a', 'side_b'],
+                    'entity_fingerprint' => \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::entityFingerprint($entity, []),
+                    'reason' => 'Сметное назначение принято для проверки']];
+        }
+        app(SaveManualProjectFacts::class)->handle($actor, $session->project_id, $session->id, 3, (string) Str::uuid(), ['entities' => $answers]);
+        $after = $this->postJson($inspectPath, ['request_id' => (string) Str::uuid(), 'state_version' => 4])->assertOk()
+            ->assertJsonPath('data.checkpoint.status', 'planning_required')->json('data');
+        self::assertSame($source['run']['id'], $after['run']['id']);
+        self::assertSame(5, $after['run']['step_count']);
+        $quantities = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)
+            ->previewInput($session->organization_id, $session->project_id, $session->id)['quantities'];
+        self::assertCount(2, array_filter($quantities, static fn ($quantity): bool => $quantity->formulaKey === 'wall_net_volume'));
+        $partition = array_values(array_filter($answers, static fn ($answer): bool => $answer['wall_assembly']['role'] === 'partition'))[0];
+        app(SaveManualProjectFacts::class)->handle($actor, $session->project_id, $session->id, 4, (string) Str::uuid(), ['entities' => [[
+            'key' => 'partition-thickness', 'type' => 'wall', 'existing_entity_id' => $partition['existing_entity_id'],
+            'parameters' => ['thickness' => ['value' => '0.14', 'unit' => 'm', 'basis' => 'measurement']],
+        ]]]);
+        $quantities = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)
+            ->previewInput($session->organization_id, $session->project_id, $session->id)['quantities'];
+        self::assertCount(2, array_filter($quantities, static fn ($quantity): bool => $quantity->formulaKey === 'wall_net_volume'));
+        $this->postJson($inspectPath, ['request_id' => (string) Str::uuid(), 'state_version' => 5])->assertOk()
+            ->assertJsonPath('data.checkpoint.status', 'planning_required')->assertJsonPath('data.run.step_count', 6);
+        self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+        $this->assertNoPaidCalls($session);
+    }
+
     public static function materializationLimits(): array
     {
         return ['source bytes' => ['source_bytes', 'input_budget_exceeded'], 'work rows' => ['work_rows', 'planning_budget_exceeded']];

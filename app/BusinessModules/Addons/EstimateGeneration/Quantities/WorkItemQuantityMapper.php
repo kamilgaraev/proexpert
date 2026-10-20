@@ -71,7 +71,7 @@ final class WorkItemQuantityMapper
         return count($matches) === 1 ? array_values($matches)[0] : null;
     }
 
-    public function map(string $workItemKey, array $quantities): ?QuantityData
+    public function map(string $workItemKey, array $quantities, bool $allowLegacyWallVolumeFallback = false): ?QuantityData
     {
         $direct = $this->quantity($quantities[$workItemKey] ?? null);
         if ($direct !== null) {
@@ -88,7 +88,7 @@ final class WorkItemQuantityMapper
             return null;
         }
 
-        $rule = $this->rule($workItemKey);
+        $rule = $this->rule($workItemKey, $allowLegacyWallVolumeFallback);
         if ($rule === null) {
             return null;
         }
@@ -188,7 +188,7 @@ final class WorkItemQuantityMapper
         ];
     }
 
-    private function rule(string $key): ?array
+    private function rule(string $key, bool $allowLegacyWallVolumeFallback = false): ?array
     {
         $floorArea = fn (string $factor = '1'): array => ['sources' => [['key' => 'floor_area', 'factor' => $factor]], 'unit' => 'm2'];
         $firstFloorInternalArea = fn (string $factor = '1'): array => [
@@ -263,8 +263,11 @@ final class WorkItemQuantityMapper
             ],
             'walls.external_volume' => [
                 'sources' => [
-                    ['key' => 'gross_wall_area', 'factor' => '0.30'],
-                    ['key' => 'floor_area', 'factor' => '0.45'],
+                    ['key' => 'net_wall_volume', 'factor' => '1'],
+                    ...($allowLegacyWallVolumeFallback ? [
+                        ['key' => 'gross_wall_area', 'factor' => '0.30'],
+                        ['key' => 'floor_area', 'factor' => '0.45'],
+                    ] : []),
                 ],
                 'unit' => 'm3',
             ],

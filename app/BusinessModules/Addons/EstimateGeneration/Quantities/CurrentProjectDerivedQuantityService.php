@@ -19,6 +19,7 @@ final readonly class CurrentProjectDerivedQuantityService
         'floor_area' => 'floor_area',
         'direct_floor_area' => 'floor_area',
         'wall_net_area' => 'net_wall_area',
+        'wall_net_volume' => 'net_wall_volume',
         'sloped_roof_area' => 'roof_area',
         'earthwork_volume' => 'earthwork_volume',
         'foundation_beam_volume' => 'foundation_volume',
@@ -270,6 +271,9 @@ final readonly class CurrentProjectDerivedQuantityService
         unset($childrenByParent);
 
         $requests = [];
+        $volumeDocumentVersions = $inventoryDocumentVersions ?? (array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'wall_assembly') === []
+            ? [] : GeometryInventory::currentDocumentVersions($snapshot));
+        $volumeWalls = WallEstimateScope::volumeWalls($snapshot, $decisions, $volumeDocumentVersions);
         foreach ($snapshot->entities as $entity) {
             $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
             foreach (FactVocabulary::foundationFormulas() as $formula => $definition) {
@@ -314,6 +318,11 @@ final readonly class CurrentProjectDerivedQuantityService
                     $completeness,
                 );
                 $this->applyCoverage($request, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []), $snapshot, $decisions, $inventoryDocumentVersions);
+                if (isset($volumeWalls[$entity->id])) {
+                    $volume = $this->wallRequest($entity, $openingsByWall[$entity->id] ?? [], $facts, $token, $technology, $completeness, true);
+                    $this->applyCoverage($volume, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []), $snapshot, $decisions, $inventoryDocumentVersions);
+                    $requests[] = $volume;
+                }
             } elseif ($semanticType === 'roof') {
                 $roofChildren = $roofChildrenByRoof[$entity->id] ?? [];
                 $request = $this->roofRequest(
@@ -397,7 +406,7 @@ final readonly class CurrentProjectDerivedQuantityService
     }
 
     /** @param list<Entity> $openings @param array<string, array<string, list<Fact>>> $facts */
-    private function wallRequest(Entity $wall, array $openings, array $facts, string $token, array $technology, array $completeness): array
+    private function wallRequest(Entity $wall, array $openings, array $facts, string $token, array $technology, array $completeness, bool $volume = false): array
     {
         $length = $this->oneFact($facts, $wall->id, 'length');
         $height = $this->oneFact($facts, $wall->id, 'height');
@@ -420,12 +429,13 @@ final readonly class CurrentProjectDerivedQuantityService
             }
         }
 
-        $request = $this->request('wall_net_area', $wall->id, [
+        $request = $this->request($volume ? 'wall_net_volume' : 'wall_net_area', $wall->id, [
             'wall_length' => $length?->id,
             'wall_height' => $height?->id,
+            ...($volume ? ['wall_thickness' => $this->oneFact($facts, $wall->id, 'thickness')?->id] : []),
             'opening_widths' => $widths,
             'opening_heights' => $heights,
-        ], $token, $technology, $completeness, 'm2', 2);
+        ], $token, $technology, $completeness, $volume ? 'm3' : 'm2', $volume ? 3 : 2);
         $request['geometry_inputs'] = $geometryInputs;
 
         return $request;

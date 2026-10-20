@@ -969,6 +969,91 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         return $ready->quantity;
     }
 
+    public function test_wall_assembly_question_saves_a_source_bound_assumption_replays_and_rejects_stale_or_forged_sides_without_ai(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures', 'finishing']]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $writer = app(SaveManualProjectFacts::class);
+        $first = $writer->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+            [...$this->entity('wall', 'wall-1', ['length' => '5', 'height' => '3', 'thickness' => '0.14']),
+                'coverage' => ['wall_openings' => 'covered_empty']],
+        ]]);
+        self::assertSame('2.1', $first['quantities']['net_wall_volume']['amount']);
+        $draft = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector::class)->project([
+            'source_input_version' => 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh()),
+            'local_estimates' => [],
+        ]);
+        $session->refresh()->update(['draft_payload' => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft::class)->seal($draft)]);
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $wall = $capture['snapshot']->entities[0];
+        $backlog = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterBacklog::class);
+        $questions = $backlog->current($session->fresh(), $capture['snapshot'], $capture['token']);
+        self::assertCount(1, $questions['questions']);
+        $question = $questions['questions'][0];
+        self::assertSame('wall_assembly', $question['answer']['kind']);
+        self::assertSame(['external', 'partition'], array_column($question['input_contract']['roles'], 'value'));
+        $input = ['entities' => [['key' => 'answer', 'type' => 'wall', 'existing_entity_id' => $wall->id,
+            'native_question' => $question['answer']['native_question'], 'wall_assembly' => ['role' => 'external',
+                'finished_surfaces' => ['outside', 'inside'], 'entity_fingerprint' => $question['answer']['entity_fingerprint'],
+                'reason' => 'Предварительный сметный сценарий по наружному контуру плана']]]];
+        $before = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
+        foreach (['foreign_side', 'duplicate_side', 'forged_fingerprint', 'empty_reason', 'unknown_role'] as $variant) {
+            $invalid = $input;
+            $entry = &$invalid['entities'][0]['wall_assembly'];
+            match ($variant) {
+                'foreign_side' => $entry['finished_surfaces'] = ['side_a'],
+                'duplicate_side' => $entry['finished_surfaces'] = ['inside', 'inside'],
+                'forged_fingerprint' => $entry['entity_fingerprint'] = str_repeat('f', 64),
+                'empty_reason' => $entry['reason'] = '',
+                'unknown_role' => $entry['role'] = 'inferred_from_name',
+            };
+            unset($entry);
+            try {
+                $writer->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), $invalid);
+                self::fail('Invalid wall assembly was accepted.');
+            } catch (ValidationException) {
+                self::assertSame($before, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+                self::assertSame(1, $session->fresh()->state_version);
+            }
+        }
+        $request = (string) Str::uuid();
+        $result = $writer->handle($actor, $scope[1], $scope[2], 1, $request, $input);
+        self::assertSame('0', $result['cost_units']);
+        self::assertTrue($result['recalculation_required']);
+        self::assertEquals($result, $writer->handle($actor, $scope[1], $scope[2], 1, $request, $input));
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $snapshot = $capture['snapshot'];
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $selected = \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, []);
+        self::assertSame('external', $selected[$wall->id]['role']);
+        self::assertSame(['inside', 'outside'], $selected[$wall->id]['finished_surfaces']);
+        self::assertEquals($wall, $snapshot->entities[0]);
+        $fact = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'wall_assembly'))[0];
+        self::assertSame('user_assumption', $fact->origin);
+        self::assertNull($fact->unit);
+        self::assertSame([], \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, [], []));
+        self::assertSame([], $backlog->current($session->fresh(), $snapshot, $capture['token'])['questions']);
+        try {
+            $writer->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $input);
+            self::fail('Stale wall question was accepted.');
+        } catch (ValidationException) {
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+        unset($input['entities'][0]['native_question']);
+        $input['entities'][0]['wall_assembly']['role'] = 'partition';
+        $input['entities'][0]['wall_assembly']['finished_surfaces'] = ['side_a'];
+        $writer->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $input);
+        $updated = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $updatedDecisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($updated->facts, 'id')]);
+        $selected = \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($updated, $updatedDecisions, []);
+        self::assertSame('partition', $selected[$wall->id]['role']);
+        self::assertSame(2, $selected[$wall->id]['fact_version']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     private function fixture(): array
     {
         $organization = Organization::factory()->create();

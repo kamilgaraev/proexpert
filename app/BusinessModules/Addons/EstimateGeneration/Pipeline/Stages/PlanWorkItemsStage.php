@@ -104,6 +104,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         ];
         $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($context->organizationId, $context->projectId, $context->sessionId, $context->creditOperationId);
         $payload = $this->compiler->compile($analysis, null, true, $workLimit);
+        $generationIdentity['evaluation_mode'] = $payload['evaluation_policy']['mode'] ?? null;
         $this->logProgress($context, 'baseline_compiled');
         $this->renewAfterProgress($heartbeat);
         $stageFiveItems = $this->technologyWorkItems->planPackages(

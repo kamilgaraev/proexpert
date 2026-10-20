@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Brick\Math\BigDecimal;
@@ -16,11 +21,21 @@ use Illuminate\Validation\ValidationException;
 final readonly class CurrentDraftQuantityProofGuard
 {
     public function __construct(private CurrentProjectDerivedQuantityService $current,
-        private WorkItemQuantityMapper $mapper, private EvidenceRepository $evidence) {}
+        private WorkItemQuantityMapper $mapper, private EvidenceRepository $evidence, private ProjectModelRepository $models) {}
 
     public function assertCurrent(int $organizationId, int $projectId, int $sessionId, array $draft, bool $lockEvidence = true): void
     {
-        $quantities = $this->current->previewInput($organizationId, $projectId, $sessionId)['quantities'];
+        $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
+        $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001);
+        $snapshot = $capture['snapshot'];
+        $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
+        if (count($snapshot->facts) > 10000 || ($universal && count($decisions) > 256)) {
+            $this->reject();
+        }
+        $quantities = $universal
+            ? $this->current->simulateInput($snapshot, $capture['token'], $decisions)['quantities']
+            : $this->current->previewInput($organizationId, $projectId, $sessionId)['quantities'];
+        $wallScopes = WallEstimateScope::select($snapshot, $decisions, GeometryInventory::currentDocumentVersions($snapshot));
         $ids = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
@@ -52,6 +67,17 @@ final readonly class CurrentDraftQuantityProofGuard
                             if (($operand['quantity_binding']['work_item_key'] ?? null) !== ($item['key'] ?? null)) {
                                 $this->reject();
                             }
+                        }
+                    }
+                    if (! WallWorkItemExpander::permits($item, $wallScopes, $universal)) {
+                        $this->reject();
+                    }
+                    if (isset($item['metadata']['wall_assembly'])) {
+                        foreach ($wallScopes[$targetEntity]['evidence_ids'] ?? [] as $id) {
+                            if (preg_match('/\Aevidence:([1-9][0-9]*)\z/', $id, $match) !== 1) {
+                                $this->reject();
+                            }
+                            $ids[(int) $match[1]] = (int) $match[1];
                         }
                     }
                     $basisEvidence = $basis['evidence_ids'] ?? [];

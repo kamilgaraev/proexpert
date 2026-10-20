@@ -38,7 +38,7 @@ final readonly class FactoryPlanningInspector
         $refs = [];
         foreach ($backlog['native_questions']['questions'] as $question) {
             $refs[] = ['key' => $question['key'], 'version' => $question['answer']['version'],
-                'entity_id' => $question['answer']['entity_id'], 'parameter' => $question['answer']['parameter'],
+                'entity_id' => $question['answer']['entity_id'], 'parameter' => $question['answer']['parameter'] ?? $question['answer']['kind'],
                 'can_answer' => $question['can_answer'], 'finding_key' => null];
         }
         $total = $backlog['native_questions']['total_questions'];
