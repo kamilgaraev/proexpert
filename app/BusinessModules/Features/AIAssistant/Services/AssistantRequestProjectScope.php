@@ -6,7 +6,9 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 final readonly class AssistantRequestProjectScope
 {
-    public function __construct(public bool $requested, public ?int $projectId) {}
+    private const CURRENT_PROJECT = '(?<![\pL\pN])(?:(?:текущ|выбран|эт|данн)[а-яё]*|наш(?:его|ему|ем|им)?)\s+(?:проект|объект)[а-яё]*(?![\pL\pN])';
+
+    public function __construct(public bool $requested, public ?int $projectId, private ?int $contextProjectId = null) {}
 
     public static function fromPlan(array $plan): self
     {
@@ -19,7 +21,7 @@ final readonly class AssistantRequestProjectScope
             return new self(true, $valid ? self::positiveId($named['project_id'] ?? null) : null);
         }
         $organizationWide = self::organizationWide($question);
-        $requested = ! $organizationWide && preg_match('/(?<![\pL\pN])(?:(?:текущ|выбран|эт|данн)[а-яё]*|наш(?:его|ему|ем|им)?)\s+(?:проект|объект)[а-яё]*(?![\pL\pN])/iu', $question) === 1;
+        $requested = ! $organizationWide && preg_match('/'.self::CURRENT_PROJECT.'/iu', $question) === 1;
         $context = is_array($plan['request']['context'] ?? null) ? $plan['request']['context'] : [];
         $projects = [];
         foreach (['entity_refs', 'entity_references'] as $key) {
@@ -34,15 +36,20 @@ final readonly class AssistantRequestProjectScope
             }
         }
 
-        return new self($requested, ! $organizationWide && count($projects) === 1 ? (int) array_key_first($projects) : null);
+        $contextProjectId = count($projects) === 1 ? (int) array_key_first($projects) : null;
+
+        return new self($requested, $organizationWide ? null : $contextProjectId, $contextProjectId);
     }
 
     public static function organizationWide(string $question): bool
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
-        $scope = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект)|всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех)\s+(?:наш(?:им|их)\s+)?[\pL-]+\s+(?:нашей\s+)?организации(?![\pL\pN]))';
+        $projects = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект))';
+        $organization = '(?:всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех)\s+(?:наш(?:им|их)\s+)?[\pL-]+\s+(?:нашей\s+)?организации(?![\pL\pN]))';
+        $scope = '(?:'.$projects.'|'.$organization.')';
 
-        return preg_match('/(?<![\pL\pN])'.$scope.'/iu', $question) === 1
+        return (preg_match('/(?<![\pL\pN])'.$projects.'/iu', $question) === 1
+            || (preg_match('/(?<![\pL\pN])'.$organization.'/iu', $question) === 1 && ! self::hasAffirmativeCurrentProject($question)))
             && preg_match('/(?<![\pL\pN])(?:не(?!\s+(?:только|забуд[а-яё]*|забыва[а-яё]*|прекраща[а-яё]*|перестава[а-яё]*|упуска[а-яё]*)(?!\pL))|кроме|исключая)\s+(?:[\pL\pN-]+\s+){0,4}(?:во?\s+)?'.$scope.'/iu', $question) !== 1;
     }
 
@@ -64,19 +71,63 @@ final readonly class AssistantRequestProjectScope
             || ! is_array($arguments['sections'] ?? null)) {
             return $arguments;
         }
+        if ($organizationWide && self::hasExplicitProjectSections($question)) {
+            return $arguments;
+        }
         foreach ($arguments['sections'] as $index => $section) {
             if (! is_array($section)) {
                 continue;
             }
-            $arguments['sections'][$index]['project_id'] = $organizationWide ? null : $this->projectId;
+            if (! $organizationWide || ($this->contextProjectId !== null && self::positiveId($section['project_id'] ?? null) === $this->contextProjectId)) {
+                $arguments['sections'][$index]['project_id'] = $organizationWide ? null : $this->projectId;
+            }
             if ($organizationWide && is_array($section['filters'] ?? null)) {
                 $arguments['sections'][$index]['filters'] = array_values(array_filter($section['filters'],
-                    static fn (mixed $filter): bool => ! is_array($filter) || ($filter['field'] ?? null) !== 'project_id'
-                        || in_array($filter['operator'] ?? null, ['is_null', 'is_not_null'], true)));
+                    fn (mixed $filter): bool => ! is_array($filter) || ! $this->isSelectedProjectFilter($filter)));
             }
         }
 
         return $arguments;
+    }
+
+    private static function hasAffirmativeCurrentProject(string $question): bool
+    {
+        $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
+        $negative = '(?<![\pL\pN])(?:не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})';
+        $question = preg_replace('/'.$negative.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
+
+        return preg_match('/'.self::CURRENT_PROJECT.'/iu', $question) === 1;
+    }
+
+    private static function hasExplicitProjectSections(string $question): bool
+    {
+        if (preg_match('/(?<![\pL\pN])(?:кроме|исключая|за\s+исключением)\s+(?:[\pL-]+\s+){0,3}(?:проект|объект)[а-яё]*(?!\pL)/iu', $question) === 1) {
+            return false;
+        }
+
+        return AssistantNamedProjectReadScope::withoutQuotedNames($question) !== $question
+            || preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*[1-9]\d*(?![\pL\pN])/iu', $question) === 1
+            || (preg_match('/(?<![\pL\pN])сравн[а-яё]*(?!\pL)/iu', $question) === 1 && self::hasAffirmativeCurrentProject($question));
+    }
+
+    private function isSelectedProjectFilter(array $filter): bool
+    {
+        if ($this->contextProjectId === null || ($filter['field'] ?? null) !== 'project_id') {
+            return false;
+        }
+        $values = match ($filter['operator'] ?? null) {
+            'eq' => [$filter['value'] ?? null],
+            'in' => is_array($filter['value'] ?? null) ? $filter['value'] : [],
+            default => [],
+        };
+
+        foreach ($values as $value) {
+            if (self::positiveId($value) !== $this->contextProjectId) {
+                return false;
+            }
+        }
+
+        return $values !== [];
     }
 
     public function allowsReferences(array $references, array $results = []): bool

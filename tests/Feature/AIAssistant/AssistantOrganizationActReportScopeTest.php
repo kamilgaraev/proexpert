@@ -37,11 +37,13 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'section project' => [true, false, false, 7, 5],
             'nested project filter' => [false, true, false, 7, 5],
             'both with date and status filters' => [true, true, true, 5, 3],
+            'organization except selected project' => [false, true, false, 4, 4, true],
+            'organization except stale section project' => [true, true, false, 4, 4, true],
         ];
     }
 
     #[DataProvider('reportCases')]
-    public function test_real_dispatch_keeps_organization_scope_and_current_permissions(bool $sectionProject, bool $nestedProject, bool $filtered, int $sourceRows, int $outputRows): void
+    public function test_real_dispatch_keeps_organization_scope_and_current_permissions(bool $sectionProject, bool $nestedProject, bool $filtered, int $sourceRows, int $outputRows, bool $excludeFirst = false): void
     {
         Queue::fake();
         config(['cache.default' => 'array']);
@@ -80,7 +82,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             return new CurrentStoredFile($path, 'etag', strlen($csv), $hash, $mime);
         });
         $this->app->instance(FileService::class, $files);
-        $filters = $nestedProject ? [['field' => 'project_id', 'operator' => 'eq', 'value' => $first->id]] : [];
+        $filters = $nestedProject ? [['field' => 'project_id', 'operator' => $excludeFirst ? 'neq' : 'eq', 'value' => $first->id]] : [];
         if ($filtered) {
             $filters = [...$filters, ['field' => 'date', 'operator' => 'gte', 'value' => '2026-10-01'],
                 ['field' => 'date', 'operator' => 'lte', 'value' => '2026-10-31'], ['field' => 'status', 'operator' => 'neq', 'value' => 'rejected']];
@@ -93,6 +95,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'order_by' => [['field' => 'status', 'direction' => 'asc'], ['field' => 'currency', 'direction' => 'asc']], 'row_limit' => 100,
         ]]];
         $question = self::QUESTION.($filtered ? ' Только за октябрь 2026 года, без отклонённых актов.' : '');
+        if ($excludeFirst) {
+            $question .= ' Кроме проекта '.$first->id.'.';
+        }
         $result = $this->dispatch($arguments, $question, $first, $org, $actor);
         self::assertSame('success', $result['status'], json_encode($result, JSON_UNESCAPED_UNICODE));
         self::assertSame([['title' => 'По статусам и валютам', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows]], $result['sections']);
@@ -113,6 +118,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00'], ['USD', 2, '10.00']];
         if (! $filtered) {
             $expected = [...$expected, ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
+        }
+        if ($excludeFirst) {
+            $expected = [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
         }
         self::assertEqualsCanonicalizing($expected, $groups);
         $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();

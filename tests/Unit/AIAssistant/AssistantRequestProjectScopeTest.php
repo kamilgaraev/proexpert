@@ -32,7 +32,7 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
-    public function test_report_binding_removes_model_project_ids_and_keeps_other_filters_and_nullness(): void
+    public function test_report_binding_removes_selected_project_ids_and_keeps_other_filters_and_nullness(): void
     {
         $question = 'По всем актам организации. Не ограничивайся выбранным проектом.';
         $filters = [['field' => 'project_id', 'operator' => 'eq', 'value' => 52],
@@ -42,11 +42,12 @@ final class AssistantRequestProjectScopeTest extends TestCase
         $arguments = ['title' => 'Акты', 'format' => 'csv', 'sections' => [
             ['project_id' => 52, 'filters' => $filters, 'columns' => ['status', 'currency']],
             ['project_id' => 100, 'filters' => [['field' => 'project_id', 'operator' => 'in', 'value' => ['52', '100']]]],
+            ['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'in', 'value' => ['52']]]],
         ]];
         $expected = $arguments;
         $expected['sections'][0]['project_id'] = null;
         $expected['sections'][0]['filters'] = array_slice($filters, 1);
-        $expected['sections'][1] = ['project_id' => null, 'filters' => []];
+        $expected['sections'][2] = ['project_id' => null, 'filters' => []];
         self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan('Покажи акты'))->bindReportScope('Покажи акты', $arguments));
         $invalid = ['sections' => 'invalid'];
@@ -64,6 +65,34 @@ final class AssistantRequestProjectScopeTest extends TestCase
         self::assertSame($expected, AssistantRequestProjectScope::fromPlan($plan)->bindReportScope($question, $arguments));
         $plan['named_project_scope']['message_sha256'] = str_repeat('0', 64);
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($plan)->bindReportScope($question, $arguments));
+    }
+
+    public function test_record_scope_respects_affirmative_current_project_constraints(): void
+    {
+        foreach (['Отчёт по всем актам организации в выбранном проекте',
+            'Сводка всех журналов нашей организации, только текущего проекта',
+            'По всей организации, только в выбранном проекте'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertTrue($scope->requested);
+            self::assertSame(52, $scope->projectId);
+        }
+        foreach (['По всем актам организации. Не ограничивайся выбранным проектом.',
+            'По всем актам организации, не только выбранного проекта.',
+            'По всем актам организации, без ограничения выбранным проектом.'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertFalse(AssistantRequestProjectScope::fromPlan($this->plan($question))->requested);
+        }
+    }
+
+    public function test_organization_report_keeps_project_exclusions_and_comparison_sections(): void
+    {
+        $question = 'Нужны все акты всей организации, кроме проекта 52';
+        $arguments = ['sections' => [['project_id' => null, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]]]];
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        $question = 'Сводка по всем актам организации. Сравни проекты 52 и 100 по отдельности.';
+        $arguments = ['sections' => [['project_id' => 52, 'filters' => []], ['project_id' => 100, 'filters' => []]]];
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
     }
 
     public function test_genitive_all_projects_scope_clears_selected_project_and_preserves_negation(): void
