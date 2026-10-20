@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationAnalysisBasisController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationAnswerReceiptController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationCompositionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDialogueController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
@@ -64,6 +65,8 @@ Route::middleware([
         Route::get('/{session}/evaluation/requirement-sources', [EstimateGenerationEvaluationController::class, 'requirementSources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.requirement-sources');
         Route::post('/{session}/evaluation/requirement', [EstimateGenerationEvaluationController::class, 'requirement'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.requirement');
         Route::post('/{session}/evaluation/recalculate', [EstimateGenerationEvaluationController::class, 'recalculate'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.recalculate');
+        Route::get('/{session}/evaluation/composition', [EstimateGenerationCompositionController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.composition');
+        Route::post('/{session}/evaluation/composition', [EstimateGenerationCompositionController::class, 'accept'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.composition.accept');
         Route::post('/{session}/evaluation/price', [EstimateGenerationEvaluationController::class, 'price'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.price');
         Route::get('/{session}/evaluation/technologies', [EstimateGenerationEvaluationController::class, 'technologies'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.technologies');
         Route::post('/{session}/evaluation/technology', [EstimateGenerationEvaluationController::class, 'technology'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.technology');

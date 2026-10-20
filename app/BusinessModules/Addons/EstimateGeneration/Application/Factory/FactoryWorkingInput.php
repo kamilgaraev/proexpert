@@ -17,6 +17,7 @@ final class FactoryWorkingInput
         'evaluation_currency_receipts', 'evaluation_decision_receipts', 'evaluation_scenario_receipts',
         'evaluation_scope_receipts', 'evaluation_quantity_receipts', 'evaluation_technology_receipts',
         'regional_price_selection_receipts',
+        'evaluation_composition_receipts',
     ];
 
     public static function fromPayload(array $payload): array
