@@ -78,6 +78,8 @@ final readonly class AssistantRequestProjectScope
         }
         $mixed = $organizationWide && self::hasExplicitProjectSections($question);
         $projectIds = null;
+        $boundProjects = [];
+        $projectSections = [];
         foreach ($arguments['sections'] as $index => $section) {
             if (! is_array($section)) {
                 continue;
@@ -100,6 +102,15 @@ final readonly class AssistantRequestProjectScope
                     $id = $projectIds[0];
                 }
                 $this->assertProjectFilters($section, $id);
+                $signature = ['project_id' => $id];
+                foreach (['domain', 'entity_type', 'columns', 'filters', 'group_by', 'metrics', 'order_by', 'row_limit'] as $key) {
+                    $signature[$key] = $section[$key] ?? null;
+                }
+                if (in_array($signature, $projectSections, true)) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                $projectSections[] = $signature;
+                $boundProjects[$id] = true;
                 $arguments['sections'][$index]['project_id'] = $id;
 
                 continue;
@@ -116,6 +127,20 @@ final readonly class AssistantRequestProjectScope
             if ($organizationWide && is_array($section['filters'] ?? null)) {
                 $arguments['sections'][$index]['filters'] = array_values(array_filter($section['filters'],
                     fn (mixed $filter): bool => ! is_array($filter) || ! $this->isSelectedProjectFilter($filter)));
+                if ($scope === 'organization') {
+                    foreach ($arguments['sections'][$index]['filters'] as $filter) {
+                        if (is_array($filter) && ($filter['field'] ?? null) === 'project_id'
+                            && ! in_array($filter['operator'] ?? null, ['neq', 'is_null', 'is_not_null'], true)) {
+                            throw new AssistantReportScopeAmbiguous;
+                        }
+                    }
+                }
+            }
+        }
+        if ($mixed) {
+            $projectIds ??= $this->reportProjectIds($question, $search);
+            if (array_diff($projectIds, array_keys($boundProjects)) !== []) {
+                throw new AssistantReportScopeAmbiguous;
             }
         }
 

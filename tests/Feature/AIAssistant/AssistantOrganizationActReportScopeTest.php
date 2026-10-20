@@ -47,6 +47,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'organization and explicit project' => [true, true, false, 7, 5, false, '', 'explicit'],
             'organization and named selected project' => [true, true, false, 7, 5, false, '', 'named'],
             'mixed scope without section metadata' => [true, true, false, 7, 5, false, '', 'ambiguous'],
+            'mixed scope missing compared project' => [true, true, false, 7, 5, false, '', 'missing_project'],
+            'organization section with positive project filter' => [true, true, false, 7, 5, false, '', 'org_project_filter'],
         ];
     }
 
@@ -84,7 +86,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         self::assertFalse($policy->canReadEntity($actor, $org->id, 'project', $foreign->id));
         $csv = null;
         $files = $this->createMock(FileService::class);
-        $files->expects($variant === 'ambiguous' ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
+        $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'org_project_filter'], true);
+        $files->expects($rejectedScope ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
 
@@ -107,13 +110,14 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($excludeFirst) {
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
-        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous'], true);
+        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'org_project_filter'], true);
         if ($variant === 'nominative') {
             $question = 'Сделай CSV: все акты организации по статусам и валютам, включая черновики.';
         }
         if ($comparison) {
             $question = match ($variant) {
-                'explicit' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
+                'explicit', 'org_project_filter' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
+                'missing_project' => 'Сделай Excel: сравни все акты организации с проектами '.$first->id.' и '.$second->id,
                 'named' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$first->name,
                 default => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с выбранным проектом',
             };
@@ -123,16 +127,19 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $projectSection = $organizationSection;
             $projectSection['title'] = 'Проект';
             $projectSection['scope'] = 'project';
-            $projectSection['project_id'] = $variant === 'explicit' ? $second->id : $first->id;
+            $projectSection['project_id'] = in_array($variant, ['explicit', 'org_project_filter'], true) ? $second->id : $first->id;
             $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']]];
             if ($variant === 'ambiguous') {
                 unset($organizationSection['scope'], $projectSection['scope']);
+            }
+            if ($variant === 'org_project_filter') {
+                $organizationSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $second->id]];
             }
             $arguments['format'] = 'xlsx';
             $arguments['sections'] = [$organizationSection, $projectSection];
         }
         $result = $this->dispatch($arguments, $question, $first, $org, $actor);
-        if ($variant === 'ambiguous') {
+        if ($rejectedScope) {
             self::assertSame('error', $result['status']);
             self::assertTrue($result['needs_clarification']);
             self::assertArrayHasKey('sections.scope', $result['validation_errors']);

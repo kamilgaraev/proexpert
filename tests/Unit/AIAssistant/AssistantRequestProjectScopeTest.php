@@ -261,6 +261,52 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_mixed_report_requires_every_explicitly_compared_project(): void
+    {
+        $question = 'Сравни все акты организации с проектами 52 и 100';
+        $rejected = [];
+        foreach ([[52], [52, 52], [], [52, 52, 100]] as $ids) {
+            $sections = [['scope' => 'organization', 'project_id' => null]];
+            foreach ($ids as $id) {
+                $sections[] = ['scope' => 'project', 'project_id' => $id];
+            }
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+                $rejected[] = false;
+            } catch (AssistantReportScopeAmbiguous) {
+                $rejected[] = true;
+            }
+        }
+        self::assertSame([true, true, true, true], $rejected);
+        $sections = [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 52], ['scope' => 'project', 'project_id' => 100]];
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+        $sections[] = ['scope' => 'project', 'project_id' => 52, 'domain' => 'contracts', 'entity_type' => 'contract'];
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+    }
+
+    public function test_explicit_organization_scope_rejects_positive_project_filters(): void
+    {
+        $question = 'Сравни все акты организации с проектом 100';
+        $rejected = [];
+        foreach ([['eq', 100], ['in', [100]], ['in', [52, 100]], ['gt', 52], ['contains', '100']] as [$operator, $value]) {
+            $sections = [['scope' => 'organization', 'project_id' => null,
+                'filters' => [['field' => 'project_id', 'operator' => $operator, 'value' => $value]]],
+                ['scope' => 'project', 'project_id' => 100]];
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+                $rejected[] = false;
+            } catch (AssistantReportScopeAmbiguous) {
+                $rejected[] = true;
+            }
+        }
+        self::assertSame([true, true, true, true, true], $rejected);
+        foreach (['neq', 'is_null', 'is_not_null'] as $operator) {
+            $sections = [['scope' => 'organization', 'project_id' => null,
+                'filters' => [['field' => 'project_id', 'operator' => $operator, 'value' => 52]]], ['scope' => 'project', 'project_id' => 100]];
+            self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+        }
+    }
+
     public function test_genitive_all_projects_scope_clears_selected_project_and_preserves_negation(): void
     {
         $question = 'Сделай Excel по просроченным задачам всех проектов организации';
