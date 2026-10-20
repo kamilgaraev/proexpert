@@ -14,6 +14,23 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_current_day_forms_resolve_current_sutki_without_losing_project_scope(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
+        try {
+            foreach (['за текущие сутки', 'текущие сутки', 'в течение текущих суток',
+                'за текущий день', 'за текущую дату', 'за сегодняшний день', 'за сегодняшние сутки'] as $phrase) {
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+                $this->assertPeriodScope($phrase, '2026-10-20', '2026-10-20');
+            }
+            foreach (['за текущие сутки и за октябрь 2026', 'за текущие недели', 'за будущие сутки'] as $phrase) {
+                $this->assertPeriodScope($phrase, null, null);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_relative_date_noun_keeps_direct_named_and_literal_period_scope(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
