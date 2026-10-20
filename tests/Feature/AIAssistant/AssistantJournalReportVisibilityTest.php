@@ -14,6 +14,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomRep
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportRenderer;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotFootprint;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Enums\ProjectOrganizationRole;
@@ -210,6 +211,31 @@ final class AssistantJournalReportVisibilityTest extends TestCase
             'message' => trans_message('reports.errors.report_source_unavailable')], $tool->execute($this->plan(), $actor, $fixture->organization));
         self::assertSame($contextCount, AuthorizationContext::query()->count());
         self::assertNull(AuthorizationContext::findProjectContext((int) $project->id, $organizationId));
+    }
+
+    public function test_real_journal_performer_query_has_proven_snapshot_dependencies(): void
+    {
+        [$fixture, , $journals] = $this->fixture();
+        $actor = $fixture->owner;
+        $organizationId = (int) $fixture->organization->id;
+        $policy = app(AssistantDataAccessPolicy::class);
+        $sql = null;
+        $proof = app(AssistantStatusSnapshotFootprint::class)->capture(function () use ($policy, $actor, $organizationId, &$sql): array {
+            return $policy->withCurrentChecks($actor, $organizationId, function () use ($policy, $actor, $organizationId, &$sql): array {
+                $query = $policy->entityQuery($actor, $organizationId, 'construction_journal');
+                self::assertNotNull($query);
+                $sql = $query->toSql();
+
+                return $query->orderBy('construction_journals.id')->pluck('construction_journals.id')->all();
+            }, fresh: true);
+        });
+        self::assertIsString($sql);
+        self::assertStringContainsString('jsonb_to_recordset(', $sql);
+        self::assertSame([$journals[0]->id, $journals[1]->id], $proof['value']);
+        self::assertIsArray($proof['relations'], $proof['reason'] ?? '');
+        foreach (['public.construction_journals', 'public.projects', 'public.project_organization_hierarchy'] as $relation) {
+            self::assertContains($relation, $proof['relations']);
+        }
     }
 
     private function plan(): array
