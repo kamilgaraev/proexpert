@@ -74,6 +74,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'work organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_organization'],
             'project organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_project'],
             'document flow organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_document_flow'],
+            'project status adjective keeps selected project' => [true, false, false, 3, 3, false, '', 'project_adjective'],
+            'object status adjective keeps selected project' => [true, false, false, 3, 3, false, '', 'object_adjective'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
             'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
@@ -239,6 +241,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             };
             $question = 'Сформируй CSV: все акты организации '.$process.' по статусам и валютам.';
         }
+        if (in_array($variant, ['project_adjective', 'object_adjective'], true)) {
+            $question = 'Сформируй CSV: сгруппируй акты по всем '.($variant === 'project_adjective' ? 'проектным' : 'объектным').' статусам и валютам.';
+        }
         if ($comparison) {
             $question = match ($variant) {
                 'explicit', 'missing_org', 'org_project_filter', 'project_range_gt', 'project_range_lte' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
@@ -336,7 +341,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($variant === 'defined_records') {
             $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00']];
         }
-        if (in_array($variant, ['process_organization', 'process_project', 'process_document_flow'], true)) {
+        if (in_array($variant, ['process_organization', 'process_project', 'process_document_flow', 'project_adjective', 'object_adjective'], true)) {
             $expected = [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']];
         }
         self::assertEqualsCanonicalizing($expected, $groups);

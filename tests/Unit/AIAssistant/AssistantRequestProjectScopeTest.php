@@ -10,6 +10,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_project_and_object_adjectives_do_not_request_all_projects(): void
+    {
+        foreach (['Сгруппируй задачи по всем проектным статусам', 'Покажи акты во всех объектных категориях',
+            'Сводка всех проектных статусов', 'Сравни договоры со всеми объектными требованиями',
+            'Покажи задачи любого из наших проектных статусов', 'Покажи задачи по всем проектировщикам',
+            'Покажи акты по всем объектамучёта'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(52, AssistantRequestProjectScope::fromPlan($this->plan($question))->projectId, $question);
+            self::assertSame(['project_id' => 52], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
+        }
+    }
+
+    public function test_complete_project_and_object_nouns_keep_all_project_scope(): void
+    {
+        foreach (['Покажи договоры во всех проектах', 'Покажи договоры во всех объектах',
+            'Сводка всех проектов', 'Сводка всех объектов', 'Покажи акты по всем проектам',
+            'Покажи акты по всем объектам', 'Отчёт со всеми проектами', 'Отчёт со всеми нашими объектами',
+            'Выбери договор любого из наших проектов', 'Выбери любой наш объект',
+            'Покажи все проекты', 'Покажи все объекты'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
+        }
+    }
+
     public function test_instrumental_organization_records_preserve_both_comparison_scopes(): void
     {
         foreach (['со всеми актами организации', 'со всеми договорами организации', 'со всеми нашими журналами организации',
