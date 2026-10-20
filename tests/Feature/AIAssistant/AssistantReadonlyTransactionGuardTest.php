@@ -83,6 +83,38 @@ final class AssistantReadonlyTransactionGuardTest extends TestCase
         }
     }
 
+    public function test_temporary_status_connection_obeys_deadline_and_restores_timeouts_after_cancellation(): void
+    {
+        $name = 'assistant_status_guard_test';
+        $temporary = DB::build([...DB::connection()->getConfig(), 'name' => $name]);
+        $temporary->statement("SET statement_timeout = '17s'");
+        $this->activate();
+        DB::beginTransaction();
+        DB::select('SELECT 1');
+        (new \ReflectionProperty($this->context, 'deadlineNanoseconds'))->setValue($this->context, hrtime(true) + 500_000_000);
+        try {
+            try {
+                $this->context->withTemporaryDatabaseConnection($temporary, fn () => $temporary->transaction(function () use ($temporary): void {
+                    $temporary->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+                    $temporary->select('SELECT pg_sleep(2)');
+                }));
+                self::fail('Temporary read connection must obey the remaining request budget');
+            } catch (QueryException $exception) {
+                self::assertSame('57014', $exception->errorInfo[0]);
+            }
+            $this->context->restoreDatabaseStatementTimeouts();
+            self::assertSame('17s', $temporary->selectOne('SHOW statement_timeout')->statement_timeout);
+            self::assertSame(0, $temporary->transactionLevel());
+            self::assertSame(1, DB::transactionLevel());
+            self::assertSame('off', DB::selectOne('SHOW transaction_read_only')->transaction_read_only);
+            DB::statement('INSERT INTO assistant_report_guard_probe (id) VALUES (1)');
+        } finally {
+            DB::purge($name);
+        }
+        $this->context->restoreDatabaseStatementTimeouts();
+        self::assertArrayNotHasKey($name, DB::getConnections());
+    }
+
     public function test_report_authorization_reuses_lifecycle_transaction_after_its_locked_reads(): void
     {
         $this->activate();

@@ -76,7 +76,7 @@ final class AssistantApiContractTest extends TestCase
         $this->assertInstanceOf(AIAssistantServiceProvider::class, $this->app->getProvider(AIAssistantServiceProvider::class));
         $this->assertInstanceOf(AIAssistantService::class, $this->app->make(AIAssistantService::class));
         $registry = $this->app->make(AIToolRegistry::class);
-        foreach (['get_organization_calculation_health', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'resolve_estimate', 'get_estimate_positions', 'get_estimate_financial_snapshot'] as $name) {
+        foreach (['get_rag_index_status', 'get_organization_calculation_health', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'resolve_estimate', 'get_estimate_positions', 'get_estimate_financial_snapshot'] as $name) {
             $this->assertNotNull($registry->getTool($name), $name);
         }
         $catalog = $this->app->make(AssistantDomainCatalog::class);
