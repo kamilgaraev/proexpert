@@ -301,7 +301,8 @@ final readonly class AssistantRequestProjectScope
                 'neq' => self::positiveId($value) === $projectId,
                 'in' => ! is_array($value) || ! in_array($projectId, array_map(self::positiveId(...), $value), true),
                 'is_null' => true,
-                default => false,
+                'is_not_null' => false,
+                default => true,
             };
             if ($conflicts) {
                 throw new AssistantReportScopeAmbiguous;

@@ -50,6 +50,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'mixed scope missing compared project' => [true, true, false, 7, 5, false, '', 'missing_project'],
             'mixed scope missing organization section' => [true, true, false, 7, 5, false, '', 'missing_org'],
             'organization section with positive project filter' => [true, true, false, 7, 5, false, '', 'org_project_filter'],
+            'project section with excluding greater than id' => [true, true, false, 7, 5, false, '', 'project_range_gt'],
+            'project section with excluding upper id bound' => [true, true, false, 7, 5, false, '', 'project_range_lte'],
             'organization without metadata and unrequested project' => [true, false, false, 7, 5, false, '', 'org_non_ui'],
             'organization without metadata and unrequested project filter' => [false, false, false, 7, 5, false, '', 'org_non_ui_filter'],
             'named comparison with final period' => [true, true, true, 5, 3, false, '', 'named_period'],
@@ -101,7 +103,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         self::assertFalse($policy->canReadEntity($actor, $org->id, 'project', $foreign->id));
         $csv = null;
         $files = $this->createMock(FileService::class);
-        $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter'], true);
+        $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte'], true);
         $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
@@ -182,8 +184,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($excludeFirst) {
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
-        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion'], true);
-        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion'], true);
+        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true);
+        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
         }
@@ -207,7 +209,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($comparison) {
             $question = match ($variant) {
-                'explicit', 'missing_org', 'org_project_filter' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
+                'explicit', 'missing_org', 'org_project_filter', 'project_range_gt', 'project_range_lte' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
                 'missing_project' => 'Сделай Excel: сравни все акты организации с проектами '.$first->id.' и '.$second->id,
                 'named' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$first->name,
                 'named_period' => 'Сделай Excel из двух листов: сравни все акты организации без отклонённых с проектом '.$first->name.' за октябрь 2026 года',
@@ -224,6 +226,10 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $projectSection['project_id'] = $secondProject ? $second->id : $first->id;
             $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']],
                 ...($filtered ? array_slice($filters, $nestedProject ? 1 : 0) : [])];
+            if (in_array($variant, ['project_range_gt', 'project_range_lte'], true)) {
+                $projectSection['filters'] = [['field' => 'project_id', 'operator' => $variant === 'project_range_gt' ? 'gt' : 'lte',
+                    'value' => $projectSection['project_id'] - ($variant === 'project_range_lte' ? 1 : 0)]];
+            }
             if ($variant === 'ambiguous') {
                 unset($organizationSection['scope'], $projectSection['scope']);
             }

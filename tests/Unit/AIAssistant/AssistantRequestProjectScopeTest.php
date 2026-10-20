@@ -310,6 +310,34 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_project_sections_reject_unsupported_identifier_filters(): void
+    {
+        $question = 'Сравни все акты организации с проектом 100';
+        $rejected = [];
+        foreach ([['gt', 100], ['gte', 101], ['lt', 100], ['lte', 99], ['gt', 99], ['gte', 100],
+            ['lt', 101], ['lte', 100], ['contains', '100'], ['unsupported', 100]] as [$operator, $value]) {
+            $sections = [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 100,
+                'filters' => [['field' => 'project_id', 'operator' => $operator, 'value' => $value]]]];
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+                $rejected[] = false;
+            } catch (AssistantReportScopeAmbiguous) {
+                $rejected[] = true;
+            }
+        }
+        self::assertSame(array_fill(0, 10, true), $rejected);
+    }
+
+    public function test_project_sections_keep_proven_consistent_identifier_filters(): void
+    {
+        $question = 'Сравни все акты организации с проектом 100';
+        foreach ([['eq', 100], ['neq', 99], ['in', [52, 100]], ['is_not_null', null]] as [$operator, $value]) {
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 100,
+                'filters' => [['field' => 'project_id', 'operator' => $operator, 'value' => $value]]]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        }
+    }
+
     public function test_current_or_literal_project_does_not_bypass_a_named_comparison_lookup(): void
     {
         foreach (['выбранным проектом', 'проектом 52'] as $first) {
