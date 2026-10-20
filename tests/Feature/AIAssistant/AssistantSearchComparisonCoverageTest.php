@@ -86,6 +86,44 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         return [['Покажи все проекты организации'], ['Все объекты организации']];
     }
 
+    public static function singleProjectRestrictions(): array
+    {
+        return [['numeric'], ['named'], ['quoted']];
+    }
+
+    #[DataProvider('singleProjectRestrictions')]
+    public function test_single_project_restriction_uses_the_explicit_project_instead_of_ui_context(string $kind): void
+    {
+        $this->secondProject->updateQuietly(['name' => 'Сравнение']);
+        $this->act($this->secondProject);
+        $project = match ($kind) {
+            'named' => 'Сравнение', 'quoted' => '«Сравнение»', default => (string) $this->secondProject->id,
+        };
+        $arguments = $this->arguments($this->project->id);
+        if ($kind === 'numeric') {
+            unset($arguments['project_id']);
+        }
+        $response = $this->ask([$arguments], 'Покажи все акты организации в проекте '.$project);
+        $result = array_values($this->observedResults)[0] ?? [];
+        self::assertSame(1, $result['result_window']['total'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame([(int) ContractPerformanceAct::query()->where('project_id', $this->secondProject->id)->sole()->id], array_column($result['results'] ?? [], 'id'));
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+    }
+
+    public function test_single_project_restriction_rechecks_real_project_access(): void
+    {
+        $this->act($this->secondProject);
+        $question = 'Покажи все акты организации по проекту '.$this->secondProject->id;
+        $this->ask([$this->arguments($this->project->id)], $question);
+        self::assertSame(1, (array_values($this->observedResults)[0] ?? [])['result_window']['total'] ?? null);
+        $this->actor->assignedProjects()->updateExistingPivot($this->secondProject->id, ['is_active' => false]);
+        $this->ask([$this->arguments($this->project->id)], $question);
+        $result = array_values($this->observedResults)[0] ?? [];
+        self::assertTrue($result['needs_clarification'] ?? false, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame([], $result['source_refs'] ?? []);
+        self::assertSame([], $result['results'] ?? []);
+    }
+
     public function test_collective_machinery_list_clears_model_ui_scope_with_real_project_access(): void
     {
         $this->actor = Model::withoutEvents(fn () => $this->fixture->addMember([

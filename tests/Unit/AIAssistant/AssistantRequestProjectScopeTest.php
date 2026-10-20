@@ -10,6 +10,101 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_additive_project_scopes_remain_mixed_without_a_comparison_verb(): void
+    {
+        foreach (['Какие камеры проекта «Вся наша организация» и по всем нашим проектам?',
+            'Все акты организации и проекта 100', 'Покажи акты проекта 100, а также по всем актам организации'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 100]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments,
+                static fn (): array => ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]]), $question);
+        }
+    }
+
+    public function test_explicit_single_project_restriction_overrides_organization_wording(): void
+    {
+        foreach (['Покажи все акты организации по проекту 100', 'Все акты организации в проекте №100',
+            'Покажи все акты организации в проекте СевГУ', 'Все акты организации по объекту «СевГУ»',
+            'Все проекты организации по проекту 100'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+            $search = static function (array $arguments): array {
+                self::assertContains($arguments['query'], ['100', 'СевГУ']);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope($question, [], 52, true, $search), $question);
+            self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true, $search), $question);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => 52],
+                ['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]]]];
+            $expected = ['sections' => [['project_id' => 100, 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]]]];
+            self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search), $question);
+        }
+    }
+
+    public function test_explicit_single_project_restriction_never_falls_back_to_ui_or_organization(): void
+    {
+        foreach (['Все акты организации по проекту 100', 'Все акты организации в проекте СевГУ'] as $question) {
+            foreach ([null, ['status' => 'error'], ['status' => 'success', 'results' => [], 'result_window' => ['has_more' => false]],
+                ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => true]],
+                ['status' => 'success', 'results' => [['id' => 100], ['id' => 101]], 'result_window' => ['has_more' => false]]] as $result) {
+                foreach (['search', 'report'] as $operation) {
+                    try {
+                        $search = static fn (): mixed => $result;
+                        if ($operation === 'search') {
+                            AssistantRequestProjectScope::bindSearchScope($question, [], 52, true, $search);
+                        } else {
+                            AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [['project_id' => 52]]], $search);
+                        }
+                        self::fail('An unverified explicit project was accepted');
+                    } catch (AssistantReportScopeAmbiguous) {
+                        self::assertTrue(true);
+                    }
+                }
+            }
+        }
+    }
+
+    public function test_not_including_project_is_an_exclusion_without_a_positive_lookup(): void
+    {
+        foreach (['не включая проект 52', 'не включая проект №52', 'не включая выбранный проект',
+            'не включая проект «СевГУ»', 'не включая проект СевГУ'] as $clause) {
+            $question = 'Сделай отчёт по всем актам организации, '.$clause;
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $search = static function (): never {
+                self::fail('An excluded project must not be looked up as a positive scope');
+            };
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true, $search), $question);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]]]];
+            $expected = $arguments;
+            $expected['sections'][0]['project_id'] = null;
+            self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search), $question);
+        }
+    }
+
+    public function test_single_project_restriction_rejects_conflicting_filters_or_a_wrong_id_lookup(): void
+    {
+        $question = 'Все акты организации по проекту 100';
+        foreach ([['project_id' => 200], ['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => 200]]],
+            ['filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 100]]],
+            ['filters' => [['field' => 'project_id', 'operator' => 'is_null']]],
+            ['filters' => [['field' => 'project_id', 'operator' => 'gt', 'value' => 100]]]] as $section) {
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [$section]],
+                    static fn (): array => ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]]);
+                self::fail('A conflicting project constraint was accepted');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+        try {
+            AssistantRequestProjectScope::bindSearchScope($question, [], 52, true,
+                static fn (): array => ['status' => 'success', 'results' => [['id' => 101]], 'result_window' => ['has_more' => false]]);
+            self::fail('A lookup of a different project ID was accepted');
+        } catch (AssistantReportScopeAmbiguous) {
+            self::assertTrue(true);
+        }
+    }
+
     public function test_collective_organization_entities_clear_the_selected_project(): void
     {
         foreach (['Покажи всю технику организации', 'Вся техника организации', 'По всей технике нашей организации',

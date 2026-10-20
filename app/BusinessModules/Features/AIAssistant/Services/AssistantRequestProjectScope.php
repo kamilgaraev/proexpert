@@ -50,6 +50,12 @@ final readonly class AssistantRequestProjectScope
 
     public static function organizationWide(string $question): bool
     {
+        return self::organizationScope($question, true);
+    }
+
+    private static function organizationScope(string $question, bool $applyProjectRestriction): bool
+    {
+        $originalQuestion = $question;
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $definitions = '(?:(?:[а-яё][а-яё-]*(?:ые|ие|ых|их|ым|им|ыми|ими)|частично|полностью|еще|ещё|пока|не)\s+){0,6}';
         $collectiveDefinitions = '(?:(?:[а-яё][а-яё-]*(?:ая|яя|ую|юю|ой|ей|ое|ее|ого|его|ому|ему|ым|им|ом|ем)|частично|полностью|еще|ещё|пока|не)\s+){0,6}';
@@ -75,12 +81,18 @@ final readonly class AssistantRequestProjectScope
         return (preg_match('/(?<![\pL\pN])'.$projects.'/iu', $question) === 1
             || (preg_match('/(?<![\pL\pN])'.$organization.'/iu', $question) === 1
                 && (! self::hasAffirmativeCurrentProject($question) || self::comparesCurrentProject($question))))
-            && preg_match('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?(?:(?:показыва|покажи|включ|учитыва|учти|добав|бери|брать|ищи|искать|работа)[а-яё]*\s+|(?:выполня|проводи)[а-яё]*\s+поиск\s+)?|(?:кроме|исключая)\s+)(?:(?:в|во|на|по|для|из|с|со)\s+)?'.$scope.'/iu', $question) !== 1;
+            && preg_match('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?(?:(?:показыва|покажи|включ|учитыва|учти|добав|бери|брать|ищи|искать|работа)[а-яё]*\s+|(?:выполня|проводи)[а-яё]*\s+поиск\s+)?|(?:кроме|исключая)\s+)(?:(?:в|во|на|по|для|из|с|со)\s+)?'.$scope.'/iu', $question) !== 1
+            && (! $applyProjectRestriction || ! self::hasExplicitProjectSections($originalQuestion) || self::hasMultipleProjectScopes($originalQuestion));
     }
 
     public static function bindSearchScope(string $question, array $arguments, ?int $contextProjectId, bool $projectFilterSupported, ?callable $search = null): array
     {
-        if (self::organizationWide($question)) {
+        if (self::hasOrganizationProjectRestriction($question)) {
+            if (! $projectFilterSupported) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            $arguments['project_id'] = (new self(false, null, $contextProjectId))->restrictedProjectId($question, $search);
+        } elseif (self::organizationWide($question)) {
             $id = self::positiveId($arguments['project_id'] ?? null);
             if ($id !== null && self::hasExplicitProjectSections($question)) {
                 $scope = new self(false, null, $contextProjectId);
@@ -99,9 +111,13 @@ final readonly class AssistantRequestProjectScope
 
     public function bindReportScope(string $question, array $arguments, ?callable $search = null): array
     {
+        if (! is_array($arguments['sections'] ?? null)) {
+            return $arguments;
+        }
         $organizationWide = ! $this->requested && self::organizationWide($question);
-        if ((! $organizationWide && (! $this->requested || $this->projectId === null))
-            || ! is_array($arguments['sections'] ?? null)) {
+        $restricted = ! $this->requested && self::hasOrganizationProjectRestriction($question);
+        $projectId = $restricted ? $this->restrictedProjectId($question, $search) : $this->projectId;
+        if (! $organizationWide && ((! $this->requested && ! $restricted) || $projectId === null)) {
             return $arguments;
         }
         $mixed = $organizationWide && self::hasExplicitProjectSections($question);
@@ -117,6 +133,18 @@ final readonly class AssistantRequestProjectScope
             if (($scope !== null && ! in_array($scope, ['organization', 'project'], true))
                 || ($mixed && $scope === null) || (! $organizationWide && $scope === 'organization')) {
                 throw new AssistantReportScopeAmbiguous;
+            }
+            if ($restricted) {
+                $id = self::positiveId($section['project_id'] ?? null);
+                if ($id !== null && $id !== $projectId && $id !== $this->contextProjectId) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                if (is_array($section['filters'] ?? null)) {
+                    $section['filters'] = array_values(array_filter($section['filters'],
+                        fn (mixed $filter): bool => ! is_array($filter) || ! $this->isSelectedProjectFilter($filter)));
+                    $arguments['sections'][$index]['filters'] = $section['filters'];
+                }
+                $this->assertProjectFilters($section, $projectId);
             }
             $hasOrganizationSection = $hasOrganizationSection || $scope === 'organization';
             if ($organizationWide && $scope === 'project') {
@@ -152,7 +180,7 @@ final readonly class AssistantRequestProjectScope
             }
             if (! $organizationWide || $scope === 'organization'
                 || ($this->contextProjectId !== null && self::positiveId($section['project_id'] ?? null) === $this->contextProjectId)) {
-                $arguments['sections'][$index]['project_id'] = $organizationWide ? null : $this->projectId;
+                $arguments['sections'][$index]['project_id'] = $organizationWide ? null : $projectId;
             }
             if ($organizationWide && is_array($section['filters'] ?? null)) {
                 $arguments['sections'][$index]['filters'] = array_values(array_filter($section['filters'],
@@ -183,13 +211,16 @@ final readonly class AssistantRequestProjectScope
 
     private static function hasAffirmativeCurrentProject(string $question): bool
     {
-        return preg_match('/'.self::CURRENT_PROJECT.'/iu', self::withoutNegativeCurrentProject($question)) === 1;
+        $question = self::withoutNegativeCurrentProject($question);
+        $question = preg_replace('/(?<![\pL\pN])(?:во?\s+всех|по\s+всем|всех|всем|все)\s+наш(?:их|им|и)\s+(?:проект|объект)[а-яё]*(?![\pL\pN])/iu', ' ', $question) ?? $question;
+
+        return preg_match('/'.self::CURRENT_PROJECT.'/iu', $question) === 1;
     }
 
     private static function withoutNegativeCurrentProject(string $question): string
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
-        $negative = '(?<![\pL\pN])(?:не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+(?:ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})?|(?:кроме|исключая|за\s+исключением)\s+)';
+        $negative = '(?<![\pL\pN])(?:не\s+включая\s+|не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+(?:ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})?|(?:кроме|исключая|за\s+исключением)\s+)';
 
         return preg_replace('/'.$negative.'(?:(?:в|во|на|по|для|из|с|со)\s+)?'.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
     }
@@ -213,6 +244,53 @@ final readonly class AssistantRequestProjectScope
             || preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*[1-9]\d*(?![\pL\pN])/iu', $question) === 1
             || AssistantReportEntityQuery::extract($question, 'project') !== null
             || AssistantReportEntityQuery::hasAmbiguousName($question, 'project');
+    }
+
+    private static function hasMultipleProjectScopes(string $question): bool
+    {
+        $question = AssistantNamedProjectReadScope::withoutQuotedNames(self::withoutExcludedProjects($question));
+        $comparisonPrefix = $question;
+        if (preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])/iu', $question, $mention, PREG_OFFSET_CAPTURE) === 1) {
+            $comparisonPrefix = substr($question, 0, $mention[0][1]);
+        }
+        if (preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?![\pL\pN])/iu', $comparisonPrefix) === 1) {
+            return true;
+        }
+        preg_match_all('/(?<![\pL\pN])(?:и|а\s+также)\s+/iu', $question, $conjunctions, PREG_OFFSET_CAPTURE);
+        $project = '(?:'.self::CURRENT_PROJECT.'|(?:проект|объект)[а-яё]*(?![\pL\pN]))';
+        foreach ($conjunctions[0] as [$conjunction, $offset]) {
+            $prefix = substr($question, 0, $offset);
+            $tail = substr($question, $offset + strlen($conjunction));
+            if ((self::organizationScope($tail, false) && preg_match('/(?<![\pL\pN])'.$project.'/iu', $prefix) === 1)
+                || (self::organizationScope($prefix, false) && preg_match('/^(?:(?:по|в|во|на|для)\s+)?'.$project.'/iu', $tail) === 1)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function hasOrganizationProjectRestriction(string $question): bool
+    {
+        return self::organizationScope($question, false) && ! self::organizationWide($question);
+    }
+
+    private function restrictedProjectId(string $question, ?callable $search): int
+    {
+        $ids = $this->reportProjectIds($question, $search);
+        if (count($ids) !== 1) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+        $id = $ids[0];
+        if (preg_match('/'.self::NUMERIC_PROJECTS.'/iu', AssistantNamedProjectReadScope::withoutQuotedNames(self::withoutExcludedProjects($question))) === 1) {
+            $result = $search === null ? null : $search(['query' => (string) $id, 'project_id' => $id, 'limit' => 2]);
+            if (! is_array($result) || ($result['status'] ?? null) !== 'success' || ($result['result_window']['has_more'] ?? null) !== false
+                || ! is_array($result['results'] ?? null) || count($result['results']) !== 1 || ($result['results'][0]['id'] ?? null) !== $id) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+        }
+
+        return $id;
     }
 
     private function reportProjectIds(string $question, ?callable $search): array
@@ -284,7 +362,7 @@ final readonly class AssistantRequestProjectScope
 
     private static function withoutExcludedProjects(string $question): string
     {
-        $negative = '(?<![\pL\pN])(?:без|кроме|исключая|за\s+исключением)\s+';
+        $negative = '(?<![\pL\pN])(?:без|кроме|исключая|не\s+включая|за\s+исключением)\s+';
         $noun = '(?<![\pL\pN])(?:проект|объект)[а-яё]*(?![\pL\pN])';
         $stop = '(?:\s+(?:с|со|против|относительно)\s+(?:'.self::CURRENT_PROJECT.'|'.$noun.')|[,;.!?\r\n]|$)';
         $name = '(?:(?!'.$stop.')[^,;.!?\r\n])+';

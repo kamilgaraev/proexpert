@@ -43,6 +43,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'organization without selected project' => [true, true, false, 4, 4, true, 'Без выбранного проекта.'],
             'organization except current project' => [true, true, false, 4, 4, true, 'За исключением текущего проекта.'],
             'nominative organization' => [true, true, false, 7, 5, false, '', 'nominative'],
+            'organization wording restricted by project ID' => [true, true, false, 4, 4, false, '', 'restricted_id'],
+            'organization wording restricted by project name' => [true, true, false, 4, 4, false, '', 'restricted_name'],
+            'organization not including project' => [true, true, false, 4, 4, true, '', 'not_including'],
             'organization and current project' => [true, true, false, 7, 5, false, '', 'current'],
             'organization and explicit project' => [true, true, false, 7, 5, false, '', 'explicit'],
             'organization and named selected project' => [true, true, false, 7, 5, false, '', 'named'],
@@ -195,6 +198,13 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($variant === 'nominative') {
             $question = 'Сделай CSV: все акты организации по статусам и валютам, включая черновики.';
         }
+        if (in_array($variant, ['restricted_id', 'restricted_name'], true)) {
+            $second->updateQuietly(['name' => 'СевГУ ограничение '.bin2hex(random_bytes(4))]);
+            $question = 'Сформируй CSV по всем актам организации по проекту '.($variant === 'restricted_id' ? $second->id : $second->name);
+        }
+        if ($variant === 'not_including') {
+            $question = 'Сформируй CSV по всем актам организации, не включая проект '.$first->id;
+        }
         if ($variant === 'without_drafts') {
             $question = 'Сформируй CSV. Не включай черновики в отчет по всем актам организации, группируй по статусам и валютам.';
         }
@@ -295,7 +305,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if (! $filtered) {
             $expected = [...$expected, ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
         }
-        if ($excludeFirst) {
+        if ($excludeFirst || in_array($variant, ['restricted_id', 'restricted_name'], true)) {
             $expected = [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
         }
         if ($variant === 'without_drafts') {
