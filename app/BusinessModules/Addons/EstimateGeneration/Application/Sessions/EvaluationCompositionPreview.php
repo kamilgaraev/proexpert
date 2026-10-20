@@ -27,8 +27,8 @@ final readonly class EvaluationCompositionPreview
         $draft = $session->draft_payload ?? [];
         if (! config('estimate-generation.universal_enabled', false) || ($payload['evaluation_mode'] ?? null) !== 'universal'
             || ($draft['generation_contract'] ?? null) !== UniversalDraftProjector::CONTRACT
-            || ! $this->artifacts->verifyArtifact($draft) || $session->status->isTerminal()
-            || in_array($session->status->value, ['applying', 'generating', 'processing_documents', 'failed'], true)) {
+            || ! $this->artifacts->verifyArtifact($draft)
+            || ! in_array($session->status->value, ['estimate_review_required', 'ready_to_apply'], true)) {
             throw ValidationException::withMessages(['composition' => trans_message('estimate_composition.unavailable')]);
         }
         $restored = (new OrdinaryDraftReviewCandidates)->restore($draft);

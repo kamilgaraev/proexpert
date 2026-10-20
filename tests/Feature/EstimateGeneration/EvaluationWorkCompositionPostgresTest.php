@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalRev
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationCompositionController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SaveEvaluationWorkCompositionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -27,6 +28,7 @@ use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Mockery;
@@ -331,6 +333,67 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         self::assertCount($outbound, Http::recorded());
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+    }
+
+    public function test_retained_draft_can_only_be_extended_during_evaluation_review(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $composition = app(EvaluationWorkComposition::class);
+        $offered = $composition->show($actor, $session->project_id, $session->id);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $token = $models->snapshotForPlanning(...[...$scope, 10001])['token'];
+        $outbound = count(Http::recorded());
+        foreach (['draft', 'input_review_required', 'ready_to_generate', 'processing_documents'] as $status) {
+            $session->update(['status' => $status]);
+            $raw = $session->fresh()->getRawOriginal();
+            foreach (['preview', 'accept'] as $action) {
+                try {
+                    if ($action === 'preview') {
+                        $composition->show($actor, $session->project_id, $session->id);
+                    } else {
+                        $composition->accept($actor, $session->project_id, $session->id, $this->input($offered, ['roof.rafters']));
+                    }
+                    self::fail('Retained draft accepted composition outside evaluation review: '.$status.'/'.$action);
+                } catch (ValidationException) {
+                    self::assertSame($raw, $session->fresh()->getRawOriginal());
+                    self::assertSame($token, $models->snapshotForPlanning(...[...$scope, 10001])['token']);
+                }
+            }
+        }
+        $session->update(['status' => 'ready_to_apply']);
+        $ready = $composition->show($actor, $session->project_id, $session->id);
+        self::assertCount(11, $ready['candidates']);
+        $result = $composition->accept($actor, $session->project_id, $session->id, $this->input($ready, ['roof.rafters']));
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame(2, $result['state_version']);
+        self::assertCount($outbound, Http::recorded());
+    }
+
+    public function test_composition_reason_http_validation_matches_the_decision_byte_limit(): void
+    {
+        [$actor, $session, $prefix] = $this->fixture();
+        $preview = $this->getJson($prefix)->assertOk()->json('data');
+        $input = $this->input($preview, ['roof.rafters']);
+        $rules = (new SaveEvaluationWorkCompositionRequest)->rules();
+        foreach ([str_repeat('я', 500), str_repeat('a', 1000), str_repeat('😀', 250)] as $reason) {
+            self::assertFalse(Validator::make([...$input, 'reason' => $reason], $rules)->fails());
+        }
+        $raw = $session->fresh()->getRawOriginal();
+        foreach ([str_repeat('я', 501), str_repeat('a', 1001), str_repeat('😀', 251)] as $reason) {
+            $validator = Validator::make([...$input, 'reason' => $reason], $rules);
+            self::assertTrue($validator->fails());
+            self::assertTrue($validator->errors()->has('reason'));
+            $this->postJson($prefix, [...$input, 'reason' => $reason])->assertUnprocessable()->assertJsonValidationErrors('reason');
+            self::assertSame($raw, $session->fresh()->getRawOriginal());
+        }
+        $input['reason'] = str_repeat('я', 500);
+        $result = $this->postJson($prefix, $input)->assertOk()->json('data');
+        self::assertSame('0', $result['cost_units']);
+        $models = app(ProjectModelRepository::class);
+        $proof = $session->fresh()->input_payload['composition_selections']['roof.rafters'];
+        $decisions = $models->decisionsForSelectedFacts($session->organization_id, $session->project_id, $session->id, [$proof['fact_id']]);
+        self::assertSame($input['reason'], $decisions[0]->reason);
     }
 
     private function fixture(): array

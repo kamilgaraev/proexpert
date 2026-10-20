@@ -19,6 +19,11 @@ final class SaveEvaluationWorkCompositionRequest extends FormRequest
             'preview_fingerprint' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
             'work_keys' => ['required', 'array', 'min:1', 'max:32'],
             'work_keys.*' => ['required', 'string', 'distinct', 'max:160'],
-            'reason' => ['required', 'string', 'min:10', 'max:1000']];
+            'reason' => ['required', 'string', 'min:10', 'max:1000',
+                static function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (is_string($value) && strlen($value) > 1000) {
+                        $fail(trans_message('estimate_composition.reason_too_long'));
+                    }
+                }]];
     }
 }
