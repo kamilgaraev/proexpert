@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EvaluationResour
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EvaluationResourceTargetRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SaveEvaluationResourcePriceRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Domain\Authorization\Http\Middleware\InterfaceRequestProvenance;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -36,8 +37,12 @@ final class EstimateGenerationResourcePriceController extends Controller
 
     public function save(SaveEvaluationResourcePriceRequest $request, Project $project, EstimateGenerationSession $session, EvaluationResourcePriceChoices $choices): JsonResponse
     {
+        $input = $request->all();
+        if (InterfaceRequestProvenance::isTrustedServerDerived($request)) {
+            unset($input['current_interface']);
+        }
         try {
-            return AdminResponse::success($choices->save($request->user(), (int) $project->id, (int) $session->id, $request->all()))
+            return AdminResponse::success($choices->save($request->user(), (int) $project->id, (int) $session->id, $input))
                 ->header('Cache-Control', 'private, no-store');
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_resource_price.changed'), 409);

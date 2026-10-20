@@ -152,7 +152,7 @@ final class ResourcePriceSelectionPostgresTest extends EstimateGenerationCanonic
         $input = $this->choice($url, $session, $quote);
         $before = $session->fresh()->getRawOriginal();
         foreach ([['same_product_confirmed' => false], ['target_hash' => str_repeat('f', 64)], ['source_hash' => str_repeat('e', 64)],
-            ['reason' => ''], ['qa_limit_units' => 1000], ['source_reference' => 'work_type:1']] as $patch) {
+            ['reason' => ''], ['qa_limit_units' => 1000], ['source_reference' => 'work_type:1'], ['current_interface' => 'admin']] as $patch) {
             $this->postJson($url.'/resource-price', [...$input, ...$patch])->assertUnprocessable();
             self::assertSame($before, $session->fresh()->getRawOriginal());
         }
@@ -224,6 +224,7 @@ final class ResourcePriceSelectionPostgresTest extends EstimateGenerationCanonic
         $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $permissions = Mockery::mock(AuthorizationService::class);
         $permissions->allows('canCurrent')->andReturnTrue();
+        $permissions->allows('canAccessInterface')->andReturnTrue();
         $this->app->instance(AuthorizationService::class, $permissions);
         $units = [];
         foreach ([['Квадратный метр', 'м²', 'area'], ['Кубический метр', 'м³', 'volume'], ['Час', 'ч', 'time']] as [$name, $unit, $type]) {
@@ -276,9 +277,9 @@ final class ResourcePriceSelectionPostgresTest extends EstimateGenerationCanonic
         Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
         $route = '/_resource-prices/projects/{project}/sessions/{session}/evaluation';
         foreach (['resources' => 'resources', 'resource-price-sources' => 'sources'] as $path => $method) {
-            Route::get($route.'/'.$path, [EstimateGenerationResourcePriceController::class, $method])->middleware(['auth:api_admin', SubstituteBindings::class]);
+            Route::get($route.'/'.$path, [EstimateGenerationResourcePriceController::class, $method])->middleware(['auth:api_admin', SubstituteBindings::class, 'interface:admin']);
         }
-        Route::post($route.'/resource-price', [EstimateGenerationResourcePriceController::class, 'save'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        Route::post($route.'/resource-price', [EstimateGenerationResourcePriceController::class, 'save'])->middleware(['auth:api_admin', SubstituteBindings::class, 'interface:admin']);
         $this->withToken(auth('api_admin')->login($actor));
 
         return [$actor, $session, $quote, str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route)];

@@ -39,6 +39,18 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_client_fields_cannot_impersonate_framework_metadata_or_change_the_budget(): void
+    {
+        [$actor, $session, $url] = $this->fixture();
+        $preview = $this->getJson($url.'?parent_work_item_key=ceiling:rough')->assertOk()->json('data');
+        $input = $this->input($preview);
+        $before = $session->fresh()->getRawOriginal();
+        foreach ([['current_interface' => 'admin'], ['qa_limit_units' => 1000], ['qa_run_id' => (string) Str::uuid()]] as $patch) {
+            $this->postJson($url, [...$input, ...$patch])->assertUnprocessable();
+            self::assertSame($before, $session->fresh()->getRawOriginal());
+        }
+    }
+
     public function test_whole_building_area_is_preserved_without_becoming_an_extra_ceiling_room(): void
     {
         [$actor, $session, $url] = $this->fixture(includeBuildingArea: true);
@@ -304,6 +316,7 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->allows('canCurrent')->andReturnTrue();
         $authorization->allows('can')->andReturnTrue();
+        $authorization->allows('canAccessInterface')->andReturnTrue();
         $this->app->instance(AuthorizationService::class, $authorization);
         $rows = [];
         foreach (['rough' => 'rough.ceiling', 'finish' => 'finish.ceiling', 'brandering' => 'ceiling.brandering', 'insulation' => 'ceiling.insulation', 'cornice' => 'ceiling.cornice', 'hatch' => 'ceiling.hatch'] as $key => $work) {
@@ -342,8 +355,8 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
         Route::bind('project', static fn (): Project => $project);
         Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
         $route = '/_contract/ceilings/projects/{project}/sessions/{session}/evaluation/room-ceilings';
-        Route::get($route, [EstimateGenerationCeilingController::class, 'show'])->middleware(['auth:api_admin', SubstituteBindings::class]);
-        Route::post($route, [EstimateGenerationCeilingController::class, 'accept'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        Route::get($route, [EstimateGenerationCeilingController::class, 'show'])->middleware(['auth:api_admin', SubstituteBindings::class, 'interface:admin']);
+        Route::post($route, [EstimateGenerationCeilingController::class, 'accept'])->middleware(['auth:api_admin', SubstituteBindings::class, 'interface:admin']);
         $this->withToken(auth('api_admin')->login($actor));
 
         return [$actor, $session, str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route)];
