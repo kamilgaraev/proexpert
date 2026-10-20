@@ -19,6 +19,8 @@ use function trans_message;
 
 final class CommercialProposalExportService
 {
+    private const RENDERER_VERSION = 2;
+
     public function __construct(
         private readonly FileService $fileService,
         private readonly CommercialProposalAmountAccess $amountAccess,
@@ -50,6 +52,7 @@ final class CommercialProposalExportService
         $options = $input['options'] ?? [];
         $templateHash = $version->template_version_hash ?? 'default';
         $contentHash = hash('sha256', json_encode([
+            'renderer_version' => self::RENDERER_VERSION,
             'content_hash' => $version->content_hash,
             'format' => $format,
             'amounts_visible' => $canViewAmounts,
@@ -169,16 +172,17 @@ final class CommercialProposalExportService
     {
         $sections = $version->sections_snapshot ?? [];
         $totals = $version->totals_snapshot ?? [];
+        $currency = (string) ($totals['currency'] ?? $proposal->currency);
         $amount = $canViewAmounts
-            ? number_format((float) ($totals['total_amount'] ?? 0), 2, ',', ' ') . ' ' . e((string) ($totals['currency'] ?? $proposal->currency))
+            ? number_format((float) ($totals['total_amount'] ?? 0), 2, ',', ' ') . ' ' . e($currency)
             : trans_message('commercial_proposals.amounts.hidden');
-        $sectionsHtml = collect($sections)->map(static function (array $section) use ($canViewAmounts, $proposal): string {
-            $lines = collect($section['line_items'] ?? [])->map(static function (array $item) use ($canViewAmounts, $proposal): string {
+        $sectionsHtml = collect($sections)->map(static function (array $section) use ($canViewAmounts, $currency): string {
+            $lines = collect($section['line_items'] ?? [])->map(static function (array $item) use ($canViewAmounts, $currency): string {
                 $price = $canViewAmounts
-                    ? e(number_format((float) ($item['unit_price'] ?? 0), 2, ',', ' ') . ' ' . (string) $proposal->currency)
+                    ? e(number_format((float) ($item['unit_price'] ?? 0), 2, ',', ' ') . ' ' . $currency)
                     : e(trans_message('commercial_proposals.amounts.hidden'));
                 $total = $canViewAmounts
-                    ? e(number_format((float) ($item['total_amount'] ?? 0), 2, ',', ' ') . ' ' . (string) $proposal->currency)
+                    ? e(number_format((float) ($item['total_amount'] ?? 0), 2, ',', ' ') . ' ' . $currency)
                     : e(trans_message('commercial_proposals.amounts.hidden'));
 
                 return '<tr><td>' . e((string) ($item['title'] ?? '')) . '</td><td>' . e((string) ($item['quantity'] ?? '')) . '</td><td>' . e((string) ($item['unit'] ?? '')) . '</td><td>' . $price . '</td><td>' . $total . '</td></tr>';
@@ -195,7 +199,7 @@ final class CommercialProposalExportService
             . '.meta{color:#4b5563;margin-bottom:18px}.total{margin-top:24px;font-size:18px;font-weight:700}'
             . 'table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border-bottom:1px solid #e5e7eb;padding:6px 4px;text-align:left}th{font-weight:700;background:#f9fafb}'
             . '</style></head><body>'
-            . '<h1>' . e($proposal->title) . '</h1>'
+            . '<h1>' . e($version->title ?? $proposal->title) . '</h1>'
             . '<div class="meta">' . e($proposal->number) . ' - ' . e((string) $proposal->customer_name) . ' - v' . e((string) $version->version_number) . '</div>'
             . $sectionsHtml
             . '<div class="total">' . e(trans_message('commercial_proposals.export.total')) . ': ' . $amount . '</div>'

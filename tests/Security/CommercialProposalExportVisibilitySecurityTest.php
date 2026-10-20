@@ -181,6 +181,41 @@ final class CommercialProposalExportVisibilitySecurityTest extends TestCase
         self::assertNull($service->exportStatus((int) $proposal->organization_id, $proposal->id, $export->id)->getAttribute('download_url'));
     }
 
+    public function test_export_replaces_a_previous_renderer_cache_and_reuses_the_new_file(): void
+    {
+        [, $actor, $proposal, $version] = $this->fixture(true);
+        $legacyHash = hash('sha256', json_encode([
+            'content_hash' => $version->content_hash,
+            'format' => 'html',
+            'amounts_visible' => true,
+            'options' => [],
+        ], JSON_THROW_ON_ERROR));
+        $legacy = $this->storedExport($proposal, $version);
+        $legacy->forceFill([
+            'content_hash' => $legacyHash,
+            'template_version_hash' => $version->template_version_hash ?? 'default',
+            'amounts_visible' => true,
+            'options' => [],
+        ])->save();
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putContent')->once()->andReturnUsing(static function (string $html): string {
+            self::assertStringContainsString('<h1>Версия</h1>', $html);
+            self::assertStringNotContainsString('<h1>Предложение</h1>', $html);
+
+            return 'org-version/current-renderer.html';
+        });
+        $this->app->instance(FileService::class, $files);
+        $this->actingAs($actor, 'api_admin');
+        $service = app(CommercialProposalExportService::class);
+
+        $export = $service->export($proposal, ['format' => 'html'], true, $actor->id);
+        self::assertNotSame($legacy->id, $export->id);
+        self::assertSame('org-version/current-renderer.html', $export->storage_path);
+        self::assertSame($export->id, $service->export($proposal, ['format' => 'html'], true, $actor->id)->id);
+        self::assertSame($legacyHash, $legacy->refresh()->content_hash);
+        self::assertSame('ready', $legacy->status);
+    }
+
     public function test_unknown_cache_is_regenerated_and_failed_regeneration_cannot_reclassify_old_bytes(): void
     {
         [, $actor, $proposal] = $this->fixture();
