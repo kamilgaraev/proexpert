@@ -338,6 +338,7 @@ final class ApiQueryMetrics
             'file_report_storage_exists', 'file_report_storage_url',
             'file_download_storage_exists', 'file_download_temporary_url',
             'assistant_report_access_resolve', 'assistant_report_storage_open',
+            'file_current_disk_resolve', 'file_current_read_stream',
             'admin_authorize', 'purchase_authorize', 'interface_access', 'procurement_modules', 'response_normalize',
             'rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts',
             'rag_expected_counts', 'rag_documents', 'rag_finalize',

@@ -4,6 +4,7 @@ namespace App\Services\Storage;
 
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Storage\DTO\CurrentMultipartCompletion;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\DTO\MultipartPart;
@@ -140,7 +141,8 @@ class FileService
     public function readCurrent(string $key)
     {
         $this->assertOrganizationPath($key);
-        $stream = $this->disk()->readStream($key);
+        $disk = ApiQueryMetrics::measureProcessingPhase('file_current_disk_resolve', fn () => $this->disk());
+        $stream = ApiQueryMetrics::measureProcessingPhase('file_current_read_stream', static fn () => $disk->readStream($key));
         if (! is_resource($stream)) {
             throw new \RuntimeException('storage_object_read_failed');
         }

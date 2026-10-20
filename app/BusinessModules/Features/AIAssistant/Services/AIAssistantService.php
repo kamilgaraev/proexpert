@@ -3015,7 +3015,8 @@ class AIAssistantService
             $read = AssistantRequiredProjectRead::fromPlan($taskPlan);
             $arguments = $read['arguments'] ?? [];
             if (($read['name'] ?? null) === 'get_project_production_schedule_summary'
-                && array_key_exists('period_start', $arguments) && isset($arguments['period_end'])
+                && (array_keys($arguments) === ['project_id']
+                    || array_key_exists('period_start', $arguments) && isset($arguments['period_end']))
                 && AssistantProductionSchedulePeriod::validArguments($arguments)) {
                 $savedRequest['production_period_override'] = $arguments + ['message_sha256' => hash('sha256', $savedRequest['message'])];
             }

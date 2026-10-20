@@ -353,7 +353,9 @@ final class AssistantProductionSchedulePeriod
             && ($override['message_sha256'] ?? null) === hash('sha256', $previous['message'])
             && AssistantDetailContinuationIntent::matches($reply, includeFinancial: false)) {
             $arguments = array_intersect_key($override, array_flip(['project_id', 'period_start', 'period_end']));
-            if (array_key_exists('period_start', $arguments) && isset($arguments['period_end']) && self::validArguments($arguments)) {
+            $allTime = array_keys($arguments) === ['project_id']
+                && \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader::matches($previous['message']);
+            if (($allTime || array_key_exists('period_start', $arguments) && isset($arguments['period_end'])) && self::validArguments($arguments)) {
                 return ['query' => $previous['message']] + $arguments;
             }
         }
