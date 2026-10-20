@@ -12,6 +12,29 @@ use PHPUnit\Framework\TestCase;
 
 final class NativeParameterQuestionProjectorTest extends TestCase
 {
+    public function test_opening_area_offers_only_the_missing_dimensions_of_each_opening(): void
+    {
+        $entities = [$this->entity('opening:a', 'opening'), $this->entity('opening:b', 'opening')];
+        $warnings = [];
+        foreach ($entities as $entity) {
+            foreach (['width', 'height'] as $parameter) {
+                $warnings[] = $this->warning($entity->id, 'opening_area', $parameter);
+            }
+        }
+        $view = $this->project(new ProjectModelSnapshot($entities, [], [], []), $warnings, ['structures']);
+        self::assertCount(4, $view['questions']);
+        self::assertSame([], $view['limitations']);
+        $pairs = [];
+        foreach ($view['questions'] as $question) {
+            self::assertSame('m', $question['answer']['unit']);
+            self::assertSame('opening', $question['answer']['entity_type']);
+            self::assertSame(['opening_area'], $question['formula_ids']);
+            $pairs[] = [$question['answer']['entity_id'], $question['answer']['parameter']];
+        }
+        sort($pairs);
+        self::assertSame([['opening:a', 'height'], ['opening:a', 'width'], ['opening:b', 'height'], ['opening:b', 'width']], $pairs);
+    }
+
     public function test_separate_foundation_quantities_do_not_require_an_invented_global_aggregate_to_continue_planning(): void
     {
         $entity = $this->entity('beam', 'foundation_beam');

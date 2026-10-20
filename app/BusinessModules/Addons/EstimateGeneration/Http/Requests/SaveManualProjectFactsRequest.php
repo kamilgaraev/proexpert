@@ -21,7 +21,11 @@ final class SaveManualProjectFactsRequest extends FormRequest
         return [
             'state_version' => ['required', 'integer', 'min:0'], 'request_id' => ['required', 'uuid'],
             'entities' => ['required', 'array', 'min:1', 'max:100'],
-            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice,native_question,wall_assembly'],
+            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice,native_question,wall_assembly,opening_scope'],
+            'entities.*.opening_scope' => ['sometimes', 'required', 'array:opening_kind,entity_fingerprint,reason'],
+            'entities.*.opening_scope.opening_kind' => ['required_with:entities.*.opening_scope', 'in:door,window'],
+            'entities.*.opening_scope.entity_fingerprint' => ['required_with:entities.*.opening_scope', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'entities.*.opening_scope.reason' => ['required_with:entities.*.opening_scope', 'string', 'max:1000'],
             'entities.*.wall_assembly' => ['sometimes', 'required', 'array:role,finished_surfaces,entity_fingerprint,reason'],
             'entities.*.wall_assembly.role' => ['required_with:entities.*.wall_assembly', 'in:external,partition'],
             'entities.*.wall_assembly.finished_surfaces' => ['present_with:entities.*.wall_assembly', 'array', 'max:2'],
