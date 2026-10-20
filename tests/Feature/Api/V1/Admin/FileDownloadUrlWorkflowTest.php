@@ -101,7 +101,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $context = AdminApiTestContext::create();
         $file = $this->personalReport($context, ['directory' => 'docs']);
         $files = Mockery::mock(FileService::class);
-        $files->shouldReceive('temporaryDownloadUrl')->times(4)->with($file->storage_key, 300)
+        $files->shouldReceive('temporaryDownloadUrl')->times(4)->with($file->storage_key, 300, $file->original_name)
             ->andReturn('https://download.example.test/legacy', 'https://download.example.test/explicit', 'https://download.example.test/click-one', 'https://download.example.test/click-two');
         $this->app->instance(FileService::class, $files);
 

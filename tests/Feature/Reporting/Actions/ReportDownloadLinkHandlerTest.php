@@ -94,7 +94,7 @@ final class ReportDownloadLinkHandlerTest extends TestCase
 
             public function __construct() {}
 
-            public function temporaryDownloadUrl(string $key, int $ttlSeconds): string
+            public function temporaryDownloadUrl(string $key, int $ttlSeconds, ?string $downloadFilename = null): string
             {
                 $this->requests[] = [$key, $ttlSeconds];
 

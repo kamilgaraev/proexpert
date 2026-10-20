@@ -74,6 +74,48 @@ final class FileServiceCurrentObjectTest extends TestCase
         self::assertSame([$key], $disk->deletedKeys);
     }
 
+    public function test_it_keeps_download_links_without_filename_overrides(): void
+    {
+        $key = 'org-42/personal-files/user-7/object.txt';
+        $disk = $this->recordingDisk();
+        $files = $this->service(Mockery::mock(S3ClientInterface::class), $disk);
+
+        $link = $files->temporaryDownloadUrl($key, 300);
+
+        self::assertStringStartsWith('https://download.example.test/', $link);
+        self::assertSame($key, $disk->temporaryUrlPath);
+        self::assertSame('', $disk->downloadDisposition);
+    }
+
+    public function test_it_signs_downloads_with_safe_original_attachment_filenames(): void
+    {
+        $key = 'org-42/personal-files/user-7/object.txt';
+        foreach ([
+            ['Учебный файл №102.txt', 'Учебный файл №102.txt'],
+            ["../nested\\\r\nфайл.txt", 'файл.txt'],
+            ["../\r\n", 'document'],
+            ['notes.txt', 'notes.txt'],
+        ] as [$originalName, $expectedName]) {
+            $disk = $this->recordingDisk();
+            $files = $this->service(Mockery::mock(S3ClientInterface::class), $disk);
+
+            $link = $files->temporaryDownloadUrl($key, 300, $originalName);
+
+            self::assertStringStartsWith('https://download.example.test/', $link);
+            self::assertSame($key, $disk->temporaryUrlPath);
+            self::assertStringStartsWith('attachment;', $disk->downloadDisposition);
+            self::assertStringNotContainsString("\r", $disk->downloadDisposition);
+            self::assertStringNotContainsString("\n", $disk->downloadDisposition);
+            self::assertStringNotContainsString('/', $disk->downloadDisposition);
+            self::assertStringNotContainsString('\\', $disk->downloadDisposition);
+            if ($expectedName !== 'document' && $expectedName !== 'notes.txt') {
+                self::assertStringContainsString("filename*=utf-8''".rawurlencode($expectedName), $disk->downloadDisposition);
+            } else {
+                self::assertStringContainsString($expectedName, $disk->downloadDisposition);
+            }
+        }
+    }
+
     public function test_it_hashes_seekable_stream_and_restores_its_cursor_before_upload(): void
     {
         $contents = 'streamed-private-file';
@@ -311,6 +353,10 @@ final class FileServiceCurrentObjectTest extends TestCase
             /** @var list<string> */
             public array $deletedKeys = [];
 
+            public string $downloadDisposition = '';
+
+            public string $temporaryUrlPath = '';
+
             public function __construct(
                 private readonly string $contents,
                 private int $readFailures,
@@ -323,6 +369,9 @@ final class FileServiceCurrentObjectTest extends TestCase
 
             public function temporaryUrl($path, $expiration, array $options = []): string
             {
+                $this->temporaryUrlPath = (string) $path;
+                $this->downloadDisposition = (string) ($options['ResponseContentDisposition'] ?? '');
+
                 return 'https://download.example.test/'.rawurlencode((string) $path).'?expires=300';
             }
 
