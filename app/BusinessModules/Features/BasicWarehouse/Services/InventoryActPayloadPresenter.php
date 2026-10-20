@@ -116,9 +116,9 @@ final class InventoryActPayloadPresenter
             'inventory_date' => optional($act->inventory_date)?->toDateString(),
             'created_by' => $act->created_by,
             'commission_members' => $act->commission_members ?? [],
-            'started_at' => optional($act->started_at)?->toDateTimeString(),
-            'completed_at' => optional($act->completed_at)?->toDateTimeString(),
-            'approved_at' => optional($act->approved_at)?->toDateTimeString(),
+            'started_at' => optional($act->started_at)?->toIso8601String(),
+            'completed_at' => optional($act->completed_at)?->toIso8601String(),
+            'approved_at' => optional($act->approved_at)?->toIso8601String(),
             'approved_by' => $act->approved_by,
             'notes' => $act->notes,
             'summary' => $act->summary ?? [
