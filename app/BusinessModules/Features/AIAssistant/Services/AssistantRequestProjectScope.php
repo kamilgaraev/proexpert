@@ -40,7 +40,7 @@ final readonly class AssistantRequestProjectScope
     public static function organizationWide(string $question): bool
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
-        $scope = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект)|всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац)';
+        $scope = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект)|всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех)\s+(?:наш(?:им|их)\s+)?[\pL-]+\s+(?:нашей\s+)?организации(?![\pL\pN]))';
 
         return preg_match('/(?<![\pL\pN])'.$scope.'/iu', $question) === 1
             && preg_match('/(?<![\pL\pN])(?:не(?!\s+(?:только|забуд[а-яё]*|забыва[а-яё]*|прекраща[а-яё]*|перестава[а-яё]*|упуска[а-яё]*)(?!\pL))|кроме|исключая)\s+(?:[\pL\pN-]+\s+){0,4}(?:во?\s+)?'.$scope.'/iu', $question) !== 1;
@@ -52,6 +52,28 @@ final readonly class AssistantRequestProjectScope
             $arguments['project_id'] = null;
         } elseif (! array_key_exists('project_id', $arguments) && $projectFilterSupported) {
             $arguments['project_id'] = $contextProjectId;
+        }
+
+        return $arguments;
+    }
+
+    public function bindReportScope(string $question, array $arguments): array
+    {
+        $organizationWide = ! $this->requested && self::organizationWide($question);
+        if ((! $organizationWide && (! $this->requested || $this->projectId === null))
+            || ! is_array($arguments['sections'] ?? null)) {
+            return $arguments;
+        }
+        foreach ($arguments['sections'] as $index => $section) {
+            if (! is_array($section)) {
+                continue;
+            }
+            $arguments['sections'][$index]['project_id'] = $organizationWide ? null : $this->projectId;
+            if ($organizationWide && is_array($section['filters'] ?? null)) {
+                $arguments['sections'][$index]['filters'] = array_values(array_filter($section['filters'],
+                    static fn (mixed $filter): bool => ! is_array($filter) || ($filter['field'] ?? null) !== 'project_id'
+                        || in_array($filter['operator'] ?? null, ['is_null', 'is_not_null'], true)));
+            }
         }
 
         return $arguments;

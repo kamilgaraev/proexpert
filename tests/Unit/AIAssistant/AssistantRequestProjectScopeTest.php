@@ -9,6 +9,63 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_all_organization_acts_do_not_inherit_the_project_from_a_negated_limit(): void
+    {
+        $question = 'Нужна сводка по всем актам организации в CSV: по каждому статусу и каждой валюте — количество актов и общая сумма. Валюты не смешивай, черновики тоже посчитай. Не ограничивайся выбранным проектом.';
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+        self::assertFalse($scope->requested);
+        self::assertNull($scope->projectId);
+    }
+
+    public function test_record_scopes_keep_organization_negation_and_literal_project_names(): void
+    {
+        foreach (['По всем актам организации', 'Сводка всех журналов нашей организации',
+            'По всем нашим договорам организации', 'По всем сотрудникам нашей организации'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertFalse(AssistantRequestProjectScope::fromPlan($this->plan($question))->requested);
+        }
+        foreach (['Не всех актов организации, только выбранного проекта', 'Кроме всех журналов нашей организации',
+            'По всем актам другой организации', 'По всем актам организаций',
+            'Покажи акты выбранного проекта «По всем актам организации»'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+        }
+    }
+
+    public function test_report_binding_removes_model_project_ids_and_keeps_other_filters_and_nullness(): void
+    {
+        $question = 'По всем актам организации. Не ограничивайся выбранным проектом.';
+        $filters = [['field' => 'project_id', 'operator' => 'eq', 'value' => 52],
+            ['field' => 'date', 'operator' => 'gte', 'value' => '2026-10-01'],
+            ['field' => 'status', 'operator' => 'neq', 'value' => 'rejected'],
+            ['field' => 'project_id', 'operator' => 'is_null', 'value' => null]];
+        $arguments = ['title' => 'Акты', 'format' => 'csv', 'sections' => [
+            ['project_id' => 52, 'filters' => $filters, 'columns' => ['status', 'currency']],
+            ['project_id' => 100, 'filters' => [['field' => 'project_id', 'operator' => 'in', 'value' => ['52', '100']]]],
+        ]];
+        $expected = $arguments;
+        $expected['sections'][0]['project_id'] = null;
+        $expected['sections'][0]['filters'] = array_slice($filters, 1);
+        $expected['sections'][1] = ['project_id' => null, 'filters' => []];
+        self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan('Покажи акты'))->bindReportScope('Покажи акты', $arguments));
+        $invalid = ['sections' => 'invalid'];
+        self::assertSame($invalid, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $invalid));
+    }
+
+    public function test_report_binding_preserves_trusted_named_scope_before_organization_words(): void
+    {
+        $question = 'По всей организации';
+        $plan = $this->plan($question);
+        $plan['named_project_scope'] = ['project_id' => 100, 'message_sha256' => hash('sha256', $question)];
+        $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => 52]]]]];
+        $expected = $arguments;
+        $expected['sections'][0]['project_id'] = 100;
+        self::assertSame($expected, AssistantRequestProjectScope::fromPlan($plan)->bindReportScope($question, $arguments));
+        $plan['named_project_scope']['message_sha256'] = str_repeat('0', 64);
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($plan)->bindReportScope($question, $arguments));
+    }
+
     public function test_genitive_all_projects_scope_clears_selected_project_and_preserves_negation(): void
     {
         $question = 'Сделай Excel по просроченным задачам всех проектов организации';

@@ -2362,14 +2362,6 @@ class AIAssistantService
                 if ($requestProjectScope->projectId === null) {
                     return $this->currentProjectScopeUnavailable('current_project_required');
                 }
-                if ($toolName === 'generate_custom_report') {
-                    foreach ($args['sections'] ?? [] as $index => $section) {
-                        if (! is_array($section)) {
-                            continue;
-                        }
-                        $args['sections'][$index]['project_id'] = $requestProjectScope->projectId;
-                    }
-                }
                 if (isset($schema['properties']['project_id'])) {
                     $args['project_id'] = $requestProjectScope->projectId;
                 }
@@ -2377,6 +2369,9 @@ class AIAssistantService
                     && ($args['entity_type'] ?? null) === 'project') {
                     $args['id'] = $requestProjectScope->projectId;
                 }
+            }
+            if ($toolName === 'generate_custom_report') {
+                $args = $requestProjectScope->bindReportScope($requestQuery, $args);
             }
             $this->toolArguments->validate($args, $schema);
             $toolFailureStage = 'request_policy';
