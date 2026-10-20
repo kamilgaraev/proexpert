@@ -54,11 +54,11 @@ final class AssistantStatusScopedMutationGuard
     {
         $installed = $connection->selectOne("SELECT to_regclass('public.ai_assistant_status_snapshot_scoped_changes') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('public.ai_assistant_status_snapshot_control') AND attname = 'scoped_guard_body' AND attnum > 0 AND NOT attisdropped AND atttypid = 'text'::regtype AND attgenerated = '' AND attidentity = '') AS present");
         if ($installed === null || $installed->present !== true) {
-            return (object) ['cacheable' => false, 'fingerprint' => '', 'relation_oids' => '{}'];
+            return (object) ['cacheable' => false, 'fingerprint' => '', 'relation_oids' => '{}', 'scoped_prerequisites' => false];
         }
         $columns = self::sourceColumns($connection);
         if ($columns === []) {
-            return (object) ['cacheable' => false, 'fingerprint' => '', 'relation_oids' => '{}'];
+            return (object) ['cacheable' => false, 'fingerprint' => '', 'relation_oids' => '{}', 'scoped_prerequisites' => true, 'scoped_source_columns' => false];
         }
         $tableNames = '{'.implode(',', self::TABLES).'}';
         $body = self::rowBody($columns);
@@ -68,7 +68,7 @@ WITH scoped_relations AS (
     WHERE n.nspname = 'public' AND c.relname = ANY(?::text[])
 ), scoped_functions AS (
     SELECT p.* FROM pg_proc p WHERE p.oid IN (to_regprocedure(?), to_regprocedure(?), to_regprocedure(?))
-)
+), proof AS MATERIALIZED (
 SELECT (SELECT array_agg(oid ORDER BY oid)::text FROM scoped_relations) AS relation_oids,
     encode(sha256(convert_to(concat_ws('|', to_regclass('public.ai_assistant_status_snapshot_scoped_changes')::oid,
         (SELECT scoped_guard_body FROM public.ai_assistant_status_snapshot_control WHERE id = 1),
@@ -76,24 +76,38 @@ SELECT (SELECT array_agg(oid ORDER BY oid)::text FROM scoped_relations) AS relat
         (SELECT string_agg(pg_get_indexdef(i.indexrelid), '|' ORDER BY i.indexrelid) FROM pg_index i WHERE i.indrelid = to_regclass('public.ai_assistant_status_snapshot_scoped_changes')),
         (SELECT string_agg(pg_get_functiondef(f.oid), '|' ORDER BY f.oid) FROM scoped_functions f),
         (SELECT string_agg(pg_get_triggerdef(t.oid), '|' ORDER BY t.tgrelid,t.tgname) FROM pg_trigger t JOIN scoped_relations r ON r.oid = t.tgrelid WHERE t.tgname IN (?, ?))), 'UTF8')), 'hex') AS fingerprint,
-    (SELECT COUNT(*) = 5 FROM scoped_relations)
-    AND EXISTS (SELECT 1 FROM public.ai_assistant_status_snapshot_control WHERE id = 1 AND scoped_guard_body = ?)
-    AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass('public.ai_assistant_status_snapshot_scoped_changes') AND c.relkind = 'r' AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity
+    ((SELECT COUNT(*) = 5 FROM scoped_relations)) AS scoped_relation_count,
+    (EXISTS (SELECT 1 FROM public.ai_assistant_status_snapshot_control WHERE id = 1 AND scoped_guard_body = ?)) AS scoped_control_body,
+    (EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass('public.ai_assistant_status_snapshot_scoped_changes') AND c.relkind = 'r' AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity
         AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid OR i.inhparent = c.oid)
-        AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal))
-    AND NOT EXISTS (SELECT 1 FROM scoped_relations r WHERE r.relkind <> 'r' OR EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = r.oid OR i.inhparent = r.oid)
-        OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = r.oid AND a.attname = 'organization_id' AND a.attnum > 0 AND NOT a.attisdropped AND a.attnotnull AND a.atttypid = 'int8'::regtype AND a.attgenerated = '' AND a.attidentity = ''))
-    AND (SELECT COUNT(*) = 4 FROM pg_attribute a WHERE a.attrelid = to_regclass('public.ai_assistant_status_snapshot_scoped_changes') AND a.attnum > 0 AND NOT a.attisdropped AND a.attnotnull AND a.attgenerated = '' AND a.attidentity = ''
-        AND ((a.attname = 'xid' AND a.atttypid = 'xid8'::regtype) OR (a.attname = 'relation_oid' AND a.atttypid = 'oid'::regtype) OR (a.attname = 'organization_id' AND a.atttypid = 'int8'::regtype) OR (a.attname = 'created_at' AND a.atttypid = 'timestamptz'::regtype)))
-    AND EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = to_regclass('public.ai_assistant_status_snapshot_scoped_changes') AND i.indisprimary AND i.indisvalid AND i.indisready
-        AND i.indnkeyatts = 3 AND i.indkey::text = (SELECT string_agg(a.attnum::text, ' ' ORDER BY CASE a.attname WHEN 'xid' THEN 1 WHEN 'relation_oid' THEN 2 ELSE 3 END) FROM pg_attribute a WHERE a.attrelid = i.indrelid AND a.attname IN ('xid', 'relation_oid', 'organization_id') AND NOT a.attisdropped) AND i.indpred IS NULL AND i.indexprs IS NULL)
-    AND EXISTS (SELECT 1 FROM scoped_functions f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[] AND f.prorettype = 'trigger'::regtype AND f.prokind = 'f' AND f.pronargs = 0 AND f.provolatile = 'v' AND f.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql'))
-    AND EXISTS (SELECT 1 FROM scoped_functions f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[] AND f.prorettype = 'void'::regtype AND f.prokind = 'f' AND f.pronargs = 2 AND f.proargtypes::text = '26 25' AND f.provolatile = 'v' AND f.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql'))
-    AND NOT EXISTS (SELECT 1 FROM scoped_functions f CROSS JOIN LATERAL aclexplode(COALESCE(f.proacl, acldefault('f', f.proowner))) a WHERE f.oid = to_regprocedure('public.witness_assistant_status_snapshot_scope(oid,text)') AND a.grantee = 0 AND a.privilege_type = 'EXECUTE')
-    AND NOT EXISTS (SELECT 1 FROM pg_proc f WHERE f.oid IN (to_regprocedure('public.track_assistant_status_snapshot_mutation()'), to_regprocedure('public.track_assistant_source_snapshot_semantic_mutation()')) AND NOT has_function_privilege(f.proowner, to_regprocedure('public.witness_assistant_status_snapshot_scope(oid,text)'), 'EXECUTE'))
-    AND EXISTS (SELECT 1 FROM scoped_functions f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[] AND f.prorettype = 'trigger'::regtype AND f.prokind = 'f' AND f.pronargs = 0 AND f.provolatile = 'v' AND f.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql'))
-    AND NOT EXISTS (SELECT 1 FROM scoped_relations r WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = r.oid AND t.tgname = ? AND t.tgfoid = to_regprocedure(?) AND NOT t.tgisinternal AND t.tgtype = 29 AND t.tgenabled = 'A' AND t.tgconstraint = 0 AND t.tgnargs = 0 AND t.tgattr::text = '' AND t.tgqual IS NULL)
-        OR NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = r.oid AND t.tgname = ? AND t.tgfoid = to_regprocedure(?) AND NOT t.tgisinternal AND t.tgtype = 32 AND t.tgenabled = 'A' AND t.tgconstraint = 0 AND t.tgnargs = 0 AND t.tgattr::text = '' AND t.tgqual IS NULL)) AS cacheable
+        AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal))) AS scoped_change_relation,
+    (NOT EXISTS (SELECT 1 FROM scoped_relations r WHERE r.relkind <> 'r' OR EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = r.oid OR i.inhparent = r.oid)
+        OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = r.oid AND a.attname = 'organization_id' AND a.attnum > 0 AND NOT a.attisdropped AND a.attnotnull AND a.atttypid = 'int8'::regtype AND a.attgenerated = '' AND a.attidentity = ''))) AS scoped_source_relations,
+    ((SELECT COUNT(*) = 4 FROM pg_attribute a WHERE a.attrelid = to_regclass('public.ai_assistant_status_snapshot_scoped_changes') AND a.attnum > 0 AND NOT a.attisdropped AND a.attnotnull AND a.attgenerated = '' AND a.attidentity = ''
+        AND ((a.attname = 'xid' AND a.atttypid = 'xid8'::regtype) OR (a.attname = 'relation_oid' AND a.atttypid = 'oid'::regtype) OR (a.attname = 'organization_id' AND a.atttypid = 'int8'::regtype) OR (a.attname = 'created_at' AND a.atttypid = 'timestamptz'::regtype)))) AS scoped_change_columns,
+    (EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = to_regclass('public.ai_assistant_status_snapshot_scoped_changes') AND i.indisprimary AND i.indisvalid AND i.indisready
+        AND i.indnkeyatts = 3 AND i.indkey::text = (SELECT string_agg(a.attnum::text, ' ' ORDER BY CASE a.attname WHEN 'xid' THEN 1 WHEN 'relation_oid' THEN 2 ELSE 3 END) FROM pg_attribute a WHERE a.attrelid = i.indrelid AND a.attname IN ('xid', 'relation_oid', 'organization_id') AND NOT a.attisdropped) AND i.indpred IS NULL AND i.indexprs IS NULL)) AS scoped_change_primary_key,
+    (EXISTS (SELECT 1 FROM scoped_functions f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[] AND f.prorettype = 'trigger'::regtype AND f.prokind = 'f' AND f.pronargs = 0 AND f.provolatile = 'v' AND f.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql'))) AS scoped_row_function,
+    (EXISTS (SELECT 1 FROM scoped_functions f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[] AND f.prorettype = 'void'::regtype AND f.prokind = 'f' AND f.pronargs = 2 AND f.proargtypes::text = '26 25' AND f.provolatile = 'v' AND f.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql'))) AS scoped_witness_function,
+    (NOT EXISTS (SELECT 1 FROM scoped_functions f CROSS JOIN LATERAL aclexplode(COALESCE(f.proacl, acldefault('f', f.proowner))) a WHERE f.oid = to_regprocedure('public.witness_assistant_status_snapshot_scope(oid,text)') AND a.grantee = 0 AND a.privilege_type = 'EXECUTE')) AS scoped_witness_not_public,
+    (NOT EXISTS (SELECT 1 FROM pg_proc f WHERE f.oid IN (to_regprocedure('public.track_assistant_status_snapshot_mutation()'), to_regprocedure('public.track_assistant_source_snapshot_semantic_mutation()')) AND NOT has_function_privilege(f.proowner, to_regprocedure('public.witness_assistant_status_snapshot_scope(oid,text)'), 'EXECUTE'))) AS scoped_witness_owner_access,
+    (EXISTS (SELECT 1 FROM scoped_functions f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[] AND f.prorettype = 'trigger'::regtype AND f.prokind = 'f' AND f.pronargs = 0 AND f.provolatile = 'v' AND f.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql'))) AS scoped_truncate_function,
+    (NOT EXISTS (SELECT 1 FROM scoped_relations r WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = r.oid AND t.tgname = ? AND t.tgfoid = to_regprocedure(?) AND NOT t.tgisinternal AND t.tgtype = 29 AND t.tgenabled = 'A' AND t.tgconstraint = 0 AND t.tgnargs = 0 AND t.tgattr::text = '' AND t.tgqual IS NULL)
+        OR NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = r.oid AND t.tgname = ? AND t.tgfoid = to_regprocedure(?) AND NOT t.tgisinternal AND t.tgtype = 32 AND t.tgenabled = 'A' AND t.tgconstraint = 0 AND t.tgnargs = 0 AND t.tgattr::text = '' AND t.tgqual IS NULL))) AS scoped_triggers
+)
+SELECT proof.*, scoped_relation_count
+    AND scoped_control_body
+    AND scoped_change_relation
+    AND scoped_source_relations
+    AND scoped_change_columns
+    AND scoped_change_primary_key
+    AND scoped_row_function
+    AND scoped_witness_function
+    AND scoped_witness_not_public
+    AND scoped_witness_owner_access
+    AND scoped_truncate_function
+    AND scoped_triggers AS cacheable
+FROM proof
 SQL;
 
         $proof = $connection->selectOne($sql, [$tableNames, 'public.'.self::ROW_FUNCTION.'()', 'public.'.self::TRUNCATE_FUNCTION.'()', 'public.'.self::WITNESS_FUNCTION.'(oid,text)',
@@ -102,6 +116,8 @@ SQL;
         if ($proof === null) {
             throw new LogicException('assistant_snapshot_scoped_proof_unavailable');
         }
+        $proof->scoped_prerequisites = true;
+        $proof->scoped_source_columns = true;
 
         return $proof;
     }

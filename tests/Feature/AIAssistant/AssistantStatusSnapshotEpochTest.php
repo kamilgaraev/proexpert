@@ -110,6 +110,43 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_epoch_checks_identify_global_trigger_rejection_without_extra_queries(): void
+    {
+        $state = $this->readOnly(function (): array {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            try {
+                $state = $this->epoch->capture(['public.assistant_snapshot_epoch_row_test']);
+                self::assertCount(3, DB::getQueryLog());
+
+                return $state;
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+        });
+        self::assertTrue($state['cacheable']);
+        self::assertSame(array_fill_keys([
+            'input_organization', 'input_relations', 'transaction_context', 'transaction_mode',
+            'global_change_table', 'global_control_table', 'global_mutation_function', 'global_change_columns',
+            'global_control_columns', 'global_required_relations', 'global_name_resolution', 'global_relation_shapes',
+            'global_dependency_functions', 'global_mutation_triggers', 'control_row',
+        ], true), $state['proof_checks'] ?? []);
+        DB::statement('ALTER TABLE public.assistant_snapshot_epoch_row_test DISABLE TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME);
+        try {
+            $rejected = $this->capture();
+            self::assertFalse($rejected['cacheable']);
+            self::assertSame(['global_mutation_triggers'], array_keys(array_filter($rejected['proof_checks'], static fn (bool $value): bool => ! $value)));
+            self::assertArrayNotHasKey('control_row', $rejected['proof_checks']);
+        } finally {
+            DB::statement('ALTER TABLE public.assistant_snapshot_epoch_row_test ENABLE ALWAYS TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME);
+        }
+        self::assertTrue($this->capture()['cacheable']);
+        $outside = $this->epoch->capture($state['used_relations']);
+        self::assertFalse($outside['cacheable']);
+        self::assertSame(['input_organization' => true, 'input_relations' => true, 'transaction_context' => false], $outside['proof_checks']);
+    }
+
     public function test_rollback_preserves_proof_and_statements_coalesce_by_top_level_transaction(): void
     {
         $state = $this->capture();

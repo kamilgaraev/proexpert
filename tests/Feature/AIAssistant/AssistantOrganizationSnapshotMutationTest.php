@@ -201,7 +201,10 @@ final class AssistantOrganizationSnapshotMutationTest extends TestCase
         $migration->down();
         try {
             self::assertFalse($this->valid($state));
-            self::assertFalse($this->capture((int) $source->organization_id, assertCacheable: false)['cacheable']);
+            $missing = $this->capture((int) $source->organization_id, assertCacheable: false);
+            self::assertFalse($missing['cacheable']);
+            self::assertFalse($missing['proof_checks']['scoped_prerequisites']);
+            self::assertArrayNotHasKey('scoped_source_columns', $missing['proof_checks']);
         } finally {
             $migration->up();
         }
@@ -216,7 +219,9 @@ final class AssistantOrganizationSnapshotMutationTest extends TestCase
         DB::statement('ALTER TABLE public.ai_rag_status_sources DISABLE TRIGGER '.AssistantStatusScopedMutationGuard::ROW_TRIGGER);
         try {
             self::assertFalse($this->valid($state));
-            self::assertFalse($this->capture((int) $source->organization_id, assertCacheable: false)['cacheable']);
+            $missing = $this->capture((int) $source->organization_id, assertCacheable: false);
+            self::assertFalse($missing['cacheable']);
+            self::assertFalse($missing['proof_checks']['scoped_triggers']);
         } finally {
             DB::statement('ALTER TABLE public.ai_rag_status_sources ENABLE ALWAYS TRIGGER '.AssistantStatusScopedMutationGuard::ROW_TRIGGER);
         }
@@ -234,6 +239,24 @@ final class AssistantOrganizationSnapshotMutationTest extends TestCase
             self::assertFalse($this->capture((int) $source->organization_id, assertCacheable: false)['cacheable']);
         } finally {
             DB::unprepared('CREATE OR REPLACE FUNCTION public.'.AssistantStatusScopedMutationGuard::ROW_FUNCTION.'() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS '.DB::connection()->getPdo()->quote($body));
+        }
+        self::assertTrue($this->capture((int) $source->organization_id)['cacheable']);
+    }
+
+    public function test_scoped_checks_reject_public_witness_execution_and_recover_after_revoke(): void
+    {
+        $source = $this->source();
+        $state = $this->capture((int) $source->organization_id);
+        self::assertCount(29, $state['proof_checks'] ?? []);
+        foreach ($state['proof_checks'] as $value) { self::assertTrue($value); }
+        DB::statement('GRANT EXECUTE ON FUNCTION public.'.AssistantStatusScopedMutationGuard::WITNESS_FUNCTION.'(oid,text) TO PUBLIC');
+        try {
+            $rejected = $this->capture((int) $source->organization_id, assertCacheable: false);
+            self::assertFalse($rejected['cacheable']);
+            self::assertSame(['scoped_witness_not_public'], array_keys(array_filter($rejected['proof_checks'], static fn (bool $value): bool => ! $value)));
+            self::assertArrayNotHasKey('control_row', $rejected['proof_checks']);
+        } finally {
+            DB::statement('REVOKE EXECUTE ON FUNCTION public.'.AssistantStatusScopedMutationGuard::WITNESS_FUNCTION.'(oid,text) FROM PUBLIC');
         }
         self::assertTrue($this->capture((int) $source->organization_id)['cacheable']);
     }

@@ -27,19 +27,25 @@ final class AssistantStatusSnapshotEpoch
     public function capture(?array $usedRelations = null, ?int $organizationId = null): array
     {
         $relations = $this->normalizeRelations($usedRelations);
-        $state = ['snapshot' => '', 'captured_at' => '', 'gc_generation' => -1, 'schema_fingerprint' => '', 'cacheable' => false, 'used_relations' => $relations, 'organization_id' => $organizationId];
+        $state = ['snapshot' => '', 'captured_at' => '', 'gc_generation' => -1, 'schema_fingerprint' => '', 'cacheable' => false, 'used_relations' => $relations, 'organization_id' => $organizationId, 'proof_checks' => []];
+        $state['proof_checks']['input_organization'] = $organizationId === null || $organizationId > 0;
         if ($organizationId !== null && $organizationId <= 0) { return $state; }
+        $state['proof_checks']['input_relations'] = $usedRelations === null || $relations !== [];
         if ($usedRelations !== null && $relations === []) { return $state; }
         $connection = $this->connection();
+        $state['proof_checks']['transaction_context'] = $connection->getDriverName() === 'pgsql' && $connection->transactionLevel() > 0;
         if ($connection->getDriverName() !== 'pgsql' || $connection->transactionLevel() === 0) { return $state; }
         $clock = $connection->selectOne("SELECT pg_current_snapshot()::text AS snapshot, LEAST(transaction_timestamp(), clock_timestamp())::text AS captured_at, current_setting('transaction_isolation') AS isolation, current_setting('transaction_read_only') AS read_only");
         $state['snapshot'] = (string) $clock->snapshot;
         $state['captured_at'] = (string) $clock->captured_at;
+        $state['proof_checks']['transaction_mode'] = $clock->isolation === 'repeatable read' && $clock->read_only === 'on';
         if ($clock->isolation !== 'repeatable read' || $clock->read_only !== 'on') { return $state; }
         $schema = $this->schemaState($relations, $organizationId);
         $state['schema_fingerprint'] = (string) $schema->fingerprint;
+        $state['proof_checks'] += $schema->proof_checks;
         if ($schema->cacheable !== true) { return $state; }
         $control = $connection->selectOne('SELECT gc_generation FROM public.'.self::CONTROL_TABLE.' WHERE id = 1');
+        $state['proof_checks']['control_row'] = $control !== null;
         if ($control === null) { return $state; }
         $state['gc_generation'] = (int) $control->gc_generation;
         $state['cacheable'] = true;
@@ -185,7 +191,7 @@ WITH RECURSIVE relations AS (
 ), required AS (
     SELECT oid FROM roots
     UNION SELECT e.target_oid FROM required r JOIN dependency_edges e ON e.source_oid = r.oid
-)
+), proof AS MATERIALIZED (
 SELECT encode(sha256(convert_to(concat_ws('|', current_user, current_setting('TimeZone'), current_setting('DateStyle'), current_setting('search_path'), pg_catalog.current_schema(), pg_catalog.current_schemas(true)::text, current_setting('row_security'),
     to_regclass('public.ai_assistant_status_snapshot_changes'), to_regclass('public.ai_assistant_status_snapshot_changes')::oid,
     to_regclass('public.ai_assistant_status_snapshot_control')::oid, to_regprocedure(?)::oid,
@@ -193,19 +199,19 @@ SELECT encode(sha256(convert_to(concat_ws('|', current_user, current_setting('Ti
     COALESCE(pg_get_functiondef(to_regprocedure('public.track_assistant_source_snapshot_semantic_mutation()')), ''),
     COALESCE((SELECT string_agg(pg_get_triggerdef(t.oid), '|' ORDER BY t.tgname) FROM pg_trigger t WHERE t.tgrelid = to_regclass('public.ai_rag_sources') AND t.tgname IN ('assistant_status_snapshot_mutation', 'assistant_source_snapshot_semantic_mutation')), '')), 'UTF8')), 'hex') AS fingerprint,
     COALESCE((SELECT array_agg(c.oid ORDER BY c.oid) FROM required r JOIN pg_class c ON c.oid = r.oid WHERE c.relkind IN ('r', 'p')), ARRAY[]::oid[])::text AS relation_oids,
-    to_regclass('public.ai_assistant_status_snapshot_changes') IS NOT NULL
-    AND to_regclass('public.ai_assistant_status_snapshot_control') IS NOT NULL
-    AND EXISTS (SELECT 1 FROM pg_proc f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[])
-    AND (SELECT COUNT(*) = 3 FROM pg_attribute a WHERE a.attrelid = to_regclass('public.ai_assistant_status_snapshot_changes') AND NOT a.attisdropped AND a.attnotnull AND ((a.attname = 'xid' AND a.atttypid = 'xid8'::regtype) OR (a.attname = 'relation_oid' AND a.atttypid = 'oid'::regtype) OR (a.attname = 'created_at' AND a.atttypid = 'timestamptz'::regtype)))
-    AND (SELECT COUNT(*) = 2 FROM pg_attribute a WHERE a.attrelid = to_regclass('public.ai_assistant_status_snapshot_control') AND NOT a.attisdropped AND a.attnotnull AND ((a.attname = 'id' AND a.atttypid = 'int2'::regtype) OR (a.attname = 'gc_generation' AND a.atttypid = 'int8'::regtype)))
-    AND __COMPLETE__
-    AND __RESOLUTION__
-    AND NOT EXISTS (SELECT 1 FROM required r JOIN pg_class c ON c.oid = r.oid JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind NOT IN ('r', 'p') OR n.nspname <> 'public' OR c.relname IN (__EXCLUDED__) OR c.relrowsecurity)
-    AND NOT EXISTS (SELECT 1 FROM required r JOIN pg_rewrite w ON w.ev_class = r.oid
+    (to_regclass('public.ai_assistant_status_snapshot_changes') IS NOT NULL) AS global_change_table,
+    (to_regclass('public.ai_assistant_status_snapshot_control') IS NOT NULL) AS global_control_table,
+    (EXISTS (SELECT 1 FROM pg_proc f WHERE f.oid = to_regprocedure(?) AND f.prosrc = ? AND f.prosecdef AND f.proconfig = ARRAY['search_path=pg_catalog']::text[])) AS global_mutation_function,
+    ((SELECT COUNT(*) = 3 FROM pg_attribute a WHERE a.attrelid = to_regclass('public.ai_assistant_status_snapshot_changes') AND NOT a.attisdropped AND a.attnotnull AND ((a.attname = 'xid' AND a.atttypid = 'xid8'::regtype) OR (a.attname = 'relation_oid' AND a.atttypid = 'oid'::regtype) OR (a.attname = 'created_at' AND a.atttypid = 'timestamptz'::regtype)))) AS global_change_columns,
+    ((SELECT COUNT(*) = 2 FROM pg_attribute a WHERE a.attrelid = to_regclass('public.ai_assistant_status_snapshot_control') AND NOT a.attisdropped AND a.attnotnull AND ((a.attname = 'id' AND a.atttypid = 'int2'::regtype) OR (a.attname = 'gc_generation' AND a.atttypid = 'int8'::regtype)))) AS global_control_columns,
+    (__COMPLETE__) AS global_required_relations,
+    (__RESOLUTION__) AS global_name_resolution,
+    (NOT EXISTS (SELECT 1 FROM required r JOIN pg_class c ON c.oid = r.oid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind NOT IN ('r', 'p') OR n.nspname <> 'public' OR c.relname IN (__EXCLUDED__) OR c.relrowsecurity)) AS global_relation_shapes,
+    (NOT EXISTS (SELECT 1 FROM required r JOIN pg_rewrite w ON w.ev_class = r.oid
         JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = w.oid AND d.refclassid = 'pg_proc'::regclass
-        JOIN pg_proc f ON f.oid = d.refobjid JOIN pg_namespace n ON n.oid = f.pronamespace WHERE n.nspname <> 'pg_catalog' OR f.provolatile <> 'i')
-    AND NOT EXISTS (
+        JOIN pg_proc f ON f.oid = d.refobjid JOIN pg_namespace n ON n.oid = f.pronamespace WHERE n.nspname <> 'pg_catalog' OR f.provolatile <> 'i')) AS global_dependency_functions,
+    (NOT EXISTS (
         SELECT 1 FROM relations r WHERE r.relkind IN ('r', 'p') AND NOT EXISTS (
             SELECT 1 FROM pg_trigger t WHERE t.tgrelid = r.oid AND t.tgname = ? AND t.tgfoid = to_regprocedure(?)
                 AND NOT t.tgisinternal AND t.tgtype = 60 AND t.tgenabled = 'A' AND t.tgconstraint = 0 AND t.tgnargs = 0 AND t.tgqual IS NULL
@@ -229,8 +235,19 @@ SELECT encode(sha256(convert_to(concat_ws('|', current_user, current_setting('Ti
                             || __SOURCE_BODY_SUFFIX__)
                 ))
         )
-    )
-    AS cacheable
+    )) AS global_mutation_triggers
+)
+SELECT proof.*, global_change_table
+    AND global_control_table
+    AND global_mutation_function
+    AND global_change_columns
+    AND global_control_columns
+    AND global_required_relations
+    AND global_name_resolution
+    AND global_relation_shapes
+    AND global_dependency_functions
+    AND global_mutation_triggers AS cacheable
+FROM proof
 SQL;
 
         $pdo = $this->connection()->getPdo();
@@ -245,8 +262,10 @@ SQL;
             [$excluded, $roots, $complete, $resolution, $prefix, $separator, $suffix], $sql),
             [...$names, 'public.'.self::FUNCTION_NAME.'()', 'public.'.self::FUNCTION_NAME.'()', 'public.'.self::FUNCTION_NAME.'()', self::FUNCTION_BODY, self::TRIGGER_NAME, 'public.'.self::FUNCTION_NAME.'()']);
         if ($schema === null) { throw new LogicException('assistant_snapshot_schema_unavailable'); }
+        $schema->proof_checks = AssistantStatusSnapshotDiagnostics::epochChecks(get_object_vars($schema));
         if ($organizationId !== null) {
             $scoped = AssistantStatusScopedMutationGuard::proof($this->connection());
+            $schema->proof_checks += AssistantStatusSnapshotDiagnostics::epochChecks(get_object_vars($scoped));
             $schema->cacheable = $schema->cacheable === true && $scoped->cacheable === true;
             $schema->fingerprint = hash('sha256', $schema->fingerprint.'|'.$scoped->fingerprint);
             $schema->scoped_relation_oids = $scoped->relation_oids;
