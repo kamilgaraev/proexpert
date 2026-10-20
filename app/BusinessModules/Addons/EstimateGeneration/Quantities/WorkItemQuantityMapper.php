@@ -111,9 +111,13 @@ final class WorkItemQuantityMapper
             }
 
             $factor = BigDecimal::of($candidate['factor']);
+            $approvedCeiling = in_array($workItemKey, RoomCeilingReplacement::WORKS, true)
+                && in_array($source->formulaKey, ['room_ceiling_area', 'room_ceiling_perimeter'], true)
+                && $source->source === QuantitySource::Estimated && $source->assumptions !== []
+                && is_string($source->formulaInputs['room_ceiling_scope']['fact_id'] ?? null);
             if ($factor->isEqualTo(BigDecimal::one())
                 && $rule['unit'] === $source->unit
-                && $source->source === QuantitySource::Evidenced
+                && ($source->source === QuantitySource::Evidenced || $approvedCeiling)
                 && $source->reviewBlockers === []
                 && is_array($source->formulaInputs['operands'] ?? null)
                 && $source->formulaInputs['operands'] !== []
@@ -125,7 +129,7 @@ final class WorkItemQuantityMapper
                     formulaKey: $source->formulaKey,
                     formulaVersion: $source->formulaVersion,
                     formulaInputs: $source->formulaInputs,
-                    source: QuantitySource::Evidenced,
+                    source: $source->source,
                     evidenceIds: $source->evidenceIds,
                     modelVersion: $source->modelVersion,
                     assumptions: $source->assumptions,
@@ -233,6 +237,10 @@ final class WorkItemQuantityMapper
         ];
 
         return match ($key) {
+            'rough.ceiling', 'finish.ceiling', 'ceiling.brandering', 'ceiling.insulation' => [
+                'sources' => [['key' => 'ceiling_area', 'factor' => '1']], 'unit' => 'm2',
+            ],
+            'ceiling.cornice' => ['sources' => [['key' => 'ceiling_perimeter', 'factor' => '1']], 'unit' => 'm'],
             'rough.floor', 'finish.floor', 'office.ceiling', 'warehouse.floor_hardener' => $floorArea(),
 
             'earth.plan', 'siteworks.area', 'warehouse.roads' => $firstFloorInternalArea(),

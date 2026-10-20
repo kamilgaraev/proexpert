@@ -906,6 +906,96 @@ final class DerivedQuantityFactoryTest extends TestCase
         $this->openingFixture('foreign_coverage');
     }
 
+    #[Test]
+    public function room_ceiling_requires_an_explicit_current_shape_choice_and_keeps_exact_dimension_and_choice_proofs(): void
+    {
+        [$snapshot, $decisions, $request] = $this->ceilingFixture();
+        $factory = new DerivedQuantityFactory;
+        foreach (['room_ceiling_area' => ['m2', '8.5118'], 'room_ceiling_perimeter' => ['m', '11.67']] as $formula => [$unit, $expected]) {
+            $result = $factory->derive($snapshot, $decisions, [...$request, 'formula_identity' => $formula, 'output_unit' => $unit]);
+            self::assertTrue($result->isReady(), json_encode($result->unresolvedInputs));
+            self::assertSame($expected, $result->quantity?->value);
+            self::assertSame($unit, $result->quantity?->unit);
+            self::assertSame(['evidence:ceiling', 'evidence:length', 'evidence:width'], $result->quantity?->evidenceIds);
+            self::assertSame('scope:ceiling', $result->quantity?->snapshotIdentity['room_ceiling_scope']['fact_id']);
+            self::assertSame('length', $result->quantity?->snapshotIdentity['room_ceiling_scope']['dimensions']['length']['fact_id']);
+        }
+        foreach (['missing_scope', 'missing_decision', 'missing_evidence', 'forged_hash', 'stale_dimension', 'changed_value',
+            'wrong_anchor', 'non_room', 'contextual_room', 'excluded_room', 'duplicate_dimension', 'duplicate_scope',
+            'wrong_method', 'extra_value', 'zero_actor', 'decision_version', 'wrong_operand', 'multiple_operands',
+            'swapped_operands', 'extra_operand', 'conflicted_dimension'] as $variant) {
+            [$invalid, $choices, $input] = $this->ceilingFixture($variant);
+            $result = $factory->derive($invalid, $choices, $input);
+            self::assertFalse($result->isReady(), $variant);
+            self::assertNull($result->quantity, $variant);
+        }
+    }
+
+    private function ceilingFixture(string $variant = ''): array
+    {
+        $room = $this->entity('room:ceiling', 'room', ['identity' => ['manual_key' => 'bedroom']]);
+        $facts = [$this->fact('length', $room->id, 'length', '2920', 'mm', ['evidence:length']),
+            $this->fact('width', $room->id, 'width', '2.915', 'm', ['evidence:width'])];
+        $evidence = [$this->evidence('evidence:length', 'cad:room:length'), $this->evidence('evidence:width', 'cad:room:width')];
+        $base = $this->snapshot([$room], $facts, $evidence);
+        $value = \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingScope::sources($base)[$room->id];
+        $value = [...$value, 'reason' => 'Плоский прямоугольный потолок принят для сметного расчёта', 'decision_id' => 'decision:ceiling'];
+        if ($variant === 'wrong_method') {
+            $value['method'] = 'floor_area';
+        }
+        if ($variant === 'extra_value') {
+            $value['area'] = '40';
+        }
+        $ledgerVersion = 'sha256:'.hash('sha256', 'evaluation-choices:v1|1|2|3');
+        $anchor = 'entity:'.hash('sha256', $ledgerVersion.'|'.\App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingScope::anchor($room->id));
+        $scope = new Fact('scope:ceiling', 1, 2, 3, $ledgerVersion, $variant === 'wrong_anchor' ? 'room:ceiling' : $anchor,
+            'evaluation_answer', $value, null, 0.0, 'user_input', 'confirmed', ['evidence:ceiling']);
+        if ($variant !== 'missing_scope') {
+            $facts[] = $scope;
+        }
+        if ($variant !== 'missing_evidence') {
+            $evidence[] = new Evidence('evidence:ceiling', 1, 2, 3, $ledgerVersion, 'input:3', 'user_input',
+                nativeReference: 'input_payload.evaluation_choices', producerName: 'user_input_normalizer', sourceReference: 'input:3',
+                choiceHash: $variant === 'forged_hash' ? str_repeat('f', 64) : hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($value)));
+        }
+        $decisions = $variant === 'missing_decision' ? [] : [new Decision('decision:ceiling', 1, 2, 3, $ledgerVersion,
+            'fact', $scope->id, $scope->id, 'user', $variant === 'zero_actor' ? '0' : '42', $value['reason'],
+            $variant === 'decision_version' ? 2 : 1, ['evidence:ceiling'])];
+        if (in_array($variant, ['stale_dimension', 'changed_value'], true)) {
+            $facts[0] = $this->fact('length', $room->id, 'length', $variant === 'changed_value' ? '3000' : '2920', 'mm', ['evidence:length'],
+                version: $variant === 'stale_dimension' ? 2 : 1);
+        }
+        if ($variant === 'duplicate_dimension') {
+            $facts[] = $this->fact('length:duplicate', $room->id, 'length', '2920', 'mm', ['evidence:length']);
+        }
+        if ($variant === 'duplicate_scope') {
+            $facts[] = new Fact('scope:duplicate', 1, 2, 3, $ledgerVersion, $anchor, 'evaluation_answer', $value, null, 0.0, 'user_input', 'confirmed', ['evidence:ceiling']);
+        }
+        if (in_array($variant, ['non_room', 'contextual_room', 'excluded_room'], true)) {
+            $room = $this->entity($room->id, $variant === 'non_room' ? 'building_floor' : 'room',
+                ['identity' => ['manual_key' => 'bedroom'], 'contextual_only' => $variant === 'contextual_room', 'excluded_by_document_note' => $variant === 'excluded_room']);
+        }
+        $snapshot = $this->snapshot([$room], $facts, $evidence);
+        if ($variant === 'conflicted_dimension') {
+            $alternative = $this->fact('length:alternative', $room->id, 'length', '3100', 'mm', ['evidence:length']);
+            $conflict = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict::betweenSources('conflict:ceiling',
+                [$facts[0], $alternative], 'cross_document_incompatible_values', self::SOURCE_VERSION);
+            $snapshot = new ProjectModelSnapshot($snapshot->entities, $snapshot->facts, $snapshot->evidence, [$conflict]);
+        }
+        $operands = ['length' => 'length', 'width' => 'width'];
+        if ($variant === 'wrong_operand') {
+            $operands['length'] = 'width';
+        } elseif ($variant === 'multiple_operands') {
+            $operands['length'] = ['length'];
+        } elseif ($variant === 'swapped_operands') {
+            $operands = ['length' => 'width', 'width' => 'length'];
+        } elseif ($variant === 'extra_operand') {
+            $operands['height'] = 'width';
+        }
+
+        return [$snapshot, $decisions, $this->request('room_ceiling_area', $room->id, $operands, 'm2', 8)];
+    }
+
     private function openingFixture(string $variant = ''): array
     {
         $wall = $this->entity('wall:opening', 'wall', ['identity' => ['manual_key' => 'wall']]);

@@ -50,6 +50,20 @@ final readonly class CurrentDraftQuantityProofGuard
         $openingScopes = OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         $openingSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions);
         $ids = [];
+        if ($universal) {
+            $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)->whereKey($sessionId)->firstOrFail();
+            if (\App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::requiresProof(
+                \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::rows($draft), $session->input_payload['room_ceiling_replacements'] ?? [])) {
+                foreach (app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RoomCeilingReplacementProof::class)->evidenceIds($session,
+                    \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::rows($draft), $snapshot) as $id) {
+                    if (preg_match('/\Aevidence:([1-9][0-9]*)\z/', $id, $match) !== 1) {
+                        $this->reject();
+                    }
+                    $ids[(int) $match[1]] = (int) $match[1];
+                }
+            }
+        }
         $bound = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {

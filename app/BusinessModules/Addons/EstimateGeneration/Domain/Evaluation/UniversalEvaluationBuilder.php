@@ -81,6 +81,8 @@ final readonly class UniversalEvaluationBuilder
                     $position = ['key' => $item['key'], 'name' => $item['name'] ?? $item['key'], 'section' => $sectionKey,
                         'package_key' => $estimate['key'], 'entity_id' => $entityId, 'unit' => $item['unit'] ?? null,
                         'work_key' => $workKey,
+                        'room_ceiling_replacement_candidate' => \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::candidate($item)
+                            && \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::work($item) === $workKey,
                         'coverage_requirement' => $item['metadata']['requirement_key']
                             ?? ScopeCompletenessEvaluator::workRequirement($sectionKey, $workKey),
                         'quantity' => $item['quantity'] ?? null, 'quantity_status' => $item['quantity_status'] ?? 'unknown',

@@ -52,6 +52,11 @@ final readonly class EvaluationDraftArithmeticRecalculator
                 $openingSnapshot, $openingScopes, $quantities, 1000, $documentVersions, $openingSystems);
         }
         $bound = [];
+        if ($session !== null && \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::requiresProof(
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::rows($draft), $session->input_payload['room_ceiling_replacements'] ?? [])) {
+            app(RoomCeilingReplacementProof::class)->evidenceIds($session,
+                \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::rows($draft), $snapshot);
+        }
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
             foreach ($estimate['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $item) {

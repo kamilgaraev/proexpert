@@ -14,6 +14,20 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkItemQuantityMapperTest extends TestCase
 {
+    public function test_single_room_ceiling_keeps_its_exact_formula_and_explicit_assumption_without_a_preliminary_coefficient(): void
+    {
+        $source = new QuantityData('ceiling_area', 'm2', '8.5118', 'room_ceiling_area', '1',
+            ['entity_id' => 'room:1', 'operands' => [['fact_id' => 'fact:length']], 'snapshot_identity' => [],
+                'room_ceiling_scope' => ['fact_id' => 'fact:scope']], QuantitySource::Estimated, ['evidence:1'], 'model:1', ['fact:scope']);
+        $mapped = (new WorkItemQuantityMapper)->map('rough.ceiling', ['ceiling_area' => $source]);
+        self::assertSame('8.5118', $mapped?->amount);
+        self::assertSame('room_ceiling_area', $mapped?->formulaKey);
+        self::assertSame(QuantitySource::Estimated, $mapped?->source);
+        self::assertSame($source->formulaInputs, $mapped?->formulaInputs);
+        self::assertSame($source->assumptions, $mapped?->assumptions);
+        self::assertNull((new WorkItemQuantityMapper)->map('finish.floor', ['ceiling_area' => $source]));
+    }
+
     public function test_wall_volume_area_coefficients_require_explicit_legacy_compatibility(): void
     {
         $mapper = new WorkItemQuantityMapper;
