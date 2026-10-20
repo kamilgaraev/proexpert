@@ -62,7 +62,7 @@ final class NativeParameterQuestionProjector
                 continue;
             }
             $formula = $warning['formula'] ?? '';
-            if (! in_array($formula, ['floor_area', 'direct_floor_area', 'wall_net_area', 'sloped_roof_area', 'earthwork_volume',
+            if (! in_array($formula, ['floor_area', 'direct_floor_area', 'wall_net_area', 'wall_net_volume', 'sloped_roof_area', 'earthwork_volume',
                 ...array_keys(FactVocabulary::foundationFormulas()), ...array_keys(FactVocabulary::engineeringFormulas())], true)) {
                 $limitations['additional_review_required'] = true;
 

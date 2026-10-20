@@ -52,9 +52,13 @@ final readonly class NativeParameterBacklog
         $warnings = array_values(array_filter($simulation['warnings'], static fn (array $warning): bool => ! ScopedQuantityInputReadiness::permitsPartialPlanning($warning, $snapshot, $token, $sections,
             $simulation['quantities'], $documentVersions, $decisions)));
 
-        return $this->projector->project($snapshot, $token, $sections, $warnings,
+        $backlog = $this->projector->project($snapshot, $token, $sections, $warnings,
             $documentVersions, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session),
             array_intersect_key($payload, array_flip(['building_type', 'floors'])));
+
+        return ($session->draft_payload ?? []) === [] ? $backlog
+            : (new WallAssemblyQuestions)->append($backlog, $snapshot, $decisions, $documentVersions,
+                $token, $sections, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session));
     }
 
     public function validateAnswer(EstimateGenerationSession $session, ProjectModelSnapshot $snapshot, string $token, array $input): void
@@ -72,8 +76,12 @@ final readonly class NativeParameterBacklog
             if (count($rows) === 1 && $question['can_answer'] && is_array($binding)
                 && CanonicalPipelineJson::encode($binding) === CanonicalPipelineJson::encode($answer['native_question'])
                 && ($row['existing_entity_id'] ?? null) === $answer['entity_id'] && ($row['type'] ?? null) === $answer['entity_type']
-                && array_keys($row['parameters'] ?? []) === [$answer['parameter']]
-                && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'parameters', 'native_question']) === []) {
+                && ((($answer['kind'] ?? null) === 'project_parameter'
+                        && array_keys($row['parameters'] ?? []) === [$answer['parameter']]
+                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'parameters', 'native_question']) === [])
+                    || (($answer['kind'] ?? null) === 'wall_assembly' && is_array($row['wall_assembly'] ?? null)
+                        && ($row['wall_assembly']['entity_fingerprint'] ?? null) === $answer['entity_fingerprint']
+                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'wall_assembly', 'native_question']) === []))) {
                 return;
             }
         }

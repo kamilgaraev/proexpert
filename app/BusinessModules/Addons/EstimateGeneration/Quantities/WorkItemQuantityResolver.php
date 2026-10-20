@@ -17,6 +17,11 @@ final readonly class WorkItemQuantityResolver
     {
         $entity = $workItem['metadata']['scope_entity_id'] ?? $workItem['entity_id'] ?? null;
         $key = (string) ($workItem['metadata']['quantity_key'] ?? '');
+        $work = $workItem['metadata']['composition_work_key'] ?? $key;
+        if (in_array($work, WallWorkItemExpander::WORKS, true)
+            && (! is_string($entity) || $entity === '' || ! isset($workItem['metadata']['wall_assembly']['fact_id']))) {
+            return null;
+        }
         $quantity = $this->directTakeoff->make($workItem, $generationIdentity)
             ?? $this->mapper->map($key, $quantities);
         if ($quantity === null && is_string($entity) && $entity !== '') {

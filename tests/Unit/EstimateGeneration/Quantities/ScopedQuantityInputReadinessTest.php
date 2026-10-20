@@ -18,6 +18,7 @@ final class ScopedQuantityInputReadinessTest extends TestCase
     public static function formulas(): array
     {
         return ['walls' => ['wall_net_area', 'wall', 'm2', 'structures'],
+            'wall_volumes' => ['wall_net_volume', 'wall', 'm3', 'structures'],
             'equipment' => ['equipment_count', 'equipment', 'count', 'equipment']];
     }
 

@@ -101,6 +101,7 @@ final readonly class FactoryInspectionInput
             'limitations' => [],
             'fingerprint' => hash('sha256', CanonicalPipelineJson::encode([
                 FactoryInspectionStore::POLICY, FactoryWorkingInput::CONTRACT, \App\BusinessModules\Addons\EstimateGeneration\Quantities\ScopedQuantityInputReadiness::CONTRACT,
+                \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::CONTRACT,
                 (int) $session->state_version, $session->status->value, $payload, $capture['token'], $snapshotFingerprint,
             ]))];
     }
@@ -110,6 +111,7 @@ final readonly class FactoryInspectionInput
         return ['within_budget' => false, 'snapshot' => null, 'model_token' => null, 'limitations' => [$reason],
             'fingerprint' => hash('sha256', CanonicalPipelineJson::encode([
                 FactoryInspectionStore::POLICY, FactoryWorkingInput::CONTRACT, \App\BusinessModules\Addons\EstimateGeneration\Quantities\ScopedQuantityInputReadiness::CONTRACT,
+                \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::CONTRACT,
                 (int) $session->state_version, $session->status->value, $payload, $reason,
             ]))];
     }

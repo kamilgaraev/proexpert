@@ -36,6 +36,10 @@ final readonly class EvaluationDraftArithmeticRecalculator
     {
         $preview = $this->quantities->previewInput($context->organizationId, $context->projectId, $context->sessionId);
         $quantities = $preview['quantities'];
+        $documentVersions = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($snapshot);
+        $wallScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, $documentVersions);
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander)->expand($draft,
+            $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
         $quantitiesByEntity = [];
         foreach ($quantities as $quantity) {
             if ($quantity instanceof QuantityData && is_string($quantity->formulaInputs['entity_id'] ?? null)) {
@@ -67,6 +71,9 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         && ($item['metadata']['quantity_reset_required'] ?? false) !== true) {
                         $workKey = $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'];
                         $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity);
+                    }
+                    if (! \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, $wallScopes)) {
+                        $quantity = null;
                     }
                     $oldUnit = $item['unit'] ?? null;
                     $oldAmount = $item['quantity'] ?? null;

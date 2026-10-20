@@ -21,6 +21,7 @@ final class DerivedQuantityFactory
     private const FORMULAS = [
         'floor_area' => ['length', 'width'],
         'wall_net_area' => ['wall_length', 'wall_height'],
+        'wall_net_volume' => ['wall_length', 'wall_height', 'wall_thickness'],
         'sloped_roof_area' => ['plan_areas', 'slope_rises', 'slope_runs'],
         'earthwork_volume' => ['area', 'depth'],
         'direct_floor_area' => ['measurement'],
@@ -42,7 +43,7 @@ final class DerivedQuantityFactory
         if ($roles === null) {
             return $this->unresolved('formula_unknown', 'formula');
         }
-        if ($formula === 'wall_net_area') {
+        if (in_array($formula, ['wall_net_area', 'wall_net_volume'], true)) {
             $openingWidths = ($request['operands'] ?? [])['opening_widths'] ?? null;
             $openingHeights = ($request['operands'] ?? [])['opening_heights'] ?? null;
             if ((is_array($openingWidths) && $openingWidths !== [])
@@ -116,6 +117,9 @@ final class DerivedQuantityFactory
         $target = $entities[$entityId] ?? null;
         if (! $target instanceof Entity) {
             return $this->unresolved('entity_missing', 'entity', $entityId);
+        }
+        if ($formula === 'wall_net_volume' && GeometryInventory::type($target) !== 'wall') {
+            return $this->unresolved('wall_measurement_incompatible', 'entity', $entityId);
         }
         if ($foundation !== null
             && ($target->attributes['semantic_type'] ?? $target->attributes['properties']['semantic_type'] ?? $target->type) !== $foundation['entity']) {
@@ -220,10 +224,22 @@ final class DerivedQuantityFactory
 
                     continue;
                 }
+                if ($formula === 'wall_net_volume' && in_array($role, ['wall_length', 'wall_height', 'wall_thickness'], true)) {
+                    if ($facts[$id]->entityId !== $target->id) {
+                        $issues[] = $this->issue('entity_scope_mismatch', $role, $id);
+
+                        continue;
+                    }
+                    if (FactVocabulary::parameter($facts[$id]->type) !== substr($role, 5)) {
+                        $issues[] = $this->issue('wall_measurement_incompatible', $role, $id);
+
+                        continue;
+                    }
+                }
                 $operandTarget = $target;
                 $sourceEntity = $entities[$facts[$id]->entityId] ?? null;
                 $relation = match (true) {
-                    $formula === 'wall_net_area' && in_array($role, ['opening_widths', 'opening_heights'], true) => 'wall_openings',
+                    in_array($formula, ['wall_net_area', 'wall_net_volume'], true) && in_array($role, ['opening_widths', 'opening_heights'], true) => 'wall_openings',
                     $formula === 'sloped_roof_area' && in_array($role, ['plan_areas', 'slope_rises', 'slope_runs'], true) => 'roof_facets',
                     $formula === 'sloped_roof_area' && $role === 'roof_opening_areas' => 'roof_openings',
                     default => null,
@@ -599,7 +615,7 @@ final class DerivedQuantityFactory
         array $decisions,
     ): array {
         $expectedKinds = match ($formula) {
-            'wall_net_area' => [
+            'wall_net_area', 'wall_net_volume' => [
                 'wall_opening' => ['width', 'height'],
             ],
             'sloped_roof_area' => [
@@ -782,7 +798,7 @@ final class DerivedQuantityFactory
         int $maxPhysicalReferences,
         int $maxPhysicalReferenceBytes,
     ): ?array {
-        if ($formula === 'wall_net_area') {
+        if (in_array($formula, ['wall_net_area', 'wall_net_volume'], true)) {
             $widths = $resolved['opening_widths'] ?? [];
             $heights = $resolved['opening_heights'] ?? [];
             if (count($widths) !== count($heights)) {
@@ -1006,6 +1022,7 @@ final class DerivedQuantityFactory
                 ? $this->decimal($resolved['base_quantity'][0])
                 : $this->decimal($resolved['base_quantity'][0])->multipliedBy($this->decimal($resolved['coefficient'][0])),
             'wall_net_area' => $this->wallArea($resolved),
+            'wall_net_volume' => $this->wallArea($resolved)->multipliedBy($this->decimal($resolved['wall_thickness'][0])),
             'sloped_roof_area' => $this->roofArea($resolved),
         };
     }
@@ -1045,7 +1062,7 @@ final class DerivedQuantityFactory
         }
 
         return match ($formula) {
-            'earthwork_volume', 'foundation_beam_volume', 'foundation_slab_volume' => 'm3',
+            'earthwork_volume', 'foundation_beam_volume', 'foundation_slab_volume', 'wall_net_volume' => 'm3',
             'technology_work_package' => $resolved['base_quantity'][0]['unit'],
             'direct_quantity' => $resolved['measurement'][0]['unit'],
             default => 'm2',

@@ -44,6 +44,7 @@ final readonly class FactoryDraftBuilder
         private RoomFloorWorkItemExpander $floors = new RoomFloorWorkItemExpander,
         private EquipmentWorkItemExpander $equipment = new EquipmentWorkItemExpander,
         private FoundationWorkItemExpander $foundations = new FoundationWorkItemExpander,
+        private \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander $walls = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander,
         private UniversalDraftProjector $projector = new UniversalDraftProjector,
         private UniversalEvaluationBuilder $evaluations = new UniversalEvaluationBuilder,
         private UniversalReviewSummaryProjector $reviews = new UniversalReviewSummaryProjector,
@@ -107,6 +108,10 @@ final readonly class FactoryDraftBuilder
         $draft = $this->floors->expand($draft, $quantities, self::MAX_ROWS, $planning['room_floor_entity_ids'] ?? []);
         $draft = $this->equipment->expand($draft, $quantities, self::MAX_ROWS, $planning['equipment_estimate_scopes'] ?? []);
         $draft = $this->foundations->expand($draft, $snapshot, self::MAX_ROWS, $quantities, GeometryInventory::currentDocumentVersions($snapshot));
+        $documentVersions = GeometryInventory::currentDocumentVersions($snapshot);
+        $draft = $this->walls->expand($draft, $snapshot,
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, $documentVersions),
+            $quantities, self::MAX_ROWS, $documentVersions);
         FrozenWorkItemLimit::assertDraft($draft, self::MAX_ROWS);
         $identity = ['input_snapshot_hash' => $planning['input_snapshot_hash'],
             'scope_identity' => ['organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2], 'source_version' => $planning['source_version']]];

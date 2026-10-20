@@ -263,8 +263,7 @@ final class WorkItemQuantityMapper
             ],
             'walls.external_volume' => [
                 'sources' => [
-                    ['key' => 'gross_wall_area', 'factor' => '0.30'],
-                    ['key' => 'floor_area', 'factor' => '0.45'],
+                    ['key' => 'net_wall_volume', 'factor' => '1'],
                 ],
                 'unit' => 'm3',
             ],

@@ -144,6 +144,38 @@ final class DerivedQuantityFactoryTest extends TestCase
     }
 
     #[Test]
+    public function wall_volume_uses_the_same_walls_proven_thickness_and_net_openings(): void
+    {
+        $entities = [$this->entity('wall:1', 'wall'), $this->entity('wall:2', 'wall'),
+            $this->entity('opening:1', 'opening', ['wall_id' => 'wall:1'])];
+        $facts = [$this->fact('length', 'wall:1', 'length', '5', 'm', ['evidence:length']),
+            $this->fact('height', 'wall:1', 'height', '3', 'm', ['evidence:height']),
+            $this->fact('thickness', 'wall:1', 'thickness', '140', 'mm', ['evidence:thickness']),
+            $this->fact('width', 'opening:1', 'width', '1', 'm', ['evidence:width']),
+            $this->fact('opening-height', 'opening:1', 'height', '2', 'm', ['evidence:opening-height'])];
+        $proofs = array_map(fn (Fact $fact): Evidence => $this->evidence($fact->evidenceIds[0], 'native:'.$fact->id), $facts);
+        $request = $this->request('wall_net_volume', 'wall:1', ['wall_length' => 'length', 'wall_height' => 'height',
+            'wall_thickness' => 'thickness', 'opening_widths' => ['width'], 'opening_heights' => ['opening-height']], 'm3', 3);
+        $factory = new DerivedQuantityFactory;
+        $result = $factory->derive($this->snapshot($entities, $facts, $proofs), [], $request);
+        self::assertTrue($result->isReady());
+        self::assertSame('1.82', $result->quantity?->value);
+        self::assertSame('m3', $result->quantity?->unit);
+        self::assertContains('thickness', array_column($result->quantity?->operands ?? [], 'fact_id'));
+
+        $facts[2] = $this->fact('thickness', 'wall:2', 'thickness', '140', 'mm', ['evidence:thickness']);
+        $foreign = $factory->derive($this->snapshot($entities, $facts, $proofs), [], $request);
+        self::assertFalse($foreign->isReady());
+        self::assertContains('entity_scope_mismatch', array_column($foreign->unresolvedInputs, 'code'));
+        $facts[2] = $this->fact('thickness', 'wall:1', 'height', '140', 'mm', ['evidence:thickness']);
+        $wrong = $factory->derive($this->snapshot($entities, $facts, $proofs), [], $request);
+        self::assertFalse($wrong->isReady());
+        self::assertContains('wall_measurement_incompatible', array_column($wrong->unresolvedInputs, 'code'));
+        unset($request['operands']['wall_thickness']);
+        self::assertFalse($factory->derive($this->snapshot($entities, $facts, $proofs), [], $request)->isReady());
+    }
+
+    #[Test]
     public function wall_area_subtracts_scoped_openings_once_and_rejects_over_subtraction(): void
     {
         $entities = [

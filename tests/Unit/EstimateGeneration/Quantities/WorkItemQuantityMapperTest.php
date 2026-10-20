@@ -367,7 +367,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             'office.ceiling', 'office.partitions',
             'rough.walls', 'server.room',
             'siteworks.area',
-            'walls.external_volume', 'walls.internal',
+            'walls.internal',
             'warehouse.beams', 'warehouse.columns', 'warehouse.floor_concrete',
             'warehouse.floor_hardener', 'warehouse.floor_joints', 'warehouse.floor_rebar',
             'warehouse.frame_weight', 'warehouse.gates', 'warehouse.loading_nodes',
@@ -378,6 +378,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             self::assertNotNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
         }
         self::assertNull((new WorkItemQuantityMapper)->map('foundation.concrete', $quantities));
+        self::assertNull((new WorkItemQuantityMapper)->map('walls.external_volume', $quantities));
     }
 
     #[Test]

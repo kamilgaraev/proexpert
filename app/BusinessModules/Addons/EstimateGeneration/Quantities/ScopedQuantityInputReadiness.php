@@ -16,7 +16,7 @@ final class ScopedQuantityInputReadiness
         array $sections, array $quantities, array $documentVersions, array $decisions): bool
     {
         $definition = match ($warning['formula'] ?? null) {
-            'wall_net_area' => ['wall', 'm2'], 'equipment_count' => ['equipment', 'count'], default => null,
+            'wall_net_area' => ['wall', 'm2'], 'wall_net_volume' => ['wall', 'm3'], 'equipment_count' => ['equipment', 'count'], default => null,
         };
         if (($warning['code'] ?? null) !== 'canonical_quantity_aggregate_unresolved' || $definition === null
             || array_intersect($sections, FactVocabulary::entitySections($definition[0])) === []) {
