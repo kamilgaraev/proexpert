@@ -11,6 +11,7 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Services\Logging\LoggingService;
 use App\Services\Monitoring\ApiQueryMetrics;
+use App\Services\Entitlements\OrganizationEntitlementService;
 use Illuminate\Support\Collection;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Cache;
@@ -56,6 +57,11 @@ class AuthorizationService
         }
         ApiQueryMetrics::recordAccessRead($memoizeReads ? 'scope_memoized' : 'scope_plain', $scope, $scope->readCache);
         return $scope;
+    }
+
+    public function memoizedCurrentModuleSlugs(int $organizationId, OrganizationEntitlementService $source): ?array
+    {
+        return $this->permissionResolver->memoizedCurrentModuleSlugs($organizationId, $source);
     }
 
     public function canCurrent(User $user, string $permission, ?array $context = null): bool

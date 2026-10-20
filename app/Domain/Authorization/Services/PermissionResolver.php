@@ -12,6 +12,7 @@ use Closure;
 use Illuminate\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Carbon;
 
 /**
  * Сервис для резолвинга прав (системных и модульных)
@@ -80,6 +81,29 @@ class PermissionResolver
     private function rememberRead(string $key, Closure $read): mixed
     {
         return $this->readCache === null ? $read() : $this->readCache->remember($key, 300, $read);
+    }
+
+    public function memoizedCurrentModuleSlugs(int $organizationId, OrganizationEntitlementService $source): ?array
+    {
+        if (! $this->currentChecks || $this->readCache === null) {
+            return null;
+        }
+        $key = 'current_module_snapshots_'.$organizationId;
+        $now = Carbon::now()->getTimestampMs();
+        foreach ($this->readCache->get($key, []) as $snapshot) {
+            if ($snapshot['expires_at'] > $now && $snapshot['source']->sharesModuleReadSourceWith($source)) {
+                return $snapshot['slugs'];
+            }
+        }
+        ApiQueryMetrics::recordAccessRead('module_load_full', $this, $this->readCache, $organizationId);
+        $slugs = $source->getEffectiveModuleSlugs($organizationId);
+        $now = Carbon::now()->getTimestampMs();
+        $snapshots = array_values(array_filter($this->readCache->get($key, []),
+            static fn (array $snapshot): bool => $snapshot['expires_at'] > $now));
+        $snapshots[] = ['source' => $source, 'slugs' => $slugs, 'expires_at' => $now + 300000];
+        $this->readCache->put($key, $snapshots, 300);
+
+        return $slugs;
     }
 
     /**
@@ -284,16 +308,15 @@ class PermissionResolver
             $isActive = $this->measureCurrentAccessPhase('access_module_entitlement', fn () => $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
                     ApiQueryMetrics::recordAccessRead($this->readCache === null ? 'module_lookup_plain' : 'module_lookup_memoized', $this, $this->readCache, $organizationId);
-                    $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
-                        function () use ($organizationId, $moduleToCheck): array {
-                            $source = $this->currentEntitlementSource ?? app(OrganizationEntitlementService::class);
-                            $matching = $this->readCache === null && get_class($source) === OrganizationEntitlementService::class;
-                            ApiQueryMetrics::recordAccessRead($matching ? 'module_load_matching' : 'module_load_full', $this, $this->readCache, $organizationId);
-
-                            return $matching
-                                ? $source->getEffectiveModuleSlugsMatching($organizationId, $moduleToCheck)
-                                : $source->getEffectiveModuleSlugs($organizationId);
-                        });
+                    $source = $this->currentEntitlementSource ?? app(OrganizationEntitlementService::class);
+                    $activeModules = $this->memoizedCurrentModuleSlugs($organizationId, $source);
+                    if ($activeModules === null) {
+                        $matching = get_class($source) === OrganizationEntitlementService::class;
+                        ApiQueryMetrics::recordAccessRead($matching ? 'module_load_matching' : 'module_load_full', $this, $this->readCache, $organizationId);
+                        $activeModules = $matching
+                            ? $source->getEffectiveModuleSlugsMatching($organizationId, $moduleToCheck)
+                            : $source->getEffectiveModuleSlugs($organizationId);
+                    }
 
                     return in_array($moduleToCheck, $activeModules, true);
                 }

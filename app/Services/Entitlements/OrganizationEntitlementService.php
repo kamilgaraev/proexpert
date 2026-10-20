@@ -17,6 +17,12 @@ class OrganizationEntitlementService
         private readonly PackageCatalogService $packageCatalog
     ) {}
 
+    final public function sharesModuleReadSourceWith(self $other): bool
+    {
+        return $this === $other || (get_class($this) === self::class
+            && get_class($other) === self::class && $this->packageCatalog === $other->packageCatalog);
+    }
+
     public function getEffectiveModuleSlugs(int $organizationId): array
     {
         ApiQueryMetrics::recordAccessRead('entitlement_full', $this, null, $organizationId);
