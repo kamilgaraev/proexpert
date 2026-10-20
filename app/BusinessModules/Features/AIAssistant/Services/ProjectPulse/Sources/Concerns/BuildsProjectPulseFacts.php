@@ -121,6 +121,8 @@ trait BuildsProjectPulseFacts
             'site_requests.work_start_date',
             'site_requests.work_end_date',
             'site_requests.location',
+            'site_requests.delivery_address',
+            'site_requests.equipment_location',
             'site_requests.required_date',
         ];
     }
@@ -143,9 +145,13 @@ trait BuildsProjectPulseFacts
                 $parts[] = (int) $row->personnel_count . ' чел.';
             }
         }
-        $location = trim((string) ($type === SiteRequestTypeEnum::PERSONNEL_REQUEST
-            ? ($row->work_location ?? '')
-            : '')) ?: trim((string) ($row->location ?? ''));
+        $typedLocation = match ($type) {
+            SiteRequestTypeEnum::MATERIAL_REQUEST => $row->delivery_address ?? '',
+            SiteRequestTypeEnum::EQUIPMENT_REQUEST => $row->equipment_location ?? '',
+            SiteRequestTypeEnum::PERSONNEL_REQUEST => $row->work_location ?? '',
+            default => '',
+        };
+        $location = trim((string) $typedLocation) ?: trim((string) ($row->location ?? ''));
         if ($location !== '') {
             $parts[] = Str::limit($location, 160, '…');
         }

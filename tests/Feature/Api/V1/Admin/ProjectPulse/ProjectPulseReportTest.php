@@ -26,6 +26,26 @@ use Tests\TestCase;
 
 class ProjectPulseReportTest extends TestCase
 {
+    public function test_site_request_label_uses_typed_locations_with_generic_fallback(): void
+    {
+        $formatter = new class {
+            use \App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns\BuildsProjectPulseFacts {
+                siteRequestLabel as public label;
+            }
+        };
+        foreach (['material' => 'delivery_address', 'equipment' => 'equipment_location', 'personnel' => 'work_location'] as $type => $field) {
+            $row = (object) ['title' => 'Учебная заявка', 'request_type' => $type, $field => 'Профильная площадка'];
+            self::assertStringContainsString('Профильная площадка', $formatter->label($row));
+            $row->location = 'Общая локация';
+            self::assertStringContainsString('Профильная площадка', $formatter->label($row));
+            self::assertStringNotContainsString('Общая локация', $formatter->label($row));
+            $row->$field = '   ';
+            self::assertStringContainsString('Общая локация', $formatter->label($row));
+            $row->$field = null;
+            self::assertStringContainsString('Общая локация', $formatter->label($row));
+        }
+    }
+
     public function test_site_request_label_bounds_long_multibyte_locations(): void
     {
         $formatter = new class {
@@ -93,6 +113,18 @@ class ProjectPulseReportTest extends TestCase
             'title' => '',
             'request_type' => 'material',
             'status' => 'approved',
+            'delivery_address' => 'Учебный адрес доставки',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $ids['equipment'] = DB::table('site_requests')->insertGetId([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Учебная техника',
+            'request_type' => 'equipment',
+            'status' => 'pending',
+            'equipment_location' => 'Учебное место техники',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -112,7 +144,7 @@ class ProjectPulseReportTest extends TestCase
             self::assertEqualsCanonicalizing(
                 str_ends_with($source, 'ProjectPulseProcurementFactSource')
                     ? [$ids['material']]
-                    : [$ids['engineer'], $ids['worker'], $ids['material']],
+                    : [$ids['engineer'], $ids['worker'], $ids['material'], $ids['equipment']],
                 $facts->map(fn (ProjectPulseFact $fact) => $fact->relatedEntity['id'])->all(),
             );
             foreach ($facts as $fact) {
@@ -122,7 +154,9 @@ class ProjectPulseReportTest extends TestCase
                 self::assertStringNotContainsString('#' . $entity['id'], $fact->text);
                 self::assertSame('/site-requests/' . $entity['id'], $entity['route']);
                 if ($entity['id'] === $ids['material']) {
-                    self::assertSame('Заявка с объекта · Заявка на материалы', $entity['label']);
+                    self::assertSame('Заявка с объекта · Заявка на материалы · Учебный адрес доставки', $entity['label']);
+                } elseif ($entity['id'] === $ids['equipment']) {
+                    self::assertSame('Учебная техника · Заявка на технику · Учебное место техники', $entity['label']);
                 } else {
                     self::assertStringContainsString('Учебный персонал · Заявка на персонал', $entity['label']);
                     self::assertStringContainsString('21.10.2026 — 23.10.2026', $entity['label']);
