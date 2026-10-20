@@ -910,6 +910,9 @@ final class DerivedQuantityFactoryTest extends TestCase
     public function room_ceiling_requires_an_explicit_current_shape_choice_and_keeps_exact_dimension_and_choice_proofs(): void
     {
         [$snapshot, $decisions, $request] = $this->ceilingFixture();
+        self::assertSame([], \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingScope::select($snapshot, $decisions, 'room:other'));
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingScope::select($snapshot, $decisions),
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingScope::select($snapshot, $decisions, 'room:ceiling'));
         $factory = new DerivedQuantityFactory;
         foreach (['room_ceiling_area' => ['m2', '8.5118'], 'room_ceiling_perimeter' => ['m', '11.67']] as $formula => [$unit, $expected]) {
             $result = $factory->derive($snapshot, $decisions, [...$request, 'formula_identity' => $formula, 'output_unit' => $unit]);

@@ -14,12 +14,15 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkItemQuantityMapperTest extends TestCase
 {
-    public function test_single_room_ceiling_keeps_its_exact_formula_and_explicit_assumption_without_a_preliminary_coefficient(): void
+    public function test_single_room_ceiling_requires_an_accepted_child_context_and_keeps_its_exact_assumption(): void
     {
         $source = new QuantityData('ceiling_area', 'm2', '8.5118', 'room_ceiling_area', '1',
             ['entity_id' => 'room:1', 'operands' => [['fact_id' => 'fact:length']], 'snapshot_identity' => [],
                 'room_ceiling_scope' => ['fact_id' => 'fact:scope']], QuantitySource::Estimated, ['evidence:1'], 'model:1', ['fact:scope']);
-        $mapped = (new WorkItemQuantityMapper)->map('rough.ceiling', ['ceiling_area' => $source]);
+        $mapper = new WorkItemQuantityMapper;
+        self::assertNull($mapper->map('rough.ceiling', ['ceiling_area' => $source]));
+        self::assertNull($mapper->mapForEntity('rough.ceiling', ['ceiling_area' => $source], 'room:1'));
+        $mapped = $mapper->mapForEntity('rough.ceiling', ['ceiling_area' => $source], 'room:1', allowRoomCeilingReplacement: true);
         self::assertSame('8.5118', $mapped?->amount);
         self::assertSame('room_ceiling_area', $mapped?->formulaKey);
         self::assertSame(QuantitySource::Estimated, $mapped?->source);

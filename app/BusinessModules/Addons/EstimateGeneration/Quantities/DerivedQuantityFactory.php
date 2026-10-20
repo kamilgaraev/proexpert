@@ -125,7 +125,7 @@ final class DerivedQuantityFactory
             return $this->unresolved('wall_measurement_incompatible', 'entity', $entityId);
         }
         if (in_array($formula, ['room_ceiling_area', 'room_ceiling_perimeter'], true)) {
-            $scope = RoomCeilingScope::select($snapshot, $decisions)[$entityId] ?? null;
+            $scope = RoomCeilingScope::select($snapshot, $decisions, $entityId)[$entityId] ?? null;
             if ($scope === null || count($requestedOperands) !== 2
                 || ($requestedOperands['length'] ?? null) !== $scope['dimensions']['length']['fact_id']
                 || ($requestedOperands['width'] ?? null) !== $scope['dimensions']['width']['fact_id']) {

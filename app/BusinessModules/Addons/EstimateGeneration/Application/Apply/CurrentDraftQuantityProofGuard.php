@@ -85,7 +85,8 @@ final readonly class CurrentDraftQuantityProofGuard
                     $entity = $basis['formula_inputs']['entity_id'] ?? null;
                     $targetEntity = $item['metadata']['scope_entity_id'] ?? $item['entity_id'] ?? null;
                     if ($fresh === null && is_string($key) && is_string($targetEntity) && $targetEntity !== '') {
-                        $fresh = $this->mapper->mapForEntity($key, $quantities, $targetEntity);
+                        $fresh = $this->mapper->mapForEntity($key, $quantities, $targetEntity,
+                            allowRoomCeilingReplacement: isset($item['metadata']['room_ceiling_replacement']));
                     }
                     if ($fresh === null || $fresh->reviewBlockers !== [] || $fresh->evidenceIds === [] || ! is_string($entity)
                         || ($fresh->formulaInputs['entity_id'] ?? null) !== $entity

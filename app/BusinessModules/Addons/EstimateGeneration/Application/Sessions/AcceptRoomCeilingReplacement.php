@@ -125,7 +125,7 @@ final readonly class AcceptRoomCeilingReplacement
             $quantities = $this->quantities->simulateInput($capture['snapshot'], $capture['token'], $decisions)['quantities'];
             $children = [];
             foreach ($preview['rooms'] as $room) {
-                $quantity = $this->mapper->mapForEntity($preview['work_key'], $quantities, $room['entity_id']);
+                $quantity = $this->mapper->mapForEntity($preview['work_key'], $quantities, $room['entity_id'], allowRoomCeilingReplacement: true);
                 if ($quantity === null) {
                     $this->reject('changed');
                 }

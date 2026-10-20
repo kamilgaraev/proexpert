@@ -103,7 +103,8 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     if (! $explicitQuantity && $quantity === null && is_string($expectedEntity)
                         && ($item['metadata']['quantity_reset_required'] ?? false) !== true) {
                         $workKey = $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'];
-                        $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity);
+                        $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity,
+                            allowRoomCeilingReplacement: isset($item['metadata']['room_ceiling_replacement']));
                     }
                     if (! \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander::permits($item, $wallScopes, $universal)
                         || ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander::permits($item, $openingScopes)) {

@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvalu
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CurrentRoomIdentitySources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CurrentWorkEntityBindingProof;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RoomCeilingReplacementProof;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
@@ -192,6 +193,14 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
     public function test_single_room_quantity_alias_keeps_the_explicit_ceiling_formula_through_apply_validation(): void
     {
         [$actor, $session] = $this->fixture(1);
+        $draft = $session->fresh()->draft_payload;
+        foreach ($draft['local_estimates'][0]['sections'][0]['work_items'] as &$item) {
+            if (in_array($item['key'], ['ceiling:brandering', 'ceiling:insulation', 'ceiling:cornice'], true)) {
+                $item['quantity'] = null;
+            }
+        }
+        unset($item);
+        $session->update(['draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft))]);
         $handler = app(AcceptRoomCeilingReplacement::class);
         $preview = $handler->show($actor, $session->project_id, $session->id, 'ceiling:rough');
         self::assertSame('8.5118', $preview['replacement_total']);
@@ -202,6 +211,16 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
         self::assertSame('room_ceiling_area', $children[0]['quantity_evidence']['formula_key']);
         $draft['local_estimates'][0]['sections'][0]['work_items'] = $children;
         app(CurrentDraftQuantityProofGuard::class)->assertCurrent((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $draft);
+        $saved = $session->fresh();
+        app(RecalculateUniversalEvaluation::class)->handle($actor, $session->project_id, $session->id, $saved->state_version, (string) Str::uuid());
+        $rows = array_column(RoomCeilingReplacement::rows($session->fresh()->draft_payload), null, 'key');
+        foreach (['ceiling:brandering', 'ceiling:insulation', 'ceiling:cornice'] as $unaccepted) {
+            self::assertNull($rows[$unaccepted]['quantity']);
+            self::assertArrayNotHasKey('room_ceiling_replacement', $rows[$unaccepted]['metadata']);
+        }
+        self::assertSame('8.5118', $rows[$children[0]['key']]['quantity']);
+        self::assertSame('room_ceiling_area', $rows[$children[0]['key']]['quantity_evidence']['formula_key']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
     private function fixture(int $roomCount = 5): array

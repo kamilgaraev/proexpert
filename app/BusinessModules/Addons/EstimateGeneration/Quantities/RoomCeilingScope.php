@@ -24,19 +24,29 @@ final class RoomCeilingScope
         return 'room-ceiling:'.hash('sha256', $roomId);
     }
 
-    public static function sources(ProjectModelSnapshot $snapshot): array
+    public static function sources(ProjectModelSnapshot $snapshot, ?string $roomId = null): array
     {
+        $roles = $facts = [];
+        foreach (['length', 'width'] as $role) {
+            foreach (FactVocabulary::aliases($role) as $type) {
+                $roles[$type] = $role;
+            }
+        }
+        foreach ($snapshot->facts as $fact) {
+            if (($roomId === null || $fact->entityId === $roomId) && isset($roles[$fact->type])) {
+                $facts[$fact->entityId][$roles[$fact->type]][] = $fact;
+            }
+        }
         $result = [];
         foreach ($snapshot->entities as $room) {
-            if (GeometryInventory::type($room) !== 'room'
+            if (($roomId !== null && $room->id !== $roomId) || GeometryInventory::type($room) !== 'room'
                 || ($room->attributes['contextual_only'] ?? false) || ($room->attributes['excluded_by_document_note'] ?? false)
                 || ($room->attributes['properties']['contextual_only'] ?? false) || ($room->attributes['properties']['excluded_by_document_note'] ?? false)) {
                 continue;
             }
             $dimensions = [];
             foreach (['length', 'width'] as $role) {
-                $matches = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->entityId === $room->id
-                    && in_array($fact->type, FactVocabulary::aliases($role), true)));
+                $matches = $facts[$room->id][$role] ?? [];
                 if (count($matches) !== 1) {
                     continue 2;
                 }
@@ -72,13 +82,14 @@ final class RoomCeilingScope
         return $ids;
     }
 
-    public static function select(ProjectModelSnapshot $snapshot, array $decisions): array
+    public static function select(ProjectModelSnapshot $snapshot, array $decisions, ?string $roomId = null): array
     {
-        $sources = self::sources($snapshot);
+        $sources = self::sources($snapshot, $roomId);
         $accepted = array_column(array_filter($decisions, static fn ($decision): bool => $decision instanceof Decision), null, 'id');
         $choices = [];
         foreach ($snapshot->facts as $fact) {
-            if ($fact->type === 'evaluation_answer' && is_array($fact->value) && ($fact->value['answer_kind'] ?? null) === 'room_ceiling_scope') {
+            if ($fact->type === 'evaluation_answer' && is_array($fact->value) && ($fact->value['answer_kind'] ?? null) === 'room_ceiling_scope'
+                && is_string($fact->value['room_entity_id'] ?? null) && isset($sources[$fact->value['room_entity_id']])) {
                 $choices[$fact->value['room_entity_id'] ?? ''][] = $fact;
             }
         }
