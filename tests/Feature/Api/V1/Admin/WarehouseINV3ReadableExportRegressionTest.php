@@ -75,7 +75,28 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
         $this->assertStringNotContainsString('ФИО не указано', $documentText);
     }
 
-    private function exportSheet(string $commissionMemberName): Worksheet
+    public function test_inv3_export_keeps_long_material_names_wrapped_with_room_for_all_lines(): void
+    {
+        foreach ([
+            'УЧ-102 — проверка приёмки после релиза 19.10.2026 — грунтовка для подготовки стен и потолка перед окраской, с подробным учебным названием материала',
+            str_repeat('Ш', 250),
+            implode("\n", array_fill(0, 7, 'Учебная строка материала')),
+        ] as $name) {
+            $sheet = $this->exportSheet('Анна Петрова', $name);
+
+            $this->assertSame($name, $sheet->getCell('B16')->getValue());
+            $this->assertTrue($sheet->getStyle('B16')->getAlignment()->getWrapText());
+            $this->assertFalse($sheet->getStyle('B16')->getAlignment()->getShrinkToFit());
+            $this->assertGreaterThanOrEqual(72.0, $sheet->getRowDimension(16)->getRowHeight());
+            $this->assertEquals(600, $sheet->getCell('F16')->getValue());
+            $this->assertEquals(600, $sheet->getCell('H16')->getValue());
+            $this->assertEquals(0, $sheet->getCell('J16')->getValue());
+            $this->assertSame(1, $sheet->getPageSetup()->getFitToWidth());
+            $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+        }
+    }
+
+    private function exportSheet(string $commissionMemberName, string $materialName = 'Арматура А500С, диаметр 12 мм'): Worksheet
     {
         Storage::fake('s3');
 
@@ -93,7 +114,7 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
         ]);
         $material = Material::query()->create([
             'organization_id' => $context->organization->id,
-            'name' => 'Арматура А500С, диаметр 12 мм',
+            'name' => $materialName,
             'code' => 'INV3-REBAR',
             'measurement_unit_id' => $unit->id,
             'additional_properties' => ['asset_type' => Asset::TYPE_MATERIAL],

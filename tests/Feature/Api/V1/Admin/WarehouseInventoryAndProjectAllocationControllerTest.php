@@ -603,6 +603,51 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $this->assertDatabaseCount('project_material_delivery_events', 2);
     }
 
+    public function test_inventory_payload_preserves_explicit_timezone_for_lifecycle_timestamps(): void
+    {
+        config(['app.timezone' => 'UTC']);
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Учебный склад', 'INV-TIME');
+        $this->allowAdminAccess();
+        $act = InventoryAct::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'act_number' => 'INV-20261020-TIME',
+            'status' => InventoryAct::STATUS_APPROVED,
+            'inventory_date' => '2026-10-20',
+            'created_by' => $context->user->id,
+            'approved_by' => $context->user->id,
+            'started_at' => '2026-10-20 20:07:26',
+            'completed_at' => '2026-10-20 20:09:55',
+            'approved_at' => '2026-10-20 20:10:00',
+            'commission_members' => [],
+        ]);
+
+        foreach ([
+            ["/api/v1/admin/warehouses/inventory/{$act->id}", 'data.'],
+            ["/api/v1/admin/warehouses/inventory?warehouse_id={$warehouse->id}", 'data.data.0.'],
+        ] as [$url, $prefix]) {
+            $this->withHeaders($context->authHeaders())->getJson($url)->assertOk()
+                ->assertJsonPath($prefix.'started_at', '2026-10-20T20:07:26+00:00')
+                ->assertJsonPath($prefix.'completed_at', '2026-10-20T20:09:55+00:00')
+                ->assertJsonPath($prefix.'approved_at', '2026-10-20T20:10:00+00:00')
+                ->assertJsonPath($prefix.'inventory_date', '2026-10-20');
+        }
+
+        $act->update([
+            'status' => InventoryAct::STATUS_DRAFT,
+            'approved_by' => null,
+            'started_at' => null,
+            'completed_at' => null,
+            'approved_at' => null,
+        ]);
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/warehouses/inventory/{$act->id}")
+            ->assertOk()
+            ->assertJsonPath('data.started_at', null)
+            ->assertJsonPath('data.completed_at', null)
+            ->assertJsonPath('data.approved_at', null);
+    }
+
     public function test_inventory_lifecycle_builds_items_from_current_stock_and_approval_updates_balances(): void
     {
         $context = AdminApiTestContext::create();

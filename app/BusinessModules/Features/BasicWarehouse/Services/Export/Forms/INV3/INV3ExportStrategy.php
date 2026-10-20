@@ -116,6 +116,12 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
             $sheet->setCellValue("F{$row}", $item->expected_quantity);
             $sheet->setCellValue("H{$row}", $item->actual_quantity);
             $sheet->setCellValue("J{$row}", $item->difference);
+            $sheet->getStyle("B{$row}:D{$row}")->getAlignment()->setWrapText(true);
+            $lines = array_sum(array_map(
+                static fn (string $line): int => max(1, (int) ceil(mb_strlen($line) / 24)),
+                preg_split('/\R/u', $item->material->name) ?: [''],
+            ));
+            $sheet->getRowDimension($row)->setRowHeight(max(30, ($lines + 1) * 18));
 
             $row++;
         }
