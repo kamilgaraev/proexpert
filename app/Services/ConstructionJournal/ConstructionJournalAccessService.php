@@ -7,7 +7,6 @@ namespace App\Services\ConstructionJournal;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
-use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Project\ProjectParticipantService;
@@ -49,28 +48,8 @@ final class ConstructionJournalAccessService
             return [];
         }
 
-        $organizationId = (int) $user->current_organization_id;
-        $facts = $this->participants->getHierarchyWithActivity($project);
-        $hierarchy = $facts['hierarchy'];
-        $visible = [$organizationId];
-        if ($hierarchy['configured']) {
-            do {
-                $count = count($visible);
-                foreach ($hierarchy['participants'] as $participant) {
-                    if (in_array($participant['parent_organization_id'], $visible, true)
-                        && ! in_array($participant['organization_id'], $visible, true)) {
-                        $visible[] = $participant['organization_id'];
-                    }
-                }
-            } while (count($visible) !== $count);
-        }
-
-        if (in_array($organizationId, array_column($hierarchy['participants'], 'organization_id'), true)) {
-            return array_values(array_intersect($facts['active_organization_ids'], $visible));
-        }
-
-        return Organization::query()->whereIn('id', $visible)->where('is_active', true)
-            ->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+        return ConstructionJournalPerformerVisibility::ids((int) $user->current_organization_id,
+            $this->participants->getHierarchyWithActivity($project));
     }
 
     public function canRead(User $user, ConstructionJournal $journal): bool

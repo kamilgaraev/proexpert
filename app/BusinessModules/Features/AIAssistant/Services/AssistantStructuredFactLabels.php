@@ -16,6 +16,8 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\QualityControl\Enums\QualityDefectSeverityEnum;
 use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\EstimatePositionItemType;
 use App\Enums\Schedule\ScheduleStatusEnum;
@@ -32,6 +34,8 @@ final class AssistantStructuredFactLabels
             'assistant_document.coverage_status' => Lang::has('ai_assistant.document_metadata_coverage.'.$value)
                 ? trans_message('ai_assistant.document_metadata_coverage.'.$value) : null,
             'contract.status' => ContractStatusEnum::tryFrom($value)?->label(),
+            'construction_journal.status' => JournalStatusEnum::tryFrom($value)?->label(),
+            'construction_journal_entry.status' => JournalEntryStatusEnum::tryFrom($value)?->label(),
             'payment_document.status' => PaymentDocumentStatus::tryFrom($value)?->label(),
             'payment_document.document_type' => PaymentDocumentType::tryFrom($value)?->label(),
             'schedule.status' => ScheduleStatusEnum::tryFrom($value)?->label(),

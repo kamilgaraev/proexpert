@@ -77,6 +77,54 @@ class ProjectParticipantService
             ->selectSub($customerRoot, 'customer_root_organization_id')
             ->orderBy('active_participants.organization_id')
             ->get();
+
+        return $this->hierarchyWithActivityFromFacts($project, $facts);
+    }
+
+    public function getHierarchiesWithActivity(array $projects): array
+    {
+        if ($projects === []) {
+            return [];
+        }
+        $projectsById = [];
+        foreach ($projects as $project) {
+            if (! $project instanceof Project || ! is_int($project->id) || $project->id < 1) {
+                throw new \InvalidArgumentException('invalid_hierarchy_project');
+            }
+            $projectsById[$project->id] = $project;
+        }
+        $ids = array_keys($projectsById);
+        $activeParticipants = ProjectOrganization::query()->whereIn('project_id', $ids)->where('is_active', true)
+            ->select(['project_id', 'organization_id'])->toBase();
+        $activeParticipants->union(Project::query()->withTrashed()->whereIn('id', $ids)
+            ->selectRaw('id AS project_id, organization_id')->toBase());
+        $customerRoot = ProjectOrganization::query()->whereColumn('project_id', 'active_participants.project_id')
+            ->where('is_active', true)
+            ->whereRaw("COALESCE(NULLIF(role_new, ''), role) = ?", [ProjectOrganizationRole::CUSTOMER->value])
+            ->select('organization_id')->limit(1);
+        $facts = DB::query()->useWritePdo()->fromSub($activeParticipants, 'active_participants')
+            ->leftJoin('project_organization_hierarchy as hierarchy', static function (JoinClause $join): void {
+                $join->on('hierarchy.organization_id', '=', 'active_participants.organization_id')
+                    ->on('hierarchy.project_id', '=', 'active_participants.project_id');
+            })
+            ->leftJoinSub(Organization::query()->select(['id', 'name', 'is_active']), 'participant_organizations', 'participant_organizations.id', '=', 'active_participants.organization_id')
+            ->select([
+                'active_participants.project_id', 'active_participants.organization_id',
+                'hierarchy.organization_id as hierarchy_organization_id', 'hierarchy.parent_organization_id',
+                'participant_organizations.name as organization_name',
+                'participant_organizations.is_active as organization_is_active',
+            ])->selectSub($customerRoot, 'customer_root_organization_id')
+            ->orderBy('active_participants.project_id')->orderBy('active_participants.organization_id')->get()->groupBy('project_id');
+        $result = [];
+        foreach ($projectsById as $project) {
+            $result[(int) $project->id] = $this->hierarchyWithActivityFromFacts($project, $facts->get((int) $project->id, collect()));
+        }
+
+        return $result;
+    }
+
+    private function hierarchyWithActivityFromFacts(Project $project, \Illuminate\Support\Collection $facts): array
+    {
         $activeIds = $facts->pluck('organization_id')->map(static fn ($id): int => (int) $id)->all();
         $rows = $facts->filter(static fn ($row): bool => $row->hierarchy_organization_id !== null)
             ->keyBy('organization_id');

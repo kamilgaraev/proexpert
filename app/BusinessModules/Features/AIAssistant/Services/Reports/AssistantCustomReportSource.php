@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -17,7 +22,7 @@ final readonly class AssistantCustomReportSource
 {
     public function __construct(private AssistantDomainCatalog $catalog, private AssistantDataAccessPolicy $policy) {}
 
-    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId, ?\DateTimeInterface $asOf = null): array
+    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId, ?\DateTimeInterface $asOf = null, bool $requireCompleteScope = false): array
     {
         $definition = $this->catalog->definition($domain);
         if ($definition === null || ! in_array($entityType, $definition->entityTypes, true)) {
@@ -31,9 +36,16 @@ final readonly class AssistantCustomReportSource
             throw new AccessDeniedHttpException;
         }
         foreach ([...$definition->permissions, ...(array) ($definition->entityPermissions[$entityType] ?? [])] as $permission) {
-            if (! $this->policy->canCurrentPermission($actor, $organizationId, $permission)) {
+            $allowed = $projectId !== null && $permission === 'construction-journal.view'
+                && in_array($entityType, ['construction_journal', 'construction_journal_entry'], true)
+                ? $this->policy->canCurrentProjectPermission($actor, $organizationId, $projectId, $permission)
+                : $this->policy->canCurrentPermission($actor, $organizationId, $permission);
+            if (! $allowed) {
                 throw new AccessDeniedHttpException;
             }
+        }
+        if ($requireCompleteScope && $projectId === null && in_array($entityType, ['construction_journal', 'construction_journal_entry'], true)) {
+            $this->assertJournalProjectContexts($actor, $organizationId);
         }
         $members = $domain === 'people' && $entityType === 'user' ? app(AssistantOrganizationMemberReportProjection::class) : null;
         $query = $members?->query($actor, $organizationId, $this->policy)
@@ -168,6 +180,25 @@ final readonly class AssistantCustomReportSource
         if ($fields === [] || array_diff($fields, array_keys($available)) !== []) {
             throw ValidationException::withMessages(['fields' => trans_message('ai_custom_reports.unsupported_fields')]);
         }
+    }
+
+    private function assertJournalProjectContexts(User $actor, int $organizationId): void
+    {
+        $context = app()->bound(AssistantRequestExecutionContext::class) ? app(AssistantRequestExecutionContext::class) : null;
+        $this->policy->accessibleProjects($actor, $organizationId)->whereHas('journals')->select('projects.id')
+            ->chunkById(250, static function (Collection $projects) use ($organizationId, $context): void {
+                $context?->assertCanContinue();
+                $context?->remainingMilliseconds();
+                $ids = $projects->modelKeys();
+                $known = AuthorizationContext::query()->where('type', AuthorizationContext::TYPE_PROJECT)
+                    ->whereIn('resource_id', $ids)
+                    ->whereHas('parentContext', static fn (Builder $parent): Builder => $parent
+                        ->where('type', AuthorizationContext::TYPE_ORGANIZATION)->where('resource_id', $organizationId))
+                    ->pluck('resource_id')->map(static fn ($id): int => (int) $id)->all();
+                if (array_diff($ids, $known) !== []) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+                }
+            }, 'projects.id', 'id');
     }
 
     private function paymentContracts(User $actor, int $organizationId): ?array

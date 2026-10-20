@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportBuilder;
@@ -93,6 +95,11 @@ final class GenerateCustomReportTool implements AIToolInterface
             throw $exception;
         } catch (Throwable $exception) {
             Log::error('assistant_custom_report_failed', ['organization_id' => $organization->id, 'actor_id' => $user->id, 'exception_class' => $exception::class]);
+
+            if ($exception instanceof ReportContractException && $exception->errorCode === ReportErrorCode::REPORT_SOURCE_UNAVAILABLE) {
+                return ['status' => 'unavailable', 'error_code' => $exception->errorCode->value,
+                    'message' => trans_message('reports.errors.report_source_unavailable')];
+            }
 
             return ['status' => 'error', 'message' => trans_message('ai_custom_reports.failed')];
         }

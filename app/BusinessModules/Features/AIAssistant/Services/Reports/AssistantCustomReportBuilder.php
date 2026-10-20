@@ -77,7 +77,7 @@ final readonly class AssistantCustomReportBuilder
     private function section(array $section, User $actor, int $organizationId, string $fetchedAt): array
     {
         $scope = ['domain' => $section['domain'], 'entity_type' => $section['entity_type'], 'project_id' => isset($section['project_id']) ? (int) $section['project_id'] : null];
-        $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id']);
+        $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id'], requireCompleteScope: true);
         if (count(array_unique($section['columns'])) !== count($section['columns'])
             || count(array_unique($section['group_by'])) !== count($section['group_by'])) {
             throw ValidationException::withMessages(['columns' => trans_message('ai_custom_reports.unsupported_fields')]);
