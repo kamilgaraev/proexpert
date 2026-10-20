@@ -889,7 +889,8 @@ class AIAssistantService
                 $advertisedTools = array_column($tools, 'name');
 
                 if (is_array($toolCall) && in_array($toolName, $advertisedTools, true)
-                    && $this->isTerminalReadOnlyTool($toolName) && $this->toolRegistry->getTool($toolName) !== null) {
+                    && ($this->isTerminalReadOnlyTool($toolName) || $toolName === 'generate_custom_report')
+                    && $this->toolRegistry->getTool($toolName) !== null) {
                     if (! $organization instanceof Organization) {
                         $organization = $this->resolveOrganization($organizationId);
                     }
