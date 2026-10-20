@@ -40,7 +40,9 @@ final class AssistantProductionSchedulePeriod
 
     private const DATE_NOUN = 'дат(?:а|ы|е|у|ой|ою)';
 
-    private const DAY_NOUN = '(?:день|дня|дню|дн[её]м|дне|сутки|суток|суткам|сутками|сутках|'.self::DATE_NOUN.')';
+    private const SUTKI_NOUN = 'сут(?:ки|ок|кам|ками|ках)';
+
+    private const DAY_NOUN = '(?:день|дня|дню|дн[её]м|дне|'.self::SUTKI_NOUN.'|'.self::DATE_NOUN.')';
 
     private const DAY_ADJECTIVE_ENDING = '(?:ий|его|ему|им|ем|ие|их|ими|яя|ая|ей|ую|юю|ею)';
 
@@ -456,12 +458,21 @@ final class AssistantProductionSchedulePeriod
 
             return $match[1].' '.((int) \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y') - $offset);
         }, $query) ?? $query;
-        $query = preg_replace_callback('/\b((?:с|со)\s+начала\s+)?'.self::ADJECTIVAL_DAY.'\b/iu', static function (array $match): string {
-            if (($match[1] ?? '') !== '') {
+        $query = preg_replace_callback('/\b((?:(?:с|со)\s+начала|(?:по\s+состоянию\s+)?на)\s+)?'.self::ADJECTIVAL_DAY.'\b/iu', static function (array $match): string {
+            $prefix = trim($match[1] ?? '');
+            if (preg_match('/^(?:с|со)\s+начала$/iu', $prefix) === 1) {
                 return $match[0];
             }
 
-            return ($match[2] ?? '') === '' ? 'сегодня' : mb_strtolower($match[2]);
+            $day = ($match[2] ?? '') === '' ? 'сегодня' : mb_strtolower($match[2]);
+            if ($prefix === '') {
+                return $day;
+            }
+            if (preg_match('/^на$/iu', $prefix) === 1 && preg_match('/\b'.self::SUTKI_NOUN.'$/iu', $match[0]) === 1) {
+                $prefix = 'за';
+            }
+
+            return $prefix.' '.$day;
         }, $query) ?? $query;
         $query = preg_replace('/\b'.self::CURRENT_SNAPSHOT.'/iu', ' ', $query) ?? $query;
         $query = preg_replace('/\b(?:за\s+)?предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;

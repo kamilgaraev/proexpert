@@ -14,6 +14,27 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_na_sutki_keeps_a_day_period_separate_from_an_as_of_snapshot(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
+        try {
+            foreach (['на текущие сутки' => '2026-10-20', 'на сегодняшние сутки' => '2026-10-20',
+                'на вчерашние сутки' => '2026-10-19', 'на позавчерашние сутки' => '2026-10-18'] as $phrase => $day) {
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+                $this->assertPeriodScope($phrase, $day, $day);
+            }
+            foreach (['на сегодняшний день', 'на сегодняшнюю дату', 'по состоянию на текущие сутки', 'по состоянию на сегодняшние сутки'] as $phrase) {
+                self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+            foreach (['по состоянию на вчерашние сутки', 'на завтрашние сутки', 'на текущие сутки и за октябрь 2026'] as $phrase) {
+                $this->assertPeriodScope($phrase, null, null);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_current_day_forms_resolve_current_sutki_without_losing_project_scope(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
@@ -552,7 +573,7 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
         try {
             foreach (['сегодня' => '2026-10-20', 'вчера' => '2026-10-19', 'позавчера' => '2026-10-18'] as $stem => $date) {
-                foreach ([$stem.'шний день', 'за '.$stem.'шний день', 'в течение '.$stem.'шнего дня', 'на протяжении '.$stem.'шних суток'] as $phrase) {
+                foreach ([$stem.'шний день', 'за '.$stem.'шний день', 'в течение '.$stem.'шнего дня', 'на протяжении '.$stem.'шних суток', 'на '.$stem.'шние сутки'] as $phrase) {
                     $expected = ['project_id' => 102, 'period_start' => $date, 'period_end' => $date];
                     self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
                         ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
@@ -587,7 +608,7 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
                 ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
             self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
         }
-        foreach (['на сегодняшний день', 'по состоянию на сегодняшний день', 'на сегодняшние сутки', 'по состоянию на сегодняшние сутки'] as $phrase) {
+        foreach (['на сегодняшний день', 'по состоянию на сегодняшний день', 'по состоянию на сегодняшние сутки'] as $phrase) {
             self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
                 ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
             self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
