@@ -103,6 +103,7 @@ class ActFileControllerWorkflowTest extends TestCase
         $indexResponse->assertJsonPath('meta.total', 1);
         $indexResponse->assertJsonPath('data.0.id', $file->id);
         $indexResponse->assertJsonPath('data.0.path', 'acts/act-scan.pdf');
+        $indexResponse->assertJsonPath('data.0.download_url', 'https://download.example.test/act');
 
         $ids = collect($indexResponse->json('data'))->pluck('id')->all();
         $this->assertNotContains($foreignFolderFile->id, $ids);
@@ -121,6 +122,42 @@ class ActFileControllerWorkflowTest extends TestCase
         $deleteResponse->assertOk();
         $deleteResponse->assertJsonPath('success', true);
         $this->assertDatabaseMissing('personal_files', ['id' => $file->id]);
+    }
+
+    public function test_personal_act_metadata_list_skips_download_url_generation(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $path = 'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/act-scan.pdf';
+        $file = PersonalFile::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'storage_key' => $path,
+            'directory' => 'acts',
+            'original_name' => 'act-scan.pdf',
+            'mime_type' => 'application/pdf',
+            'sha256' => str_repeat('a', 64),
+            'size' => 20,
+            'is_folder' => false,
+        ]);
+        $urlCalls = 0;
+        $fileService = Mockery::mock(FileService::class);
+        $fileService->shouldReceive('temporaryDownloadUrl')->with($path, 300)
+            ->andReturnUsing(static function () use (&$urlCalls): string {
+                $urlCalls++;
+
+                return 'https://download.example.test/act';
+            });
+        $this->app->instance(FileService::class, $fileService);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/act-files?per_page=10&include_download_urls=0');
+
+        $response->assertOk()->assertJsonPath('success', true)
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('data.0.id', $file->id)
+            ->assertJsonPath('data.0.path', 'acts/act-scan.pdf');
+        self::assertSame(0, $urlCalls);
+        $response->assertJsonPath('data.0.download_url', null);
     }
 
     public function test_act_report_files_are_listed_with_uploader_and_downloaded_as_binary_content(): void

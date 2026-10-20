@@ -37,7 +37,7 @@ final class ActFileController extends Controller
                 self::DIRECTORY,
             );
             $paginator->getCollection()->transform(
-                fn ($file): array => $this->personalFiles->payload($file),
+                fn ($file): array => $this->personalFiles->payload($file, $request->boolean('include_download_urls', true)),
             );
 
             return AdminResponse::paginated(
