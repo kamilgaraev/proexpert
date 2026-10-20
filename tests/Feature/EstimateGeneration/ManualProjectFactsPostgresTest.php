@@ -63,7 +63,8 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
     {
         [$actor, $session] = $this->fixture();
         config(['estimate-generation.universal_enabled' => true]);
-        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures'],
+            'building_type' => 'Одноэтажный жилой дом', 'floors' => 1]]);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $models = app(ProjectModelRepository::class);
         $writer = app(SaveManualProjectFacts::class);
@@ -84,9 +85,11 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame('height', $question['answer']['parameter']);
         self::assertSame('m', $question['input_contract']['unit']);
         self::assertTrue($question['can_answer']);
+        self::assertSame('0.4', $question['estimating_suggestion']['value']);
+        self::assertSame('assumption', $question['estimating_suggestion']['basis']);
         $binding = $question['answer']['native_question'];
         $answer = ['entities' => [['key' => 'answer', 'type' => 'foundation_beam', 'existing_entity_id' => $question['answer']['entity_id'],
-            'native_question' => $binding, 'parameters' => ['height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'measurement']]]]];
+            'native_question' => $binding, 'parameters' => ['height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'assumption']]]]];
         $countBefore = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
         foreach (['legacy', 'missing_scope', 'wrong_section', 'unknown_section'] as $variant) {
             $payload = $session->fresh()->input_payload;
@@ -121,6 +124,11 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         $request = (string) Str::uuid();
         $result = $writer->handle($actor, $scope[1], $scope[2], 1, $request, $answer);
         self::assertSame('1', $result['quantities']['foundation_volume']['amount']);
+        $saved = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $heights = array_values(array_filter($saved->facts, static fn ($fact): bool => $fact->type === 'height'));
+        self::assertCount(1, $heights);
+        self::assertSame($question['answer']['entity_id'], $heights[0]->entityId);
+        self::assertSame('user_assumption', $heights[0]->origin);
         self::assertSame(2, $result['state_version']);
         self::assertFalse($session->fresh()->input_payload['input_confirmed']);
         self::assertSame([], $backlog->current($session->fresh())['native_questions']['questions']);

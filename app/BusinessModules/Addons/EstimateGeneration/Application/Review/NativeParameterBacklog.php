@@ -49,7 +49,8 @@ final readonly class NativeParameterBacklog
         sort($sections, SORT_STRING);
 
         return $this->projector->project($snapshot, $token, $sections, $simulation['warnings'],
-            GeometryInventory::currentDocumentVersions($snapshot), (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session));
+            GeometryInventory::currentDocumentVersions($snapshot), (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session),
+            array_intersect_key($payload, array_flip(['building_type', 'floors'])));
     }
 
     public function validateAnswer(EstimateGenerationSession $session, ProjectModelSnapshot $snapshot, string $token, array $input): void

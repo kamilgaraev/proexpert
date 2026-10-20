@@ -105,6 +105,43 @@ final class NativeParameterQuestionProjectorTest extends TestCase
         self::assertContains('source_review_required', $unanchored['limitations']);
     }
 
+    public function test_missing_beam_height_has_an_optional_bound_estimating_scenario_for_an_explicit_single_storey_house(): void
+    {
+        $entity = $this->entity('beam', 'foundation_beam');
+        $snapshot = new ProjectModelSnapshot([$entity], [], [], []);
+        $warnings = [$this->warning($entity->id, 'foundation_beam_volume', 'height')];
+        $plain = $this->project($snapshot, $warnings, ['structures']);
+        $proposed = $this->projector()->project($snapshot, str_repeat('a', 64), ['structures'], $warnings, [], 1, true,
+            ['building_type' => 'Одноэтажный жилой дом', 'floors' => 1]);
+        self::assertArrayNotHasKey('estimating_suggestion', $plain['questions'][0]);
+        self::assertSame(['value' => '0.4', 'unit' => 'm', 'basis' => 'assumption',
+            'description' => 'estimate_generation.native_questions.estimating_suggestions.single_storey_foundation_height[]'],
+            $proposed['questions'][0]['estimating_suggestion']);
+        self::assertNotSame($plain['questions'][0]['answer']['version'], $proposed['questions'][0]['answer']['version']);
+        self::assertSame([], $snapshot->facts);
+        self::assertSame('0', $proposed['cost_units']);
+    }
+
+    public function test_estimating_scenario_does_not_replace_existing_or_conflicting_dimensions_or_other_building_contexts(): void
+    {
+        $entity = $this->entity('beam', 'foundation_beam');
+        $warnings = [$this->warning($entity->id, 'foundation_beam_volume', 'height')];
+        foreach ([[], ['building_type' => 'Склад', 'floors' => 1], ['building_type' => 'Жилой дом', 'floors' => 2],
+            ['building_type' => 'Жилой дом', 'floors' => null], ['building_type' => 'Производственный жилой дом', 'floors' => 1]] as $context) {
+            $view = $this->projector()->project(new ProjectModelSnapshot([$entity], [], [], []), str_repeat('a', 64), ['structures'], $warnings, [], 1, true, $context);
+            self::assertArrayNotHasKey('estimating_suggestion', $view['questions'][0]);
+        }
+        foreach ([['height', '0.5'], ['floor_count', 2]] as [$type, $value]) {
+            $fact = new Fact('existing', 1, 2, 3, $entity->sourceVersion, $entity->id, $type, $value, $type === 'height' ? 'm' : 'pcs', 0, 'user_input', 'confirmed', ['evidence:existing']);
+            $view = $this->projector()->project(new ProjectModelSnapshot([$entity], [$fact], [], []), str_repeat('a', 64), ['structures'], $warnings, [], 1, true,
+                ['building_type' => 'Жилой дом', 'floors' => 1]);
+            self::assertArrayNotHasKey('estimating_suggestion', $view['questions'][0]);
+        }
+        $view = $this->projector()->project(new ProjectModelSnapshot([$entity], [], [], []), str_repeat('a', 64), ['structures'], $warnings, [], 1, false,
+            ['building_type' => 'Жилой дом', 'floors' => 1]);
+        self::assertArrayNotHasKey('estimating_suggestion', $view['questions'][0]);
+    }
+
     private function project(ProjectModelSnapshot $snapshot, array $warnings, array $sections): array
     {
         return $this->projector()->project($snapshot, str_repeat('a', 64), $sections, $warnings, [], 1, true);
