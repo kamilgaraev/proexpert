@@ -46,6 +46,37 @@ class WorkTypeControllerWorkflowTest extends TestCase
         $this->assertNotContains($foreignWorkType->id, $ids);
     }
 
+    public function test_registry_summary_matches_filtered_tenant_scope_before_pagination(): void
+    {
+        $context = $this->createContextWithCatalogModule();
+        $unit = $this->unitFor($context->organization->id);
+        $this->createWorkType($context->organization->id, $unit->id, ['name' => 'Summary Alpha', 'category' => 'Walls', 'is_active' => true]);
+        $this->createWorkType($context->organization->id, $unit->id, ['name' => 'Summary Beta', 'category' => 'Walls', 'is_active' => false]);
+        $this->createWorkType($context->organization->id, $unit->id, ['name' => 'Summary Gamma', 'category' => 'Floors', 'is_active' => true]);
+        $this->createWorkType($context->organization->id, $unit->id, ['name' => 'Other Delta', 'category' => null, 'is_active' => false]);
+        $this->createWorkType($context->organization->id, $unit->id, ['name' => 'Other Empty', 'category' => '', 'is_active' => true]);
+        $foreign = Organization::factory()->verified()->create();
+        $this->createWorkType($foreign->id, $this->unitFor($foreign->id)->id, ['name' => 'Summary Foreign', 'category' => 'Foreign', 'is_active' => true]);
+
+        foreach ([1, 2] as $page) {
+            $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/work-types?per_page=1&page='.$page);
+            $response->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('meta.total', 5)
+                ->assertJsonPath('summary.total', 5)->assertJsonPath('summary.active', 3)->assertJsonPath('summary.categories', 2);
+        }
+
+        foreach ([
+            ['name=summary', 3, 2, 2],
+            ['name=summary&category=walls', 2, 1, 1],
+            ['name=summary&category=walls&is_active=false', 1, 0, 1],
+            ['name=summary&category=walls&is_active=true', 1, 1, 1],
+            ['name=missing', 0, 0, 0],
+        ] as [$filter, $total, $active, $categories]) {
+            $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/work-types?per_page=1&'.$filter);
+            $response->assertOk()->assertJsonPath('meta.total', $total)
+                ->assertJsonPath('summary.total', $total)->assertJsonPath('summary.active', $active)->assertJsonPath('summary.categories', $categories);
+        }
+    }
+
     public function test_index_allows_work_type_view_without_catalog_manage_permission(): void
     {
         $context = $this->createContextWithCatalogModule('foreman');

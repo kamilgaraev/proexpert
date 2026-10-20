@@ -31,4 +31,6 @@ interface WorkTypeRepositoryInterface extends BaseRepositoryInterface
         string $sortBy = 'name',
         string $sortDirection = 'asc'
     );
-} 
+
+    public function getWorkTypeSummaryForOrganization(int $organizationId, array $filters = []): array;
+}
