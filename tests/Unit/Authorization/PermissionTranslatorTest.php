@@ -470,6 +470,61 @@ class PermissionTranslatorTest extends TestCase
         }
     }
 
+    public function test_translation_batch_reads_each_dictionary_once_and_refreshes_on_next_call(): void
+    {
+        $translator = new class(new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang'), 'ru') extends Translator {
+            public array $dictionaryReads = [];
+
+            public function get($key, array $replace = [], $locale = null, $fallback = true)
+            {
+                if (is_string($key) && str_starts_with($key, 'permissions.')) {
+                    $this->dictionaryReads[$key] = ($this->dictionaryReads[$key] ?? 0) + 1;
+                }
+
+                return parent::get($key, $replace, $locale, $fallback);
+            }
+        };
+        Facade::clearResolvedInstances();
+        $container = Facade::getFacadeApplication();
+        self::assertNotNull($container);
+        $container->instance('translator', $translator);
+        Lang::get('permissions', [], 'ru');
+        Lang::addLines([
+            'permissions.values' => [],
+            'permissions.modules' => [],
+            'permissions.system' => [],
+            'permissions.subjects' => ['fixture' => 'Первый объект'],
+            'permissions.actions' => ['view' => 'Просмотр', 'edit' => 'Изменение'],
+            'permissions.groups' => ['fixture_module' => 'Группа примера'],
+            'permissions.interfaces' => ['admin' => 'Администратор', 'lk' => 'Кабинет'],
+        ], 'ru');
+        Lang::setLocale('en');
+        $input = [
+            'system_permissions' => ['fixture.view', 'fixture.edit'],
+            'module_permissions' => ['fixture-module' => ['fixture.view', 'fixture.edit']],
+            'interface_access' => ['admin', 'lk'],
+        ];
+
+        $translated = PermissionTranslator::translatePermissionsData($input);
+
+        self::assertSame(['fixture.view' => 'Первый объект: Просмотр', 'fixture.edit' => 'Первый объект: Изменение'], $translated['system_permissions']);
+        self::assertSame($translated['system_permissions'], $translated['module_permissions']['fixture-module']);
+        self::assertSame(['fixture-module' => 'Группа примера'], $translated['module_groups']);
+        self::assertSame(['admin' => 'Администратор', 'lk' => 'Кабинет'], $translated['interface_access']);
+        self::assertSame(array_fill_keys([
+            'permissions.values', 'permissions.system', 'permissions.subjects', 'permissions.actions',
+            'permissions.modules', 'permissions.groups', 'permissions.interfaces',
+        ], 1), $translator->dictionaryReads);
+
+        Lang::addLines(['permissions.subjects' => ['fixture' => 'Обновлённый объект']], 'ru');
+        $translator->dictionaryReads = [];
+        $updated = PermissionTranslator::translatePermissionsData($input);
+
+        self::assertSame('Обновлённый объект: Просмотр', $updated['system_permissions']['fixture.view']);
+        self::assertSame('Обновлённый объект: Изменение', $updated['module_permissions']['fixture-module']['fixture.edit']);
+        self::assertSame(1, $translator->dictionaryReads['permissions.subjects']);
+    }
+
     private function valuesOnly(array $value): array
     {
         $values = [];
