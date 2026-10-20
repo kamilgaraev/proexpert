@@ -68,6 +68,79 @@ final class FileListPaginationWorkflowTest extends TestCase
         $this->assertStablePages($context, '/api/v1/admin/report-files?', $ids, 100);
     }
 
+    public function test_file_lists_reject_a_reversed_date_range(): void
+    {
+        $context = $this->dateFilterContext();
+        foreach (['report-files', 'act-files', 'personal-files'] as $route) {
+            $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                'date_from' => '2026-10-21', 'date_to' => '2026-10-20', 'include_download_urls' => 0,
+            ]))->assertUnprocessable()->assertJsonValidationErrors('date_to')
+                ->assertJsonPath('errors.date_to.0', trans_message('reports.validation.date_to_after_or_equal'));
+        }
+    }
+
+    public function test_file_lists_accept_equal_ordered_and_one_sided_dates(): void
+    {
+        $context = $this->dateFilterContext();
+        foreach (['report-files', 'act-files', 'personal-files'] as $route) {
+            foreach ([
+                ['date_from' => '2026-10-20', 'date_to' => '2026-10-20'],
+                ['date_from' => '2026-10-19', 'date_to' => '2026-10-20'],
+                ['date_from' => '2026-10-20'],
+                ['date_to' => '2026-10-20'],
+                ['date_from' => '', 'date_to' => '2026-10-20'],
+                ['date_from' => '2026-10-20', 'date_to' => ''],
+                ['date_from' => '', 'date_to' => ''],
+            ] as $dates) {
+                $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                    ...$dates, 'include_download_urls' => 0,
+                ]))->assertOk();
+            }
+        }
+    }
+
+    public function test_file_lists_compare_datetime_bounds_as_calendar_dates(): void
+    {
+        $context = $this->dateFilterContext();
+        foreach (['report-files', 'act-files', 'personal-files'] as $route) {
+            foreach ([
+                ['date_from' => '2026-10-20 23:00', 'date_to' => '2026-10-20 01:00'],
+                ['date_from' => '2026-10-20T23:00:00+03:00', 'date_to' => '2026-10-20T01:00:00+03:00'],
+                ['date_from' => '2026-10-20 23:00', 'date_to' => '2026-10-20'],
+            ] as $dates) {
+                $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                    ...$dates, 'include_download_urls' => 0,
+                ]))->assertOk();
+            }
+            $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                'date_from' => '2026-10-20T00:30:00+14:00', 'date_to' => '2026-10-19T23:30:00-12:00',
+                'include_download_urls' => 0,
+            ]))->assertUnprocessable()->assertJsonValidationErrors('date_to');
+            foreach (['date_from', 'date_to'] as $invalidField) {
+                $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                    'date_from' => '2026-10-20', 'date_to' => '2026-10-20', $invalidField => 'not-a-date',
+                    'include_download_urls' => 0,
+                ]))->assertUnprocessable()->assertJsonValidationErrors($invalidField);
+            }
+        }
+    }
+
+    private function dateFilterContext(): AdminApiTestContext
+    {
+        $actModule = Module::query()->create([
+            'name' => 'Управление актами', 'slug' => 'act-reporting', 'version' => '1.0.0',
+            'type' => 'core', 'billing_model' => 'free',
+            'class_name' => \App\BusinessModules\Addons\ActReporting\ActReportingModule::class,
+            'is_active' => true, 'is_system_module' => true, 'can_deactivate' => false,
+        ]);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturn(['file-management', 'act-reporting']);
+        $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'file-management']), $actModule]));
+        $this->app->instance(OrganizationEntitlementService::class, $entitlements);
+
+        return AdminApiTestContext::create(['is_active' => true]);
+    }
+
     private function assertStablePages(AdminApiTestContext $context, string $route, array $ids, int $perPage): void
     {
         $grantReads = 0;
