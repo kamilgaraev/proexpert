@@ -20,6 +20,8 @@ final class DerivedQuantityFactory
 {
     private const FORMULAS = [
         'floor_area' => ['length', 'width'],
+        'room_ceiling_area' => ['length', 'width'],
+        'room_ceiling_perimeter' => ['length', 'width'],
         'opening_area' => ['width', 'height'],
         'wall_net_area' => ['wall_length', 'wall_height'],
         'wall_net_volume' => ['wall_length', 'wall_height', 'wall_thickness'],
@@ -121,6 +123,15 @@ final class DerivedQuantityFactory
         }
         if ($formula === 'wall_net_volume' && GeometryInventory::type($target) !== 'wall') {
             return $this->unresolved('wall_measurement_incompatible', 'entity', $entityId);
+        }
+        if (in_array($formula, ['room_ceiling_area', 'room_ceiling_perimeter'], true)) {
+            $scope = RoomCeilingScope::select($snapshot, $decisions, $entityId)[$entityId] ?? null;
+            if ($scope === null || count($requestedOperands) !== 2
+                || ($requestedOperands['length'] ?? null) !== $scope['dimensions']['length']['fact_id']
+                || ($requestedOperands['width'] ?? null) !== $scope['dimensions']['width']['fact_id']) {
+                return $this->unresolved('room_ceiling_scope_unconfirmed', 'entity', $entityId);
+            }
+            $request['snapshot']['room_ceiling_scope'] = $scope;
         }
         if ($formula === 'opening_area') {
             $scope = OpeningEstimateScope::select($snapshot, $decisions, $documentVersions ?? [])[$entityId] ?? null;
@@ -368,6 +379,9 @@ final class DerivedQuantityFactory
         $evidenceIds = array_values(array_unique($evidenceIds));
         if ($formula === 'opening_area') {
             $evidenceIds = [...$evidenceIds, ...$request['snapshot']['opening_scope']['evidence_ids']];
+        }
+        if (in_array($formula, ['room_ceiling_area', 'room_ceiling_perimeter'], true)) {
+            $evidenceIds = [...$evidenceIds, ...$request['snapshot']['room_ceiling_scope']['evidence_ids']];
         }
         if ($quantityBinding instanceof Fact) {
             $evidenceIds = array_values(array_unique([...$evidenceIds, ...$quantityBinding->evidenceIds]));
@@ -1095,7 +1109,8 @@ final class DerivedQuantityFactory
         }
 
         return match ($formula) {
-            'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
+            'floor_area', 'room_ceiling_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
+            'room_ceiling_perimeter' => $this->decimal($resolved['length'][0])->plus($this->decimal($resolved['width'][0]))->multipliedBy(2),
             'opening_area' => $this->decimal($resolved['width'][0])->multipliedBy($this->decimal($resolved['height'][0])),
             'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
             'foundation_beam_volume' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0]))
@@ -1147,6 +1162,7 @@ final class DerivedQuantityFactory
 
         return match ($formula) {
             'earthwork_volume', 'foundation_beam_volume', 'foundation_slab_volume', 'wall_net_volume' => 'm3',
+            'room_ceiling_perimeter' => 'm',
             'technology_work_package' => $resolved['base_quantity'][0]['unit'],
             'direct_quantity' => $resolved['measurement'][0]['unit'],
             default => 'm2',

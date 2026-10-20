@@ -52,8 +52,11 @@ final class WorkItemQuantityMapper
     }
 
     /** Select an exact canonical formula of this entity when a global alias is unavailable. */
-    public function mapForEntity(string $workKey, array $quantities, string $entityId): ?QuantityData
+    public function mapForEntity(string $workKey, array $quantities, string $entityId, bool $allowRoomCeilingReplacement = false): ?QuantityData
     {
+        if (in_array($workKey, RoomCeilingReplacement::WORKS, true) && ! $allowRoomCeilingReplacement) {
+            return null;
+        }
         $matches = [];
         foreach ($quantities as $raw) {
             $quantity = $this->quantity($raw);
@@ -81,6 +84,10 @@ final class WorkItemQuantityMapper
     public function map(string $workItemKey, array $quantities, bool $allowLegacyWallVolumeFallback = false): ?QuantityData
     {
         $direct = $this->quantity($quantities[$workItemKey] ?? null);
+        if (in_array($workItemKey, RoomCeilingReplacement::WORKS, true)
+            && ($direct === null || in_array($direct->formulaKey, ['room_ceiling_area', 'room_ceiling_perimeter'], true))) {
+            return null;
+        }
         if ($direct !== null) {
             if (DirectTakeoffRequiredWorkItems::contains($workItemKey)
                 && $direct->source === QuantitySource::Estimated) {
@@ -233,6 +240,10 @@ final class WorkItemQuantityMapper
         ];
 
         return match ($key) {
+            'rough.ceiling', 'finish.ceiling', 'ceiling.brandering', 'ceiling.insulation' => [
+                'sources' => [['key' => 'ceiling_area', 'factor' => '1']], 'unit' => 'm2',
+            ],
+            'ceiling.cornice' => ['sources' => [['key' => 'ceiling_perimeter', 'factor' => '1']], 'unit' => 'm'],
             'rough.floor', 'finish.floor', 'office.ceiling', 'warehouse.floor_hardener' => $floorArea(),
 
             'earth.plan', 'siteworks.area', 'warehouse.roads' => $firstFloorInternalArea(),

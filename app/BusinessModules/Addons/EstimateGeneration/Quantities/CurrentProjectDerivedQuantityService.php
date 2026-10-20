@@ -16,6 +16,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
 final readonly class CurrentProjectDerivedQuantityService
 {
     public const FORMULA_PURPOSES = [
+        'room_ceiling_area' => 'ceiling_area',
+        'room_ceiling_perimeter' => 'ceiling_perimeter',
         'floor_area' => 'floor_area',
         'direct_floor_area' => 'floor_area',
         'wall_net_area' => 'net_wall_area',
@@ -279,6 +281,7 @@ final readonly class CurrentProjectDerivedQuantityService
         $requests = [];
         $volumeWalls = WallEstimateScope::volumeWalls($snapshot, $decisions, $inventoryDocumentVersions ?? []);
         $openingScopes = OpeningEstimateScope::select($snapshot, $decisions, $inventoryDocumentVersions ?? []);
+        $ceilingScopes = RoomCeilingScope::select($snapshot, $decisions);
         foreach ($snapshot->entities as $entity) {
             $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
             foreach (FactVocabulary::foundationFormulas() as $formula => $definition) {
@@ -300,6 +303,13 @@ final readonly class CurrentProjectDerivedQuantityService
                     $technology, $completeness, $definition['unit'], $definition['group'] === 'count' ? 0 : 8);
             }
             if ($semanticType === 'room') {
+                if (isset($ceilingScopes[$entity->id])) {
+                    $scope = $ceilingScopes[$entity->id];
+                    foreach (['room_ceiling_area' => 'm2', 'room_ceiling_perimeter' => 'm'] as $formula => $unit) {
+                        $requests[] = $this->request($formula, $entity->id, ['length' => $scope['dimensions']['length']['fact_id'],
+                            'width' => $scope['dimensions']['width']['fact_id']], $token, $technology, $completeness, $unit, 8);
+                    }
+                }
                 $area = $this->oneFact($facts, $entity->id, 'area');
                 $request = $area instanceof Fact
                     ? $this->request(
@@ -893,6 +903,9 @@ final readonly class CurrentProjectDerivedQuantityService
     private function quantityData(DerivedQuantity $quantity, string $modelVersion, string $key, array $facts): QuantityData
     {
         $assumptions = [];
+        if (isset($quantity->snapshotIdentity['room_ceiling_scope']['fact_id'])) {
+            $assumptions[] = $quantity->snapshotIdentity['room_ceiling_scope']['fact_id'];
+        }
         foreach ($quantity->operands as $operand) {
             if (($facts[$operand['fact_id']]->origin ?? null) === 'user_assumption') {
                 $assumptions[] = $operand['fact_id'];
@@ -916,6 +929,7 @@ final readonly class CurrentProjectDerivedQuantityService
                 'snapshot_identity' => $quantity->snapshotIdentity,
                 'technology_decision_id' => $quantity->technologyDecisionId,
                 ...($quantity->formulaIdentity === 'opening_area' ? ['opening_scope' => $quantity->snapshotIdentity['opening_scope'] ?? null] : []),
+                ...(isset($quantity->snapshotIdentity['room_ceiling_scope']) ? ['room_ceiling_scope' => $quantity->snapshotIdentity['room_ceiling_scope']] : []),
             ],
             source: $assumptions === [] ? QuantitySource::Evidenced : QuantitySource::Estimated,
             evidenceIds: $quantity->evidenceIds,

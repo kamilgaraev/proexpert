@@ -73,6 +73,9 @@ final readonly class BindEvaluationWorkEntity
             if ($selected === null) {
                 throw ValidationException::withMessages(['entity' => trans_message('estimate_work_entity.binding_source_invalid')]);
             }
+            if (isset($item['metadata']['room_ceiling_replacement']) && ($item['entity_id'] ?? null) !== $selected['entity_id']) {
+                throw ValidationException::withMessages(['entity' => trans_message('estimate_work_entity.binding_source_invalid')]);
+            }
             $previous = $payload['work_entity_selections'][$item['key']] ?? null;
             $changed = ! is_array($previous) || ($previous['entity_id'] ?? null) !== $selected['entity_id']
                 || ($previous['source_fact_id'] ?? null) !== $selected['source_fact_id']

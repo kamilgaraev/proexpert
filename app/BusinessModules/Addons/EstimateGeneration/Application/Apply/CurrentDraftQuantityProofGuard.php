@@ -50,6 +50,20 @@ final readonly class CurrentDraftQuantityProofGuard
         $openingScopes = OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         $openingSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions);
         $ids = [];
+        if ($universal) {
+            $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)->whereKey($sessionId)->firstOrFail();
+            if (\App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::requiresProof(
+                \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::rows($draft), $session->input_payload['room_ceiling_replacements'] ?? [])) {
+                foreach (app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RoomCeilingReplacementProof::class)->evidenceIds($session,
+                    \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::rows($draft), $snapshot) as $id) {
+                    if (preg_match('/\Aevidence:([1-9][0-9]*)\z/', $id, $match) !== 1) {
+                        $this->reject();
+                    }
+                    $ids[(int) $match[1]] = (int) $match[1];
+                }
+            }
+        }
         $bound = [];
         $rows = 0;
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
@@ -71,7 +85,8 @@ final readonly class CurrentDraftQuantityProofGuard
                     $entity = $basis['formula_inputs']['entity_id'] ?? null;
                     $targetEntity = $item['metadata']['scope_entity_id'] ?? $item['entity_id'] ?? null;
                     if ($fresh === null && is_string($key) && is_string($targetEntity) && $targetEntity !== '') {
-                        $fresh = $this->mapper->mapForEntity($key, $quantities, $targetEntity);
+                        $fresh = $this->mapper->mapForEntity($key, $quantities, $targetEntity,
+                            allowRoomCeilingReplacement: isset($item['metadata']['room_ceiling_replacement']));
                     }
                     if ($fresh === null || $fresh->reviewBlockers !== [] || $fresh->evidenceIds === [] || ! is_string($entity)
                         || ($fresh->formulaInputs['entity_id'] ?? null) !== $entity

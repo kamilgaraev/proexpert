@@ -12,6 +12,32 @@ use PHPUnit\Framework\TestCase;
 
 final class UniversalEvaluationBuilderTest extends TestCase
 {
+    public function test_ceiling_replacement_candidate_preserves_a_direct_quantity_source_without_treating_it_as_a_room_binding(): void
+    {
+        $version = 'sha256:'.str_repeat('a', 64);
+        $entity = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('quantity:source', 1, 2, 3, $version, 'quantity', 'quantity:source');
+        $snapshot = new ProjectModelSnapshot([$entity], [], [], []);
+        $basis = ['formula_key' => 'direct_quantity', 'formula_inputs' => ['entity_id' => $entity->id]];
+        foreach (['rough.ceiling', 'finish.ceiling', 'ceiling.brandering', 'ceiling.insulation', 'ceiling.cornice', 'ceiling.hatch', 'sanitary.grab_rails'] as $work) {
+            $item = ['key' => 'aggregate-ceiling', 'work_key' => null, 'name' => 'Потолок', 'quantity' => '40', 'unit' => 'm2', 'quantity_basis_details' => $basis,
+                'metadata' => ['composition_work_key' => $work, 'quantity_key' => 'quantity:direct:existing']];
+            $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']],
+                'local_estimates' => [['key' => 'rough_finishing', 'sections' => [['work_items' => [$item]]]]]];
+            $builder = new UniversalEvaluationBuilder;
+            $position = $builder->build($draft, $snapshot)['scenarios'][0]['positions'][0];
+            self::assertSame(in_array($work, \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomCeilingReplacement::WORKS, true), $position['room_ceiling_replacement_candidate']);
+            self::assertSame($entity->id, $position['entity_id']);
+            self::assertSame($work, $position['work_key']);
+            self::assertSame($basis, $position['quantity_basis']);
+            self::assertSame('40', $position['quantity']);
+            foreach ([['scope_entity_id' => 'room:bound'], ['room_ceiling_replacement' => ['fact_id' => 'fact:replacement']]] as $metadata) {
+                $changed = $draft;
+                $changed['local_estimates'][0]['sections'][0]['work_items'][0]['metadata'] = [...$item['metadata'], ...$metadata];
+                self::assertFalse($builder->build($changed, $snapshot)['scenarios'][0]['positions'][0]['room_ceiling_replacement_candidate']);
+            }
+        }
+    }
+
     public function test_native_price_identity_ignores_capture_time_but_preserves_source_and_amount_changes(): void
     {
         $item = ['key' => 'floor', 'name' => 'Пол', 'unit' => 'm2', 'quantity' => '2', 'evaluation_price_basis_quantity' => '2',
