@@ -575,6 +575,74 @@ final class DesignPackageSecurityRegressionTest extends TestCase
         }
     }
 
+    public function test_registry_projection_preserves_visible_fields_scope_and_freshness_without_detail_payloads(): void
+    {
+        $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $ready = $this->readyPackage($actor, $project);
+        $modelPackage = $this->package($actor, $project);
+        $modelPackage->update(['project_stage' => 'rd']);
+        $model = $this->version($actor, $modelPackage, 'model', 'ifc');
+        $model->update(['metadata' => ['fixture' => str_repeat('version-data-', 800)], 'extracted_metadata' => ['fixture' => str_repeat('extracted-data-', 800)]]);
+        $this->readyDerivative($model, ['fixture' => str_repeat('derivative-data-', 800)]);
+        DesignPackageSection::query()->create([
+            'organization_id' => $actor->organization->id, 'project_id' => $project->id,
+            'package_id' => $modelPackage->id, 'project_stage' => 'rd', 'code' => 'PLANS', 'title' => 'Inactive plans',
+            'metadata' => ['composition_active' => false, 'fixture' => str_repeat('section-data-', 800)],
+        ]);
+        $otherProject = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $this->package($actor, $otherProject);
+        $foreign = $this->context(['view']);
+        $this->package($foreign, Project::factory()->create(['organization_id' => $foreign->organization->id]));
+        $url = '/api/v1/admin/design-management/packages?project_id='.$project->id.'&per_page=20';
+        $headers = $actor->authHeaders();
+        $full = $this->withHeaders($headers)->getJson($url)->assertOk()->assertJsonCount(2, 'data')->assertJsonPath('meta.total', 2);
+        $registry = $this->withHeaders($headers)->getJson($url.'&projection=registry')->assertOk()->assertJsonCount(2, 'data');
+        self::assertSame($full->json('meta'), $registry->json('meta'));
+        self::assertSame($full->json('summary'), $registry->json('summary'));
+        self::assertSame($full->json('links'), $registry->json('links'));
+        $fullRows = collect($full->json('data'))->keyBy('id');
+        $rows = collect($registry->json('data'))->keyBy('id');
+        self::assertTrue($rows[$ready->id]['completeness_is_fresh']);
+        self::assertSame('ready', $rows[$modelPackage->id]['viewer_status']);
+        self::assertFalse($rows[$modelPackage->id]['sections'][0]['composition_active']);
+        self::assertArrayHasKey('document_groups', $fullRows[$modelPackage->id]);
+        foreach ($rows as $id => $row) {
+            $oracle = $fullRows[$id];
+            foreach (['models', 'documents', 'artifacts', 'metadata', 'review_comments', 'workflow_events', 'workflow_history', 'document_groups', 'latest_completeness_check', 'derivative'] as $field) {
+                self::assertArrayNotHasKey($field, $row);
+                self::assertArrayHasKey($field, $oracle);
+            }
+            foreach ($row as $field => $value) {
+                if ($field === 'current_version' && $value !== null) {
+                    self::assertSame(array_intersect_key($oracle[$field], $value), $value);
+                    self::assertArrayNotHasKey('metadata', $value);
+                    self::assertArrayNotHasKey('extracted_metadata', $value);
+                    self::assertArrayNotHasKey('derivatives', $value);
+                } elseif ($field === 'sections') {
+                    foreach ($value as $index => $section) {
+                        self::assertSame(array_intersect_key($oracle[$field][$index], $section), $section);
+                        self::assertArrayNotHasKey('artifacts', $section);
+                        self::assertArrayNotHasKey('metadata', $section);
+                        self::assertArrayNotHasKey('documents', $section);
+                    }
+                } else {
+                    self::assertSame($oracle[$field], $value, $field);
+                }
+            }
+        }
+        self::assertLessThan(strlen($full->getContent()) / 2, strlen($registry->getContent()));
+        $artifact = DesignArtifact::query()->where('package_id', $ready->id)->sole();
+        $artifact->timestamps = false;
+        $artifact->update(['metadata' => ['changed' => 'without timestamp']]);
+        $after = $this->withHeaders($headers)->getJson($url.'&projection=registry')->assertOk();
+        self::assertFalse(collect($after->json('data'))->keyBy('id')[$ready->id]['completeness_is_fresh']);
+        $this->withHeaders($headers)->getJson($url.'&projection=unsupported')->assertUnprocessable();
+        $detail = $this->withHeaders($headers)->getJson('/api/v1/admin/design-management/packages/'.$ready->id.'?projection=registry')->assertOk();
+        self::assertArrayHasKey('artifacts', $detail->json('data'));
+        self::assertArrayHasKey('workflow_history', $detail->json('data'));
+    }
+
     public function test_maximum_registry_page_keeps_single_input_and_issue_reads(): void
     {
         $actor = $this->context(['view']);

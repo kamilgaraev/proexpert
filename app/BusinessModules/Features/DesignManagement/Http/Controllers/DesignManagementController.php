@@ -62,6 +62,7 @@ final class DesignManagementController extends Controller
                 'viewer_status' => ['nullable', 'string', Rule::in(['missing', 'queued', 'processing', 'ready', 'failed'])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
                 'page' => ['nullable', 'integer', 'min:1'],
+                'projection' => ['nullable', 'string', Rule::in(['full', 'registry'])],
             ]);
             $paginator = ApiQueryMetrics::measureProcessingPhase('list_prepare', fn () => $this->service->listPackages($this->organizationId($request), $validated, $request->user()));
 

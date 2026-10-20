@@ -11,6 +11,7 @@ use App\BusinessModules\Features\DesignManagement\Support\DesignBrand;
 use BackedEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Arr;
 
 final class DesignPackageResource extends JsonResource
 {
@@ -28,6 +29,9 @@ final class DesignPackageResource extends JsonResource
     {
         /** @var DesignPackage $package */
         $package = $this->resource;
+        $registry = $request->isMethod('GET')
+            && $request->is('api/v1/admin/design-management/packages')
+            && $request->query('projection') === 'registry';
         $status = $this->enumValue($package->status);
         $currentVersion = DesignPackageWorkflow::currentVersion($package);
         $derivative = DesignPackageWorkflow::preferredDerivative($currentVersion);
@@ -49,7 +53,7 @@ final class DesignPackageResource extends JsonResource
             $composition = null;
         }
 
-        return [
+        $data = [
             'id' => $package->id,
             'organization_id' => $package->organization_id,
             'project_id' => $package->project_id,
@@ -94,7 +98,7 @@ final class DesignPackageResource extends JsonResource
             'problem_flag_details' => DesignPackageWorkflow::problemFlagDetails($problemFlags),
             'available_actions' => $availableActions,
             'available_action_details' => DesignPackageWorkflow::actionDetails($availableActions),
-            'workflow_history' => DesignPackageWorkflow::workflowHistory($package),
+            'workflow_history' => $registry ? null : DesignPackageWorkflow::workflowHistory($package),
             'workflow_summary' => DesignPackageWorkflow::workflowSummary(
                 $package,
                 $currentVersion,
@@ -105,6 +109,25 @@ final class DesignPackageResource extends JsonResource
             'created_at' => $package->created_at?->toIso8601String(),
             'updated_at' => $package->updated_at?->toIso8601String(),
         ];
+
+        if (! $registry) {
+            return $data;
+        }
+
+        $data = Arr::except($data, [
+            'models', 'documents', 'artifacts', 'metadata', 'review_comments', 'workflow_events',
+            'workflow_history', 'document_groups', 'latest_completeness_check', 'derivative',
+        ]);
+        $data['current_version'] = $currentVersion ? Arr::except((new DesignArtifactVersionResource($currentVersion))->toArray($request), [
+            'metadata', 'extracted_metadata', 'artifact', 'package', 'project', 'derivative', 'derivatives', 'sheets',
+        ]) : null;
+        $data['sections'] = $this->whenLoaded('sections', fn (): array => $package->sections->map(
+            static fn ($section): array => Arr::except((new DesignPackageSectionResource($section))->toArray($request), [
+                'metadata', 'documents', 'artifacts', 'sheets', 'review_comments',
+            ]),
+        )->all());
+
+        return $data;
     }
 
     private function missingDerivative(): array
