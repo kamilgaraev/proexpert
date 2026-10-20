@@ -83,18 +83,19 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
-            ['key' => 'beam', 'type' => 'foundation_beam', 'name' => 'Балка без размеров'],
+            ['key' => 'beam', 'type' => 'foundation_beam', 'name' => 'Балка без полного набора размеров',
+                'parameters' => ['length' => ['value' => '5', 'unit' => 'm', 'basis' => 'measurement']]],
         ]]);
         $capture = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001]);
         $snapshot = $capture['snapshot'];
         $models = Mockery::mock(ProjectModelRepository::class);
         $decisions = [];
+        $fact = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'length'))[0];
         for ($index = 0; $index < 257; $index++) {
-            $fact = $snapshot->facts[0];
             $decisions[] = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision('decision:'.$index,
                 ...[...$scope, $fact->sourceVersion, 'fact', $fact->id, $fact->id, 'user', (string) $actor->id, 'Проверено', 1]);
         }
-        $models->shouldReceive('decisionsForSelectedFacts')->once()->with(...[...$scope, array_column($snapshot->facts, 'id')])->andReturn($decisions);
+        $models->shouldReceive('decisionsForSelectedFacts')->once()->with(...[...$scope, [$fact->id]])->andReturn($decisions);
         $backlog = new \App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterBacklog($models,
             new \App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService($models,
                 new \App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory),
@@ -108,6 +109,68 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         $overFacts = $backlog->current($session->fresh(), $large, $capture['token']);
         self::assertSame($overDecisions, $overFacts);
         self::assertSame(1, $session->fresh()->state_version);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_native_questions_and_apply_quantity_proof_keep_numeric_decisions_after_many_label_and_price_choices(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $save = app(SaveManualProjectFacts::class);
+        $save->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [[
+            'key' => 'room', 'type' => 'room', 'name' => 'Помещение', 'parameters' => [
+                'length' => ['value' => '5', 'unit' => 'm', 'basis' => 'measurement'],
+                'width' => ['value' => '2', 'unit' => 'm', 'basis' => 'measurement'],
+            ],
+        ]]]);
+        $models = app(ProjectModelRepository::class);
+        $before = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $source = $before['snapshot']->entities[0]->sourceVersion;
+        $entities = $facts = $decisions = [];
+        for ($index = 0; $index < 260; $index++) {
+            $id = 'choice:'.hash('sha256', $session->id.'|'.$index);
+            $entity = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity($id, ...[...$scope, $source,
+                'quantity', $id, ['semantic_type' => 'quantity', 'identity' => ['evaluation_anchor' => 'fixture:'.$index]]]);
+            $fact = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:'.hash('sha256', $id),
+                ...[...$scope, $source, $id, $index % 2 === 0 ? 'entity_identity' : 'evaluation_price', ['value' => 'fixture'],
+                    null, 0.0, 'user_assumption', 'confirmed', []]);
+            $entities[] = $entity;
+            $facts[] = $fact;
+            $decisions[] = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision('decision:'.hash('sha256', $id),
+                ...[...$scope, $source, 'fact', $fact->id, $fact->id, 'user', (string) $actor->id, 'Подтверждено название или цена', 1]);
+        }
+        $models->saveSourceModel($entities, $facts, []);
+        foreach ($decisions as $index => $decision) {
+            $models->applyDecision($decision, $facts[$index]);
+        }
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        self::assertGreaterThan(256, count($models->decisionsForSelectedFacts(...[...$scope, array_column($capture['snapshot']->facts, 'id')])));
+        $backlog = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterBacklog::class)
+            ->current($session->fresh(), $capture['snapshot'], $capture['token']);
+        self::assertTrue($backlog['available']);
+        self::assertNotContains('input_budget_exceeded', $backlog['limitations']);
+        $preview = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope);
+        $quantity = $preview['quantities']['floor_area'];
+        self::assertSame('10', $quantity->amount);
+        $draft = ['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+            'local_estimates' => [['sections' => [['work_items' => [['key' => 'room-floor', 'quantity' => '10', 'unit' => 'm2',
+                'metadata' => ['quantity_key' => 'floor_area'], 'quantity_evidence' => $quantity->toArray()]]]]]]];
+        $guard = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class);
+        DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $draft]));
+        self::addToAssertionCount(1);
+        $room = array_values(array_filter($capture['snapshot']->entities, static fn ($entity): bool => $entity->type === 'room'))[0];
+        $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => [[
+            'key' => 'change-width', 'type' => 'room', 'existing_entity_id' => $room->id,
+            'parameters' => ['width' => ['value' => '3', 'unit' => 'm', 'basis' => 'measurement']],
+        ]]]);
+        try {
+            DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $draft]));
+            self::fail('Changed numeric proof was ignored with many label/price decisions.');
+        } catch (ValidationException) {
+            self::addToAssertionCount(1);
+        }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 

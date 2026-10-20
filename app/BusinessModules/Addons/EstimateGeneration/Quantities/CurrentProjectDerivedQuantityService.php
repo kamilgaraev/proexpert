@@ -147,6 +147,7 @@ final readonly class CurrentProjectDerivedQuantityService
     /** Basic formula simulation from user inputs; does not attest technology/completeness or persist a projection. */
     public function simulateInput(ProjectModelSnapshot $snapshot, string $token, array $decisions): array
     {
+        $decisions = NativeQuantityDecisionInputs::decisions($snapshot, $decisions);
         if (count($snapshot->facts) > self::MAX_FACTS || count($decisions) > 256) {
             return ['quantities' => [], 'warnings' => [['code' => 'quantity_input_simulation_budget_exceeded']]];
         }

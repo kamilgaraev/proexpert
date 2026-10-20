@@ -37,7 +37,8 @@ final readonly class NativeParameterBacklog
             return $this->unavailable('input_budget_exceeded');
         }
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
-        $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $decisions = $this->models->decisionsForSelectedFacts(...[...$scope,
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\NativeQuantityDecisionInputs::factIds($snapshot)]);
         if (count($decisions) > 256) {
             return $this->unavailable('input_budget_exceeded');
         }
