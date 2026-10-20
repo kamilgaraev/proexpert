@@ -89,7 +89,7 @@ final readonly class EvaluationWorkComposition
             $proof = $this->choices->write($actor, $session, 'work-composition:'.$input['request_id'], 'evaluation_answer',
                 ['answer_kind' => 'work_composition', 'catalog_version' => SupplementaryWorkCatalog::VERSION,
                     'work_keys' => $works, 'preview_fingerprint' => $input['preview_fingerprint']], $input['reason'], $input['request_id']);
-            $normative = in_array('normative', [$payload['price_policy'] ?? null, $draft['evaluation_policy']['price_policy'] ?? null], true);
+            $normative = ($payload['price_policy'] ?? 'normative') === 'normative';
             $added = [];
             foreach ($works as $work) {
                 $candidate = $candidates[$work];

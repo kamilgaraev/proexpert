@@ -117,7 +117,7 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         $payload = $session->input_payload;
         $payload['price_policy'] = 'normative';
         $draft = $session->draft_payload;
-        $draft['evaluation_policy']['price_policy'] = 'normative';
+        $draft['evaluation_policy']['price_policy'] = 'mixed';
         $session->update(['input_payload' => $payload, 'draft_payload' => app(BuildMostEstimateDraft::class)->seal($draft)]);
         $outbound = count(Http::recorded());
         $preview = $this->getJson($prefix)->assertOk()->json('data');
@@ -163,6 +163,34 @@ final class EvaluationWorkCompositionPostgresTest extends EstimateGenerationCano
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
         self::assertCount($outbound, Http::recorded());
+    }
+
+    public function test_current_policy_controls_unit_confirmation_before_draft_recalculation(): void
+    {
+        foreach (['catalog', 'mixed'] as $policy) {
+            [$actor, $session, $prefix] = $this->fixture();
+            $payload = $session->input_payload;
+            $payload['price_policy'] = $policy;
+            $draft = $session->draft_payload;
+            $draft['evaluation_policy']['price_policy'] = 'normative';
+            $session->update(['input_payload' => $payload, 'draft_payload' => app(BuildMostEstimateDraft::class)->seal($draft)]);
+            $outbound = count(Http::recorded());
+            $preview = $this->getJson($prefix)->assertOk()->json('data');
+            $result = $this->postJson($prefix, $this->input($preview, ['ceiling.hatch']))->assertOk()->json('data');
+            $key = $result['added_work_item_keys'][0];
+            $rows = array_column($this->items($session->fresh()->draft_payload), null, 'key');
+            self::assertNull($rows[$key]['unit']);
+            self::assertContains('unit_requires_confirmation', $rows[$key]['validation_flags']);
+            $quantity = app(SaveEvaluationWorkQuantity::class)->handle($actor, $session->project_id, $session->id, [
+                'request_id' => (string) Str::uuid(), 'state_version' => 2, 'work_item_key' => $key,
+                'value' => '0.36', 'unit' => 'm2', 'reason' => 'Для сметной оценки площадь люка принята 0,6 × 0,6 м как явное допущение']);
+            self::assertSame('0', $quantity['cost_units']);
+            $fact = app(ProjectModelRepository::class)->fact($session->organization_id, $session->project_id, $session->id, $quantity['source_fact_id']);
+            self::assertSame('user_assumption', $fact->origin);
+            self::assertSame('m2', $fact->unit);
+            self::assertSame('0.36', $fact->value);
+            self::assertCount($outbound, Http::recorded());
+        }
     }
 
     public function test_preview_filters_selected_sections_and_does_not_reintroduce_existing_or_previously_removed_works(): void
