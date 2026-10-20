@@ -11,6 +11,16 @@ use Throwable;
 
 final class AssistantStatusSnapshotDiagnostics
 {
+    public const EPOCH_CHECKS = [
+        'input_organization', 'input_relations', 'transaction_context', 'transaction_mode',
+        'global_change_table', 'global_control_table', 'global_mutation_function', 'global_change_columns',
+        'global_control_columns', 'global_required_relations', 'global_name_resolution', 'global_relation_shapes',
+        'global_dependency_functions', 'global_mutation_triggers', 'scoped_prerequisites', 'scoped_source_columns',
+        'scoped_relation_count', 'scoped_control_body', 'scoped_change_relation', 'scoped_source_relations',
+        'scoped_change_columns', 'scoped_change_primary_key', 'scoped_row_function', 'scoped_witness_function',
+        'scoped_witness_not_public', 'scoped_witness_owner_access', 'scoped_truncate_function', 'scoped_triggers', 'control_row',
+    ];
+
     public static function request(string $phase, string $section, ?string $cacheKey = null, ?int $age = null, ?bool $queued = null): void
     {
         try {
@@ -25,19 +35,33 @@ final class AssistantStatusSnapshotDiagnostics
         }
     }
 
-    public static function refresh(string $phase, string $section, string $cacheKey, ?string $expectedKey = null, ?string $reason = null): void
+    public static function refresh(string $phase, string $section, string $cacheKey, ?string $expectedKey = null, ?string $reason = null, array $epochChecks = []): void
     {
         if (! in_array($phase, ['started', 'failed', 'snapshot_unproven', 'snapshot_expired_or_changed', 'cache_key_mismatch', 'written'], true)
             || ! in_array($section, ['all', 'sources', 'documents'], true)) {
             return;
         }
         try {
-            Log::channel('api_latency')->info('assistant_status_snapshot_refresh', self::context($phase, $section, $cacheKey) + [
+            $context = self::context($phase, $section, $cacheKey) + [
                 'expected_key_hash' => $expectedKey === null ? null : hash('sha256', $expectedKey),
                 'reason' => $phase === 'snapshot_unproven' ? self::failureReason($reason) : null,
-            ]);
+            ];
+            if ($phase === 'snapshot_unproven' && $context['reason'] === 'unproven_database_epoch') {
+                $context['epoch_checks'] = self::epochChecks($epochChecks);
+            }
+            Log::channel('api_latency')->info('assistant_status_snapshot_refresh', $context);
         } catch (Throwable) {
         }
+    }
+
+    public static function epochChecks(array $checks): array
+    {
+        $safe = [];
+        foreach (self::EPOCH_CHECKS as $name) {
+            if (array_key_exists($name, $checks) && is_bool($checks[$name])) { $safe[$name] = $checks[$name]; }
+        }
+
+        return $safe;
     }
 
     public static function coverageRefresh(string $phase, bool $global, ?float $durationMs = null, ?bool $countsKnown = null, ?bool $generationPresent = null, ?Throwable $exception = null): void

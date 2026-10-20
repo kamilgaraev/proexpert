@@ -745,6 +745,60 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertSame(str_repeat('a', 40), $events[0]['release_sha']);
     }
 
+    public function test_epoch_failure_diagnostics_accept_only_fixed_boolean_checks(): void
+    {
+        $events = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->andReturnUsing(static function (string $message, array $context) use (&$events): void {
+            if ($message === 'assistant_status_snapshot_refresh') { $events[] = $context; }
+        });
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('api_latency')->andReturn($logger);
+        $checks = ['global_mutation_triggers' => false, 'scoped_triggers' => true,
+            'global_change_table' => 'private SQL', 'global_control_table' => 1, 'global_required_relations' => null,
+            'global_relation_shapes' => ['ai_rag_sources'], 'organization_id' => 123, 'private-key' => true, 0 => false];
+        AssistantStatusSnapshotDiagnostics::refresh('snapshot_unproven', 'sources', 'private-cache-key', reason: 'unproven_database_epoch:private', epochChecks: $checks);
+        foreach (['started', 'written', 'failed', 'cache_key_mismatch'] as $phase) {
+            AssistantStatusSnapshotDiagnostics::refresh($phase, 'sources', 'private-cache-key', reason: 'unproven_database_epoch', epochChecks: $checks);
+        }
+        AssistantStatusSnapshotDiagnostics::refresh('snapshot_unproven', 'sources', 'private-cache-key', reason: 'unsupported_function:private', epochChecks: $checks);
+        self::assertSame(['global_mutation_triggers' => false, 'scoped_triggers' => true], $events[0]['epoch_checks'] ?? null);
+        foreach (array_slice($events, 1) as $event) { self::assertArrayNotHasKey('epoch_checks', $event); }
+        self::assertStringNotContainsString('private', json_encode($events, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('ai_rag_sources', json_encode($events, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_epoch_rejection_reports_checks_without_publishing_a_snapshot(): void
+    {
+        [$organization, $actor, , $service, $policy, $permissions] = $this->scope();
+        $permissions->assistantDelayMicroseconds = 2_600_000;
+        self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
+        $job = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
+        $permissions->assistantDelayMicroseconds = 0;
+        $logManager = Mockery::mock(\Illuminate\Log\LogManager::class, [$this->app])->makePartial();
+        \Illuminate\Support\Facades\Log::swap($logManager);
+        $events = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->andReturnUsing(static function (string $message, array $context) use (&$events): void {
+            if ($message === 'assistant_status_snapshot_refresh') { $events[] = $context; }
+        });
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('api_latency')->andReturn($logger);
+        DB::statement('ALTER TABLE public.users DISABLE TRIGGER assistant_status_snapshot_mutation');
+        try {
+            $job->handle($service, $policy);
+            self::assertNull(Cache::get($job->cacheKey));
+            self::assertFalse(Cache::has($job->cacheKey.':queued'));
+            $rejections = array_values(array_filter($events, static fn (array $event): bool => $event['phase'] === 'snapshot_unproven'));
+            self::assertCount(1, $rejections);
+            self::assertSame('unproven_database_epoch', $rejections[0]['reason']);
+            self::assertFalse($rejections[0]['epoch_checks']['global_mutation_triggers'] ?? null);
+            foreach ($rejections[0]['epoch_checks'] as $value) { self::assertIsBool($value); }
+            self::assertNotContains('written', array_column($events, 'phase'));
+        } finally {
+            DB::statement('ALTER TABLE public.users ENABLE ALWAYS TRIGGER assistant_status_snapshot_mutation');
+        }
+    }
+
     public function test_missing_release_survives_the_final_budget_checkpoint(): void
     {
         [$organization, $actor, , $service, , $permissions] = $this->scope();

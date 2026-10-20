@@ -34,7 +34,8 @@ final class AssistantStatusSnapshotBuilder
         }
         if (Cache::add('ai-rag-status-epoch:purge', true, 60)) { $this->epoch->purge(600); }
         $unprovenReason = null;
-        $snapshot = DB::connection()->transaction(function () use ($organizationId, $actorId, $surface, $section, $ip, &$unprovenReason): ?array {
+        $epochChecks = [];
+        $snapshot = DB::connection()->transaction(function () use ($organizationId, $actorId, $surface, $section, $ip, &$unprovenReason, &$epochChecks): ?array {
             DB::connection()->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
             $capturedAt = DB::selectOne('SELECT LEAST(transaction_timestamp(), clock_timestamp())::text AS captured_at')->captured_at;
             $budget = new RagStatusBudget(DB::connection(), 60000);
@@ -88,6 +89,7 @@ final class AssistantStatusSnapshotBuilder
             $epoch = $this->epoch->capture($observed['relations'], $organizationId);
             if (! $epoch['cacheable']) {
                 $unprovenReason = 'unproven_database_epoch';
+                $epochChecks = $epoch['proof_checks'] ?? [];
                 \Illuminate\Support\Facades\Log::warning('assistant.rag_status_snapshot_unavailable', ['organization_id' => $organizationId, 'reason' => 'unproven_database_epoch']);
 
                 return null;
@@ -106,7 +108,7 @@ final class AssistantStatusSnapshotBuilder
                 $phase = 'written';
             }
         }
-        AssistantStatusSnapshotDiagnostics::refresh($phase, $section, $cacheKey, $expectedKey, $unprovenReason);
+        AssistantStatusSnapshotDiagnostics::refresh($phase, $section, $cacheKey, $expectedKey, $unprovenReason, $epochChecks);
     }
 
     private function generation(int $organizationId): ?string
