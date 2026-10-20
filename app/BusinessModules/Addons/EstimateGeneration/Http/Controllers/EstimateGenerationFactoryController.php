@@ -46,4 +46,15 @@ final class EstimateGenerationFactoryController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.factory.changed'), 409);
         }
     }
+
+    public function materialize(\App\BusinessModules\Addons\EstimateGeneration\Http\Requests\MaterializeEstimateFactoryDraftRequest $request, Project $project, EstimateGenerationSession $session, \App\BusinessModules\Addons\EstimateGeneration\Application\Factory\MaterializeFactoryDraft $inspect): JsonResponse
+    {
+        $input = $request->validated();
+        try {
+            return AdminResponse::success($inspect->handle($request->user(), (int) $project->id, (int) $session->id,
+                (int) $input['state_version'], $input['request_id'], $input['source_checkpoint_id']))->header('Cache-Control', 'private, no-store');
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.factory.changed'), 409);
+        }
+    }
 }

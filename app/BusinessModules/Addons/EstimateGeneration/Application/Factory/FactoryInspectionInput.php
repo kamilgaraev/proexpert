@@ -13,6 +13,8 @@ use LogicException;
 
 final readonly class FactoryInspectionInput
 {
+    public const MAX_INPUT_BYTES = 1048576;
+
     private const TABLE_CAPS = [
         'estimate_generation_project_model_entities' => 4096,
         'estimate_generation_project_model_assertions' => 10000,
@@ -38,12 +40,13 @@ final readonly class FactoryInspectionInput
             ['project-understanding:'.implode(':', $scope)]);
         $payload = CanonicalPipelineJson::encode($session->input_payload ?? []);
         $bytes = strlen($payload);
-        $withinBudget = $bytes <= 1048576;
+        $withinBudget = $bytes <= self::MAX_INPUT_BYTES;
         foreach (self::TABLE_CAPS as $table => $cap) {
             $query = $this->database->table($table)->where('organization_id', $scope[0])
                 ->where('project_id', $scope[1])->where('session_id', $scope[2]);
             if ($table === 'estimate_generation_ai_role_runs') {
-                $query->where('status', 'completed')->whereIn('role', ['arbiter', 'geometry_expert']);
+                $query->where('status', 'completed')->whereIn('role', ['arbiter', 'geometry_expert'])
+                    ->select(['role', 'subject_version', 'input_fingerprint']);
             }
             $query->limit($cap + 1);
             $aggregate = $this->database->query()->fromSub($query, 'bounded')
