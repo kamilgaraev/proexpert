@@ -95,6 +95,31 @@ final class AssistantRequestProjectScopeTest extends TestCase
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
     }
 
+    public function test_negated_current_project_prepositions_do_not_force_the_excluded_project(): void
+    {
+        foreach (['в выбранном проекте', 'на текущем объекте', 'по выбранному проекту', 'для текущего проекта',
+            'из выбранного проекта', 'с этого объекта'] as $clause) {
+            $question = 'По всем актам организации, не '.$clause;
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $clause);
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertFalse($scope->requested);
+            self::assertNull($scope->projectId);
+            $arguments = ['sections' => [['project_id' => null, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]]]];
+            self::assertSame($arguments, $scope->bindReportScope($question, $arguments));
+        }
+    }
+
+    public function test_organization_record_scope_does_not_match_process_or_requirement_wording(): void
+    {
+        foreach (['Покажи задачи по всем этапам организации работ', 'Покажи акты по всем требованиям организации',
+            'Отчёт по всем вопросам организации работ', 'Покажи договоры по всем правилам организации'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => 52], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true));
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => []]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        }
+    }
+
     public function test_genitive_all_projects_scope_clears_selected_project_and_preserves_negation(): void
     {
         $question = 'Сделай Excel по просроченным задачам всех проектов организации';

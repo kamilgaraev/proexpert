@@ -45,7 +45,8 @@ final readonly class AssistantRequestProjectScope
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $projects = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект))';
-        $organization = '(?:всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех)\s+(?:наш(?:им|их)\s+)?[\pL-]+\s+(?:нашей\s+)?организации(?![\pL\pN]))';
+        $records = '(?:акт(?:ам|ов)|договор(?:ам|ов)|журнал(?:ам|ов)|сотрудник(?:ам|ов)|пользовател(?:ям|ей)|плат[её]ж(?:ам|ей)|смет(?:ам)?|задач(?:ам)?|работ(?:ам)?|документ(?:ам|ов)|тендер(?:ам|ов)|заяв(?:кам|ок)|закуп(?:кам|ок)|материал(?:ам|ов)|поставщик(?:ам|ов)|контрагент(?:ам|ов)|склад(?:ам|ов)|бригад(?:ам)?)';
+        $organization = '(?:всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех)\s+(?:наш(?:им|их)\s+)?'.$records.'\s+(?:нашей\s+)?организации(?![\pL\pN]))';
         $scope = '(?:'.$projects.'|'.$organization.')';
 
         return (preg_match('/(?<![\pL\pN])'.$projects.'/iu', $question) === 1
@@ -94,7 +95,7 @@ final readonly class AssistantRequestProjectScope
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $negative = '(?<![\pL\pN])(?:не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})';
-        $question = preg_replace('/'.$negative.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
+        $question = preg_replace('/'.$negative.'(?:(?:в|во|на|по|для|из|с|со)\s+)?'.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
 
         return preg_match('/'.self::CURRENT_PROJECT.'/iu', $question) === 1;
     }
