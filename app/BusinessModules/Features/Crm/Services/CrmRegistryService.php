@@ -405,9 +405,14 @@ final class CrmRegistryService
         return $this->dealQuery($organizationId, $withTrashed)->findOrFail($id);
     }
 
-    public function findActivity(int $organizationId, string $id, bool $withTrashed = true): CrmActivity
+    public function findActivity(int $organizationId, string $id, bool $withTrashed = true, bool $lockForUpdate = false): CrmActivity
     {
-        return $this->activityQuery($organizationId, $withTrashed)->findOrFail($id);
+        $query = $this->activityQuery($organizationId, $withTrashed);
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        return $query->findOrFail($id);
     }
 
     public function createCompany(int $organizationId, array $data, ?int $actorUserId): CrmCompany
@@ -524,6 +529,7 @@ final class CrmRegistryService
             $this->validateActivityReferences($organizationId, $data);
             $activity = CrmActivity::query()->create($this->activityAttributes($organizationId, $data, $actorUserId));
             $this->touchRelatedActivity($activity);
+            $this->refreshDealNextActivities($organizationId, [$activity->deal_id]);
             $this->timeline->record($organizationId, 'activities', $activity->id, 'created', trans_message('crm.timeline.activity_created'), $actorUserId);
 
             return $this->findActivity($organizationId, $activity->id);
@@ -533,46 +539,90 @@ final class CrmRegistryService
     public function updateActivity(int $organizationId, string $id, array $data, ?int $actorUserId): CrmActivity
     {
         return DB::transaction(function () use ($organizationId, $id, $data, $actorUserId): CrmActivity {
-            $activity = $this->findActivity($organizationId, $id);
+            $activity = $this->findActivity($organizationId, $id, lockForUpdate: true);
+            $previousDealId = $activity->deal_id;
             $this->validateActivityReferences($organizationId, $data, false);
             $activity->update($this->activityAttributes($organizationId, $data, $actorUserId, false));
             $this->touchRelatedActivity($activity);
+            $this->refreshDealNextActivities($organizationId, [$previousDealId, $activity->deal_id]);
             $this->timeline->record($organizationId, 'activities', $activity->id, 'updated', trans_message('crm.timeline.activity_updated'), $actorUserId);
 
             return $this->findActivity($organizationId, $activity->id);
         });
     }
 
+    public function refreshDealNextActivities(int $organizationId, array $dealIds): void
+    {
+        $dealIds = array_values(array_unique(array_filter($dealIds)));
+        if ($dealIds === []) {
+            return;
+        }
+
+        DB::transaction(function () use ($organizationId, $dealIds): void {
+            $deals = CrmDeal::withTrashed()->forOrganization($organizationId)
+                ->whereIn('id', $dealIds)->orderBy('id')->lock('for no key update')->get();
+
+            foreach ($deals as $deal) {
+                $nextDate = CrmActivity::query()->forOrganization($organizationId)
+                    ->where('deal_id', $deal->id)->whereIn('status', ['planned', 'overdue'])
+                    ->whereNotNull('due_at')->min('due_at');
+                $query = CrmDeal::withTrashed()->forOrganization($organizationId)->whereKey($deal->id);
+                SalesRagMutationBridge::changedRows(CrmDeal::class, clone $query, $organizationId);
+                $query->update(['next_activity_at' => $nextDate]);
+            }
+        });
+    }
+
     public function archive(Model $model, ?int $actorUserId): Model
     {
-        $model->update([
-            'status' => 'archived',
-            'updated_by_user_id' => $actorUserId,
-        ]);
-        $model->delete();
+        $operation = function () use ($model, $actorUserId): Model {
+            if ($model instanceof CrmActivity) {
+                $model = $this->findActivity((int) $model->organization_id, $model->id, lockForUpdate: true);
+            }
+            $model->update([
+                'status' => 'archived',
+                'updated_by_user_id' => $actorUserId,
+            ]);
+            $model->delete();
+            if ($model instanceof CrmActivity) {
+                $this->refreshDealNextActivities((int) $model->organization_id, [$model->deal_id]);
+            }
 
-        return $model->refresh();
+            return $model->refresh();
+        };
+
+        return $model instanceof CrmActivity ? DB::transaction($operation) : $operation();
     }
 
     public function restore(Model $model, ?int $actorUserId): Model
     {
-        if (method_exists($model, 'restore')) {
-            $model->restore();
-        }
+        $operation = function () use ($model, $actorUserId): Model {
+            if ($model instanceof CrmActivity) {
+                $model = $this->findActivity((int) $model->organization_id, $model->id, lockForUpdate: true);
+            }
+            if (method_exists($model, 'restore')) {
+                $model->restore();
+            }
 
-        $status = match (true) {
-            $model instanceof CrmDeal => 'open',
-            $model instanceof CrmActivity => 'planned',
-            $model instanceof CrmLead => 'new',
-            default => 'active',
+            $status = match (true) {
+                $model instanceof CrmDeal => 'open',
+                $model instanceof CrmActivity => 'planned',
+                $model instanceof CrmLead => 'new',
+                default => 'active',
+            };
+
+            $model->update([
+                'status' => $status,
+                'updated_by_user_id' => $actorUserId,
+            ]);
+            if ($model instanceof CrmActivity) {
+                $this->refreshDealNextActivities((int) $model->organization_id, [$model->deal_id]);
+            }
+
+            return $model->refresh();
         };
 
-        $model->update([
-            'status' => $status,
-            'updated_by_user_id' => $actorUserId,
-        ]);
-
-        return $model->refresh();
+        return $model instanceof CrmActivity ? DB::transaction($operation) : $operation();
     }
 
     private function companyQuery(int $organizationId, bool $withTrashed): Builder
@@ -1456,9 +1506,5 @@ final class CrmRegistryService
             }
         }
 
-        if ($activity->deal_id !== null && $activity->status === 'planned') {
-            SalesRagMutationBridge::changedRows(CrmDeal::class, CrmDeal::query()->whereKey($activity->deal_id), (int) $activity->organization_id);
-            CrmDeal::query()->whereKey($activity->deal_id)->update(['next_activity_at' => $activity->due_at]);
-        }
     }
 }
