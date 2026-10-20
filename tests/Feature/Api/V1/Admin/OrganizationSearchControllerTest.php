@@ -106,6 +106,63 @@ class OrganizationSearchControllerTest extends TestCase
         $this->assertNotContains('Existing Contractor', $names);
     }
 
+    public function test_recommendations_keep_current_and_inactive_organizations_excluded_for_both_location_matches(): void
+    {
+        $this->allowAdminAccess();
+        $context = AdminApiTestContext::create([], [
+            'city' => 'Kazan',
+            'country' => 'RU',
+        ]);
+        $cityMatch = Organization::factory()->create([
+            'name' => 'City Match',
+            'city' => 'Kazan',
+            'country' => 'KZ',
+        ]);
+        $countryMatch = Organization::factory()->verified()->create([
+            'name' => 'Country Match',
+            'city' => 'Moscow',
+            'country' => 'RU',
+        ]);
+        Organization::factory()->inactive()->create([
+            'city' => 'Kazan',
+            'country' => 'KZ',
+        ]);
+        Organization::factory()->inactive()->create([
+            'city' => 'Moscow',
+            'country' => 'RU',
+        ]);
+        Organization::factory()->create([
+            'city' => 'Tbilisi',
+            'country' => 'GE',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/organizations/recommendations?limit=20');
+
+        $response->assertOk()->assertJsonPath('success', true)->assertJsonCount(2, 'data');
+        $this->assertSame([$cityMatch->id, $countryMatch->id], array_column($response->json('data'), 'id'));
+    }
+
+    public function test_recommendations_ignore_cached_results_from_before_the_exclusion_fix(): void
+    {
+        $this->allowAdminAccess();
+        $context = AdminApiTestContext::create([], [
+            'city' => 'Kazan',
+            'country' => 'RU',
+        ]);
+        $targetOrganization = Organization::factory()->create([
+            'city' => 'Kazan',
+            'country' => 'RU',
+        ]);
+        Cache::put("organization_recommendations:{$context->organization->id}:20", [$context->organization->toArray()], 1800);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/organizations/recommendations?limit=20');
+
+        $response->assertOk()->assertJsonPath('success', true)->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $targetOrganization->id);
+    }
+
     public function test_availability_reports_existing_contractor_reverse_invitation_and_mutual_status(): void
     {
         $this->allowAdminAccess();
