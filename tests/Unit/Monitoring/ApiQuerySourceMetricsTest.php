@@ -548,6 +548,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
             'file_report_storage_exists', 'file_report_storage_url',
             'file_download_storage_exists', 'file_download_temporary_url',
             'assistant_report_access_resolve', 'assistant_report_storage_open',
+            'assistant_report_domain_checks', 'assistant_report_reference_checks',
             'file_current_disk_resolve', 'file_current_read_stream'];
         foreach ($phases as $phase) {
             $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
@@ -593,6 +594,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
         foreach (['journal_load', 'journal_prepare', 'journal_payload', 'journal_encode',
             'file_download_storage_exists', 'file_download_temporary_url',
             'assistant_report_access_resolve', 'assistant_report_storage_open',
+            'assistant_report_domain_checks', 'assistant_report_reference_checks',
             'file_current_disk_resolve', 'file_current_read_stream',
             'design_freshness', 'design_resources', 'design_response_build', 'design_response_decode'] as $name) {
             ApiQueryMetrics::recordProcessingPhase($request, $name, hrtime(true));
