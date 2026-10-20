@@ -11,6 +11,10 @@ final readonly class AssistantRequestProjectScope
 {
     private const CURRENT_PROJECT = '(?<![\pL\pN])(?:(?:текущ|выбран|эт|данн)[а-яё]*|наш(?:его|ему|ем|им)?)\s+(?:проект|объект)[а-яё]*(?![\pL\pN])';
 
+    private const QUOTED_NAME = '«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"';
+
+    private const NUMERIC_PROJECTS = '(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*([1-9]\d*(?:\s*(?:,|и|или)\s*(?:(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*)?[1-9]\d*)*)(?![\pL\pN])';
+
     public function __construct(public bool $requested, public ?int $projectId, private ?int $contextProjectId = null) {}
 
     public static function fromPlan(array $plan): self
@@ -48,7 +52,14 @@ final readonly class AssistantRequestProjectScope
     {
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $projects = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект))';
-        $records = '(?:акт(?:ы|ам|ов)|договор(?:ы|ам|ов)|журнал(?:ы|ам|ов)|сотрудник(?:и|ам|ов)|пользовател(?:и|ям|ей)|плат[её]ж(?:и|ам|ей)|смет(?:ы|ам)?|задач(?:и|ам)?|работ(?:ы|ам)?|документ(?:ы|ам|ов)|тендер(?:ы|ам|ов)|заяв(?:ки|кам|ок)|закуп(?:ки|кам|ок)|материал(?:ы|ам|ов)|поставщик(?:и|ам|ов)|контрагент(?:ы|ам|ов)|склад(?:ы|ам|ов)|бригад(?:ы|ам)?)';
+        $records = '(?:акт(?:ы|ам|ов)|договор(?:ы|ам|ов)|журнал(?:ы|ам|ов)|сотрудник(?:и|ам|ов)|пользовател(?:и|ям|ей)|плат[её]ж(?:и|ам|ей)|смет(?:ы|ам)?|задач(?:и|ам)?|работ(?:ы|ам)?|документ(?:ы|ам|ов)|тендер(?:ы|ам|ов)|заяв(?:ки|кам|ок)|закуп(?:ки|кам|ок)|материал(?:ы|ам|ов)|поставщик(?:и|ам|ов)|контрагент(?:ы|ам|ов)|склад(?:ы|ам|ов)|бригад(?:ы|ам)?'
+            .'|дефект(?:ы|ам|ов)|замечани(?:я|ям|й)|несоответстви(?:я|ям|й)|инцидент(?:ы|ам|ов)|происшестви(?:я|ям|й)|нарушени(?:я|ям|й)|инструктаж(?:и|ам|ей)|проверк(?:и|ам)?|инспекци(?:и|ям|й)'
+            .'|наряд(?:ы|ам|ов)(?:-допуск(?:и|ам|ов))?|табел(?:и|ям|ей)|трудозатрат(?:ы|ам)?|начислени(?:я|ям|й)|выработк(?:и|ам)?|запис(?:и|ям|ей)(?:\s+(?:времени|табеля|выработки))?'
+            .'|сдел(?:ки|кам|ок)|лид(?:ы|ам|ов)|компани(?:и|ям|й)|контакт(?:ы|ам|ов)|обращени(?:я|ям|й)|активност(?:и|ям|ей)|(?:коммерческ[а-яё]*\s+)?предложени(?:я|ям|й)|стать(?:и|ям|ей)(?:\s+базы\s+знаний)?'
+            .'|остат(?:ки|кам|ков)|баланс(?:ы|ам|ов)|движени(?:я|ям|й)(?:\s+материалов)?|распределени(?:я|ям|й)|резерв(?:ы|ам|ов)|ячей(?:ки|кам|ек)(?:\s+хранения)?|актив(?:ы|ам|ов)|достав(?:ки|кам|ок)|постав(?:ки|кам|ок)|заказ(?:ы|ам|ов)|при[её]м(?:ки|кам|ок)|согласовани(?:я|ям|й)'
+            .'|график(?:и|ам|ов)|расписани(?:я|ям|й)|комплект(?:ы|ам|ов)(?:\s+документации)?|пакет(?:ы|ам|ов)(?:\s+документации)?|артефакт(?:ы|ам|ов)|верси(?:и|ям|й)|набор(?:ы|ам|ов)(?:\s+моделей)?'
+            .'|машин(?:ы|ам)?|механизм(?:ы|ам|ов)|назначени(?:я|ям|й)|просто(?:и|ям|ев)|сменн[а-яё]*\s+отч[её]т(?:ы|ам|ов)|ремонт(?:ы|ам|ов)|выдач(?:и|ам)?(?:\s+топлива)?'
+            .'|запрос(?:ы|ам|ов)(?:\s+(?:изменений|информации))?|изменени(?:я|ям|й)|претензи(?:и|ям|й)|чек-лист(?:ы|ам|ов)|пункт(?:ы|ам|ов)(?:\s+чек-листов)?|сесси(?:и|ям|й)(?:\s+при[её]мки)?|корректирующ[а-яё]*\s+мероприяти(?:я|ям|й))';
         $organization = '(?:всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац|(?:по\s+всем|всех|все)\s+(?:наш(?:и|им|их)\s+)?'.$records.'\s+(?:нашей\s+)?организации(?![\pL\pN]))';
         $scope = '(?:'.$projects.'|'.$organization.')';
 
@@ -115,7 +126,7 @@ final readonly class AssistantRequestProjectScope
 
                 continue;
             }
-            if ($organizationWide && $scope === 'organization'
+            if ($organizationWide
                 && self::positiveId($section['project_id'] ?? null) !== null
                 && self::positiveId($section['project_id']) !== $this->contextProjectId) {
                 throw new AssistantReportScopeAmbiguous;
@@ -127,12 +138,10 @@ final readonly class AssistantRequestProjectScope
             if ($organizationWide && is_array($section['filters'] ?? null)) {
                 $arguments['sections'][$index]['filters'] = array_values(array_filter($section['filters'],
                     fn (mixed $filter): bool => ! is_array($filter) || ! $this->isSelectedProjectFilter($filter)));
-                if ($scope === 'organization') {
-                    foreach ($arguments['sections'][$index]['filters'] as $filter) {
-                        if (is_array($filter) && ($filter['field'] ?? null) === 'project_id'
-                            && ! in_array($filter['operator'] ?? null, ['neq', 'is_null', 'is_not_null'], true)) {
-                            throw new AssistantReportScopeAmbiguous;
-                        }
+                foreach ($arguments['sections'][$index]['filters'] as $filter) {
+                    if (is_array($filter) && ($filter['field'] ?? null) === 'project_id'
+                        && ! in_array($filter['operator'] ?? null, ['neq', 'is_null', 'is_not_null'], true)) {
+                        throw new AssistantReportScopeAmbiguous;
                     }
                 }
             }
@@ -170,10 +179,7 @@ final readonly class AssistantRequestProjectScope
 
     private static function hasExplicitProjectSections(string $question): bool
     {
-        if (preg_match('/(?<![\pL\pN])(?:без|кроме|исключая|за\s+исключением)\s+(?:[\pL-]+\s+){0,3}(?:проект|объект)[а-яё]*(?!\pL)/iu', $question) === 1) {
-            return false;
-        }
-
+        $question = self::withoutExcludedProjects($question);
         $quotedProject = preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*:?\s*[«„“"]/iu', $question) === 1;
         $question = self::withoutNegativeCurrentProject($question);
 
@@ -185,13 +191,13 @@ final readonly class AssistantRequestProjectScope
 
     private function reportProjectIds(string $question, ?callable $search): array
     {
+        $question = self::withoutExcludedProjects($question);
         $ids = [];
         if (self::hasAffirmativeCurrentProject($question) && $this->contextProjectId !== null) {
             $ids[] = $this->contextProjectId;
         }
         $unquoted = AssistantNamedProjectReadScope::withoutQuotedNames($question);
-        $numericProjects = '(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*([1-9]\d*(?:\s*(?:,|и|или)\s*(?:(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*)?[1-9]\d*)*)(?![\pL\pN])';
-        preg_match_all('/'.$numericProjects.'/iu', $unquoted, $groups);
+        preg_match_all('/'.self::NUMERIC_PROJECTS.'/iu', $unquoted, $groups);
         foreach ($groups[1] as $group) {
             preg_match_all('/[1-9]\d*/', $group, $numbers);
             foreach ($numbers[0] as $number) {
@@ -201,8 +207,7 @@ final readonly class AssistantRequestProjectScope
                 }
             }
         }
-        $quotes = '«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"';
-        $nameQuestion = preg_replace('/(?:'.$quotes.')(*SKIP)(*F)|(?:'.self::CURRENT_PROJECT.'|'.$numericProjects.')/iu', ' ', $question) ?? $question;
+        $nameQuestion = preg_replace('/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.')/iu', ' ', $question) ?? $question;
         if (AssistantReportEntityQuery::hasAmbiguousName($nameQuestion, 'project', preservePrepositions: true)) {
             throw new AssistantReportScopeAmbiguous;
         }
@@ -216,14 +221,50 @@ final readonly class AssistantRequestProjectScope
         if ($search === null) {
             throw new AssistantReportScopeAmbiguous;
         }
-        $result = $search(['query' => $name, 'name_match' => 'exact', 'limit' => 2]);
-        $rows = is_array($result) ? ($result['results'] ?? null) : null;
-        if (! is_array($result) || ($result['status'] ?? null) !== 'success' || ! is_array($rows) || count($rows) !== 1
-            || ($result['result_window']['has_more'] ?? null) !== false || ! is_int($rows[0]['id'] ?? null) || $rows[0]['id'] < 1) {
-            throw new AssistantReportScopeAmbiguous;
+        $quoted = preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*:?\s*(?:'.self::QUOTED_NAME.')/iu', $nameQuestion) === 1;
+        foreach (self::reportNameCandidates($name, $quoted) as $candidate) {
+            $result = $search(['query' => $candidate, 'name_match' => 'exact', 'limit' => 2]);
+            $rows = is_array($result) ? ($result['results'] ?? null) : null;
+            if (! is_array($result) || ($result['status'] ?? null) !== 'success' || ! is_array($rows)
+                || ($result['result_window']['has_more'] ?? null) !== false) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            if ($rows === []) {
+                continue;
+            }
+            if (count($rows) !== 1 || ! is_int($rows[0]['id'] ?? null) || $rows[0]['id'] < 1) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+
+            return array_values(array_unique([...$ids, $rows[0]['id']]));
         }
 
-        return array_values(array_unique([...$ids, $rows[0]['id']]));
+        throw new AssistantReportScopeAmbiguous;
+    }
+
+    private static function reportNameCandidates(string $name, bool $quoted): array
+    {
+        $candidates = [$name];
+        if ($quoted) {
+            return $candidates;
+        }
+        $group = '(?:статусам|валютам|проектам|объектам|подрядчикам|контрагентам|месяцам|неделям|дням)';
+        $withoutGrouping = preg_replace('/\s+(?:по|с\s+группировкой\s+по)\s+'.$group.'(?:\s*(?:,|и)\s*'.$group.')*\s*[.!?]*$/iu', '', $name) ?? $name;
+        $candidates[] = $withoutGrouping;
+        $candidates[] = AssistantProductionSchedulePeriod::withoutCompleteSuffix($withoutGrouping);
+
+        return array_values(array_unique(array_filter($candidates, static fn (string $candidate): bool => $candidate !== '')));
+    }
+
+    private static function withoutExcludedProjects(string $question): string
+    {
+        $negative = '(?<![\pL\pN])(?:без|кроме|исключая|за\s+исключением)\s+';
+        $noun = '(?<![\pL\pN])(?:проект|объект)[а-яё]*(?![\pL\pN])';
+        $stop = '(?:\s+(?:с|со|против|относительно)\s+(?:'.self::CURRENT_PROJECT.'|'.$noun.')|[,;.!?\r\n]|$)';
+        $name = '(?:(?!'.$stop.')[^,;.!?\r\n])+';
+        $excluded = '(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.'|'.$noun.'\s*:?\s*(?:'.self::QUOTED_NAME.')|'.$noun.'(?:\s+'.$name.')?)';
+
+        return preg_replace('/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|'.$negative.$excluded.'/iu', ' ', $question) ?? $question;
     }
 
     private function assertProjectFilters(array $section, int $projectId): void
