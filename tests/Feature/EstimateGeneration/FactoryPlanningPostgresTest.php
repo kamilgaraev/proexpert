@@ -88,7 +88,9 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
 
     public function test_free_materialization_creates_the_first_sealed_draft_and_replays_without_paid_attempts_or_duplicate_revision(): void
     {
-        [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1], [[
+        [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1,
+            'feedback_receipts' => ['historic' => ['result' => str_repeat('x', 2800000)]],
+        ], [[
             'key' => 'slab', 'type' => 'foundation_slab', 'parameters' => [
                 'area' => ['value' => '4', 'unit' => 'm2', 'basis' => 'measurement'],
                 'thickness' => ['value' => '0.25', 'unit' => 'm', 'basis' => 'assumption'],
