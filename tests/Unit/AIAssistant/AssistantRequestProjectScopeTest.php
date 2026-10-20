@@ -6,10 +6,111 @@ namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_comparison_sections_require_the_same_subject_specification(): void
+    {
+        $question = 'Сравни все акты организации с проектом 100';
+        $subject = ['domain' => 'acts', 'entity_type' => 'performance_act', 'columns' => ['status'],
+            'filters' => [['field' => 'status', 'operator' => 'neq', 'value' => 'rejected']],
+            'group_by' => ['status', 'currency'], 'metrics' => [['field' => 'id', 'operation' => 'count']],
+            'order_by' => [['field' => 'status', 'direction' => 'asc']], 'row_limit' => 100];
+        foreach (['domain' => 'contracts', 'entity_type' => 'contract', 'columns' => ['currency'],
+            'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']],
+            'group_by' => ['status'], 'metrics' => [['field' => 'total_amount', 'operation' => 'sum']],
+            'order_by' => [['field' => 'status', 'direction' => 'desc']], 'row_limit' => 1] as $key => $value) {
+            $organization = ['scope' => 'organization', 'project_id' => null, ...$subject];
+            $project = ['scope' => 'project', 'project_id' => 100, ...array_replace($subject, [$key => $value])];
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [$organization, $project]]);
+                self::fail('Different comparison subject accepted: '.$key);
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_project_column_lists_do_not_restrict_organization_scope(): void
+    {
+        foreach (['Сделай все акты организации с колонками проект и статус',
+            'Покажи все акты организации с полями проект и валюта',
+            'Сделай все акты организации со столбцами проект и сумма',
+            'Все акты организации сгруппируй по полям проект и статус',
+            'Все акты организации сгруппируй по проекту и статусу',
+            'Все акты организации с колонками номер, проект и статус'] as $question) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $search = static function (): never {
+                self::fail('Column name triggered project lookup');
+            };
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true, $search));
+            self::assertSame(['sections' => [['project_id' => null]]], AssistantRequestProjectScope::fromPlan($this->plan($question))
+                ->bindReportScope($question, ['sections' => [['project_id' => 52]]], $search));
+        }
+    }
+
+    public function test_comparison_subject_preserves_equivalent_field_sets_metric_labels_and_aliases(): void
+    {
+        $question = 'Сравни все акты организации с проектом 100';
+        $organization = ['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'columns' => ['status', 'currency'], 'group_by' => ['status', 'currency'],
+            'filters' => [['field' => 'status', 'operator' => 'in', 'value' => ['approved', 'draft']],
+                ['field' => 'currency', 'operator' => 'eq', 'value' => 'RUB']],
+            'metrics' => [['field' => 'id', 'operation' => 'count', 'label' => 'Количество организации'],
+                ['field' => 'total_amount', 'operation' => 'sum', 'label' => 'Сумма организации']],
+            'order_by' => [['field' => 'metric_2', 'direction' => 'desc']], 'row_limit' => 1000];
+        $project = array_replace($organization, ['scope' => 'project', 'project_id' => 100,
+            'columns' => ['currency', 'status'], 'group_by' => ['currency', 'status'],
+            'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => 100],
+                ['field' => 'currency', 'operator' => 'eq', 'value' => 'RUB'],
+                ['field' => 'status', 'operator' => 'in', 'value' => ['draft', 'approved', 'draft']]],
+            'metrics' => [['field' => 'total_amount', 'operation' => 'sum', 'label' => 'Сумма проекта'],
+                ['field' => 'id', 'operation' => 'count', 'label' => 'Количество проекта']],
+            'order_by' => [['field' => 'metric_1', 'direction' => 'desc']]]);
+        unset($project['row_limit']);
+        $arguments = ['sections' => [$organization, $project]];
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        $arguments['sections'][1]['order_by'][0]['field'] = 'metric_2';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments);
+    }
+
+    public function test_each_comparison_subject_requires_all_compared_projects(): void
+    {
+        $question = 'Сравни все акты организации с проектами 52 и 100';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts'],
+            ['scope' => 'organization', 'project_id' => null, 'domain' => 'contracts'],
+            ['scope' => 'project', 'project_id' => 52, 'domain' => 'acts'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts']];
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+    }
+
+    public function test_heterogeneous_sections_remain_available_without_an_affirmative_comparison(): void
+    {
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
+        foreach (['Все акты организации, а также по проекту 100 — договоры',
+            'Все акты организации, а также по проекту 100 — договоры. Не сравнивай их.',
+            'Все акты организации, а также по проекту «Сравни» — договоры'] as $question) {
+            $search = static fn (): array => ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search), $question);
+        }
+    }
+
+    public function test_column_context_preserves_actual_project_names(): void
+    {
+        foreach (['И Статус', '«И Статус»', '«Колонки проект и статус»'] as $name) {
+            $question = 'Все акты организации по проекту '.$name;
+            self::assertSame(trim($name, '«»'), AssistantReportEntityQuery::extract($question, 'project'));
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+        }
+        self::assertSame('И Статус', AssistantReportEntityQuery::extract('С полями номер и сумма для проекта И Статус', 'project'));
+        self::assertSame('И Статус', AssistantReportEntityQuery::extract('С колонками проект «И Статус»', 'project'));
+    }
+
     public function test_project_and_object_adjectives_do_not_request_all_projects(): void
     {
         foreach (['Сгруппируй задачи по всем проектным статусам', 'Покажи акты во всех объектных категориях',
@@ -716,7 +817,8 @@ final class AssistantRequestProjectScopeTest extends TestCase
         $sections = [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 52], ['scope' => 'project', 'project_id' => 100]];
         self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
         $sections[] = ['scope' => 'project', 'project_id' => 52, 'domain' => 'contracts', 'entity_type' => 'contract'];
-        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
     }
 
     public function test_explicit_organization_scope_rejects_positive_project_filters(): void

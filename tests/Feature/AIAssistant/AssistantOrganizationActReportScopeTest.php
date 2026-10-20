@@ -76,6 +76,13 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'document flow organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_document_flow'],
             'project status adjective keeps selected project' => [true, false, false, 3, 3, false, '', 'project_adjective'],
             'object status adjective keeps selected project' => [true, false, false, 3, 3, false, '', 'object_adjective'],
+            'comparison different entities is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_entity'],
+            'comparison different filters is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_filter'],
+            'comparison different groups is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_group'],
+            'comparison different metrics is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_metric'],
+            'comparison different metric labels remains valid' => [true, false, false, 7, 5, false, '', 'compare_equivalent'],
+            'project column list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_columns'],
+            'project grouping list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_grouping'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
             'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
@@ -118,7 +125,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $csv = null;
         $files = $this->createMock(FileService::class);
         $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte',
-            'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied'], true);
+            'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied'], true)
+            || str_starts_with($variant, 'compare_subject_');
         $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
@@ -199,7 +207,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($excludeFirst) {
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
-        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true);
+        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
+            || str_starts_with($variant, 'compare_');
         $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
@@ -244,6 +253,10 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if (in_array($variant, ['project_adjective', 'object_adjective'], true)) {
             $question = 'Сформируй CSV: сгруппируй акты по всем '.($variant === 'project_adjective' ? 'проектным' : 'объектным').' статусам и валютам.';
         }
+        if (in_array($variant, ['field_columns', 'field_grouping'], true)) {
+            $question = $variant === 'field_columns' ? 'Сделай CSV по всем актам организации с колонками проект и статус'
+                : 'Сделай CSV по всем актам организации; сгруппируй по полям проект и статус.';
+        }
         if ($comparison) {
             $question = match ($variant) {
                 'explicit', 'missing_org', 'org_project_filter', 'project_range_gt', 'project_range_lte' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
@@ -263,6 +276,25 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $projectSection['project_id'] = $secondProject ? $second->id : $first->id;
             $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']],
                 ...($filtered ? array_slice($filters, $nestedProject ? 1 : 0) : [])];
+            if ($variant === 'compare_subject_entity') {
+                $projectSection['domain'] = 'contracts';
+                $projectSection['entity_type'] = 'contract';
+            }
+            if ($variant === 'compare_subject_filter') {
+                $projectSection['filters'][] = ['field' => 'status', 'operator' => 'eq', 'value' => 'approved'];
+            }
+            if ($variant === 'compare_subject_group') {
+                $projectSection['group_by'] = ['status'];
+                $projectSection['columns'] = ['status'];
+                $projectSection['order_by'] = [['field' => 'status', 'direction' => 'asc']];
+            }
+            if ($variant === 'compare_subject_metric') {
+                $projectSection['metrics'][1]['operation'] = 'avg';
+            }
+            if ($variant === 'compare_equivalent') {
+                $projectSection['metrics'][0]['label'] = 'Количество проекта';
+                $projectSection['metrics'][1]['label'] = 'Сумма проекта';
+            }
             if (in_array($variant, ['project_range_gt', 'project_range_lte'], true)) {
                 $projectSection['filters'] = [['field' => 'project_id', 'operator' => $variant === 'project_range_gt' ? 'gt' : 'lte',
                     'value' => $projectSection['project_id'] - ($variant === 'project_range_lte' ? 1 : 0)]];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComparisonSpecification;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 
 final readonly class AssistantRequestProjectScope
@@ -206,6 +207,7 @@ final readonly class AssistantRequestProjectScope
             if (! $hasOrganizationSection || array_diff($projectIds, array_keys($boundProjects)) !== []) {
                 throw new AssistantReportScopeAmbiguous;
             }
+            AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds);
         }
 
         return $arguments;

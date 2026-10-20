@@ -47,6 +47,13 @@ final class AssistantReportEntityQuery
                 $parts = array_values(array_filter(array_slice($quoted, 1), static fn (string $part): bool => trim($part) !== ''));
                 $name = trim((string) ($parts[0] ?? ''));
             } else {
+                $prefix = substr($message, 0, $offset);
+                if ($type === 'project' && preg_match('/^(?:и|или)\s+/iu', $tail) === 1
+                    && ((preg_match('/(?<![\pL\pN])(?:колонк(?:ами|и|ах|ок)|столбц(?:ами|ы|ах|ов)|пол(?:ями|я|ях|ям|ей))\s*:?[^;.!?\r\n]*$/iu', $prefix) === 1
+                            && preg_match('/(?<![\pL\pN])(?:по|для|в|во|на|из|с|со)\s*$/iu', $prefix) !== 1)
+                        || preg_match('/(?<![\pL\pN])(?:сгруппиру[а-яё]*|группиру[а-яё]*|группировк[а-яё]*)\s+по\s*$/iu', $prefix) === 1)) {
+                    continue;
+                }
                 if ($type === 'project' && $names !== []
                     && preg_match('/\b(?:с|со)\s+начала\s*$/iu', substr($message, 0, $offset)) === 1
                     && AssistantProductionSchedulePeriod::withoutSuffix('текущий '.$tail) === 'текущий') {
