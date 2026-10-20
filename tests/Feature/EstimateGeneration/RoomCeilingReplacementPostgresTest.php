@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvalu
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CurrentRoomIdentitySources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CurrentWorkEntityBindingProof;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialProjectFactsWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RoomCeilingReplacementProof;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
@@ -38,6 +39,31 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_whole_building_area_is_preserved_without_becoming_an_extra_ceiling_room(): void
+    {
+        [$actor, $session, $url] = $this->fixture(includeBuildingArea: true);
+        $outbound = count(Http::recorded());
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $aggregate = array_values(array_filter($snapshot->entities, static fn ($entity): bool => ($entity->attributes['document_role'] ?? null) === 'building_floor'));
+        self::assertCount(1, $aggregate);
+        $before = $models->currentFacts(...[...$scope, $aggregate[0]->id]);
+        self::assertCount(1, $before);
+        self::assertSame('72.19', $before[0]->value);
+        self::assertCount(6, array_filter($snapshot->entities, static fn ($entity): bool => $entity->type === 'room'));
+
+        $preview = $this->getJson($url.'?parent_work_item_key=ceiling:rough')->assertOk()->json('data');
+        self::assertCount(5, $preview['rooms']);
+        self::assertNotContains($aggregate[0]->id, array_column($preview['rooms'], 'entity_id'));
+        self::assertSame('34.6044', $preview['replacement_total']);
+        $this->postJson($url, $this->input($preview))->assertOk()->assertJsonCount(5, 'data.added_work_item_keys');
+        self::assertEquals($before, $models->currentFacts(...[...$scope, $aggregate[0]->id]));
+        self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+        self::assertSame($outbound, count(Http::recorded()));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_native_replacement_preserves_old_quantity_price_materials_and_receipts_without_copying_them_to_room_rows(): void
     {
         [$actor, $session, $url] = $this->fixture();
@@ -266,7 +292,7 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
-    private function fixture(int $roomCount = 5, ?array $roomValues = null): array
+    private function fixture(int $roomCount = 5, ?array $roomValues = null, bool $includeBuildingArea = false): array
     {
         Http::preventStrayRequests();
         Http::fake();
@@ -292,9 +318,13 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'status' => 'estimate_review_required', 'state_version' => 1,
             'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'normative', 'composition_generation_id' => 'generation:one',
+                ...($includeBuildingArea ? ['area' => '72.19'] : []),
                 'qa_run_id' => '5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', 'qa_limit_units' => 500,
                 'quantity_selections' => ['ceiling:rough' => ['old' => true]], 'price_selections' => ['ceiling:rough' => ['old' => true]],
                 'scope_selection' => ['old' => true], 'scenario_selections' => ['old' => true], 'confirmed_evaluation' => ['old' => true]], 'draft_payload' => $draft]);
+        if ($includeBuildingArea) {
+            app(InitialProjectFactsWriter::class)->write($session, $actor);
+        }
         $entities = [];
         foreach ($roomValues ?? array_slice([['bedroom-one', '2.92', '2.915'], ['bedroom-two', '2.92', '2.915'], ['bathroom', '1.8', '1.85'], ['entry', '1.12', '1.85'], ['living', '3.06', '3.98']], 0, $roomCount) as [$key, $length, $width]) {
             $parameters = ['length' => ['value' => $length, 'unit' => 'm', 'basis' => 'measurement']];

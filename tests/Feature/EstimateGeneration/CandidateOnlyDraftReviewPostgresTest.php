@@ -23,8 +23,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
@@ -92,7 +92,7 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         $draft = $artifacts->seal(['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
             'regional_context' => $catalog['context'], 'evaluation_policy' => ['selected_sections' => ['finishing']],
             'source_input_version' => 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh()),
-            'object_profile' => ['object_type' => 'residential'], 'local_estimates' => [['key' => 'finish_finishing', 'title' => 'Отделка', 'source_refs' => [],
+            'object_profile' => ['object_type' => 'residential'], 'local_estimates' => [['key' => 'finish_finishing', 'title' => 'Отделка',
                 'sections' => [['key' => 'floors', 'title' => 'Полы', 'source_refs' => [], 'work_items' => [$item]]]]]]);
         $draft = $artifacts->seal((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft));
         $session->refresh()->update(['status' => 'estimate_review_required', 'draft_payload' => $draft]);
@@ -118,6 +118,8 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $organization->id, (int) $project->id,
             $actor, 2, $item['key'], $catalog['norm_id'], false);
         self::assertTrue($artifacts->verifyArtifact($session->fresh()->draft_payload));
+        self::assertArrayNotHasKey('source_refs', $session->fresh()->draft_payload['local_estimates'][0]);
+        self::assertContains('weak_source_reference', $session->fresh()->draft_payload['local_estimates'][0]['validation_flags']);
         $receipt = app(RecalculateUniversalEvaluation::class)->handle($actor, (int) $project->id, (int) $session->id, 3, (string) Str::uuid());
         $row = $session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
         self::assertSame('6', $row['quantity']);

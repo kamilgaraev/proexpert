@@ -54,7 +54,7 @@ class EstimateValidationService
 
         foreach ($draft['local_estimates'] as $localIndex => $localEstimate) {
             $localFlags = [];
-            if ($localEstimate['source_refs'] === []) {
+            if (($localEstimate['source_refs'] ?? []) === []) {
                 $localFlags[] = 'weak_source_reference';
             }
 
