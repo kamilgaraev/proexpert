@@ -291,7 +291,10 @@ final class PersonalFileService
 
         if ($withDownloadUrl && ! $file->is_folder && is_string($file->storage_key)) {
             try {
-                $payload['download_url'] = $this->fileDownloadUrl($file, request()->user());
+                $payload['download_url'] = ApiQueryMetrics::measureProcessingPhase(
+                    'file_personal_url',
+                    fn (): string => $this->fileDownloadUrl($file, request()->user()),
+                );
             } catch (Throwable) {
                 Log::warning('personal_file_temporary_url_failed', ['file_id' => $file->id]);
             }

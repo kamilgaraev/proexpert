@@ -336,6 +336,7 @@ final class ApiQueryMetrics
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
             'file_report_list', 'file_report_classify', 'file_report_access',
             'file_report_storage_exists', 'file_report_storage_url',
+            'file_personal_list', 'file_personal_payload', 'file_personal_url',
             'file_download_storage_exists', 'file_download_temporary_url',
             'assistant_report_access_resolve', 'assistant_report_storage_open',
             'assistant_report_domain_checks', 'assistant_report_reference_checks',

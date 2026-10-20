@@ -9,6 +9,7 @@ use App\Http\Requests\Api\V1\Admin\File\CreatePersonalFolderRequest;
 use App\Http\Requests\Api\V1\Admin\File\ListFilesRequest;
 use App\Http\Requests\Api\V1\Admin\File\UploadPersonalFileRequest;
 use App\Http\Responses\AdminResponse;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Organization\OrganizationContext;
 use App\Services\Storage\PersonalFileService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -31,14 +32,14 @@ final class PersonalFileController extends Controller
     {
         try {
             [$organizationId, $userId] = $this->scope($request);
-            $paginator = $this->personalFiles->paginate(
+            $paginator = ApiQueryMetrics::measureProcessingPhase('file_personal_list', fn () => $this->personalFiles->paginate(
                 $organizationId,
                 $userId,
                 $request->validated(),
-            );
-            $paginator->getCollection()->transform(
+            ));
+            ApiQueryMetrics::measureProcessingPhase('file_personal_payload', fn () => $paginator->getCollection()->transform(
                 fn ($file): array => $this->personalFiles->payload($file, $request->boolean('include_download_urls', true)),
-            );
+            ));
 
             return AdminResponse::paginated(
                 $paginator->items(),
