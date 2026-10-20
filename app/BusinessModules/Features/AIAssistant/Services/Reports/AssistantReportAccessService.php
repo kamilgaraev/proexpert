@@ -86,8 +86,13 @@ final class AssistantReportAccessService
         if (! $this->policy->belongsToOrganization($user, $organizationId) || $refs === [] || $domains === []) {
             throw new AccessDeniedHttpException();
         }
-        foreach (array_merge(['assistant', 'reports'], $domains) as $domain) {
-            if (! is_string($domain) || ! $this->policy->canReadDomain($user, $organizationId, $domain)) {
+        foreach ($domains as $domain) {
+            if (! is_string($domain)) {
+                throw new AccessDeniedHttpException();
+            }
+        }
+        foreach (array_unique(array_merge(['assistant', 'reports'], $domains)) as $domain) {
+            if (! $this->policy->canReadDomain($user, $organizationId, $domain)) {
                 throw new AccessDeniedHttpException();
             }
         }

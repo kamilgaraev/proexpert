@@ -28,6 +28,7 @@ use Illuminate\Support\Str;
 use Mockery;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 final class FileDownloadUrlWorkflowTest extends TestCase
 {
@@ -199,10 +200,31 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $report = $this->reportFile($context, $personal);
         $grant = app(AssistantReportAccessService::class)->register($personal->storage_key, $context->organization, $context->user,
             [['entity_type' => 'project', 'entity_id' => (string) $project->id]], ['projects']);
+        $referenceReads = 0;
+        $watchReferences = true;
+        DB::listen(function (QueryExecuted $query) use ($context, $project, &$referenceReads, &$watchReferences): void {
+            if (! $watchReferences || ! str_starts_with($query->sql, 'select exists(')
+                || ! str_contains($query->sql, 'from "projects"') || ! in_array($project->id, array_map('intval', $query->bindings), true)) {
+                return;
+            }
+            if (++$referenceReads === 1) {
+                $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+            }
+        });
+        $reference = ['entity_type' => 'project', 'entity_id' => (string) $project->id];
+        try {
+            app(AssistantReportAccessService::class)->assertReferences($context->user, $context->organization->id, [$reference, $reference], ['projects']);
+            self::fail('Revocation between report references must deny access.');
+        } catch (AccessDeniedHttpException) {
+            self::assertSame(2, $referenceReads);
+        } finally {
+            $watchReferences = false;
+            $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
+        }
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('disk')->once()->andReturn(Storage::disk('s3'));
         $files->shouldNotReceive('temporaryDownloadUrl');
-        $files->shouldReceive('readCurrent')->times(4)->with($personal->storage_key)->andReturnUsing(static function () {
+        $files->shouldReceive('readCurrent')->times(5)->with($personal->storage_key)->andReturnUsing(static function () {
             $stream = fopen('php://temp', 'w+');
             fwrite($stream, 'report');
             rewind($stream);
@@ -230,6 +252,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $landingHeaders = ['Authorization' => 'Bearer '.$landingToken->accessToken, 'Accept' => 'application/json', 'Origin' => 'https://lk.1мост.рф'];
         $downloads = array_map(fn (string $url): array => [$url, $context->authHeaders()], $downloadUrls);
         $downloads[] = [str_replace('/api/v1/admin/ai-assistant/', '/api/v1/ai-assistant/', $downloadUrls[0]), $landingHeaders];
+        $firstStreamAccessCount = null;
         foreach ($downloads as [$url, $headers]) {
             $download = $this->withHeaders($headers)->get($url)->assertOk();
             foreach (['assistant_report_access_resolve', 'assistant_report_storage_open'] as $phase) {
@@ -245,8 +268,20 @@ final class FileDownloadUrlWorkflowTest extends TestCase
             self::assertSame(0, $this->filePhases['assistant_report_storage_open']['sql_count']);
             $this->assertDownloadStoragePhases(false, false);
             self::assertSame('report', $download->streamedContent());
+            $firstStreamAccessCount ??= $this->filePhases['current_access_check']['count'];
         }
 
+        DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['required_domains' => json_encode(['projects'], JSON_THROW_ON_ERROR)]);
+        $withoutExplicitReports = $this->withHeaders($context->authHeaders())->get($downloadUrls[0])->assertOk();
+        self::assertSame('report', $withoutExplicitReports->streamedContent());
+        self::assertGreaterThan(0, $firstStreamAccessCount);
+        self::assertSame($firstStreamAccessCount, $this->filePhases['current_access_check']['count']);
+        foreach ([['reports', null], ['reports', 1], ['reports', ['projects']], ['Reports'], [' reports ']] as $invalidDomains) {
+            DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['required_domains' => json_encode($invalidDomains, JSON_THROW_ON_ERROR)]);
+            $this->withHeaders($context->authHeaders())->getJson($downloadUrls[0])->assertForbidden();
+            self::assertArrayNotHasKey('assistant_report_storage_open', $this->filePhases);
+        }
+        DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['required_domains' => json_encode(['reports', 'projects'], JSON_THROW_ON_ERROR)]);
         $checkedRoutes = [...array_map(fn (string $url): array => [$url, $context->authHeaders()], $routes), ...$downloads];
         $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
         foreach ($checkedRoutes as [$route, $headers]) {
