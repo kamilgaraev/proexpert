@@ -33,10 +33,8 @@ final class ScopedQuantityInputReadiness
             return false;
         }
         $required = $definition[0] === 'equipment' ? EquipmentEstimateScope::select($snapshot, $decisions)
-            : array_filter(GeometryInventory::entities($snapshot, $documentVersions),
-                static fn ($entity): bool => GeometryInventory::type($entity) === 'wall'
-                    && ! ($entity->attributes['contextual_only'] ?? false) && ! ($entity->attributes['excluded_by_document_note'] ?? false)
-                    && ! ($entity->attributes['properties']['contextual_only'] ?? false) && ! ($entity->attributes['properties']['excluded_by_document_note'] ?? false));
+            : (($warning['formula'] ?? null) === 'wall_net_volume' ? WallEstimateScope::volumeWalls($snapshot, $decisions, $documentVersions)
+                : WallEstimateScope::walls($snapshot, $documentVersions));
         if (count($required) !== count($keys)) {
             return false;
         }

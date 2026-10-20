@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Quantities;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
@@ -93,5 +94,24 @@ final class WallEstimateScope
         ksort($result, SORT_STRING);
 
         return $result;
+    }
+
+    public static function volumeWalls(ProjectModelSnapshot $snapshot, array $decisions, array $documentVersions): array
+    {
+        $walls = self::walls($snapshot, $documentVersions);
+        if ($walls === []) {
+            return [];
+        }
+        $scopes = self::select($snapshot, $decisions, $documentVersions);
+        $thickness = [];
+        $aliases = FactVocabulary::aliases('thickness');
+        foreach ($snapshot->facts as $fact) {
+            if (in_array(mb_strtolower(trim($fact->type)), $aliases, true)) {
+                $thickness[$fact->entityId] = ($thickness[$fact->entityId] ?? 0) + 1;
+            }
+        }
+
+        return array_filter($walls, static fn ($wall): bool => isset($scopes[$wall->id])
+            ? $scopes[$wall->id]['role'] === 'external' : ($thickness[$wall->id] ?? 0) === 1);
     }
 }

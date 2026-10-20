@@ -271,8 +271,9 @@ final readonly class CurrentProjectDerivedQuantityService
         unset($childrenByParent);
 
         $requests = [];
-        $wallScopes = array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'wall_assembly') === [] ? []
-            : WallEstimateScope::select($snapshot, $decisions, GeometryInventory::currentDocumentVersions($snapshot));
+        $volumeDocumentVersions = $inventoryDocumentVersions ?? (array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'wall_assembly') === []
+            ? [] : GeometryInventory::currentDocumentVersions($snapshot));
+        $volumeWalls = WallEstimateScope::volumeWalls($snapshot, $decisions, $volumeDocumentVersions);
         foreach ($snapshot->entities as $entity) {
             $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
             foreach (FactVocabulary::foundationFormulas() as $formula => $definition) {
@@ -317,7 +318,7 @@ final readonly class CurrentProjectDerivedQuantityService
                     $completeness,
                 );
                 $this->applyCoverage($request, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []), $snapshot, $decisions, $inventoryDocumentVersions);
-                if ($this->oneFact($facts, $entity->id, 'thickness') instanceof Fact || ($wallScopes[$entity->id]['role'] ?? null) === 'external') {
+                if (isset($volumeWalls[$entity->id])) {
                     $volume = $this->wallRequest($entity, $openingsByWall[$entity->id] ?? [], $facts, $token, $technology, $completeness, true);
                     $this->applyCoverage($volume, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []), $snapshot, $decisions, $inventoryDocumentVersions);
                     $requests[] = $volume;

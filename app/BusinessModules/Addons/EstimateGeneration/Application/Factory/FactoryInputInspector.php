@@ -27,7 +27,7 @@ final readonly class FactoryInputInspector
         return ['step' => 'inspect_input', 'outcome' => $status,
             'question_refs' => array_map(static fn (array $question): array => [
                 'key' => $question['key'], 'version' => $question['answer']['version'],
-                'entity_id' => $question['answer']['entity_id'], 'parameter' => $question['answer']['parameter'],
+                'entity_id' => $question['answer']['entity_id'], 'parameter' => $question['answer']['parameter'] ?? $question['answer']['kind'],
                 'can_answer' => $question['can_answer'],
             ], $native['questions']),
             'total_questions' => $native['total_questions'], 'truncated' => $native['truncated'],

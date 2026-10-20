@@ -32,6 +32,14 @@ final class ScopedQuantityInputReadinessTest extends TestCase
         self::assertSame(['3', '7'], array_column(array_map(static fn (QuantityData $q): array => $q->toArray(), array_values($quantities)), 'amount'));
     }
 
+    public function test_wall_volume_readiness_does_not_require_an_unassigned_wall_without_thickness(): void
+    {
+        [$snapshot, $warning, $quantities] = $this->fixture('wall_net_volume', 'wall', 'm3');
+        $third = new Entity('entity:c', 1, 2, 3, 'sha256:'.str_repeat('b', 64), 'wall', 'entity:c', ['identity' => ['manual_key' => 'c']]);
+        $snapshot = new ProjectModelSnapshot([...$snapshot->entities, $third], $snapshot->facts, [], []);
+        self::assertTrue(ScopedQuantityInputReadiness::permitsPartialPlanning($warning, $snapshot, str_repeat('a', 64), ['structures'], $quantities, [], []));
+    }
+
     public static function unsafeSources(): array
     {
         return array_combine($cases = ['missing_reference', 'duplicate_reference', 'duplicate_key', 'truncated', 'incomplete_count',
@@ -103,6 +111,9 @@ final class ScopedQuantityInputReadinessTest extends TestCase
                 ['semantic_type' => $type, 'identity' => ['manual_key' => $id]]);
             $facts[] = new Fact('fact:'.$id, 1, 2, 3, $source, $entityId, $type === 'wall' ? 'length' : 'equipment_count',
                 $amount, $type === 'wall' ? 'm' : 'count', 0, 'user_input', 'confirmed', ['evidence:'.$id]);
+            if ($formula === 'wall_net_volume') {
+                $facts[] = new Fact('fact:thickness:'.$id, 1, 2, 3, $source, $entityId, 'thickness', '0.14', 'm', 0, 'user_input', 'confirmed', ['evidence:'.$id]);
+            }
             $quantities['q:'.$id] = new QuantityData('q:'.$id, $unit, $amount, $formula, '1',
                 ['entity_id' => $entityId, 'snapshot_identity' => ['input_fingerprint' => str_repeat('a', 64)]],
                 QuantitySource::Evidenced, ['evidence:'.$id], str_repeat('a', 64));
