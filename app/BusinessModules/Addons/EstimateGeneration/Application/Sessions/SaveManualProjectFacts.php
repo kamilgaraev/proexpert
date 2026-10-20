@@ -90,7 +90,7 @@ final readonly class SaveManualProjectFacts
                 if (isset($row['existing_entity_id'])) {
                     $existing = $activeEntities[$row['existing_entity_id']] ?? null;
                     if ($existing === null || ($existing->attributes['semantic_type'] ?? $existing->attributes['properties']['semantic_type'] ?? $existing->type) !== $row['type']
-                        || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']))
+                        || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']) && ! isset($row['opening_scope']))
                         || array_intersect(['name', 'floor', 'zone', 'parent_key'], array_keys($row)) !== []) {
                         throw ValidationException::withMessages(['entities.'.$index.'.existing_entity_id' => trans_message('estimate_generation.geometry_inventory.entity_invalid')]);
                     }
@@ -166,7 +166,17 @@ final readonly class SaveManualProjectFacts
                     $facts[] = $fact;
                     $proofs[$proof->id] = $proof;
                 }
-                if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']))) {
+                if (isset($row['opening_scope'])) {
+                    if (! config('estimate-generation.universal_enabled', false) || ($payload['evaluation_mode'] ?? null) !== 'universal'
+                        || ! isset($row['existing_entity_id'], $row['native_question']) || count($input['entities']) !== 1
+                        || array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'opening_scope', 'native_question']) !== []) {
+                        throw ValidationException::withMessages(['entities' => trans_message('estimate_opening.invalid')]);
+                    }
+                    [$fact, $proof] = $this->openingScope($scope, $entity, $row['opening_scope'], $inventorySnapshot, $inventoryDocumentVersions, $requestId);
+                    $facts[] = $fact;
+                    $proofs[$proof->id] = $proof;
+                }
+                if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']) && ! isset($row['opening_scope']))) {
                     $name = $row['name'] ?? $row['key'];
                     if (! is_string($name) || trim($name) === '' || mb_strlen($name) > 160) {
                         throw ValidationException::withMessages(['entities.'.$index.'.name' => 'Введите название объекта, не более 160 символов.']);
@@ -314,7 +324,7 @@ final readonly class SaveManualProjectFacts
             foreach ($facts as $fact) {
                 $this->models->applyDecision(new Decision('decision:'.hash('sha256', $requestId.'|'.$fact->id), ...[...$scope, $fact->sourceVersion,
                     'fact', $fact->supersedesFactId ?? $fact->id, $fact->id, 'user', (string) $actor->id,
-                    str_starts_with($fact->type, 'geometry_parent_') || $fact->type === 'wall_assembly' ? $fact->value['reason'] : ($descriptionReasons[$fact->id] ?? 'Пользователь подтвердил ручные исходные данные'), $fact->version, $fact->evidenceIds]), $fact);
+                    str_starts_with($fact->type, 'geometry_parent_') || in_array($fact->type, ['wall_assembly', 'opening_scope'], true) ? $fact->value['reason'] : ($descriptionReasons[$fact->id] ?? 'Пользователь подтвердил ручные исходные данные'), $fact->version, $fact->evidenceIds]), $fact);
             }
             $preview = $this->quantities->previewInput(...$scope);
             $result = ['request_id' => $requestId, 'state_version' => $expectedVersion + 1, 'fact_ids' => array_column($facts, 'id'),
@@ -330,6 +340,33 @@ final readonly class SaveManualProjectFacts
 
             return $result;
         }, 3);
+    }
+
+    private function openingScope(array $scope, Entity $opening, array $input, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot,
+        array $documentVersions, string $requestId): array
+    {
+        $current = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::openings($snapshot, $documentVersions);
+        $reason = $input['reason'] ?? null;
+        if (array_diff(array_keys($input), ['opening_kind', 'entity_fingerprint', 'reason']) !== []
+            || ! isset($current[$opening->id]) || ! in_array($input['opening_kind'] ?? null, \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::KINDS, true)
+            || ($input['entity_fingerprint'] ?? null) !== \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::entityFingerprint($current[$opening->id], $documentVersions)
+            || ! is_string($reason) || mb_strlen(trim($reason)) < 10 || strlen($reason) > 1000) {
+            throw ValidationException::withMessages(['entities' => trans_message('estimate_opening.invalid')]);
+        }
+        $factId = 'fact:'.hash('sha256', $requestId.'|'.$opening->id.'|opening_scope');
+        $value = ['contract' => \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::CONTRACT,
+            'opening_kind' => $input['opening_kind'], 'entity_fingerprint' => $input['entity_fingerprint'],
+            'target_source_version' => $opening->sourceVersion,
+            'decision_id' => 'decision:'.hash('sha256', $requestId.'|'.$factId), 'reason' => trim($reason)];
+        $hash = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($value));
+        $node = $this->evidence->insertOrGet(new EvidenceData(...[...$scope, EvidenceType::SourceFact, EvidenceSourceType::UserInput,
+            'input:'.$scope[2], $opening->sourceVersion, ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => 'input_payload.manual_facts'],
+            ['fact_key' => 'evaluation_choice', 'fact_value' => $hash], 0.0, EvidenceProducer::UserInputNormalizer->value,
+            'sha256:'.hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::CONTRACT)]));
+        $proof = new Evidence('evidence:'.$node->id, ...[...$scope, $opening->sourceVersion, 'input:'.$scope[2], 'user_input', null, null,
+            'input_payload.manual_facts', EvidenceProducer::UserInputNormalizer->value, 'input:'.$scope[2], $hash]);
+
+        return [$this->fact($scope, $opening->sourceVersion, $opening, 'opening_scope', $value, null, 'user_input', [$proof->id], $requestId), $proof];
     }
 
     private function wallAssembly(array $scope, Entity $wall, array $input, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot,

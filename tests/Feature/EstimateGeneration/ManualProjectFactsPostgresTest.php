@@ -421,7 +421,7 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
     {
         [$actor, $session] = $this->fixture();
         config(['estimate-generation.universal_enabled' => true]);
-        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $document = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()->create([
             'session_id' => $scope[2], 'organization_id' => $scope[0], 'project_id' => $scope[1], 'user_id' => $actor->id,
@@ -560,7 +560,54 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         $reconfirmed = $save->handle($actor, $scope[1], $scope[2], 4, (string) Str::uuid(), $coverage);
         $this->persistWallPreview($scope, $models, $wall, $opening, $reconfirmed['quantities']['net_wall_area']);
         self::assertSame('4', $models->currentDerivedQuantities(...[...$scope, $wall->sourceVersion])[0]->value);
+        $openingDraft = ['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+            'evaluation_policy' => ['price_policy' => 'normative'], 'local_estimates' => [['key' => 'structures', 'sections' => [[
+                'key' => 'openings', 'work_items' => [['key' => 'openings.doors', 'work_key' => 'openings.doors', 'name' => 'Door',
+                    'item_type' => 'priced_work', 'quantity' => null, 'unit' => 'm2', 'metadata' => [
+                        'composition_work_key' => 'openings.doors', 'quantity_key' => 'openings.doors',
+                        'quantity_source' => 'unknown', 'generation_source' => 'qualitative_work_catalog']]],
+            ]]]]];
+        $openingDraft['source_input_version'] = 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh());
+        $session->refresh()->update(['draft_payload' => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft::class)
+            ->seal(app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector::class)->project($openingDraft))]);
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $backlog = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterBacklog::class)
+            ->current($session->fresh(), $capture['snapshot'], $capture['token']);
+        $questions = array_values(array_filter($backlog['questions'], static fn ($question): bool => $question['answer']['kind'] === 'opening_scope'));
+        self::assertCount(1, $questions);
+        $question = $questions[0];
+        $chosen = $save->handle($actor, $scope[1], $scope[2], 5, (string) Str::uuid(), ['entities' => [[
+            'key' => 'opening-kind', 'type' => 'opening', 'existing_entity_id' => $opening->id,
+            'native_question' => $question['answer']['native_question'], 'opening_scope' => ['opening_kind' => 'door',
+                'entity_fingerprint' => $question['answer']['entity_fingerprint'], 'reason' => 'Дверь подтверждена по исходному документу'],
+        ]]]);
+        self::assertSame('0', $chosen['cost_units']);
+        $openingDraft = DB::transaction(function () use ($models, $scope, $session, $actor, $openingDraft): array {
+            $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+            $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($capture['snapshot']->facts, 'id')]);
+            $fresh = $session->fresh();
+            $version = 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($fresh);
+            $context = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext($scope[2], $scope[0], $scope[1],
+                $fresh->state_version, $version, $fresh->status->value, baseInputVersion: $version);
+
+            return app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationDraftArithmeticRecalculator::class)
+                ->recalculate($openingDraft, $context, $capture['snapshot'], $decisions, $actor, $fresh);
+        });
+        $openingRows = $openingDraft['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(1, $openingRows);
+        self::assertSame($opening->id, $openingRows[0]['entity_id'] ?? null);
+        self::assertSame('2', $openingRows[0]['quantity']);
+        DB::transaction(fn () => $applyGuard->assertCurrent(...[...$scope, $openingDraft]));
+        self::addToAssertionCount(1);
+        self::assertEquals($opening, array_values(array_filter($models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->entities,
+            static fn ($entity): bool => $entity->id === $opening->id))[0]);
         $openingDocument->update(['ignored_at' => now(), 'status' => 'ignored']);
+        try {
+            DB::transaction(fn () => $applyGuard->assertCurrent(...[...$scope, $openingDraft]));
+            self::fail('Ignored source retained an opening application proof.');
+        } catch (ValidationException) {
+            self::addToAssertionCount(1);
+        }
         self::assertSame([], app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities']);
         self::assertSame([], $models->currentDerivedQuantities(...[...$scope, $wall->sourceVersion]));
         self::assertSame([], $models->currentDerivedQuantitiesForFormulaVersion(...[...$scope, '1']));

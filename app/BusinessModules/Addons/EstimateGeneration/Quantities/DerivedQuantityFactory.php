@@ -20,6 +20,7 @@ final class DerivedQuantityFactory
 {
     private const FORMULAS = [
         'floor_area' => ['length', 'width'],
+        'opening_area' => ['width', 'height'],
         'wall_net_area' => ['wall_length', 'wall_height'],
         'wall_net_volume' => ['wall_length', 'wall_height', 'wall_thickness'],
         'sloped_roof_area' => ['plan_areas', 'slope_rises', 'slope_runs'],
@@ -30,7 +31,7 @@ final class DerivedQuantityFactory
     ];
 
     /** @param list<Decision> $decisions @param array<string, mixed> $request */
-    public function derive(ProjectModelSnapshot $snapshot, array $decisions, array $request): QuantityReadiness
+    public function derive(ProjectModelSnapshot $snapshot, array $decisions, array $request, ?array $documentVersions = null): QuantityReadiness
     {
         $preflightIssues = is_array($request['preflight_issues'] ?? null) ? $request['preflight_issues'] : [];
         if ($preflightIssues !== []) {
@@ -121,6 +122,19 @@ final class DerivedQuantityFactory
         if ($formula === 'wall_net_volume' && GeometryInventory::type($target) !== 'wall') {
             return $this->unresolved('wall_measurement_incompatible', 'entity', $entityId);
         }
+        if ($formula === 'opening_area') {
+            $scope = OpeningEstimateScope::select($snapshot, $decisions, $documentVersions ?? [])[$entityId] ?? null;
+            $coverage = OpeningGeometryCoverage::current($snapshot, $decisions, $target, $documentVersions);
+            if ($scope === null || GeometryInventory::type($target) !== 'opening') {
+                return $this->unresolved('opening_scope_unconfirmed', 'entity', $entityId);
+            }
+            if ($coverage === null) {
+                return $this->unresolved('geometry_coverage_blocked', 'geometry_coverage', $entityId);
+            }
+            $request['geometry_coverages'] = [$coverage];
+            $request['snapshot']['geometry_coverages'] = [$coverage];
+            $request['snapshot']['opening_scope'] = $scope;
+        }
         if ($foundation !== null
             && ($target->attributes['semantic_type'] ?? $target->attributes['properties']['semantic_type'] ?? $target->type) !== $foundation['entity']) {
             return $this->unresolved('foundation_entity_incompatible', 'entity', $entityId);
@@ -208,6 +222,11 @@ final class DerivedQuantityFactory
 
                 continue;
             }
+            if ($formula === 'opening_area' && count($ids) !== 1) {
+                $issues[] = $this->issue('opening_operand_cardinality_invalid', $role);
+
+                continue;
+            }
             foreach ($ids as $id) {
                 if (! is_string($id) || ! isset($facts[$id])) {
                     $issues[] = $this->issue('fact_missing', $role, is_string($id) ? $id : null);
@@ -216,6 +235,11 @@ final class DerivedQuantityFactory
                 }
                 if ($foundation !== null && $facts[$id]->entityId !== $target->id) {
                     $issues[] = $this->issue('entity_scope_mismatch', $role, $id);
+
+                    continue;
+                }
+                if ($formula === 'opening_area' && ($facts[$id]->entityId !== $target->id || FactVocabulary::parameter($facts[$id]->type) !== $role)) {
+                    $issues[] = $this->issue('opening_measurement_incompatible', $role, $id);
 
                     continue;
                 }
@@ -262,6 +286,13 @@ final class DerivedQuantityFactory
         }
         if ($issues !== []) {
             return $this->issues($issues);
+        }
+        if ($formula === 'opening_area') {
+            $openingIssue = $this->validateOpeningGeometry($target, $resolved, $request['geometry_coverages'][0]['member_ids'],
+                $entities, $facts, $evidence, $decisionIndex, $maxGeometryEntities, $maxPhysicalReferences, $maxPhysicalReferenceBytes);
+            if ($openingIssue !== null) {
+                return $this->issues([$openingIssue]);
+            }
         }
 
         $scopeIssue = $this->validateGeometryScope(
@@ -335,6 +366,9 @@ final class DerivedQuantityFactory
             $evidenceIds = [...$evidenceIds, ...$operand['evidence_ids']];
         }
         $evidenceIds = array_values(array_unique($evidenceIds));
+        if ($formula === 'opening_area') {
+            $evidenceIds = [...$evidenceIds, ...$request['snapshot']['opening_scope']['evidence_ids']];
+        }
         if ($quantityBinding instanceof Fact) {
             $evidenceIds = array_values(array_unique([...$evidenceIds, ...$quantityBinding->evidenceIds]));
         }
@@ -866,6 +900,55 @@ final class DerivedQuantityFactory
         return null;
     }
 
+    private function validateOpeningGeometry(Entity $target, array $resolved, array $members, array $entities, array $facts,
+        array $evidence, array $decisions, int $maxEntities, int $maxReferences, int $maxBytes): ?array
+    {
+        if (count($members) > $maxEntities) {
+            return $this->issue('geometry_entity_budget_exceeded', 'opening');
+        }
+        $parent = $entities[$target->attributes['wall_id'] ?? ''] ?? null;
+        if ($parent === null || GeometryInventory::type($parent) !== 'wall') {
+            return $this->issue('entity_scope_mismatch', 'opening');
+        }
+        $byEntity = [];
+        foreach ($facts as $fact) {
+            $parameter = FactVocabulary::parameter($fact->type);
+            if (in_array($parameter, ['width', 'height'], true)) {
+                $byEntity[$fact->entityId][$parameter][] = $fact;
+            }
+        }
+        $registry = ['references' => [], 'count' => 0, 'bytes' => 0];
+        foreach ($members as $id) {
+            $opening = $entities[$id] ?? null;
+            if ($opening === null || ($opening->attributes['wall_id'] ?? null) !== $parent->id) {
+                return $this->issue('entity_scope_mismatch', 'opening');
+            }
+            $operands = [];
+            foreach (['width', 'height'] as $role) {
+                if ($id === $target->id) {
+                    $operands[] = $resolved[$role][0];
+                } else {
+                    $candidates = $byEntity[$id][$role] ?? [];
+                    if (count($candidates) === 1) {
+                        $operand = $this->resolveOperand($candidates[0], $role, $opening, $evidence, $decisions, 'opening_area', 'm2');
+                        if (! isset($operand['issue'])) {
+                            $operands[] = $operand;
+                        }
+                    }
+                }
+            }
+            if ($operands !== []) {
+                $issue = $this->registerPhysicalGeometry($registry, $parent, 'wall_opening', $opening, 'opening', $operands[0]['fact_id'],
+                    $maxReferences, $maxBytes, ...$operands);
+                if ($issue !== null) {
+                    return $issue;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private function registerPhysicalGeometry(
         array &$registry,
         Entity $target,
@@ -1013,6 +1096,7 @@ final class DerivedQuantityFactory
 
         return match ($formula) {
             'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
+            'opening_area' => $this->decimal($resolved['width'][0])->multipliedBy($this->decimal($resolved['height'][0])),
             'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
             'foundation_beam_volume' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0]))
                 ->multipliedBy($this->decimal($resolved['height'][0])),
