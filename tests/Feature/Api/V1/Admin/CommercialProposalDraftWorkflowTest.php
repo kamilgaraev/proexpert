@@ -109,6 +109,43 @@ final class CommercialProposalDraftWorkflowTest extends TestCase
         self::assertNotNull($oldVersion);
         self::assertSame(2.5, (float) json_decode($oldVersion->sections_snapshot, true, 512, JSON_THROW_ON_ERROR)[0]['line_items'][0]['quantity']);
         $this->assertDatabaseHas('commercial_proposals', ['id' => $proposal['id'], 'current_version_id' => $versionId, 'customer_email' => 'proposal@example.invalid', 'crm_deal_id' => $dealId]);
+
+        $previousPreview = $this->withHeaders($context->authHeaders())
+            ->getJson($this->url($proposal['id']).'/preview?version_id='.$proposal['current_version']['id'])
+            ->assertOk()->assertJsonPath('data.version_id', $proposal['current_version']['id']);
+        self::assertStringContainsString('<h1>Учебное коммерческое предложение</h1>', $previousPreview->json('data.html'));
+        self::assertStringNotContainsString('<h1>Редакция 2</h1>', $previousPreview->json('data.html'));
+        $currentPreview = $this->withHeaders($context->authHeaders())->getJson($this->url($proposal['id']).'/preview')
+            ->assertOk()->assertJsonPath('data.version_id', $versionId);
+        self::assertStringContainsString('<h1>Редакция 2</h1>', $currentPreview->json('data.html'));
+    }
+
+    public function test_previous_version_preview_keeps_its_currency_after_the_draft_currency_changes(): void
+    {
+        $context = AdminApiTestContext::create();
+        $dealId = $this->createDeal((int) $context->organization->id);
+        $proposal = $this->createProposal($context, $dealId);
+        $payload = $this->payload($dealId);
+        $payload['title'] = 'Редакция с новой валютой';
+        $payload['line_items'][0]['quantity'] = '3';
+        $next = $this->withHeaders($context->authHeaders())->postJson($this->url($proposal['id']).'/versions', $payload)
+            ->assertCreated()->json('data');
+        $this->withHeaders($context->authHeaders())->patchJson($this->url($proposal['id']), [
+            'title' => $payload['title'], 'currency' => 'USD',
+        ])->assertOk()->assertJsonPath('data.currency', 'USD')
+            ->assertJsonPath('data.current_version.totals.currency', 'USD');
+
+        $previous = $this->withHeaders($context->authHeaders())
+            ->getJson($this->url($proposal['id']).'/preview?version_id='.$proposal['current_version']['id'])
+            ->assertOk()->assertJsonPath('data.version_id', $proposal['current_version']['id']);
+        self::assertStringContainsString('<td>100,00 RUB</td>', $previous->json('data.html'));
+        self::assertStringContainsString('<td>250,00 RUB</td>', $previous->json('data.html'));
+        self::assertStringNotContainsString('USD', $previous->json('data.html'));
+
+        $current = $this->withHeaders($context->authHeaders())->getJson($this->url($proposal['id']).'/preview')
+            ->assertOk()->assertJsonPath('data.version_id', $next['current_version']['id']);
+        self::assertStringContainsString('<td>100,00 USD</td>', $current->json('data.html'));
+        self::assertStringContainsString('<td>300,00 USD</td>', $current->json('data.html'));
     }
 
     public function test_new_version_is_blocked_while_the_current_version_is_being_reviewed(): void
