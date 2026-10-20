@@ -18,7 +18,9 @@ use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Storage\FileService;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Mockery;
@@ -31,10 +33,20 @@ final class FileDownloadUrlWorkflowTest extends TestCase
 
     private array $moduleSlugs = ['file-management'];
 
+    private array $downloadPhases = [];
+
     protected function setUp(): void
     {
         parent::setUp();
         Storage::fake('s3');
+        Event::listen(MessageLogged::class, function (MessageLogged $event): void {
+            if ($event->message === 'api_response_timing' && in_array($event->context['route'] ?? null, [
+                'api/v1/admin/personal-files/{id}/download-url',
+                'api/v1/admin/report-files/{id}/download-url',
+            ], true)) {
+                $this->downloadPhases = $event->context['processing_phases'] ?? [];
+            }
+        });
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
         $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (): array => $this->moduleSlugs);
         $entitlements->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => collect($this->moduleSlugs)->map(static fn (string $slug): Module => new Module(['slug' => $slug])));
@@ -113,6 +125,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
             $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/personal-files/'.$file->id.'/download-url');
             $response->assertOk()->assertJsonPath('data.download_url', 'https://download.example.test/'.$suffix);
             self::assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
+            $this->assertDownloadStoragePhases(false, true);
         }
     }
 
@@ -132,8 +145,10 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/report-files/'.$file->id.'/download-url');
         $response->assertOk()->assertJsonPath('data.download_url', $expected);
         self::assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
+        $this->assertDownloadStoragePhases(true, true);
         Storage::disk('s3')->delete($file->path);
         $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/report-files/'.$file->id.'/download-url')->assertNotFound();
+        $this->assertDownloadStoragePhases(true, false);
     }
 
     public function test_download_url_lookup_rejects_foreign_owners_organizations_and_folders(): void
@@ -194,6 +209,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $downloadUrls = [];
         foreach ($routes as $route) {
             $response = $this->withHeaders($context->authHeaders())->getJson($route)->assertOk();
+            $this->assertDownloadStoragePhases(false, false);
             $url = $response->json('data.download_url');
             self::assertIsString($url);
             self::assertStringStartsWith('/api/v1/admin/ai-assistant/reports/', $url);
@@ -216,6 +232,26 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['expires_at' => now()->subSecond()]);
         foreach ($routes as $route) {
             $this->withHeaders($context->authHeaders())->getJson($route)->assertGone();
+        }
+    }
+
+    private function assertDownloadStoragePhases(bool $exists, bool $url): void
+    {
+        foreach (['file_download_storage_exists' => $exists, 'file_download_temporary_url' => $url] as $name => $expected) {
+            if (! $expected) {
+                self::assertArrayNotHasKey($name, $this->downloadPhases);
+
+                continue;
+            }
+            self::assertArrayHasKey($name, $this->downloadPhases);
+            $phase = $this->downloadPhases[$name];
+            self::assertSame(1, $phase['count']);
+            self::assertSame(0, $phase['sql_count']);
+            foreach ($phase as $key => $value) {
+                self::assertContains($key, ['count', 'total_ms', 'max_ms', 'sql_count', 'sql_total_ms', 'process_cpu_ms']);
+                self::assertTrue(is_int($value) || is_float($value));
+                self::assertGreaterThanOrEqual(0, $value);
+            }
         }
     }
 

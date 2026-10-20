@@ -6,6 +6,7 @@ namespace App\Services\Storage;
 
 use App\Models\PersonalFile;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -306,11 +307,11 @@ final class PersonalFileService
             return $access->urlForPath((string) $file->storage_key, $actor);
         }
 
-        return $this->files->temporaryDownloadUrl(
+        return ApiQueryMetrics::measureProcessingPhase('file_download_temporary_url', fn (): string => $this->files->temporaryDownloadUrl(
             (string) $file->storage_key,
             (int) config('filesystems.s3.download_ttl_seconds', self::DOWNLOAD_TTL_SECONDS),
             $file->original_name,
-        );
+        ));
     }
 
     /** @return Builder<PersonalFile> */
