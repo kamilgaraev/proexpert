@@ -292,10 +292,12 @@ final class OpeningScopeEvaluationPostgresTest extends EstimateGenerationCanonic
         $session->refresh()->update(['draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft))]);
         $search = new \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService(
             $matcher, new \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter);
-        foreach (['', 'ПВХ'] as $query) {
+        foreach (['', 'ПВХ', '09-01-001-01'] as $query) {
             $result = $search->search($session->fresh(), $byWork['openings.windows']['key'], $query);
             self::assertSame([901], array_column($result['candidates'], 'norm_id'));
             self::assertStringStartsWith('Установка стальных остеклённых оконных блоков', $matcher->seen[array_key_last($matcher->seen)]['normative_search_text']);
+            self::assertSame('Установка стальных остеклённых оконных блоков'.($query === '' ? '' : ' '.$query),
+                $matcher->seen[array_key_last($matcher->seen)]['description']);
         }
         self::assertEquals($draft, $this->recalculate($draft, $actor, $session->fresh()));
         $deleted = $draft;

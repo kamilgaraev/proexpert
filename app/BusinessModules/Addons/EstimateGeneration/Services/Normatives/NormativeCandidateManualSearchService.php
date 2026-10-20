@@ -33,7 +33,7 @@ final class NormativeCandidateManualSearchService
             $system = $workItem['metadata']['opening_system']['system'];
             $text = OpeningSystemSpecification::searchText($system);
             $workItem['name'] = $text;
-            $workItem['description'] = $text;
+            $workItem['description'] = $text.($query === '' ? '' : ' '.$query);
             $workItem['normative_search_text'] = $text.($query === '' ? '' : ' '.$query);
             unset($workItem['work_intent'], $workItem['specialization_scenario'], $workItem['specialization_evidence'], $workItem['normative_rate_code']);
             unset($workItem['metadata']['specialization_scenario'], $workItem['metadata']['material_assumption'], $workItem['metadata']['material_scenario_work_key']);
