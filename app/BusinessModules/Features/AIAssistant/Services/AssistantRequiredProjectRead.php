@@ -42,6 +42,12 @@ final readonly class AssistantRequiredProjectRead
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         $operational = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query);
+        if ($operational !== null && isset(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::TOOLS[$operational['name']])
+            && ! array_key_exists('named_project_scope', $plan)
+            && (AssistantNamedProjectReadScope::name($plan) !== null
+                || \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::hasAmbiguousName($query, 'project'))) {
+            return null;
+        }
         if (($operational['name'] ?? null) === 'get_catalog_lookup') {
             $arguments = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantCatalogLookupReader::arguments($query);
             return $arguments === null ? null : ['name' => 'get_catalog_lookup', 'arguments' => $arguments];
@@ -59,7 +65,8 @@ final readonly class AssistantRequiredProjectRead
             && ($scope->projectId !== null || AssistantRequestProjectScope::organizationWide($query))) {
             return ['name' => $operational['name'], 'arguments' => ['project_id' => $scope->projectId]];
         }
-        if ($operational !== null && $scope->projectId !== null) { return ['name' => $operational['name'], 'arguments' => ['project_id' => $scope->projectId]]; }
+        if ($operational !== null && $scope->projectId !== null) { return ['name' => $operational['name'], 'arguments' => $operational['name'] === 'get_project_production_schedule_summary'
+            ? AssistantProductionSchedulePeriod::arguments($scope->projectId, $plan) : ['project_id' => $scope->projectId]]; }
         if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)
             && (! $scope->requested || $scope->projectId !== null)) {
             return ['name' => 'get_document_readiness', 'arguments' => ['project_id' => $scope->requested ? $scope->projectId : null]];

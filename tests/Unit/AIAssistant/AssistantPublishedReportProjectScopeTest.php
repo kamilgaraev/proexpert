@@ -53,6 +53,8 @@ final class AssistantPublishedReportProjectScopeTest extends TestCase
         self::assertSame('Склад на улице Мира, этап 2', AssistantReportEntityQuery::extract(
             'Отчёт по объекту «Склад на улице Мира, этап 2» за октябрь', 'project'));
         self::assertSame('СевГУ', AssistantReportEntityQuery::extract('Отчёт по проекту СевГУ за октябрь', 'project'));
+        self::assertSame('№102', AssistantReportEntityQuery::extract('Сверь выполненные работы с графиком проекта №102.', 'project'));
+        self::assertSame('№102', AssistantReportEntityQuery::extract('Отчёт по проекту №102 за октябрь', 'project'));
         self::assertSame('Учебный ПТО', AssistantReportEntityQuery::extract('Сформируй отчёт о состоянии проекта по проекту «Учебный ПТО»', 'project'));
         self::assertSame('Новый проект на улице Мира', AssistantReportEntityQuery::extract('Отчёт по проекту «Новый проект на улице Мира» за октябрь', 'project'));
         self::assertSame('СевГУ', AssistantReportEntityQuery::extract("Сформируй отчёт о состоянии проекта\nпо проекту «СевГУ»", 'project'));

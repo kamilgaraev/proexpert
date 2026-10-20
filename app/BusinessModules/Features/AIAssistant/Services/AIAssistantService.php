@@ -504,7 +504,31 @@ class AIAssistantService
         $routingQuery = ! $imageDiscussion && ! $conversationNumberRequest
             ? AssistantProjectClarificationIntent::query($query, $requestPayload, $continuationContext)
             : $query;
-        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($routingQuery, $requestPayload, $accessContext));
+        $periodClarification = AssistantProductionSchedulePeriod::clarification($query, $continuationContext);
+        $canonicalPeriodResume = $periodClarification !== null && $routingQuery === $periodClarification['query'];
+        if ($canonicalPeriodResume) {
+            $requestPayload = AssistantProductionSchedulePeriod::resumePayload($requestPayload, $periodClarification);
+        }
+        $planningQuery = ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === []
+            ? AssistantNamedProjectReadScope::planningQuery($routingQuery) : $routingQuery;
+        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($planningQuery, $requestPayload, $accessContext));
+        $taskPlan['request']['message'] = $routingQuery;
+        unset($taskPlan['production_period_override'], $taskPlan['request']['production_period_override']);
+        if ($canonicalPeriodResume
+            && array_key_exists('period_start', $periodClarification) && isset($periodClarification['period_end'])
+            && AssistantProductionSchedulePeriod::validArguments(array_intersect_key($periodClarification, array_flip(['project_id', 'period_start', 'period_end'])))) {
+            $taskPlan['production_period_override'] = $periodClarification + ['message_sha256' => hash('sha256', $routingQuery)];
+            $taskPlan['request']['production_period_override'] = $taskPlan['production_period_override'];
+        }
+        if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && ! ($taskPlan['section_navigation'] ?? false)) {
+            if ($canonicalPeriodResume && AssistantNamedProjectReadScope::name($taskPlan) === null
+                && ! \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::hasAmbiguousName($routingQuery, 'project', preservePrepositions: true)) {
+                unset($taskPlan['named_project_scope']);
+            } else {
+                $taskPlan = AssistantNamedProjectReadScope::bind($taskPlan,
+                    fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+            }
+        }
         $taskPlan['image_discussion'] = $imageDiscussion;
         $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
         $businessDomain = $this->businessDataDomain($taskPlan);
@@ -539,6 +563,11 @@ class AIAssistantService
         $executedAction = null;
 
         $conversationContext = array_merge($conversation->context ?? [], $this->buildLastRequestContext($query, $taskPlan));
+        unset($conversationContext['pending_named_project_clarification'], $conversationContext['pending_production_period']);
+        $needsProjectClarification = array_key_exists('named_project_scope', $taskPlan) && AssistantRequestProjectScope::fromPlan($taskPlan)->projectId === null;
+        if ($needsProjectClarification) {
+            $conversationContext['pending_named_project_clarification'] = ['message' => $query];
+        }
 
         if ($currentIntent) {
             $conversationContext['last_intent'] = $currentIntent;
@@ -555,6 +584,19 @@ class AIAssistantService
 
         $conversation->context = $conversationContext;
         $conversation->save();
+
+        if ($needsProjectClarification) {
+            $this->stage('verifying');
+            $this->executionCheckpoint();
+            $this->recordRequestOutcome('insufficient_data');
+            $answer = trans_message('ai_assistant_production_schedule.project_clarification');
+            $payload = $this->decorateMetadata(array_replace($this->taskOrchestrator->buildPayload($taskPlan, $answer), [
+                'validation_status' => 'unverified', 'needs_clarification' => true, 'source_refs' => [], 'artifacts' => [],
+            ]), $user);
+            $message = $this->conversationManager->addMessage($conversation, 'assistant', $answer, 0, 'system', $payload);
+
+            return $this->agentAskResult($conversation, $message, $answer, $payload, $organizationId, $user);
+        }
 
         if (($taskPlan['section_navigation'] ?? false) && $this->activeEstimateSelection === null
             && empty($conversationContext['selected_estimate']) && empty($conversationContext['selected_estimate_id'])
@@ -1028,7 +1070,15 @@ class AIAssistantService
                 $reader = AssistantRequiredProjectRead::decisionReader((string) ($toolResult['_tool_name'] ?? ''), $query);
                 if ($reader !== null && $proposedActions === []) {
                     $verifiedDecision = $this->readPhase(fn (): ?array => app($reader)->verifiedAnswer($toolResult, $user, $organizationId), $user, $organizationId);
-                    if ($verifiedDecision !== null) { $assistantContent = $verifiedDecision['text']; $structuredCheck = $verifiedDecision; }
+                    if ($verifiedDecision !== null) {
+                        $assistantContent = $verifiedDecision['text']; $structuredCheck = $verifiedDecision;
+                        if (($pendingPeriod = AssistantProductionSchedulePeriod::pending($taskPlan, $verifiedDecision)) !== null) {
+                            $context = $conversation->context ?? [];
+                            $context['pending_production_period'] = $pendingPeriod;
+                            $conversation->context = $context;
+                            $conversation->save();
+                        }
+                    }
                     break;
                 }
                 if (($toolResult['_tool_name'] ?? null) === 'get_project_attention' && $proposedActions === [] && AssistantProjectAttentionIntent::matches($query)) {
@@ -2114,6 +2164,7 @@ class AIAssistantService
     private function isTerminalReadOnlyTool(string $toolName): bool
     {
         return in_array($toolName, [
+            'get_project_production_schedule_summary',
             'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
             'resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
             'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
@@ -2425,6 +2476,7 @@ class AIAssistantService
             }
             $this->progress($progressCode, 'started');
             $pureDatabaseRead = in_array($toolName, [
+                'get_project_production_schedule_summary',
                 'describe_custom_report_source',
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
@@ -2845,8 +2897,10 @@ class AIAssistantService
         $previousRequest = is_array($conversationContext['last_request'] ?? null)
             ? $conversationContext['last_request']
             : [];
+        $isNamedProjectClarification = isset($conversationContext['pending_named_project_clarification'])
+            && AssistantProjectClarificationIntent::query($query, $requestPayload, $conversationContext) !== $query;
 
-        if (! $this->shouldContinuePreviousRequest($query, $requestPayload, $previousCapability, $previousRequest)) {
+        if (! $isNamedProjectClarification && ! $this->shouldContinuePreviousRequest($query, $requestPayload, $previousCapability, $previousRequest)) {
             return $requestPayload;
         }
 
@@ -2854,6 +2908,11 @@ class AIAssistantService
         $isDetailContinuation = $this->isDetailContinuation($query);
         $currentContext = is_array($payload['context'] ?? null) ? $payload['context'] : [];
         $previousContext = is_array($previousRequest['context'] ?? null) ? $previousRequest['context'] : [];
+        if ($isNamedProjectClarification) {
+            foreach (['period', 'filters'] as $key) {
+                if (array_key_exists($key, $previousContext)) { $currentContext[$key] = $previousContext[$key]; }
+            }
+        }
 
         if ($this->isGenericAssistantSource($currentContext['source_module'] ?? null)) {
             $currentContext['source_module'] = $previousContext['source_module'] ?? $previousCapability;
@@ -2873,7 +2932,14 @@ class AIAssistantService
             $currentContext['period'] = trim($query);
         }
 
-        if (empty($currentContext['entity_refs']) && ! empty($previousContext['entity_refs'])) {
+        if ($isDetailContinuation && $this->hasOnlyBackgroundContinuationReferences($currentContext)) {
+            foreach (['entity_refs', 'entity_references'] as $key) {
+                unset($currentContext[$key]);
+                if (array_key_exists($key, $previousContext)) {
+                    $currentContext[$key] = $previousContext[$key];
+                }
+            }
+        } elseif (empty($currentContext['entity_refs']) && ! empty($previousContext['entity_refs'])) {
             $currentContext['entity_refs'] = $previousContext['entity_refs'];
         }
 
@@ -2914,16 +2980,62 @@ class AIAssistantService
         return $payload;
     }
 
+    private function hasOnlyBackgroundContinuationReferences(array $context): bool
+    {
+        foreach (['entity_refs', 'entity_references'] as $key) {
+            $references = $context[$key] ?? [];
+            if (! is_array($references)) {
+                return false;
+            }
+            $normalized = [];
+            foreach ($references as $reference) {
+                if (is_array($reference) && ! isset($reference['type'], $reference['id']) && isset($reference['entity_type'], $reference['entity_id'])) {
+                    $reference['type'] = $reference['entity_type'];
+                    $reference['id'] = $reference['entity_id'];
+                    unset($reference['entity_type'], $reference['entity_id']);
+                }
+                $normalized[] = $reference;
+            }
+            if (! AssistantRequestUnderstandingResolver::hasOnlyBackgroundProjectReferences(['entity_refs' => $normalized])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     protected function buildLastRequestContext(string $query, array $taskPlan): array
     {
         $capabilityId = $taskPlan['capability']['id'] ?? null;
+        $savedRequest = $taskPlan['request'];
+        if (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader::matches((string) ($savedRequest['message'] ?? ''))) {
+            $read = AssistantRequiredProjectRead::fromPlan($taskPlan);
+            $arguments = $read['arguments'] ?? [];
+            if (($read['name'] ?? null) === 'get_project_production_schedule_summary'
+                && array_key_exists('period_start', $arguments) && isset($arguments['period_end'])
+                && AssistantProductionSchedulePeriod::validArguments($arguments)) {
+                $savedRequest['production_period_override'] = $arguments + ['message_sha256' => hash('sha256', $savedRequest['message'])];
+            }
+        }
+        if (array_key_exists('named_project_scope', $taskPlan)) {
+            $projectId = AssistantRequestProjectScope::fromPlan($taskPlan)->projectId;
+            foreach (['entity_refs', 'entity_references'] as $key) {
+                $savedRequest['context'][$key] = array_values(array_filter(
+                    is_array($savedRequest['context'][$key] ?? null) ? $savedRequest['context'][$key] : [],
+                    static fn (mixed $ref): bool => is_array($ref) && ($ref['entity_type'] ?? $ref['type'] ?? null) !== 'project'
+                ));
+            }
+            if ($projectId !== null) {
+                $savedRequest['context']['entity_refs'][] = ['type' => 'project', 'id' => $projectId];
+            }
+        }
 
         return [
             'last_task_type' => $taskPlan['task_type'],
             'last_capability' => $capabilityId,
             'last_image_discussion' => (bool) ($taskPlan['image_discussion'] ?? false),
-            'last_request' => $taskPlan['request'],
-            'last_request_context' => $taskPlan['request']['context'],
+            'last_request' => $savedRequest,
+            'last_request_context' => $savedRequest['context'],
             'last_access_context' => $taskPlan['access_context_public'],
             'last_report_focus' => $this->resolveReportFocus($query, $capabilityId, $taskPlan['request']['context'] ?? []),
         ];
@@ -2973,53 +3085,7 @@ class AIAssistantService
 
     private function isDetailContinuation(string $query): bool
     {
-        $normalized = $this->normalizeText(mb_strtolower($query));
-        if ($normalized === '' || mb_strlen($normalized) > 160) {
-            return false;
-        }
-
-        $normalized = preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $normalized) ?? $normalized;
-        $normalized = $this->normalizeText($normalized);
-
-        if ($normalized === '') {
-            return false;
-        }
-
-        $exactPhrases = [
-            'надо по деньгам',
-            'по деньгам',
-            'точнее',
-            'давай конкретнее а не около',
-            'какие это позиции по смете',
-            'какие позиции',
-            'а подробнее',
-            'давай детальнее',
-            'давай подробнее',
-            'детальнее',
-            'можно детальнее',
-            'можно подробнее',
-            'покажи детали',
-            'подробнее',
-            'подробней',
-            'поясни',
-            'распиши',
-            'расскажи детальнее',
-            'расскажи подробнее',
-            'расшифруй',
-            'разверни',
-            'что именно',
-            'еще подробнее',
-            'ещё подробнее',
-        ];
-
-        if (in_array($normalized, $exactPhrases, true)) {
-            return true;
-        }
-
-        return preg_match(
-            '/^(?:а\s+)?(?:(?:давай|можно|расскажи|покажи)\s+)?(?:(?:еще|ещё|чуть|более)\s+)?(?:подробнее|подробней|детальнее|поясни|распиши|расшифруй|разверни|детали)(?:\s+(?:это|его|её|ее|их|тут|там|здесь|об\s+этом|в\s+этом|на\s+этом|по\s+(?:этому|нему|ней|ним|этому\s+вопросу|этим\s+данным|этой\s+части|этому\s+пункту)))?$/u',
-            $normalized
-        ) === 1;
+        return AssistantDetailContinuationIntent::matches($query);
     }
 
     private function buildContinuationSearchQuery(string $query, array $previousRequest, array $conversationContext): string
@@ -4118,12 +4184,16 @@ class AIAssistantService
 
     protected function readFreshProjectSearch(string $name, User $actor, int $organizationId): array|string|null
     {
+        return $this->readFreshProjectSearchArguments(['query' => $name, 'limit' => 1], $actor, $organizationId);
+    }
+
+    protected function readFreshProjectSearchArguments(array $arguments, User $actor, int $organizationId): array|string|null
+    {
         if ($this->dataAccess === null) {
             return null;
         }
         try {
-            return $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($name, $actor, $organizationId): array|string|null {
-                $arguments = ['query' => $name, 'limit' => 1];
+            return $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($arguments, $actor, $organizationId): array|string|null {
                 $tool = $this->toolRegistry->getTool('search_projects');
                 if (! $tool instanceof \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool
                     || ! $this->permissionChecker->canExecuteTool($actor, 'search_projects', $arguments)) {
@@ -4359,6 +4429,7 @@ class AIAssistantService
     protected function humanizeToolName(string $toolName): string
     {
         return match ($toolName) {
+            'get_project_production_schedule_summary' => trans_message('ai_assistant_production_schedule.label'),
             'check_published_report_readiness' => trans_message('ai_published_reports.check_label'),
             'generate_published_report' => trans_message('ai_published_reports.generate_label'),
             'describe_published_reports' => trans_message('ai_published_reports.catalog_label'),

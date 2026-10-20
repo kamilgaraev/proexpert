@@ -220,6 +220,9 @@ class AIPermissionChecker
         if ($toolName === 'get_project_material_stock' && ! $policy->canCurrentPermission($user, $organizationId, 'warehouse.manage_stock')) {
             return false;
         }
+        if ($toolName === 'get_project_production_schedule_summary' && ! $policy->canCurrentPermission($user, $organizationId, 'contracts.completed_works.view')) {
+            return false;
+        }
         if ($toolName === 'get_bim_model_elements') {
             return $policy->canReadDomain($user, $organizationId, 'design')
                 && $policy->canCurrentPermission($user, $organizationId, 'design-management.models.view');
@@ -366,6 +369,7 @@ class AIPermissionChecker
             'get_project_proposal_readiness' => ['projects', 'commercial_processes'],
             'get_project_executive_readiness' => ['projects', 'documents'],
             'get_project_production_readiness' => ['projects', 'production_labor'],
+            'get_project_production_schedule_summary' => ['projects', 'schedule'],
             'get_project_crm_readiness' => ['projects', 'crm'],
             'get_project_report_catalog', 'get_project_export_history', 'get_project_report_delivery_summary' => ['projects'],
             'get_project_camera_roster' => ['projects', 'video_monitoring'],

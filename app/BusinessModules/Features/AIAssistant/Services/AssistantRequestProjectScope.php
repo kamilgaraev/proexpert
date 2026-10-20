@@ -11,6 +11,13 @@ final readonly class AssistantRequestProjectScope
     public static function fromPlan(array $plan): self
     {
         $question = (string) ($plan['request']['message'] ?? '');
+        if (array_key_exists('named_project_scope', $plan)) {
+            $named = $plan['named_project_scope'];
+            $valid = is_array($named) && is_string($named['message_sha256'] ?? null)
+                && hash_equals(hash('sha256', $question), $named['message_sha256']);
+
+            return new self(true, $valid ? self::positiveId($named['project_id'] ?? null) : null);
+        }
         $organizationWide = self::organizationWide($question);
         $requested = ! $organizationWide && preg_match('/(?<![\pL\pN])(?:(?:текущ|выбран|эт|данн)[а-яё]*|наш(?:его|ему|ем|им)?)\s+(?:проект|объект)[а-яё]*(?![\pL\pN])/iu', $question) === 1;
         $context = is_array($plan['request']['context'] ?? null) ? $plan['request']['context'] : [];
@@ -32,6 +39,7 @@ final readonly class AssistantRequestProjectScope
 
     public static function organizationWide(string $question): bool
     {
+        $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $scope = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект)|всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац)';
 
         return preg_match('/(?<![\pL\pN])'.$scope.'/iu', $question) === 1

@@ -15,7 +15,7 @@ final readonly class AssistantProjectMaterialRequestReader extends AssistantProj
             && preg_match('/техник|оборудован|персонал|запрос[а-яё]*\s+информац|сообщен[а-яё]*\s+о\s+проблем|(?:и|или)\s+(?:на\s+)?информац/iu', $query) !== 1;
     }
 
-    public static function hasIntent(string $query): bool { return preg_match('/заявк[а-яё]*\s+(?:на|по)\s+материал/iu', $query) === 1; }
+    public static function hasIntent(string $query): bool { return preg_match('/'.self::REQUEST_NOUN.'\s+(?:на|по)\s+материал/iu', $query) === 1; }
 
     public static function intentQuery(string $query): string
     {
