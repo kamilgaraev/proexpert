@@ -15,6 +15,7 @@ use App\Models\Organization;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -184,6 +185,42 @@ final class CrmActivityControllerWorkflowTest extends TestCase
         $this->assertNextDate($source, null);
         $this->assertNextDate($target, null);
         self::assertTrue(CrmActivity::withTrashed()->findOrFail($id)->trashed());
+    }
+
+    public function test_creating_activity_does_not_wait_for_another_inserts_foreign_key_lock(): void
+    {
+        $context = AdminApiTestContext::create();
+        $deal = $this->deal((int) $context->organization->id, 'Concurrent foreign key check');
+        $primary = DB::connection();
+        self::assertSame(1, $primary->transactionLevel());
+        $primary->commit();
+        $primary->beginTransaction();
+        $peerName = 'crm_activity_lock_peer';
+        config(["database.connections.{$peerName}" => $primary->getConfig()]);
+        DB::purge($peerName);
+        $peer = DB::connection($peerName);
+
+        try {
+            self::assertNotSame($primary->getPdo(), $peer->getPdo());
+            $peer->beginTransaction();
+            $peer->table('crm_activities')->insert([
+                'id' => (string) Str::uuid(), 'organization_id' => $deal->organization_id,
+                'deal_id' => $deal->id, 'type' => 'note', 'subject' => 'Uncommitted peer activity',
+                'status' => 'planned', 'due_at' => '2026-11-01 09:00:00',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $primary->statement("SET LOCAL lock_timeout = '500ms'");
+
+            $this->postActivity($context, $deal, 'Concurrent request', '2026-11-03T09:00:00Z');
+
+            $this->assertNextDate($deal, '2026-11-03 09:00:00');
+            self::assertSame(1, CrmActivity::query()->where('deal_id', $deal->id)->count());
+        } finally {
+            $peer->rollBack();
+            DB::purge($peerName);
+            $primary->rollBack();
+            $primary->beginTransaction();
+        }
     }
 
     private function postActivity(AdminApiTestContext $context, CrmDeal $deal, string $subject, ?string $dueAt): string

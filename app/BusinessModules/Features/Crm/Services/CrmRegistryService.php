@@ -560,7 +560,7 @@ final class CrmRegistryService
 
         DB::transaction(function () use ($organizationId, $dealIds): void {
             $deals = CrmDeal::withTrashed()->forOrganization($organizationId)
-                ->whereIn('id', $dealIds)->orderBy('id')->lockForUpdate()->get();
+                ->whereIn('id', $dealIds)->orderBy('id')->lock('for no key update')->get();
 
             foreach ($deals as $deal) {
                 $nextDate = CrmActivity::query()->forOrganization($organizationId)
