@@ -44,6 +44,11 @@ final class CrmLead extends CrmModel
         'converted_at' => 'datetime',
     ];
 
+    public function hasBeenConverted(): bool
+    {
+        return $this->status === 'converted' || $this->converted_deal_id !== null || $this->converted_at !== null;
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(CrmCompany::class, 'company_id');
