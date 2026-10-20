@@ -309,7 +309,8 @@ final readonly class SaveManualProjectFacts
             }
             $preview = $this->quantities->previewInput(...$scope);
             $result = ['request_id' => $requestId, 'state_version' => $expectedVersion + 1, 'fact_ids' => array_column($facts, 'id'),
-                'quantities' => array_map(static fn ($quantity): array => $quantity->toArray(), $preview['quantities']), 'warnings' => $preview['warnings'], 'cost_units' => '0'];
+                'quantities' => array_map(static fn ($quantity): array => $quantity->toArray(), $preview['quantities']), 'warnings' => $preview['warnings'],
+                'recalculation_required' => ($session->draft_payload ?? []) !== [], 'cost_units' => '0'];
             $receipts[$requestId] = ['fingerprint' => $fingerprint, 'actor_id' => (int) $actor->id, 'input' => $input, 'result' => $result];
             $payload['manual_fact_receipts'] = $receipts;
             $payload['manual_input_revision'] = ($payload['manual_input_revision'] ?? 0) + 1;

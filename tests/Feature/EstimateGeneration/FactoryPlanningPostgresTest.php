@@ -17,7 +17,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManua
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationFactoryController;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -39,6 +41,42 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     private int $outboundBefore = 0;
+
+    public function test_materialization_source_overflow_finishes_once_without_draft_evidence_state_or_paid_changes(): void
+    {
+        [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1]);
+        $text = str_repeat('x', EloquentGenerationPipelineDataGateway::MAX_SOURCE_BYTES + 1);
+        EstimateGenerationDocument::query()->create([
+            'organization_id' => $session->organization_id, 'project_id' => $session->project_id,
+            'session_id' => $session->id, 'user_id' => $actor->id, 'filename' => 'oversized.pdf',
+            'mime_type' => 'application/pdf', 'status' => 'ready', 'quality_level' => 'good',
+            'checksum_sha256' => hash('sha256', $text), 'source_version' => 'sha256:'.hash('sha256', $text),
+            'extracted_text' => $text,
+            'facts_summary' => ['document_understanding' => ['role_for_estimation' => 'quantity_source']],
+        ]);
+        $this->withToken(auth('api_admin')->login($actor));
+        $planning = $this->postJson($prefix.'/planning', ['request_id' => (string) Str::uuid(), 'state_version' => 1,
+            'source_checkpoint_id' => $source['checkpoint']['id']])->assertOk()->json('data');
+        self::assertTrue($planning['fresh']);
+        $before = $session->fresh()->getRawOriginal();
+        $evidence = DB::table('estimate_generation_evidence')->where('session_id', $session->id)->count();
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => 2, 'source_checkpoint_id' => $planning['checkpoint']['id']];
+        $result = $this->postJson($prefix.'/materialize', $input)->assertOk()->json('data');
+        self::assertSame('unavailable', $result['checkpoint']['status']);
+        self::assertSame(['input_budget_exceeded'], $result['checkpoint']['result']['limitations']);
+        self::assertNull($result['checkpoint']['result']['draft_refs']);
+        self::assertSame(2, $result['checkpoint']['result']['result_state_version']);
+        self::assertSame(3, $result['run']['step_count']);
+        self::assertFalse($result['fresh']);
+        self::assertFalse($result['paid_actions_enabled']);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        self::assertSame($evidence, DB::table('estimate_generation_evidence')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        $this->postJson($prefix.'/materialize', $input)->assertOk()->assertJsonPath('data', $result);
+        self::assertSame(1, DB::table('estimate_generation_factory_checkpoints')->where('id', $result['checkpoint']['id'])->value('attempt_count'));
+        $this->assertNoPaidCalls($session);
+    }
 
     public function test_free_materialization_creates_the_first_sealed_draft_and_replays_without_paid_attempts_or_duplicate_revision(): void
     {
@@ -70,6 +108,8 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
         });
         $result = $this->postJson($prefix.'/materialize', $input)->assertOk()->assertHeader('Cache-Control', 'no-store, private')->json('data');
         self::assertSame(3, $result['state_version']);
+        self::assertSame(1048576, $result['processing_limits']['maximum_input_bytes']);
+        self::assertSame(strlen(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($session->fresh()->input_payload)), $result['processing_limits']['input_bytes']);
         self::assertSame('materialize_draft', $result['checkpoint']['result']['step']);
         self::assertSame('draft_materialized', $result['checkpoint']['status']);
         self::assertSame(3, $result['run']['step_count']);
@@ -116,6 +156,12 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
         self::assertSame($revisionCount, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
         self::assertSame($before['qa_run_id'], $session->fresh()->input_payload['qa_run_id']);
         self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+        $saved = app(SaveManualProjectFacts::class)->handle($actor, $session->project_id, $session->id, 3, (string) Str::uuid(), ['entities' => [[
+            'key' => 'beam', 'type' => 'foundation_beam', 'parameters' => [
+                'height' => ['value' => '0.4', 'unit' => 'm', 'basis' => 'assumption'],
+            ],
+        ]]]);
+        self::assertTrue($saved['recalculation_required']);
         $this->assertNoPaidCalls($session);
     }
 
@@ -377,13 +423,14 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
                 'evaluation_mode' => 'universal', 'selected_sections' => ['structures'],
                 'qa_run_id' => '5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', 'qa_limit_units' => 500,
             ], $inputOverrides)]);
-        app(SaveManualProjectFacts::class)->handle($actor, $project->id, $session->id, 0, (string) Str::uuid(), ['entities' => [[
+        $saved = app(SaveManualProjectFacts::class)->handle($actor, $project->id, $session->id, 0, (string) Str::uuid(), ['entities' => [[
             'key' => 'beam', 'type' => 'foundation_beam', 'parameters' => [
                 'length' => ['value' => '10', 'unit' => 'm', 'basis' => 'measurement'],
                 'width' => ['value' => '250', 'unit' => 'mm', 'basis' => 'measurement'],
                 'height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'assumption'],
             ],
         ], ...$extraEntities]]);
+        self::assertFalse($saved['recalculation_required']);
         $source = app(InspectFactoryInputs::class)->handle($actor, $project->id, $session->id, 1, (string) Str::uuid());
         self::assertSame('planning_required', $source['checkpoint']['status']);
         $this->outboundBefore = count(Http::recorded());

@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageException;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Connection;
@@ -272,7 +273,25 @@ final readonly class FactoryInspectionStore
                 || ! hash_equals($capture['model_token'], $claim->modelToken)) {
                 throw new StaleEstimateGenerationState((int) $session->id, (int) $checkpoint->expected_state_version);
             }
-            $built = ($this->drafts ?? app(FactoryDraftBuilder::class))->build($session, $capture);
+            try {
+                $built = $this->database->transaction(fn (): array => ($this->drafts ?? app(FactoryDraftBuilder::class))->build($session, $capture));
+            } catch (PipelineStageException $exception) {
+                if ($exception->safeCode !== 'pipeline_source_too_large') {
+                    throw $exception;
+                }
+                $session->refresh();
+                if ((int) $session->state_version !== (int) $checkpoint->expected_state_version
+                    || ! $this->checkpoints($session)->where('id', $claim->checkpointId)->where('run_id', $claim->runId)
+                        ->where('status', 'running')->where('owner_token', $claim->ownerToken)->where('attempt_count', $claim->attempt)
+                        ->where('lease_expires_at', '>', CarbonImmutable::now())->exists()
+                    || ! $this->runs($session)->where('id', $claim->runId)->where('step_count', $checkpoint->step_number)->exists()) {
+                    throw new StaleEstimateGenerationState((int) $session->id, (int) $checkpoint->expected_state_version);
+                }
+                $this->finish($session, $checkpoint->id, FactoryDraftBuilder::stop('unavailable', $claim->sourceCheckpointId,
+                    (int) $session->state_version, ['input_budget_exceeded']), CarbonImmutable::now());
+
+                return;
+            }
             $draft = $built['draft'];
             if (($draft['evaluation_rows_count'] ?? 0) < 1) {
                 throw ValidationException::withMessages(['draft' => trans_message('estimate_generation.factory.draft_empty')]);
@@ -384,6 +403,8 @@ final readonly class FactoryInspectionStore
             default => self::POLICY,
         },
             'session_id' => (int) $session->id, 'state_version' => (int) $session->state_version,
+            'processing_limits' => ['input_bytes' => strlen(CanonicalPipelineJson::encode($session->input_payload ?? [])),
+                'maximum_input_bytes' => FactoryInspectionInput::MAX_INPUT_BYTES],
             'run' => $run === null ? null : ['id' => $run->id, 'policy_version' => $run->policy_version,
                 'step_count' => (int) $run->step_count, 'max_steps' => self::MAX_STEPS],
             'checkpoint' => $checkpoint === null ? null : ['id' => $checkpoint->id, 'request_id' => $checkpoint->request_id,
