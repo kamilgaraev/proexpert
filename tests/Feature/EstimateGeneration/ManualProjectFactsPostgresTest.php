@@ -24,6 +24,58 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_http_wall_batch_allows_shared_surface_names_but_rejects_duplicates_within_one_wall(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake();
+        config(['estimate-generation.universal_enabled' => true, 'jwt.secret' => str_repeat('test-key', 8), 'jwt.blacklist_enabled' => false]);
+        [$actor, $session] = $this->fixture();
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures', 'finishing']]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => array_map(
+            fn (string $key): array => [...$this->entity('wall', $key, ['length' => '5', 'height' => '3', 'thickness' => '0.14']),
+                'coverage' => ['wall_openings' => 'covered_empty']], ['wall-1', 'wall-2'])]);
+        $project = Project::query()->findOrFail($session->project_id);
+        app(AuthorizationService::class)->allows('can')->with(Mockery::type(User::class), 'estimate_generation.review',
+            Mockery::on(static fn (array $context): bool => $context['project_id'] === (int) $project->id && is_int($context['organization_id'])))
+            ->andReturnTrue();
+        Route::bind('project', static fn (): Project => $project);
+        Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
+        $route = '/_contract/wall-batch/projects/{project}/sessions/{session}/initial-facts';
+        Route::post($route, [EstimateGenerationManualFactsController::class, 'store'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        $url = str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route);
+        $this->withToken(auth('api_admin')->login($actor));
+        $outboundBeforeWrites = count(Http::recorded());
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $input = ['state_version' => 1, 'request_id' => (string) Str::uuid(), 'entities' => array_map(static fn ($wall): array => [
+            'key' => 'assembly-'.$wall->id, 'type' => 'wall', 'existing_entity_id' => $wall->id,
+            'wall_assembly' => ['role' => 'external', 'finished_surfaces' => ['inside', 'outside'],
+                'entity_fingerprint' => \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::entityFingerprint($wall, []),
+                'reason' => 'Для предварительной сметы выбраны наружная стена и обе стороны отделки'],
+        ], $snapshot->entities)];
+        $result = $this->postJson($url, $input)->assertOk()->assertJsonPath('data.cost_units', '0')->json('data');
+        self::assertSame(2, $result['state_version']);
+        $replay = $this->postJson($url, $input)->assertOk()->json('data');
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($replay));
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $scopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallEstimateScope::select($snapshot, $decisions, []);
+        self::assertCount(2, $scopes);
+        foreach ($scopes as $selected) {
+            self::assertSame(['inside', 'outside'], $selected['finished_surfaces']);
+        }
+        $assertions = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
+        $invalid = [...$input, 'state_version' => 2, 'request_id' => (string) Str::uuid()];
+        $invalid['entities'][1]['wall_assembly']['finished_surfaces'] = ['inside', 'inside'];
+        $this->postJson($url, $invalid)->assertUnprocessable();
+        self::assertSame(2, $session->fresh()->state_version);
+        self::assertSame($assertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($outboundBeforeWrites, count(Http::recorded()));
+    }
+
     public function test_native_question_limits_are_explicit_and_never_trim_facts_or_decisions_to_enable_answers(): void
     {
         [$actor, $session] = $this->fixture();

@@ -25,7 +25,7 @@ final class SaveManualProjectFactsRequest extends FormRequest
             'entities.*.wall_assembly' => ['sometimes', 'required', 'array:role,finished_surfaces,entity_fingerprint,reason'],
             'entities.*.wall_assembly.role' => ['required_with:entities.*.wall_assembly', 'in:external,partition'],
             'entities.*.wall_assembly.finished_surfaces' => ['present_with:entities.*.wall_assembly', 'array', 'max:2'],
-            'entities.*.wall_assembly.finished_surfaces.*' => ['required', 'distinct', 'in:inside,outside,side_a,side_b'],
+            'entities.*.wall_assembly.finished_surfaces.*' => ['required', 'in:inside,outside,side_a,side_b'],
             'entities.*.wall_assembly.entity_fingerprint' => ['required_with:entities.*.wall_assembly', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
             'entities.*.wall_assembly.reason' => ['required_with:entities.*.wall_assembly', 'string', 'max:1000'],
             'entities.*.native_question' => ['sometimes', 'required', 'array:key,version,input_fingerprint,entity_source_version'],
