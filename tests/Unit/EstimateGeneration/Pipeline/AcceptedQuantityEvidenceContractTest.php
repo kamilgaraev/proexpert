@@ -15,6 +15,7 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
     {
         $root = dirname(__DIR__, 4);
         $stage = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/Stages/PlanWorkItemsStage.php');
+        $binder = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Quantities/CanonicalWorkItemQuantityBinder.php');
 
         self::assertStringContainsString('AcceptedQuantityEvidenceMaterializer', $stage);
         self::assertStringNotContainsString('quantity_evidence_descriptor', $stage);
@@ -22,9 +23,10 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
         self::assertStringContainsString('WorkItemQuantityResolver', $stage);
         self::assertStringContainsString("'input_snapshot_hash' => \$stage6Context['input_snapshot_hash'] ?? null", $stage);
         self::assertStringContainsString("'source_version' => \$stage6Context['source_version'] ?? null", $stage);
-        self::assertStringContainsString('->resolve($workItem, $quantities, $generationIdentity)', $stage);
+        self::assertStringContainsString('CanonicalWorkItemQuantityBinder', $stage);
+        self::assertStringContainsString('->resolve($workItem, $quantities, $generationIdentity)', $binder);
         self::assertStringContainsString("'quantity_evidence'", $stage);
-        self::assertStringContainsString("'quantity_mapping_missing'", $stage);
+        self::assertStringContainsString("'quantity_mapping_missing'", $binder);
         self::assertFileExists($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/AcceptedQuantityEvidenceMaterializer.php');
     }
 
