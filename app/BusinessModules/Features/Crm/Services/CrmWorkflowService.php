@@ -26,29 +26,31 @@ final class CrmWorkflowService
 
     public function qualifyLead(int $organizationId, string $leadId, ?int $actorUserId): CrmLead
     {
-        $lead = $this->registry->findLead($organizationId, $leadId);
+        return DB::transaction(function () use ($organizationId, $leadId, $actorUserId): CrmLead {
+            $lead = $this->registry->findLead($organizationId, $leadId, lockForMutation: true);
 
-        if ($lead->status === 'converted') {
-            throw ValidationException::withMessages([
-                'status' => trans_message('crm.leads.already_converted'),
+            if ($lead->hasBeenConverted()) {
+                throw ValidationException::withMessages([
+                    'status' => trans_message('crm.leads.already_converted'),
+                ]);
+            }
+
+            $lead->update([
+                'status' => 'qualified',
+                'updated_by_user_id' => $actorUserId,
             ]);
-        }
+            $this->timeline->record($organizationId, 'leads', $lead->id, 'qualified', trans_message('crm.timeline.lead_qualified'), $actorUserId);
 
-        $lead->update([
-            'status' => 'qualified',
-            'updated_by_user_id' => $actorUserId,
-        ]);
-        $this->timeline->record($organizationId, 'leads', $lead->id, 'qualified', trans_message('crm.timeline.lead_qualified'), $actorUserId);
-
-        return $this->registry->findLead($organizationId, $lead->id);
+            return $this->registry->findLead($organizationId, $lead->id);
+        });
     }
 
     public function convertLead(int $organizationId, string $leadId, array $data, ?int $actorUserId, ?User $actor = null): array
     {
         return DB::transaction(function () use ($organizationId, $leadId, $data, $actorUserId, $actor): array {
-            $lead = $this->registry->findLead($organizationId, $leadId);
+            $lead = $this->registry->findLead($organizationId, $leadId, lockForMutation: true);
 
-            if ($lead->status === 'converted' || $lead->converted_deal_id !== null) {
+            if ($lead->hasBeenConverted()) {
                 throw ValidationException::withMessages([
                     'lead' => trans_message('crm.leads.already_converted'),
                 ]);

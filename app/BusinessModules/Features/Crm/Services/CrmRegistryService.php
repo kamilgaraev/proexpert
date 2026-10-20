@@ -395,9 +395,14 @@ final class CrmRegistryService
         return $this->contactQuery($organizationId, $withTrashed)->findOrFail($id);
     }
 
-    public function findLead(int $organizationId, string $id, bool $withTrashed = true): CrmLead
+    public function findLead(int $organizationId, string $id, bool $withTrashed = true, bool $lockForMutation = false): CrmLead
     {
-        return $this->leadQuery($organizationId, $withTrashed)->findOrFail($id);
+        $query = $this->leadQuery($organizationId, $withTrashed);
+        if ($lockForMutation) {
+            $query->lock('for no key update');
+        }
+
+        return $query->findOrFail($id);
     }
 
     public function findDeal(int $organizationId, string $id, bool $withTrashed = true): CrmDeal
@@ -470,6 +475,7 @@ final class CrmRegistryService
     public function createLead(int $organizationId, array $data, ?int $actorUserId): CrmLead
     {
         return DB::transaction(function () use ($organizationId, $data, $actorUserId): CrmLead {
+            $this->validateLeadConversionStatus(null, $data);
             $this->validateLeadReferences($organizationId, $data);
             $lead = CrmLead::query()->create($this->leadAttributes($organizationId, $data, $actorUserId));
             $this->timeline->record($organizationId, 'leads', $lead->id, 'created', trans_message('crm.timeline.lead_created'), $actorUserId);
@@ -481,7 +487,8 @@ final class CrmRegistryService
     public function updateLead(int $organizationId, string $id, array $data, ?int $actorUserId): CrmLead
     {
         return DB::transaction(function () use ($organizationId, $id, $data, $actorUserId): CrmLead {
-            $lead = $this->findLead($organizationId, $id);
+            $lead = $this->findLead($organizationId, $id, lockForMutation: true);
+            $this->validateLeadConversionStatus($lead, $data);
             $this->validateLeadReferences($organizationId, $data, false);
             $lead->update($this->leadAttributes($organizationId, $data, $actorUserId, false));
             $this->timeline->record($organizationId, 'leads', $lead->id, 'updated', trans_message('crm.timeline.lead_updated'), $actorUserId);
@@ -579,6 +586,9 @@ final class CrmRegistryService
             if ($model instanceof CrmActivity) {
                 $model = $this->findActivity((int) $model->organization_id, $model->id, lockForUpdate: true);
             }
+            if ($model instanceof CrmLead) {
+                $model = $this->findLead((int) $model->organization_id, $model->id, lockForMutation: true);
+            }
             $model->update([
                 'status' => 'archived',
                 'updated_by_user_id' => $actorUserId,
@@ -591,7 +601,7 @@ final class CrmRegistryService
             return $model->refresh();
         };
 
-        return $model instanceof CrmActivity ? DB::transaction($operation) : $operation();
+        return $model instanceof CrmActivity || $model instanceof CrmLead ? DB::transaction($operation) : $operation();
     }
 
     public function restore(Model $model, ?int $actorUserId): Model
@@ -600,6 +610,9 @@ final class CrmRegistryService
             if ($model instanceof CrmActivity) {
                 $model = $this->findActivity((int) $model->organization_id, $model->id, lockForUpdate: true);
             }
+            if ($model instanceof CrmLead) {
+                $model = $this->findLead((int) $model->organization_id, $model->id, lockForMutation: true);
+            }
             if (method_exists($model, 'restore')) {
                 $model->restore();
             }
@@ -607,7 +620,7 @@ final class CrmRegistryService
             $status = match (true) {
                 $model instanceof CrmDeal => 'open',
                 $model instanceof CrmActivity => 'planned',
-                $model instanceof CrmLead => 'new',
+                $model instanceof CrmLead => $model->hasBeenConverted() ? 'converted' : 'new',
                 default => 'active',
             };
 
@@ -622,7 +635,7 @@ final class CrmRegistryService
             return $model->refresh();
         };
 
-        return $model instanceof CrmActivity ? DB::transaction($operation) : $operation();
+        return $model instanceof CrmActivity || $model instanceof CrmLead ? DB::transaction($operation) : $operation();
     }
 
     private function companyQuery(int $organizationId, bool $withTrashed): Builder
@@ -754,6 +767,21 @@ final class CrmRegistryService
         }
 
         return $attributes;
+    }
+
+    private function validateLeadConversionStatus(?CrmLead $lead, array $data): void
+    {
+        if (!array_key_exists('status', $data)) {
+            return;
+        }
+
+        if ($lead?->hasBeenConverted()) {
+            if ($data['status'] !== 'converted') {
+                throw ValidationException::withMessages(['status' => trans_message('crm.leads.already_converted')]);
+            }
+        } elseif ($data['status'] === 'converted') {
+            throw ValidationException::withMessages(['status' => trans_message('crm.leads.conversion_action_required')]);
+        }
     }
 
     private function leadAttributes(int $organizationId, array $data, ?int $actorUserId, bool $creating = true): array
