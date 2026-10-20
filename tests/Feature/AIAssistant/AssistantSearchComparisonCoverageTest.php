@@ -80,6 +80,30 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         parent::tearDown();
     }
 
+    public static function nominativeProjectQuestions(): array
+    {
+        return [['Покажи все проекты организации'], ['Все объекты организации']];
+    }
+
+    #[DataProvider('nominativeProjectQuestions')]
+    public function test_nominative_project_list_clears_model_ui_scope_with_real_project_access(string $question): void
+    {
+        Model::withoutEvents(fn () => Project::factory()->create([
+            'organization_id' => $this->fixture->organization->id, 'is_archived' => false,
+        ]));
+        Model::withoutEvents(fn () => Project::factory()->create([
+            'organization_id' => $this->fixture->foreignOrganization->id, 'is_archived' => false,
+        ]));
+        $arguments = array_replace($this->arguments($this->project->id), [
+            'domain' => 'projects', 'entity_type' => 'project', 'fields' => ['id', 'name'],
+        ]);
+        $response = $this->ask([$arguments], $question);
+        $result = array_values($this->observedResults)[0] ?? [];
+        self::assertSame(2, $result['result_window']['total'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertEqualsCanonicalizing([(int) $this->project->id, (int) $this->secondProject->id], array_column($result['results'] ?? [], 'id'));
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+    }
+
     public function test_no_searches_cannot_publish_a_completed_organization_comparison(): void
     {
         $response = $this->ask([]);

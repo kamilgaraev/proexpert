@@ -45,6 +45,30 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_nominative_project_and_object_lists_clear_the_selected_project(): void
+    {
+        $questions = ['Покажи все проекты организации', 'Все объекты организации', 'Покажи все наши проекты',
+            'Все наши объекты', 'Покажи все проекты', 'Покажи все объекты',
+            'Все активные проекты организации', 'Все наши незавершённые объекты организации',
+            'Все частично завершённые проекты организации', 'По всем активным проектам организации'];
+        self::assertSame(array_fill(0, count($questions), true), array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+        foreach ($questions as $question) {
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertNull($scope->projectId, $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true), $question);
+            self::assertSame(['sections' => [['project_id' => null, 'filters' => []]]],
+                $scope->bindReportScope($question, ['sections' => [['project_id' => 52, 'filters' => []]]]), $question);
+        }
+    }
+
+    public function test_nominative_project_scope_keeps_negation_and_literal_names(): void
+    {
+        $questions = ['Не показывай все проекты организации', 'Кроме всех объектов нашей организации',
+            'Покажи акты проекта «Все проекты организации»', 'Все проектировщики выбранного проекта',
+            'Все объектовые документы выбранного проекта', 'Все выбранные проекты'];
+        self::assertSame(array_fill(0, count($questions), false), array_map(AssistantRequestProjectScope::organizationWide(...), $questions));
+    }
+
     public function test_estimate_child_entities_use_the_organization_scope(): void
     {
         $questions = ['Все позиции смет организации', 'По всем позициям смет нашей организации',
