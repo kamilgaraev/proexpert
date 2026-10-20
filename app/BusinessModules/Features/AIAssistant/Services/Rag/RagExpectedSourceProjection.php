@@ -100,16 +100,7 @@ final class RagExpectedSourceProjection
 
             return $query;
         };
-        if (! $collectProof) {
-            $batches = $policy->aggregateExpectedSourceIdentityBatches($expected, $actor, $organizationId,
-                ['ai_rag_expected_sources.*'], $aggregate, $checkpoint);
-        } else {
-            $batches = [];
-            foreach ($policy->sourceIdentityQueries($expected, $actor, $organizationId, $checkpoint, true) as $branch) {
-                $batches[] = $aggregate($branch->select('ai_rag_expected_sources.*')->toBase());
-            }
-        }
-        foreach ($batches as $batch) {
+        $consume = static function (\Illuminate\Database\Query\Builder $batch) use ($checkpoint, $collectProof, &$proof, &$counts): void {
             if ($checkpoint !== null) { $checkpoint(); }
             $rows = $batch->get();
             foreach ($rows as $row) {
@@ -125,6 +116,16 @@ final class RagExpectedSourceProjection
                 }
                 $counts[$row->source_type] = $row;
             }
+        };
+        if (! $collectProof) {
+            $policy->aggregateExpectedSourceIdentityBatches($expected, $actor, $organizationId,
+                ['ai_rag_expected_sources.*'], $aggregate, $checkpoint, $consume);
+        } else {
+            $batches = [];
+            foreach ($policy->sourceIdentityQueries($expected, $actor, $organizationId, $checkpoint, true) as $branch) {
+                $batches[] = $aggregate($branch->select('ai_rag_expected_sources.*')->toBase());
+            }
+            foreach ($batches as $batch) { $consume($batch); }
         }
         return $counts;
     }

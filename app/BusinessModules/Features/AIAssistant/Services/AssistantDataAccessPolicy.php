@@ -669,9 +669,9 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8, aggregateBranch: $aggregateBranch, consume: $consume);
     }
 
-    public function aggregateExpectedSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null): array
+    public function aggregateExpectedSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, ?callable $consume = null): array
     {
-        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, expectedProjection: true, joinSourceIds: true, batchSize: 8);
+        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, expectedProjection: true, joinSourceIds: true, batchSize: 8, consume: $consume);
     }
 
     private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null, ?callable $aggregateBranch = null, ?callable $consume = null): array
@@ -769,7 +769,10 @@ final class AssistantDataAccessPolicy
                         }
                     }
                     $nextProcessingPhase(null);
-                    if ($consume !== null) { $consume($compiled[array_key_last($compiled)]); }
+                    if ($consume !== null) {
+                        ApiQueryMetrics::measureRagSourceBatch($batchIdentities, $expectedProjection,
+                            static fn () => $consume($compiled[array_key_last($compiled)]));
+                    }
                 }
 
                 return null;

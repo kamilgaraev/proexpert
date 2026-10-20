@@ -910,6 +910,128 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertSame(9, $metrics->summary()['sql_count']);
     }
 
+    public function test_rag_batch_metrics_preserve_result_sql_deltas_and_closed_candidate_pairs(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        ApiQueryMetrics::record($request, 8.0);
+        $result = new \stdClass;
+        $identities = ['assistant_document' => ['file_document' => true], 'estimate' => ['estimate' => true, 'file_document' => true],
+            'estimate_template' => ['estimate_reference' => true], 'private-entity' => ['private-source' => new \stdClass]];
+        self::assertSame($result, ApiQueryMetrics::measureRagSourceBatch($identities, false, static function () use ($request, $result): object {
+            ApiQueryMetrics::record($request, 2.5);
+
+            return $result;
+        }));
+        $summary = $metrics->summary();
+        $batch = $summary['rag_source_batches'][0];
+        self::assertSame(1, $batch['ordinal']);
+        self::assertSame('stored', $batch['mode']);
+        self::assertTrue($batch['completed']);
+        self::assertFalse($batch['candidate_identities_complete']);
+        self::assertSame([
+            ['entity_type' => 'assistant_document', 'source_type' => 'file_document'],
+            ['entity_type' => 'estimate', 'source_type' => 'estimate'],
+            ['entity_type' => 'estimate_template', 'source_type' => 'estimate_reference'],
+        ], $batch['candidate_identities']);
+        self::assertSame(1, $batch['sql_count']);
+        self::assertSame(2.5, $batch['sql_total_ms']);
+        self::assertGreaterThanOrEqual(0, $batch['duration_ms']);
+        if (isset($batch['process_cpu_ms'])) { self::assertGreaterThanOrEqual(0, $batch['process_cpu_ms']); }
+        self::assertSame(2, $summary['sql_count']);
+        self::assertSame(10.5, $summary['sql_total_ms']);
+        self::assertSame(0, $summary['rag_source_batches_dropped_count']);
+        self::assertSame($summary['rag_source_batches'], (new SensitiveDataRedactor)->redact($summary)['rag_source_batches']);
+        $encoded = json_encode($summary['rag_source_batches'], JSON_THROW_ON_ERROR);
+        foreach (['private', 'metrics', 'started_at', 'bindings', 'organization_id', 'entity_id'] as $forbidden) {
+            self::assertStringNotContainsString($forbidden, $encoded);
+        }
+    }
+
+    public function test_rag_batch_metrics_bound_records_candidate_pairs_and_input_work(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $identities = [];
+        $definitions = \App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions();
+        foreach (array_slice($definitions, 0, 40, true) as $entity => $definition) { $identities[$entity] = [$definition[0] => true]; }
+        self::assertCount(40, $identities);
+        for ($index = 1; $index <= 20; $index++) {
+            self::assertSame($index, ApiQueryMetrics::measureRagSourceBatch($identities, false, static function () use ($request, $index): int {
+                ApiQueryMetrics::record($request, 0.25);
+
+                return $index;
+            }));
+        }
+        $summary = $metrics->summary();
+        self::assertCount(16, $summary['rag_source_batches']);
+        self::assertSame(range(1, 16), array_column($summary['rag_source_batches'], 'ordinal'));
+        self::assertSame(4, $summary['rag_source_batches_dropped_count']);
+        self::assertSame(20, $summary['sql_count']);
+        self::assertSame(5.0, $summary['sql_total_ms']);
+        foreach ($summary['rag_source_batches'] as $batch) {
+            self::assertCount(32, $batch['candidate_identities']);
+            self::assertFalse($batch['candidate_identities_complete']);
+            self::assertSame(1, $batch['sql_count']);
+        }
+        self::assertLessThan(100000, strlen(json_encode($summary['rag_source_batches'], JSON_THROW_ON_ERROR)));
+        [$nextRequest, $nextMetrics] = $this->metrics();
+        app()->instance('request', $nextRequest);
+        $invalid = array_fill_keys(array_map(static fn (int $index): string => 'private-'.$index, range(0, 999)), []);
+        ApiQueryMetrics::measureRagSourceBatch($invalid, false, static fn (): null => null);
+        self::assertSame([], $nextMetrics->summary()['rag_source_batches'][0]['candidate_identities']);
+        self::assertFalse($nextMetrics->summary()['rag_source_batches'][0]['candidate_identities_complete']);
+        self::assertStringNotContainsString('private', json_encode($nextMetrics->summary(), JSON_THROW_ON_ERROR));
+    }
+
+    public function test_rag_batch_metrics_are_opt_in_request_local_and_reject_replaced_metrics(): void
+    {
+        [$request, $disabled] = $this->metrics(false);
+        app()->instance('request', $request);
+        $calls = 0;
+        $operation = static function () use (&$calls): int { return ++$calls; };
+        self::assertSame(1, ApiQueryMetrics::measureRagSourceBatch([], false, $operation));
+        self::assertArrayNotHasKey('rag_source_batches', $disabled->summary());
+        $request->attributes->remove(ApiQueryMetrics::REQUEST_ATTRIBUTE);
+        self::assertSame(2, ApiQueryMetrics::measureRagSourceBatch([], false, $operation));
+        [$currentRequest, $currentMetrics] = $this->metrics();
+        app()->instance('request', $currentRequest);
+        self::assertSame([], $currentMetrics->summary()['rag_source_batches']);
+        $replacement = new ApiQueryMetrics(true);
+        self::assertSame(3, ApiQueryMetrics::measureRagSourceBatch(['project' => ['project' => true]], false,
+            static function () use ($currentRequest, $replacement, $operation): int {
+                $currentRequest->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $replacement);
+
+                return $operation();
+            }));
+        self::assertSame([], $currentMetrics->summary()['rag_source_batches']);
+        self::assertSame([], $replacement->summary()['rag_source_batches']);
+    }
+
+    public function test_rag_batch_metrics_preserve_nested_order_and_original_exception(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $failure = new \RuntimeException('private-operation-failure');
+        $pairs = ['project' => ['project' => true]];
+        try {
+            ApiQueryMetrics::measureRagSourceBatch($pairs, true, static fn () => ApiQueryMetrics::measureRagSourceBatch($pairs, false,
+                static function () use ($request, $failure): never {
+                    ApiQueryMetrics::record($request, 3.0);
+                    throw $failure;
+                }));
+            self::fail('The original consumer exception must propagate.');
+        } catch (\RuntimeException $actual) { self::assertSame($failure, $actual); }
+        $batches = $metrics->summary()['rag_source_batches'];
+        self::assertSame([1, 2], array_column($batches, 'ordinal'));
+        self::assertSame(['expected', 'stored'], array_column($batches, 'mode'));
+        self::assertSame([false, false], array_column($batches, 'completed'));
+        self::assertSame([true, true], array_column($batches, 'candidate_identities_complete'));
+        self::assertSame([1, 1], array_column($batches, 'sql_count'));
+        self::assertSame([3.0, 3.0], array_column($batches, 'sql_total_ms'));
+        self::assertStringNotContainsString('private', json_encode($batches, JSON_THROW_ON_ERROR));
+    }
+
     private function metrics(bool $capture = true): array
     {
         $request = Request::create('/api/v1/admin/ai-assistant/conversations', 'GET');
