@@ -10,6 +10,28 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_negated_project_prepositions_never_become_positive_search_restrictions(): void
+    {
+        foreach (['но не по проекту 100', 'не в проекте 100', 'не для проекта #100',
+            'не по проекту «СевГУ»', 'не в проекте СевГУ', 'не по выбранному проекту'] as $clause) {
+            $question = 'Покажи все акты организации, '.$clause;
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $search = static function (): never {
+                self::fail('A negated project must not be resolved as a positive scope');
+            };
+            try {
+                AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true, $search);
+                self::fail('A project exclusion cannot be represented by a positive search project_id');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 100]]]]];
+            $expected = $arguments;
+            $expected['sections'][0]['project_id'] = null;
+            self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search), $question);
+        }
+    }
+
     public function test_additive_project_scopes_remain_mixed_without_a_comparison_verb(): void
     {
         foreach (['Какие камеры проекта «Вся наша организация» и по всем нашим проектам?',
@@ -73,7 +95,12 @@ final class AssistantRequestProjectScopeTest extends TestCase
             $search = static function (): never {
                 self::fail('An excluded project must not be looked up as a positive scope');
             };
-            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true, $search), $question);
+            try {
+                AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true, $search);
+                self::fail('A project exclusion cannot be represented by a positive search project_id');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
             $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]]]];
             $expected = $arguments;
             $expected['sections'][0]['project_id'] = null;

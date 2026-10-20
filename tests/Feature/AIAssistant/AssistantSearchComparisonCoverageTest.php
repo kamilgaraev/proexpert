@@ -88,16 +88,16 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
 
     public static function singleProjectRestrictions(): array
     {
-        return [['numeric'], ['named'], ['quoted']];
+        return [['numeric'], ['named'], ['quoted'], ['quoted_negative']];
     }
 
     #[DataProvider('singleProjectRestrictions')]
     public function test_single_project_restriction_uses_the_explicit_project_instead_of_ui_context(string $kind): void
     {
-        $this->secondProject->updateQuietly(['name' => 'Сравнение']);
+        $this->secondProject->updateQuietly(['name' => $kind === 'quoted_negative' ? 'Не по проекту 100' : 'Сравнение']);
         $this->act($this->secondProject);
         $project = match ($kind) {
-            'named' => 'Сравнение', 'quoted' => '«Сравнение»', default => (string) $this->secondProject->id,
+            'named' => 'Сравнение', 'quoted' => '«Сравнение»', 'quoted_negative' => '«Не по проекту 100»', default => (string) $this->secondProject->id,
         };
         $arguments = $this->arguments($this->project->id);
         if ($kind === 'numeric') {
@@ -118,6 +118,22 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertSame(1, (array_values($this->observedResults)[0] ?? [])['result_window']['total'] ?? null);
         $this->actor->assignedProjects()->updateExistingPivot($this->secondProject->id, ['is_active' => false]);
         $this->ask([$this->arguments($this->project->id)], $question);
+        $result = array_values($this->observedResults)[0] ?? [];
+        self::assertTrue($result['needs_clarification'] ?? false, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame([], $result['source_refs'] ?? []);
+        self::assertSame([], $result['results'] ?? []);
+    }
+
+    public static function negativeProjectSearches(): array
+    {
+        return array_map(static fn (string $clause): array => [$clause], ['но не по проекту {id}', 'не в проекте {id}',
+            'без проекта {id}', 'кроме проекта {id}', 'не включая проект {id}', 'не по проекту «СевГУ»', 'не по выбранному проекту']);
+    }
+
+    #[DataProvider('negativeProjectSearches')]
+    public function test_project_exclusion_search_requires_clarification_instead_of_positive_or_unfiltered_data(string $clause): void
+    {
+        $this->ask([$this->arguments($this->project->id)], 'Покажи все акты организации, '.str_replace('{id}', (string) $this->secondProject->id, $clause));
         $result = array_values($this->observedResults)[0] ?? [];
         self::assertTrue($result['needs_clarification'] ?? false, json_encode($result, JSON_UNESCAPED_UNICODE));
         self::assertSame([], $result['source_refs'] ?? []);

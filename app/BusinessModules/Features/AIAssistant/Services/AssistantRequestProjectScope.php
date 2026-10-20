@@ -55,6 +55,7 @@ final readonly class AssistantRequestProjectScope
 
     private static function organizationScope(string $question, bool $applyProjectRestriction): bool
     {
+        $question = AssistantOrganizationRecordVocabulary::normalize($question, maskProjectNames: true);
         $originalQuestion = $question;
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $definitions = '(?:(?:[а-яё][а-яё-]*(?:ые|ие|ых|их|ым|им|ыми|ими)|частично|полностью|еще|ещё|пока|не)\s+){0,6}';
@@ -87,6 +88,10 @@ final readonly class AssistantRequestProjectScope
 
     public static function bindSearchScope(string $question, array $arguments, ?int $contextProjectId, bool $projectFilterSupported, ?callable $search = null): array
     {
+        $question = AssistantOrganizationRecordVocabulary::normalize($question);
+        if (self::withoutExcludedProjects($question) !== $question) {
+            throw new AssistantReportScopeAmbiguous;
+        }
         if (self::hasOrganizationProjectRestriction($question)) {
             if (! $projectFilterSupported) {
                 throw new AssistantReportScopeAmbiguous;
@@ -111,6 +116,7 @@ final readonly class AssistantRequestProjectScope
 
     public function bindReportScope(string $question, array $arguments, ?callable $search = null): array
     {
+        $question = AssistantOrganizationRecordVocabulary::normalize($question);
         if (! is_array($arguments['sections'] ?? null)) {
             return $arguments;
         }
@@ -362,7 +368,7 @@ final readonly class AssistantRequestProjectScope
 
     private static function withoutExcludedProjects(string $question): string
     {
-        $negative = '(?<![\pL\pN])(?:без|кроме|исключая|не\s+включая|за\s+исключением)\s+';
+        $negative = '(?<![\pL\pN])(?:без|кроме|исключая|не\s+включая|за\s+исключением|не(?:\s+(?:в|во|на|по|для|из|с|со))?)\s+';
         $noun = '(?<![\pL\pN])(?:проект|объект)[а-яё]*(?![\pL\pN])';
         $stop = '(?:\s+(?:с|со|против|относительно)\s+(?:'.self::CURRENT_PROJECT.'|'.$noun.')|[,;.!?\r\n]|$)';
         $name = '(?:(?!'.$stop.')[^,;.!?\r\n])+';
