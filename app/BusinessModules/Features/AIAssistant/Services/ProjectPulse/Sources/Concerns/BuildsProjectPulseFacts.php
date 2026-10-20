@@ -47,10 +47,19 @@ trait BuildsProjectPulseFacts
         if ($context->projectId !== null && $table === 'projects') {
             $query->where('projects.id', $context->projectId);
         }
+        try {
+            $columns = array_fill_keys(array_map(strtolower(...), Schema::getColumnListing($table)), true);
+        } catch (Throwable) {
+            $columns = null;
+        }
+        $hasColumn = fn (string $column): bool => $columns === null
+            ? $this->hasColumn($table, $column)
+            : isset($columns[$column]);
+
         return $query
-            ->when($this->hasColumn($table, 'organization_id'), fn (Builder $query) => $query->where($table . '.organization_id', $context->organizationId))
-            ->when($context->projectId !== null && $this->hasColumn($table, 'project_id'), fn (Builder $query) => $query->where($table . '.project_id', $context->projectId))
-            ->when($this->hasColumn($table, 'deleted_at'), fn (Builder $query) => $query->whereNull($table . '.deleted_at'));
+            ->when($hasColumn('organization_id'), fn (Builder $query) => $query->where($table . '.organization_id', $context->organizationId))
+            ->when($context->projectId !== null && $hasColumn('project_id'), fn (Builder $query) => $query->where($table . '.project_id', $context->projectId))
+            ->when($hasColumn('deleted_at'), fn (Builder $query) => $query->whereNull($table . '.deleted_at'));
     }
 
     private function limit(): int
