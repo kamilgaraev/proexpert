@@ -360,6 +360,53 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     }
 
     #[Test]
+    public function native_simulation_keeps_quantity_proof_and_ignores_only_label_and_price_decisions(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $room = new Entity('room:decision-scope', 10, 20, 30, self::SOURCE, 'room', 'room:decision-scope');
+        $userProof = new Evidence('evidence:decision-scope:length', 10, 20, 30, self::SOURCE, 'input:30', 'user_input', nativeReference: 'input_payload.length');
+        $widthProof = $this->nativeEvidence('evidence:decision-scope:width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
+        $length = new Fact('fact:decision-scope:length', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 0.0,
+            'user_assumption', 'confirmed', [$userProof->id]);
+        $width = $this->nativeFact('fact:decision-scope:width', 10, 20, 30, self::SOURCE, $room->id, 'width', '2', 'm', 1.0,
+            'document', 'confirmed', [$widthProof->id]);
+        $entities = [$room];
+        $facts = [$length, $width];
+        $quantityDecision = new Decision('decision:quantity', 10, 20, 30, self::SOURCE, 'fact', $length->id, $length->id,
+            'user', '7', 'Сметное допущение длины принято', 1, [$userProof->id]);
+        $otherDecisions = [];
+        for ($index = 0; $index < 260; $index++) {
+            $entity = new Entity('choice:'.$index, 10, 20, 30, self::SOURCE, 'quantity', 'choice:'.$index,
+                ['semantic_type' => 'quantity', 'identity' => ['evaluation_anchor' => 'fixture:'.$index]]);
+            $fact = new Fact('fact:choice:'.$index, 10, 20, 30, self::SOURCE, $entity->id,
+                $index % 2 === 0 ? 'entity_identity' : 'evaluation_price', ['value' => 'fixture'], null,
+                0.0, 'user_assumption', 'confirmed', []);
+            $entities[] = $entity;
+            $facts[] = $fact;
+            $otherDecisions[] = new Decision('decision:choice:'.$index, 10, 20, 30, self::SOURCE, 'fact', $fact->id, $fact->id,
+                'user', '7', 'Подтверждён выбор названия или цены', 1);
+        }
+        $snapshot = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot($entities, $facts, [$userProof, $widthProof], []);
+        $original = serialize($snapshot);
+        $service = new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory);
+        $result = $service->simulateInput($snapshot, 'sha256:'.str_repeat('b', 64), [$quantityDecision, ...$otherDecisions]);
+        self::assertSame('10', $result['quantities']['floor_area']->amount ?? null);
+        self::assertContains($userProof->id, $result['quantities']['floor_area']->evidenceIds);
+        self::assertCount(262, $snapshot->facts);
+        self::assertCount(260, $otherDecisions);
+        $withoutProof = $service->simulateInput($snapshot, 'sha256:'.str_repeat('b', 64), $otherDecisions);
+        self::assertArrayNotHasKey('floor_area', $withoutProof['quantities']);
+        $overLimit = array_map(static fn (int $index): Decision => new Decision('decision:required:'.$index,
+            10, 20, 30, self::SOURCE, 'fact', $length->id, $length->id, 'user', '7', 'Подтверждён исходный размер', 1, [$userProof->id]), range(1, 257));
+        $blocked = $service->simulateInput($snapshot, 'sha256:'.str_repeat('b', 64), [...$overLimit, ...$otherDecisions]);
+        self::assertSame([], $blocked['quantities']);
+        self::assertSame([['code' => 'quantity_input_simulation_budget_exceeded']], $blocked['warnings']);
+        self::assertSame($original, serialize($snapshot));
+        self::assertSame([], $repository->quantities);
+        self::assertSame([], $repository->currentQuantities);
+    }
+
+    #[Test]
     public function production_projection_requires_proven_empty_opening_coverage_and_keeps_partial_opening_unresolved(): void
     {
         $repository = new InMemoryProjectModelRepository;
