@@ -1675,6 +1675,89 @@ class ActReportsPreviewTest extends TestCase
         self::assertSame('existing export', $disk->get($key));
     }
 
+    public function test_official_pdf_feedback_uses_the_organization_timezone_and_marks_the_offset(): void
+    {
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $disk = \Illuminate\Support\Facades\Storage::fake('official-pdf-timezone');
+        $this->mock(\App\Services\Storage\FileService::class, function ($mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk);
+            $mock->shouldReceive('temporaryUrl')->andReturn('https://example.test/official.pdf');
+        });
+        $previousNow = \Illuminate\Support\Carbon::getTestNow();
+        \Illuminate\Support\Carbon::setTestNow(\Illuminate\Support\Carbon::parse('2026-10-20T03:41:00+00:00'));
+
+        try {
+            foreach ([[null, '06:41 (UTC+03:00)'], [['default_timezone' => 'Asia/Yekaterinburg'], '08:41 (UTC+05:00)']] as $index => [$settings, $expectedTime]) {
+                [$organization, $user, $contract, $project] = $this->createContractFixture('PDF-TIME-'.$index);
+                $organization->forceFill(['multi_org_settings' => $settings])->save();
+                $contract->update(['is_fixed_amount' => true]);
+                $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'PDF-TIME-'.$index, 1);
+                $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+                $this->withMiddleware();
+                $this->useActHttpBindings();
+
+                foreach (['pdf', 'ks3/pdf'] as $format) {
+                    $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}")->assertOk();
+                }
+                $files = $disk->allFiles('org-'.$organization->id.'/exports/acts');
+                self::assertCount(2, $files);
+                foreach ($files as $file) {
+                    $document = (new \Smalot\PdfParser\Parser)->parseContent($disk->get($file));
+                    $text = preg_replace('/\s+/u', ' ', $document->getText());
+                    self::assertStringContainsString('20.10.2026 '.$expectedTime, $text);
+                    self::assertStringContainsString('1 000,00', $text);
+                }
+                self::assertSame('1000.00', (string) $act->fresh()->amount);
+                $this->withoutMiddleware();
+            }
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow($previousNow);
+        }
+    }
+
+    public function test_official_pdf_feedback_keeps_document_numbers_in_a_safe_distinct_basename(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('УЧ-ПТО/102\\2026');
+        $contract->update(['is_fixed_amount' => true]);
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $disk = \Illuminate\Support\Facades\Storage::fake('official-pdf-filenames');
+        $this->mock(\App\Services\Storage\FileService::class, function ($mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk);
+            $mock->shouldReceive('temporaryUrl')->andReturn('https://example.test/official.pdf');
+        });
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'PDF-SAFE', 1);
+        $act->update(['act_document_number' => 'АВР/УЧ\\102', 'status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+
+        foreach (['', '?mode=preview'] as $mode) {
+            foreach (['pdf', 'ks3/pdf'] as $format) {
+                $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}{$mode}")->assertOk();
+            }
+        }
+        $files = $disk->allFiles();
+        self::assertCount(4, $files);
+        foreach ($files as $file) {
+            self::assertStringStartsWith('org-'.$organization->id.'/exports/acts/', $file);
+            self::assertCount(str_contains($file, '/previews/') ? 6 : 5, explode('/', $file));
+            self::assertSame(0, preg_match('/[\\\\:*?"<>|\p{C}]/u', basename($file)));
+            self::assertStringContainsString('АВР-УЧ-102', basename($file));
+            self::assertStringContainsString('УЧ-ПТО-102-2026', basename($file));
+            self::assertStringEndsWith('.pdf', basename($file));
+        }
+
+        $act->update(['act_document_number' => 'АВР-УЧ-102']);
+        $contract->update(['number' => 'УЧ-ПТО-102-2026']);
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}")->assertOk();
+        }
+        self::assertCount(6, $disk->allFiles());
+        self::assertSame('1000.00', (string) $act->fresh()->amount);
+        self::assertSame(ContractPerformanceAct::STATUS_APPROVED, $act->fresh()->status);
+    }
+
     public function test_pto_draft_official_pdf_exports_report_a_validation_error(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('PTO-OFFICIAL');

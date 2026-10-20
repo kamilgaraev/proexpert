@@ -210,6 +210,45 @@ final class ContractPeriodCertificateTest extends TestCase
         $this->assertSame($checksum['period'], round((float) $certificate->totals['period'], 2));
     }
 
+    public function test_certificate_exports_keep_safe_filenames_and_show_the_business_timezone(): void
+    {
+        [$contract, $actor] = $this->twoJanuaryActs();
+        $contract->update(['number' => 'УЧ-ПТО/102\\2026']);
+        $contract->organization->forceFill(['multi_org_settings' => ['default_timezone' => 'Asia/Yekaterinburg']])->save();
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-20T03:41:00+00:00'));
+        $service = app(ContractPeriodCertificateService::class);
+        $certificate = $service->approve(
+            $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-export-feedback-0001', $actor->id),
+            $actor->id,
+        );
+        $before = $certificate->snapshot;
+        $disk = \Illuminate\Support\Facades\Storage::fake('certificate-export-feedback');
+        $this->mock(\App\Services\Storage\FileService::class, function ($mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk);
+        });
+        $export = app(OfficialFormsExportService::class);
+        $pdfPath = $export->exportCertificateKS3ToPdf($certificate);
+        $xlsxPath = $export->exportCertificateKS3ToExcel($certificate);
+
+        foreach ([$pdfPath, $xlsxPath] as $path) {
+            self::assertStringStartsWith('org-'.$contract->organization_id.'/exports/acts/ks3/KS-3_', $path);
+            self::assertCount(5, explode('/', $path));
+            self::assertSame(0, preg_match('/[\\\\:*?"<>|\p{C}]/u', basename($path)));
+            self::assertStringContainsString('УЧ-ПТО-102-2026', basename($path));
+        }
+        $text = (new \Smalot\PdfParser\Parser)->parseContent($disk->get($pdfPath))->getText();
+        self::assertStringContainsString('20.10.2026 08:41 (UTC+05:00)', preg_replace('/\s+/u', ' ', $text));
+        self::assertStringContainsString($certificate->number, preg_replace('/\s+/u', '', $text));
+        $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($disk->path($xlsxPath));
+        try {
+            self::assertSame($certificate->number, $spreadsheet->getActiveSheet()->getCell('B20')->getValue());
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
+        self::assertSame($before, $certificate->fresh()->snapshot);
+        self::assertSame(ContractPeriodCertificate::STATUS_APPROVED, $certificate->fresh()->status);
+    }
+
     public function test_same_idempotency_key_with_changed_payload_is_conflict(): void
     {
         [$contract, $actor] = $this->twoJanuaryActs();
