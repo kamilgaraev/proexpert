@@ -8,7 +8,37 @@ use Illuminate\Support\Facades\Lang;
 
 class PermissionTranslator
 {
+    private array $dictionaries = [];
+
     public static function translateSystemPermissions(array $permissions): array
+    {
+        return (new self)->systemPermissions($permissions);
+    }
+
+    public static function translateModulePermissions(array $modulePermissions): array
+    {
+        return (new self)->modulePermissions($modulePermissions);
+    }
+
+    public static function translateInterfaceAccess(array $interfaces): array
+    {
+        return (new self)->interfaceAccess($interfaces);
+    }
+
+    public static function getPermissionTranslation(
+        string $permission,
+        ?string $module = null,
+        ?string $fallback = null
+    ): string {
+        return (new self)->permissionTranslation($permission, $module, $fallback);
+    }
+
+    public static function getGroupTranslation(string $group): string
+    {
+        return (new self)->groupTranslation($group);
+    }
+
+    private function systemPermissions(array $permissions): array
     {
         $translations = [];
 
@@ -20,13 +50,13 @@ class PermissionTranslator
             }
 
             $fallback = is_string($description) ? $description : null;
-            $translations[$key] = self::getPermissionTranslation($key, null, $fallback);
+            $translations[$key] = $this->permissionTranslation($key, null, $fallback);
         }
 
         return $translations;
     }
 
-    public static function translateModulePermissions(array $modulePermissions): array
+    private function modulePermissions(array $modulePermissions): array
     {
         $translations = [];
 
@@ -42,14 +72,14 @@ class PermissionTranslator
                     continue;
                 }
 
-                $translations[$module][$permission] = self::getPermissionTranslation($permission, (string) $module);
+                $translations[$module][$permission] = $this->permissionTranslation($permission, (string) $module);
             }
         }
 
         return $translations;
     }
 
-    public static function translateInterfaceAccess(array $interfaces): array
+    private function interfaceAccess(array $interfaces): array
     {
         $translations = [];
 
@@ -60,11 +90,11 @@ class PermissionTranslator
                 continue;
             }
 
-            $translation = self::dictionaryValue('interfaces', $key);
-            $translations[$key] = $translation ?? self::cleanFallback(
+            $translation = $this->dictionaryValue('interfaces', $key);
+            $translations[$key] = $translation ?? $this->cleanFallback(
                 is_string($description) ? $description : null,
                 $key
-            ) ?? self::unknownInterfaceLabel();
+            ) ?? $this->unknownInterfaceLabel();
         }
 
         return $translations;
@@ -72,59 +102,60 @@ class PermissionTranslator
 
     public static function translatePermissionsData(array $data): array
     {
+        $translator = new self;
         $result = [];
 
         if (isset($data['system_permissions'])) {
-            $result['system_permissions'] = self::translateSystemPermissions($data['system_permissions']);
+            $result['system_permissions'] = $translator->systemPermissions($data['system_permissions']);
         }
 
         if (isset($data['module_permissions'])) {
-            $result['module_permissions'] = self::translateModulePermissions($data['module_permissions']);
+            $result['module_permissions'] = $translator->modulePermissions($data['module_permissions']);
             $result['module_groups'] = [];
 
             foreach (array_keys($data['module_permissions']) as $module) {
-                $result['module_groups'][$module] = self::getGroupTranslation((string) $module);
+                $result['module_groups'][$module] = $translator->groupTranslation((string) $module);
             }
         }
 
         if (isset($data['interface_access'])) {
-            $result['interface_access'] = self::translateInterfaceAccess($data['interface_access']);
+            $result['interface_access'] = $translator->interfaceAccess($data['interface_access']);
         }
 
         return $result;
     }
 
-    public static function getPermissionTranslation(
+    private function permissionTranslation(
         string $permission,
         ?string $module = null,
         ?string $fallback = null
     ): string {
-        $fallbackLabel = self::cleanFallback($fallback, $permission);
+        $fallbackLabel = $this->cleanFallback($fallback, $permission);
 
-        return self::dictionaryValue('values', $permission)
-            ?? self::modulePermissionTranslation($permission, $module)
-            ?? self::systemPermissionTranslation($permission)
+        return $this->dictionaryValue('values', $permission)
+            ?? $this->modulePermissionTranslation($permission, $module)
+            ?? $this->systemPermissionTranslation($permission)
             ?? $fallbackLabel
-            ?? self::buildReadablePermissionLabel($permission);
+            ?? $this->buildReadablePermissionLabel($permission);
     }
 
-    public static function getGroupTranslation(string $group): string
+    private function groupTranslation(string $group): string
     {
         $normalizedGroup = str_replace('-', '_', $group);
 
-        return self::dictionaryValue('groups', $normalizedGroup)
-            ?? self::dictionaryValue('groups', $group)
-            ?? self::unknownGroupLabel();
+        return $this->dictionaryValue('groups', $normalizedGroup)
+            ?? $this->dictionaryValue('groups', $group)
+            ?? $this->unknownGroupLabel();
     }
 
-    private static function modulePermissionTranslation(string $permission, ?string $module): ?string
+    private function modulePermissionTranslation(string $permission, ?string $module): ?string
     {
         if (!$module) {
             return null;
         }
 
         $normalizedModule = str_replace('-', '_', $module);
-        $moduleTranslations = self::dictionary('modules');
+        $moduleTranslations = $this->dictionary('modules');
         $moduleValues = $moduleTranslations[$normalizedModule] ?? $moduleTranslations[$module] ?? null;
 
         if (is_array($moduleValues) && isset($moduleValues[$permission]) && is_string($moduleValues[$permission])) {
@@ -134,7 +165,7 @@ class PermissionTranslator
         return null;
     }
 
-    private static function systemPermissionTranslation(string $permission): ?string
+    private function systemPermissionTranslation(string $permission): ?string
     {
         $parts = explode('.', $permission);
 
@@ -143,7 +174,7 @@ class PermissionTranslator
         }
 
         [$group, $action] = $parts;
-        $systemTranslations = self::dictionary('system');
+        $systemTranslations = $this->dictionary('system');
         $groupTranslations = $systemTranslations[$group] ?? null;
 
         if (is_array($groupTranslations) && isset($groupTranslations[$action]) && is_string($groupTranslations[$action])) {
@@ -153,10 +184,10 @@ class PermissionTranslator
         return null;
     }
 
-    private static function buildReadablePermissionLabel(string $permission): string
+    private function buildReadablePermissionLabel(string $permission): string
     {
-        $subject = self::findSubject($permission);
-        $action = self::findAction($permission, $subject['key'] ?? null);
+        $subject = $this->findSubject($permission);
+        $action = $this->findAction($permission, $subject['key'] ?? null);
 
         if ($subject['label'] && $action) {
             return "{$subject['label']}: {$action}";
@@ -173,9 +204,9 @@ class PermissionTranslator
         return 'Дополнительное право доступа';
     }
 
-    private static function findSubject(string $permission): array
+    private function findSubject(string $permission): array
     {
-        $subjects = self::dictionary('subjects');
+        $subjects = $this->dictionary('subjects');
         $subjectKey = $permission;
 
         while (true) {
@@ -198,7 +229,7 @@ class PermissionTranslator
         return ['key' => null, 'label' => null];
     }
 
-    private static function findAction(string $permission, ?string $subjectKey): ?string
+    private function findAction(string $permission, ?string $subjectKey): ?string
     {
         $actionKey = $permission;
 
@@ -206,7 +237,7 @@ class PermissionTranslator
             $actionKey = substr($permission, strlen($subjectKey) + 1);
         }
 
-        $actions = self::dictionary('actions');
+        $actions = $this->dictionary('actions');
 
         if (isset($actions[$actionKey]) && is_string($actions[$actionKey])) {
             return $actions[$actionKey];
@@ -223,22 +254,25 @@ class PermissionTranslator
         return null;
     }
 
-    private static function dictionaryValue(string $section, string $key): ?string
+    private function dictionaryValue(string $section, string $key): ?string
     {
-        $dictionary = self::dictionary($section);
+        $dictionary = $this->dictionary($section);
         $value = $dictionary[$key] ?? null;
 
         return is_string($value) && trim($value) !== '' ? $value : null;
     }
 
-    private static function dictionary(string $section): array
+    private function dictionary(string $section): array
     {
-        $dictionary = Lang::get("permissions.{$section}", [], 'ru');
+        if (!array_key_exists($section, $this->dictionaries)) {
+            $dictionary = Lang::get("permissions.{$section}", [], 'ru');
+            $this->dictionaries[$section] = is_array($dictionary) ? $dictionary : [];
+        }
 
-        return is_array($dictionary) ? $dictionary : [];
+        return $this->dictionaries[$section];
     }
 
-    private static function cleanFallback(?string $fallback, string $key): ?string
+    private function cleanFallback(?string $fallback, string $key): ?string
     {
         if (!is_string($fallback)) {
             return null;
@@ -253,12 +287,12 @@ class PermissionTranslator
         return $value;
     }
 
-    private static function unknownGroupLabel(): string
+    private function unknownGroupLabel(): string
     {
         return 'Модуль доступа';
     }
 
-    private static function unknownInterfaceLabel(): string
+    private function unknownInterfaceLabel(): string
     {
         return 'Интерфейс доступа';
     }
