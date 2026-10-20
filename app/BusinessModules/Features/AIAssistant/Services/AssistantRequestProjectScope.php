@@ -13,7 +13,7 @@ final readonly class AssistantRequestProjectScope
 
     private const QUOTED_NAME = '«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"';
 
-    private const NUMERIC_PROJECTS = '(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*([1-9]\d*(?:\s*(?:,|и|или)\s*(?:(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*)?[1-9]\d*)*)(?![\pL\pN])';
+    private const NUMERIC_PROJECTS = '(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*([1-9]\d*(?:\s*(?:,|и|или)\s*(?:(?:проект|объект)[а-яё]*\s*)?(?:№|#|id)?\s*[1-9]\d*)*)(?![\pL\pN])';
 
     public function __construct(public bool $requested, public ?int $projectId, private ?int $contextProjectId = null) {}
 

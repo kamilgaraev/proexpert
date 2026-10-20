@@ -355,6 +355,35 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_each_numeric_project_list_item_accepts_its_own_identifier_marker(): void
+    {
+        foreach (['по проектам №52 и №100', 'с проектами #52 и #100', 'с проектами id52 и id100',
+            'с проектами ID 52, id 100', 'с проектами №52, #100', 'с проектами 52 и №100',
+            'с проектами №52 и проектом №100', 'по объектам №52 и №100',
+            'по проектам №52, 100', 'с проектами 52, объектом #100'] as $list) {
+            $question = 'Сравни все акты организации '.$list;
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null],
+                ['scope' => 'project', 'project_id' => 52], ['scope' => 'project', 'project_id' => 100]]];
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            $bound = null;
+            try {
+                $bound = $scope->bindReportScope($question, $arguments);
+            } catch (AssistantReportScopeAmbiguous) {
+            }
+            self::assertSame($arguments, $bound, $question);
+            self::assertSame([52, 100], $scope->comparisonProjectIds($question), $question);
+            self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 100], 52, true), $question);
+            array_pop($arguments['sections']);
+            $rejected = false;
+            try {
+                $scope->bindReportScope($question, $arguments);
+            } catch (AssistantReportScopeAmbiguous) {
+                $rejected = true;
+            }
+            self::assertTrue($rejected, $question);
+        }
+    }
+
     public function test_mixed_report_requires_every_explicitly_compared_project(): void
     {
         $question = 'Сравни все акты организации с проектами 52 и 100';

@@ -162,10 +162,17 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
 
-    public function test_every_named_project_can_be_read_with_the_organization_including_an_empty_project(): void
+    public static function projectNumberMarkers(): array
+    {
+        return ['plain' => ['', ''], 'number signs' => ['№', '№'], 'hash signs' => ['#', '#'],
+            'identifier labels' => ['id ', 'id '], 'mixed markers' => ['№', '#']];
+    }
+
+    #[DataProvider('projectNumberMarkers')]
+    public function test_every_named_project_can_be_read_with_the_organization_including_an_empty_project(string $firstMarker, string $secondMarker): void
     {
         $response = $this->ask([$this->arguments(null), $this->arguments($this->project->id), $this->arguments($this->secondProject->id)],
-            'Сравни все акты организации с проектами '.$this->project->id.' и '.$this->secondProject->id);
+            'Сравни все акты организации с проектами '.$firstMarker.$this->project->id.' и '.$secondMarker.$this->secondProject->id);
         self::assertSame([1, 1, 0], array_column(array_column($this->observedResults, 'result_window'), 'total'));
         self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
