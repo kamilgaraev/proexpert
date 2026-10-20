@@ -99,6 +99,32 @@ final class FileListPaginationWorkflowTest extends TestCase
         }
     }
 
+    public function test_file_lists_compare_datetime_bounds_as_calendar_dates(): void
+    {
+        $context = $this->dateFilterContext();
+        foreach (['report-files', 'act-files', 'personal-files'] as $route) {
+            foreach ([
+                ['date_from' => '2026-10-20 23:00', 'date_to' => '2026-10-20 01:00'],
+                ['date_from' => '2026-10-20T23:00:00+03:00', 'date_to' => '2026-10-20T01:00:00+03:00'],
+                ['date_from' => '2026-10-20 23:00', 'date_to' => '2026-10-20'],
+            ] as $dates) {
+                $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                    ...$dates, 'include_download_urls' => 0,
+                ]))->assertOk();
+            }
+            $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                'date_from' => '2026-10-20T00:30:00+14:00', 'date_to' => '2026-10-19T23:30:00-12:00',
+                'include_download_urls' => 0,
+            ]))->assertUnprocessable()->assertJsonValidationErrors('date_to');
+            foreach (['date_from', 'date_to'] as $invalidField) {
+                $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/'.$route.'?'.http_build_query([
+                    'date_from' => '2026-10-20', 'date_to' => '2026-10-20', $invalidField => 'not-a-date',
+                    'include_download_urls' => 0,
+                ]))->assertUnprocessable()->assertJsonValidationErrors($invalidField);
+            }
+        }
+    }
+
     private function dateFilterContext(): AdminApiTestContext
     {
         $actModule = Module::query()->create([

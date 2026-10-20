@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Requests\Api\V1\Admin\File;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Carbon;
+use Illuminate\Validation\Validator;
 
 class ListFilesRequest extends FormRequest
 {
@@ -20,7 +22,7 @@ class ListFilesRequest extends FormRequest
             'type' => ['sometimes', 'nullable', 'string'],
             'filename' => ['sometimes', 'nullable', 'string'],
             'date_from' => ['sometimes', 'nullable', 'date'],
-            'date_to' => ['sometimes', 'nullable', 'date', ...($this->filled('date_from') ? ['after_or_equal:date_from'] : [])],
+            'date_to' => ['sometimes', 'nullable', 'date'],
             'sort_by' => ['sometimes', 'in:created_at,size,filename'],
             'sort_dir' => ['sometimes', 'in:asc,desc'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
@@ -28,11 +30,20 @@ class ListFilesRequest extends FormRequest
         ];
     }
 
-    public function messages(): array
+    public function withValidator(Validator $validator): void
     {
-        return [
-            'date_to.after_or_equal' => trans_message('reports.validation.date_to_after_or_equal'),
-        ];
+        $validator->after(function (Validator $validator): void {
+            if (! $this->filled('date_from') || ! $this->filled('date_to')
+                || $validator->errors()->has('date_from') || $validator->errors()->has('date_to')) {
+                return;
+            }
+
+            $from = Carbon::parse((string) $this->input('date_from'))->toDateString();
+            $to = Carbon::parse((string) $this->input('date_to'))->toDateString();
+            if ($to < $from) {
+                $validator->errors()->add('date_to', trans_message('reports.validation.date_to_after_or_equal'));
+            }
+        });
     }
 
     protected function prepareForValidation(): void
