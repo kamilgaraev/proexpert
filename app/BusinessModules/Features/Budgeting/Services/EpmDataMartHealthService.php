@@ -83,23 +83,52 @@ final class EpmDataMartHealthService
             ->where('organization_id', $organizationId);
         $this->applyRunFilters($runsQuery, $filters);
 
-        $snapshots = $snapshotsQuery
+        $snapshotsQuery
             ->orderByDesc('generated_at')
             ->orderByDesc('id')
-            ->limit($thresholds['health_history_limit'])
-            ->get()
-            ->all();
-        $runs = $runsQuery
+            ->limit($thresholds['health_history_limit']);
+        $runsQuery
             ->orderByDesc('id')
-            ->limit($thresholds['health_history_limit'])
-            ->get()
-            ->all();
+            ->limit($thresholds['health_history_limit']);
+        [$snapshots, $runs] = $this->readInputs($snapshotsQuery, $runsQuery);
 
         return $this->buildPayload(
             snapshots: $snapshots,
             runs: $this->filterRunsInMemory($runs, $filters),
             generatedAt: CarbonImmutable::parse(now()->toIso8601String()),
         );
+    }
+
+    private function readInputs(Builder $snapshotsQuery, Builder $runsQuery): array
+    {
+        $snapshotModel = $snapshotsQuery->getModel();
+        $runModel = $runsQuery->getModel();
+        $grammar = $snapshotModel->getConnection()->getQueryGrammar();
+        $snapshotsSql = $snapshotsQuery->toBase()->selectRaw('? AS record_type, row_to_json('.$grammar->wrapTable($snapshotModel->getTable()).')::text AS record_attributes, generated_at AS record_sort_date, id AS record_sort_id', ['snapshot']);
+        $runsSql = $runsQuery->toBase()->selectRaw('? AS record_type, row_to_json('.$grammar->wrapTable($runModel->getTable()).')::text AS record_attributes, NULL AS record_sort_date, id AS record_sort_id', ['run']);
+        $snapshots = [];
+        $runs = [];
+
+        foreach ($snapshotsSql->unionAll($runsSql)->orderBy('record_type')->orderByDesc('record_sort_date')->orderByDesc('record_sort_id')->get() as $row) {
+            $prototype = $row->record_type === 'snapshot' ? $snapshotModel : $runModel;
+            $attributes = json_decode($row->record_attributes, true, 512, JSON_THROW_ON_ERROR);
+            if (! is_array($attributes)) {
+                throw new \UnexpectedValueException('epm_health_record_invalid');
+            }
+            foreach ($prototype->getCasts() as $field => $cast) {
+                if ($cast === 'array' && array_key_exists($field, $attributes) && $attributes[$field] !== null) {
+                    $attributes[$field] = json_encode($attributes[$field], JSON_THROW_ON_ERROR);
+                }
+            }
+            $model = $prototype->newFromBuilder($attributes);
+            if ($model instanceof EpmDataMartSnapshot) {
+                $snapshots[] = $model;
+            } else {
+                $runs[] = $model;
+            }
+        }
+
+        return [$snapshots, $runs];
     }
 
     public function buildPayload(iterable $snapshots, iterable $runs, ?CarbonInterface $generatedAt = null): array

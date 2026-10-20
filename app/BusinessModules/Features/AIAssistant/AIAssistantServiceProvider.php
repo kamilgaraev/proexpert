@@ -295,6 +295,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'get_own_admin_permissions' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOwnAdminPermissionsTool::class,
                 'get_organization_credit_balance' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationCreditBalanceTool::class,
                 'get_organization_active_packages' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationActivePackagesTool::class,
+                'get_organization_calculation_health' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationCalculationHealthTool::class,
                 'get_organization_advance_settings' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationAdvanceSettingsTool::class,
                 'get_organization_effective_modules' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationEffectiveModulesTool::class,
                 'get_own_project_access' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOwnProjectAccessTool::class,
