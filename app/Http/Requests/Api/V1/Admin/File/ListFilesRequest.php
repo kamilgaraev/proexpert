@@ -20,11 +20,18 @@ class ListFilesRequest extends FormRequest
             'type' => ['sometimes', 'nullable', 'string'],
             'filename' => ['sometimes', 'nullable', 'string'],
             'date_from' => ['sometimes', 'nullable', 'date'],
-            'date_to' => ['sometimes', 'nullable', 'date'],
+            'date_to' => ['sometimes', 'nullable', 'date', ...($this->filled('date_from') ? ['after_or_equal:date_from'] : [])],
             'sort_by' => ['sometimes', 'in:created_at,size,filename'],
             'sort_dir' => ['sometimes', 'in:asc,desc'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'include_download_urls' => ['sometimes', 'boolean'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'date_to.after_or_equal' => trans_message('reports.validation.date_to_after_or_equal'),
         ];
     }
 
