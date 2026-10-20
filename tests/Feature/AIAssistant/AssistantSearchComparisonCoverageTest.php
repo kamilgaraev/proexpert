@@ -88,7 +88,7 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
 
     public static function singleProjectRestrictions(): array
     {
-        return [['numeric'], ['named'], ['quoted'], ['quoted_negative']];
+        return [['numeric'], ['named'], ['quoted'], ['quoted_negative'], ['compare_numeric'], ['compare_named']];
     }
 
     #[DataProvider('singleProjectRestrictions')]
@@ -97,13 +97,15 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         $this->secondProject->updateQuietly(['name' => $kind === 'quoted_negative' ? 'Не по проекту 100' : 'Сравнение']);
         $this->act($this->secondProject);
         $project = match ($kind) {
-            'named' => 'Сравнение', 'quoted' => '«Сравнение»', 'quoted_negative' => '«Не по проекту 100»', default => (string) $this->secondProject->id,
+            'named', 'compare_named' => 'Сравнение', 'quoted' => '«Сравнение»', 'quoted_negative' => '«Не по проекту 100»', default => (string) $this->secondProject->id,
         };
         $arguments = $this->arguments($this->project->id);
         if ($kind === 'numeric') {
             unset($arguments['project_id']);
         }
-        $response = $this->ask([$arguments], 'Покажи все акты организации в проекте '.$project);
+        $question = str_starts_with($kind, 'compare') ? 'Сравни статусы всех актов организации по проекту '.$project
+            : 'Покажи все акты организации в проекте '.$project;
+        $response = $this->ask([$arguments], $question);
         $result = array_values($this->observedResults)[0] ?? [];
         self::assertSame(1, $result['result_window']['total'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
         self::assertSame([(int) ContractPerformanceAct::query()->where('project_id', $this->secondProject->id)->sole()->id], array_column($result['results'] ?? [], 'id'));

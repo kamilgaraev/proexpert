@@ -131,6 +131,7 @@ final readonly class AssistantRequestProjectScope
         $boundProjects = [];
         $projectSections = [];
         $hasOrganizationSection = false;
+        $organizationConstraints = null;
         foreach ($arguments['sections'] as $index => $section) {
             if (! is_array($section)) {
                 continue;
@@ -188,15 +189,14 @@ final readonly class AssistantRequestProjectScope
                 || ($this->contextProjectId !== null && self::positiveId($section['project_id'] ?? null) === $this->contextProjectId)) {
                 $arguments['sections'][$index]['project_id'] = $organizationWide ? null : $projectId;
             }
-            if ($organizationWide && is_array($section['filters'] ?? null)) {
-                $arguments['sections'][$index]['filters'] = array_values(array_filter($section['filters'],
-                    fn (mixed $filter): bool => ! is_array($filter) || ! $this->isSelectedProjectFilter($filter)));
-                foreach ($arguments['sections'][$index]['filters'] as $filter) {
-                    if (is_array($filter) && ($filter['field'] ?? null) === 'project_id'
-                        && ! in_array($filter['operator'] ?? null, ['neq', 'is_null', 'is_not_null'], true)) {
-                        throw new AssistantReportScopeAmbiguous;
-                    }
+            if ($organizationWide) {
+                if (is_array($section['filters'] ?? null)) {
+                    $section['filters'] = array_values(array_filter($section['filters'],
+                        fn (mixed $filter): bool => ! is_array($filter) || ! $this->isSelectedProjectFilter($filter)));
+                    $arguments['sections'][$index]['filters'] = $section['filters'];
                 }
+                $organizationConstraints ??= $this->organizationProjectConstraints($question, $search);
+                $this->assertOrganizationProjectFilters($section, $organizationConstraints);
             }
         }
         if ($mixed) {
@@ -259,11 +259,28 @@ final readonly class AssistantRequestProjectScope
         if (preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])/iu', $question, $mention, PREG_OFFSET_CAPTURE) === 1) {
             $comparisonPrefix = substr($question, 0, $mention[0][1]);
         }
+        $project = '(?:'.self::CURRENT_PROJECT.'|(?:проект|объект)[а-яё]*(?![\pL\pN]))';
         if (preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?![\pL\pN])/iu', $comparisonPrefix) === 1) {
-            return true;
+            preg_match_all('/(?<![\pL\pN])(?:с|со|против|относительно)\s+/iu', $question, $relations, PREG_OFFSET_CAPTURE);
+            foreach ($relations[0] as [$relation, $offset]) {
+                $prefix = substr($question, 0, $offset);
+                $tail = substr($question, $offset + strlen($relation));
+                if ((self::organizationScope($prefix, false) && preg_match('/^'.$project.'/iu', $tail) === 1)
+                    || (self::organizationScope($tail, false) && preg_match('/(?<![\pL\pN])'.$project.'/iu', $prefix) === 1)) {
+                    return true;
+                }
+            }
+            preg_match_all('/'.self::NUMERIC_PROJECTS.'/iu', $question, $lists, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+            foreach ($lists as $list) {
+                $prefix = substr($question, 0, $list[0][1]);
+                if (preg_match_all('/[1-9]\d*/', $list[1][0]) > 1
+                    && preg_match('/(?:[.!?]|(?<![\pL\pN])и)\s*(?:сравн|сопостав)[а-яё]*\s*$/iu', $prefix) === 1
+                    && self::organizationScope($prefix, false)) {
+                    return true;
+                }
+            }
         }
         preg_match_all('/(?<![\pL\pN])(?:и|а\s+также)\s+/iu', $question, $conjunctions, PREG_OFFSET_CAPTURE);
-        $project = '(?:'.self::CURRENT_PROJECT.'|(?:проект|объект)[а-яё]*(?![\pL\pN]))';
         foreach ($conjunctions[0] as [$conjunction, $offset]) {
             $prefix = substr($question, 0, $offset);
             $tail = substr($question, $offset + strlen($conjunction));
@@ -368,13 +385,77 @@ final readonly class AssistantRequestProjectScope
 
     private static function withoutExcludedProjects(string $question): string
     {
+        return preg_replace(self::excludedProjectPattern(), ' ', $question) ?? $question;
+    }
+
+    private static function excludedProjectPattern(): string
+    {
         $negative = '(?<![\pL\pN])(?:без|кроме|исключая|не\s+включая|за\s+исключением|не(?:\s+(?:в|во|на|по|для|из|с|со))?)\s+';
         $noun = '(?<![\pL\pN])(?:проект|объект)[а-яё]*(?![\pL\pN])';
         $stop = '(?:\s+(?:с|со|против|относительно)\s+(?:'.self::CURRENT_PROJECT.'|'.$noun.')|[,;.!?\r\n]|$)';
         $name = '(?:(?!'.$stop.')[^,;.!?\r\n])+';
         $excluded = '(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.'|'.$noun.'\s*:?\s*(?:'.self::QUOTED_NAME.')|'.$noun.'(?:\s+'.$name.')?)';
 
-        return preg_replace('/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|'.$negative.$excluded.'/iu', ' ', $question) ?? $question;
+        return '/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|'.$negative.'(?<excluded_project>'.$excluded.')/iu';
+    }
+
+    private function organizationProjectConstraints(string $question, ?callable $search): array
+    {
+        $constraints = [];
+        $noun = '(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])';
+        $quoted = '(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|';
+        $question = preg_replace('/'.$quoted.'без\s+'.$noun.'\s+(?:тоже|также)\s+(?:учти|включи|добавь)(?:те)?(?![\pL\pN])/iu', 'включая непривязанные записи', $question) ?? $question;
+        $nullRequest = '(?:только|лишь|исключительно)\s+(?<null_kind>без|с)\s+(?:привязк(?:и|ой)\s+к\s+|(?:указанным|заданным)\s+)?'.$noun.'(?=\s*(?:$|[,.;!?]))';
+        $question = preg_replace_callback('/'.$quoted.$nullRequest.'/iu', static function (array $match) use (&$constraints): string {
+            $operator = mb_strtolower($match['null_kind']) === 'без' ? 'is_null' : 'is_not_null';
+            $constraints[$operator] = true;
+
+            return 'с требуемой привязкой';
+        }, $question) ?? $question;
+        preg_match_all(self::excludedProjectPattern(), $question, $excluded, PREG_SET_ORDER);
+        foreach ($excluded as $match) {
+            $project = trim($match['excluded_project']);
+            if (preg_match('/^'.$noun.'$/iu', $project) === 1) {
+                if (preg_match('/^без\s+/iu', $match[0]) !== 1) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                $constraints['is_null'] = true;
+
+                continue;
+            }
+            foreach ($this->reportProjectIds($project, $search) as $id) {
+                $constraints['neq:'.$id] = true;
+            }
+        }
+        if (isset($constraints['is_null']) && count($constraints) > 1) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+
+        return $constraints;
+    }
+
+    private function assertOrganizationProjectFilters(array $section, array $constraints): void
+    {
+        $seen = [];
+        foreach (is_array($section['filters'] ?? null) ? $section['filters'] : [] as $filter) {
+            if (! is_array($filter) || ($filter['field'] ?? null) !== 'project_id') {
+                continue;
+            }
+            $operator = $filter['operator'] ?? null;
+            $value = $filter['value'] ?? null;
+            $key = match ($operator) {
+                'neq' => self::positiveId($value) === null ? null : 'neq:'.self::positiveId($value),
+                'is_null', 'is_not_null' => $value === null ? $operator : null,
+                default => null,
+            };
+            if ($key === null || ! isset($constraints[$key])) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            $seen[$key] = true;
+        }
+        if (array_diff_key($constraints, $seen) !== []) {
+            throw new AssistantReportScopeAmbiguous;
+        }
     }
 
     private function assertProjectFilters(array $section, int $projectId): void

@@ -45,6 +45,15 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'nominative organization' => [true, true, false, 7, 5, false, '', 'nominative'],
             'organization wording restricted by project ID' => [true, true, false, 4, 4, false, '', 'restricted_id'],
             'organization wording restricted by project name' => [true, true, false, 4, 4, false, '', 'restricted_name'],
+            'compare statuses restricted by project ID' => [true, true, false, 4, 4, false, '', 'restricted_compare_id'],
+            'compare amounts restricted by project name' => [true, true, false, 4, 4, false, '', 'restricted_compare_name'],
+            'organization rejects invented exclusion' => [true, true, false, 7, 5, false, '', 'invented_neq'],
+            'organization rejects invented projectless filter' => [true, true, false, 7, 5, false, '', 'invented_is_null'],
+            'organization rejects invented assigned project filter' => [true, true, false, 7, 5, false, '', 'invented_is_not_null'],
+            'organization rejects wrong excluded project' => [true, true, false, 4, 4, true, '', 'wrong_exclusion'],
+            'organization rejects omitted exclusion' => [true, true, false, 4, 4, true, '', 'missing_exclusion'],
+            'organization excludes fresh exact project name' => [true, true, false, 4, 4, true, '', 'named_exclusion'],
+            'organization cannot resolve private excluded project name' => [true, true, false, 7, 5, false, '', 'named_exclusion_denied'],
             'organization not including project' => [true, true, false, 4, 4, true, '', 'not_including'],
             'organization and current project' => [true, true, false, 7, 5, false, '', 'current'],
             'organization and explicit project' => [true, true, false, 7, 5, false, '', 'explicit'],
@@ -106,7 +115,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         self::assertFalse($policy->canReadEntity($actor, $org->id, 'project', $foreign->id));
         $csv = null;
         $files = $this->createMock(FileService::class);
-        $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte'], true);
+        $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte',
+            'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied'], true);
         $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
@@ -198,9 +208,21 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if ($variant === 'nominative') {
             $question = 'Сделай CSV: все акты организации по статусам и валютам, включая черновики.';
         }
-        if (in_array($variant, ['restricted_id', 'restricted_name'], true)) {
+        if (in_array($variant, ['restricted_id', 'restricted_name', 'restricted_compare_id', 'restricted_compare_name'], true)) {
             $second->updateQuietly(['name' => 'СевГУ ограничение '.bin2hex(random_bytes(4))]);
-            $question = 'Сформируй CSV по всем актам организации по проекту '.($variant === 'restricted_id' ? $second->id : $second->name);
+            $target = in_array($variant, ['restricted_id', 'restricted_compare_id'], true) ? $second->id : $second->name;
+            $question = (str_contains($variant, 'compare') ? 'Сформируй CSV: сравни статусы всех актов организации по проекту ' : 'Сформируй CSV по всем актам организации по проекту ').$target;
+        }
+        if (str_starts_with($variant, 'invented_')) {
+            $operator = substr($variant, strlen('invented_'));
+            $arguments['sections'][0]['filters'] = [['field' => 'project_id', 'operator' => $operator, 'value' => $operator === 'neq' ? $first->id : null]];
+        }
+        if (in_array($variant, ['wrong_exclusion', 'missing_exclusion'], true)) {
+            $arguments['sections'][0]['filters'] = $variant === 'missing_exclusion' ? []
+                : [['field' => 'project_id', 'operator' => 'neq', 'value' => $second->id]];
+        }
+        if (in_array($variant, ['named_exclusion', 'named_exclusion_denied'], true)) {
+            $question = 'Сформируй CSV по всем актам организации, кроме проекта «'.($variant === 'named_exclusion' ? $first->name : $private->name).'»';
         }
         if ($variant === 'not_including') {
             $question = 'Сформируй CSV по всем актам организации, не включая проект '.$first->id;
@@ -305,7 +327,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if (! $filtered) {
             $expected = [...$expected, ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
         }
-        if ($excludeFirst || in_array($variant, ['restricted_id', 'restricted_name'], true)) {
+        if ($excludeFirst || in_array($variant, ['restricted_id', 'restricted_name', 'restricted_compare_id', 'restricted_compare_name'], true)) {
             $expected = [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
         }
         if ($variant === 'without_drafts') {
