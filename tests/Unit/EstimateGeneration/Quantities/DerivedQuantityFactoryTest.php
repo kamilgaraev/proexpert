@@ -16,6 +16,23 @@ use PHPUnit\Framework\TestCase;
 final class DerivedQuantityFactoryTest extends TestCase
 {
     #[Test]
+    public function preflight_coverage_without_a_fact_preserves_each_relation_and_deduplicates_only_the_same_issue(): void
+    {
+        $facets = ['code' => 'geometry_coverage_unknown', 'operand' => 'geometry_coverage', 'entity_id' => 'roof:1', 'relation' => 'roof_facets'];
+        $openings = [...$facets, 'relation' => 'roof_openings'];
+        $blocked = [...$facets, 'code' => 'geometry_coverage_blocked', 'fact_id' => null];
+        $issues = [$openings, $facets, $blocked, $facets];
+        $factory = new DerivedQuantityFactory;
+        $snapshot = new ProjectModelSnapshot([], [], [], []);
+        $result = $factory->derive($snapshot, [], ['preflight_issues' => $issues]);
+        self::assertFalse($result->isReady());
+        self::assertNull($result->quantity);
+        self::assertSame([$blocked, $facets, $openings], $result->unresolvedInputs);
+        self::assertCount(3, $result->questions);
+        self::assertSame($result->unresolvedInputs, $factory->derive($snapshot, [], ['preflight_issues' => array_reverse($issues)])->unresolvedInputs);
+    }
+
+    #[Test]
     public function missing_geometry_operands_preserve_every_child_and_parameter(): void
     {
         $snapshot = $this->snapshot([$this->entity('wall:1', 'wall'),
