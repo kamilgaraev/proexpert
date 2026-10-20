@@ -9,6 +9,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\ReportFile;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -33,10 +34,10 @@ final readonly class ReportFileDownloadService
             return str_replace('/api/v1/ai-assistant/reports/', '/api/v1/admin/ai-assistant/reports/', $url);
         }
         $storage = $this->files->disk($organization);
-        if (! $storage->exists($file->path)) {
+        if (! ApiQueryMetrics::measureProcessingPhase('file_download_storage_exists', static fn (): bool => $storage->exists($file->path))) {
             throw (new ModelNotFoundException)->setModel(ReportFile::class, [$id]);
         }
 
-        return $storage->temporaryUrl($file->path, now()->addHours(1));
+        return ApiQueryMetrics::measureProcessingPhase('file_download_temporary_url', static fn (): string => $storage->temporaryUrl($file->path, now()->addHours(1)));
     }
 }
