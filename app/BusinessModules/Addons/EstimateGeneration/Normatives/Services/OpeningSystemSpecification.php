@@ -32,8 +32,10 @@ final class OpeningSystemSpecification
             'steel_glazed_window' => $window && ! $door && $steel && ! $pvc && ! $wood && ! $aluminium,
             'pvc_glazed_window' => $window && ! $door && $pvc && ! $wood && ! $aluminium && ! $steel,
             'timber_hollow_core_door' => $door && ! $window && $wood && ! $pvc && ! $steel && ! $aluminium
+                && $has('/пустотел|сотов/')
                 && ! $has('/меранти|наружн|массив|дубов/'),
             'meranti_external_door' => $door && ! $window && $wood && ! $pvc && ! $steel && ! $aluminium
+                && $has('/меранти/') && $has('/наружн/')
                 && ! $has('/внутренн|пустотел|сотов|дубов|соснов/'),
             default => false,
         };

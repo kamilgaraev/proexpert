@@ -41,8 +41,11 @@ final class NormativeHardGateTest extends TestCase
             ['pvc_glazed_window', 'Установка стальных оконных блоков', false],
             ['timber_hollow_core_door', 'Установка внутренних деревянных дверных блоков с пустотелыми полотнами', true],
             ['timber_hollow_core_door', 'Установка наружных деревянных дверных блоков из меранти', false],
+            ['timber_hollow_core_door', 'Установка внутренних деревянных дверных блоков', false],
             ['meranti_external_door', 'Установка наружных деревянных дверных блоков из меранти', true],
             ['meranti_external_door', 'Установка внутренних деревянных дверных блоков', false],
+            ['meranti_external_door', 'Установка наружных деревянных дверных блоков из бука', false],
+            ['meranti_external_door', 'Установка деревянных дверных блоков', false],
             [null, 'Установка оконных блоков из поливинилхлоридных профилей', false],
         ];
     }

@@ -271,6 +271,32 @@ final class OpeningScopeEvaluationPostgresTest extends EstimateGenerationCanonic
                 self::addToAssertionCount(1);
             }
         }
+        $matcher = new class extends \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher
+        {
+            public array $seen = [];
+
+            public function __construct() {}
+
+            public function searchWorkItemCandidates(array $workItem, array $context = [], int $limit = 10): ?array
+            {
+                $this->seen[] = $workItem;
+
+                return ['candidates' => [
+                    ['norm_id' => 901, 'name' => 'Установка стальных остеклённых оконных блоков', 'unit' => 'm2'],
+                    ['norm_id' => 902, 'name' => 'Установка оконных блоков из поливинилхлоридных профилей', 'unit' => 'm2'],
+                    ['norm_id' => 903, 'name' => 'Установка оконных блоков', 'unit' => 'm2'],
+                ]];
+            }
+        };
+        $draft['source_input_version'] = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh());
+        $session->refresh()->update(['draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft))]);
+        $search = new \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService(
+            $matcher, new \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter);
+        foreach (['', 'ПВХ'] as $query) {
+            $result = $search->search($session->fresh(), $byWork['openings.windows']['key'], $query);
+            self::assertSame([901], array_column($result['candidates'], 'norm_id'));
+            self::assertStringStartsWith('Установка стальных остеклённых оконных блоков', $matcher->seen[array_key_last($matcher->seen)]['normative_search_text']);
+        }
         self::assertEquals($draft, $this->recalculate($draft, $actor, $session->fresh()));
         $deleted = $draft;
         array_shift($deleted['local_estimates'][0]['sections'][0]['work_items']);
