@@ -273,7 +273,7 @@ final class PersonalFileService
             throw (new ModelNotFoundException)->setModel(PersonalFile::class, [$id]);
         }
 
-        $url = $this->fileDownloadUrl($file, $actor);
+        $url = $this->fileDownloadUrl($file, $actor, measureDownload: true);
 
         return str_starts_with($url, '/api/v1/ai-assistant/reports/')
             ? str_replace('/api/v1/ai-assistant/reports/', '/api/v1/admin/ai-assistant/reports/', $url)
@@ -300,18 +300,22 @@ final class PersonalFileService
         return $payload;
     }
 
-    private function fileDownloadUrl(PersonalFile $file, ?User $actor): string
+    private function fileDownloadUrl(PersonalFile $file, ?User $actor, bool $measureDownload = false): string
     {
         $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
         if ($file->directory === 'reports/assistant' || $access->isAssistantReportPath((string) $file->storage_key)) {
             return $access->urlForPath((string) $file->storage_key, $actor);
         }
 
-        return ApiQueryMetrics::measureProcessingPhase('file_download_temporary_url', fn (): string => $this->files->temporaryDownloadUrl(
+        $temporaryUrl = fn (): string => $this->files->temporaryDownloadUrl(
             (string) $file->storage_key,
             (int) config('filesystems.s3.download_ttl_seconds', self::DOWNLOAD_TTL_SECONDS),
             $file->original_name,
-        ));
+        );
+
+        return $measureDownload
+            ? ApiQueryMetrics::measureProcessingPhase('file_download_temporary_url', $temporaryUrl)
+            : $temporaryUrl();
     }
 
     /** @return Builder<PersonalFile> */

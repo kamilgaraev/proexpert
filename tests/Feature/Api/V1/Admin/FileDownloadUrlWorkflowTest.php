@@ -33,7 +33,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
 
     private array $moduleSlugs = ['file-management'];
 
-    private array $downloadPhases = [];
+    private array $filePhases = [];
 
     protected function setUp(): void
     {
@@ -41,10 +41,12 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         Storage::fake('s3');
         Event::listen(MessageLogged::class, function (MessageLogged $event): void {
             if ($event->message === 'api_response_timing' && in_array($event->context['route'] ?? null, [
+                'api/v1/admin/personal-files',
+                'api/v1/admin/report-files',
                 'api/v1/admin/personal-files/{id}/download-url',
                 'api/v1/admin/report-files/{id}/download-url',
             ], true)) {
-                $this->downloadPhases = $event->context['processing_phases'] ?? [];
+                $this->filePhases = $event->context['processing_phases'] ?? [];
             }
         });
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
@@ -120,6 +122,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         foreach (['' => 'legacy', '&include_download_urls=1' => 'explicit'] as $query => $suffix) {
             $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/personal-files?folder=docs'.$query)
                 ->assertOk()->assertJsonPath('data.0.download_url', 'https://download.example.test/'.$suffix);
+            $this->assertDownloadStoragePhases(false, false);
         }
         foreach (['click-one', 'click-two'] as $suffix) {
             $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/personal-files/'.$file->id.'/download-url');
@@ -141,6 +144,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         foreach (['', '?include_download_urls=1'] as $query) {
             $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/report-files'.$query)
                 ->assertOk()->assertJsonPath('data.0.download_url', $expected);
+            $this->assertDownloadStoragePhases(false, false);
         }
         $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/report-files/'.$file->id.'/download-url');
         $response->assertOk()->assertJsonPath('data.download_url', $expected);
@@ -239,12 +243,12 @@ final class FileDownloadUrlWorkflowTest extends TestCase
     {
         foreach (['file_download_storage_exists' => $exists, 'file_download_temporary_url' => $url] as $name => $expected) {
             if (! $expected) {
-                self::assertArrayNotHasKey($name, $this->downloadPhases);
+                self::assertArrayNotHasKey($name, $this->filePhases);
 
                 continue;
             }
-            self::assertArrayHasKey($name, $this->downloadPhases);
-            $phase = $this->downloadPhases[$name];
+            self::assertArrayHasKey($name, $this->filePhases);
+            $phase = $this->filePhases[$name];
             self::assertSame(1, $phase['count']);
             self::assertSame(0, $phase['sql_count']);
             foreach ($phase as $key => $value) {
