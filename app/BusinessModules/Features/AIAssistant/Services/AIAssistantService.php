@@ -1952,9 +1952,6 @@ class AIAssistantService
 
     private function hasCompleteSearchComparison(AssistantRequestProjectScope $scope, string $question, User $actor, int $organizationId): bool
     {
-        if ($this->activeSearchScopeAttempts === []) {
-            return true;
-        }
         try {
             $projectIds = $scope->comparisonProjectIds($question,
                 fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $actor, $organizationId));

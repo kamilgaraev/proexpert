@@ -80,6 +80,25 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_no_searches_cannot_publish_a_completed_organization_comparison(): void
+    {
+        $response = $this->ask([]);
+        $metadata = $response['message']['metadata'];
+        self::assertTrue($metadata['needs_clarification'], json_encode($metadata, JSON_UNESCAPED_UNICODE));
+        self::assertSame([], $metadata['source_refs']);
+        self::assertSame('partial', $metadata['validation_status']);
+        self::assertTrue($metadata['degraded_mode']);
+        self::assertSame([], $this->observedResults);
+        self::assertStringContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+    }
+
+    public function test_non_comparison_without_searches_does_not_require_scope_clarification(): void
+    {
+        $response = $this->ask([], 'Какие у тебя возможности?');
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+        self::assertSame([], $this->observedResults);
+    }
+
     public function test_project_only_search_cannot_publish_a_completed_organization_comparison(): void
     {
         $response = $this->ask([$this->arguments($this->project->id)]);
