@@ -11,9 +11,10 @@ final class AssistantReportComparisonSpecification
 {
     public const COMPARISON_WORD = '(?<![\pL\pN])(?:сравн|сопостав|свер)[а-яё]*(?![\pL\pN])';
 
-    public static function assertCompatible(string $question, array $sections, array $projectIds, ?string $resolvedProjectName = null): void
+    public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = []): void
     {
-        if ($resolvedProjectName !== null) {
+        usort($resolvedProjectNames, static fn (string $first, string $second): int => strlen($second) <=> strlen($first));
+        foreach ($resolvedProjectNames as $resolvedProjectName) {
             $question = preg_replace('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])(?:\s*:\s*|\s+)'.preg_quote($resolvedProjectName, '/').'(?![\pL\pN])/iu', ' ', $question) ?? $question;
         }
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);

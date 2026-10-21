@@ -306,6 +306,33 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
 
+    public function test_multiple_exact_project_names_publish_only_a_complete_comparison(): void
+    {
+        $this->project->updateQuietly(['name' => 'Альфа '.bin2hex(random_bytes(4))]);
+        $this->secondProject->updateQuietly(['name' => 'Бета '.bin2hex(random_bytes(4))]);
+        $this->act($this->secondProject);
+        $response = $this->ask([$this->arguments(null), $this->arguments($this->project->id), $this->arguments($this->secondProject->id)],
+            'Сравни все акты организации с проектом '.$this->project->name.' и проектом '.$this->secondProject->name);
+        self::assertSame([2, 1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+    }
+
+    public function test_revoked_second_named_project_cannot_publish_a_comparison(): void
+    {
+        $this->project->updateQuietly(['name' => 'Альфа '.bin2hex(random_bytes(4))]);
+        $this->secondProject->updateQuietly(['name' => 'Бета '.bin2hex(random_bytes(4))]);
+        $this->act($this->secondProject);
+        $this->beforeFinal = fn () => $this->actor->assignedProjects()->updateExistingPivot($this->secondProject->id, ['is_active' => false]);
+        try {
+            $response = $this->ask([$this->arguments(null), $this->arguments($this->project->id), $this->arguments($this->secondProject->id)],
+                'Сравни все акты организации с проектом '.$this->project->name.' и проектом '.$this->secondProject->name);
+            self::assertTrue($response['message']['metadata']['needs_clarification']);
+            self::assertSame([], $response['message']['metadata']['source_refs']);
+        } catch (\Illuminate\Auth\Access\AuthorizationException|\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+        }
+        self::assertFalse((bool) $this->actor->assignedProjects()->whereKey($this->secondProject->id)->firstOrFail()->pivot->is_active);
+    }
+
     public function test_model_can_request_the_other_scope_in_a_later_provider_turn(): void
     {
         $this->oneSearchPerTurn = true;

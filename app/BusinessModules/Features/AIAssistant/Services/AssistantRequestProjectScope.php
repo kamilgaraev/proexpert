@@ -123,7 +123,7 @@ final readonly class AssistantRequestProjectScope
         }
         $mixed = $organizationWide && self::hasExplicitProjectSections($question);
         $projectIds = null;
-        $resolvedProjectName = null;
+        $resolvedProjectNames = [];
         $boundProjects = [];
         $projectSections = [];
         $hasOrganizationSection = false;
@@ -154,7 +154,7 @@ final readonly class AssistantRequestProjectScope
                 if (! $mixed) {
                     throw new AssistantReportScopeAmbiguous;
                 }
-                $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectName);
+                $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectNames);
                 $id = self::positiveId($section['project_id'] ?? null);
                 if (! in_array($id, $projectIds, true)) {
                     if (count($projectIds) !== 1 || ($id !== null && $id !== $this->contextProjectId)) {
@@ -196,11 +196,11 @@ final readonly class AssistantRequestProjectScope
             }
         }
         if ($mixed) {
-            $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectName);
+            $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectNames);
             if (! $hasOrganizationSection || array_diff($projectIds, array_keys($boundProjects)) !== []) {
                 throw new AssistantReportScopeAmbiguous;
             }
-            AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds, $resolvedProjectName);
+            AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds, $resolvedProjectNames);
         }
 
         return $arguments;
@@ -348,9 +348,9 @@ final readonly class AssistantRequestProjectScope
         return $id;
     }
 
-    private function reportProjectIds(string $question, ?callable $search, ?string &$resolvedProjectName = null): array
+    private function reportProjectIds(string $question, ?callable $search, array &$resolvedProjectNames = []): array
     {
-        $resolvedProjectName = null;
+        $resolvedProjectNames = [];
         $question = self::withoutExcludedProjects($question);
         $ids = [];
         if (self::hasAffirmativeCurrentProject($question) && $this->contextProjectId !== null) {
@@ -368,6 +368,44 @@ final readonly class AssistantRequestProjectScope
             }
         }
         $nameQuestion = preg_replace('/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.')/iu', ' ', $question) ?? $question;
+        $noun = '(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])';
+        $parts = preg_split('/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|(?:\s+(?:и|или)\s+|,\s*(?:и\s+)?)(?=(?:(?:по|для|в|во|на|из)\s+)?'.$noun.'\s)/iu', $nameQuestion, flags: PREG_SPLIT_OFFSET_CAPTURE) ?: [[$nameQuestion, 0]];
+        $parts = array_values(array_filter($parts, static fn (array $part): bool => preg_match('/'.$noun.'/iu', $part[0]) === 1));
+        if (count($parts) > 1) {
+            if ($search === null) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            foreach (array_reverse(range(1, count($parts))) as $boundary) {
+                $end = $parts[$boundary - 1][1] + strlen($parts[$boundary - 1][0]);
+                $prefix = substr($nameQuestion, 0, $end);
+                if (preg_match('/'.$noun.'(?:\s*:\s*|\s+)(?<name>.+)$/isu', $prefix, $full) !== 1) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                $quoted = preg_match('/^(?:«|“|„|")/u', $full['name']) === 1;
+                if ($quoted && $boundary > 1) {
+                    continue;
+                }
+                $name = $quoted ? AssistantReportEntityQuery::extract($prefix, 'project', preservePrepositions: true)
+                    : preg_replace('/^[\s\x{0022}\x{0027}«»“”.:]+|[\s\x{0022}\x{0027}«»“”.:]+$/u', '', $full['name']);
+                if (! is_string($name) || $name === '') {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                foreach (self::reportNameCandidates($name, $quoted) as $candidate) {
+                    $id = self::exactReportProjectId($candidate, $search);
+                    if ($id !== null) {
+                        $resolvedProjectNames[] = $candidate;
+                        if ($boundary < count($parts)) {
+                            $names = [];
+                            $ids = [...$ids, ...$this->reportProjectIds(substr($nameQuestion, $parts[$boundary][1]), $search, $names)];
+                            $resolvedProjectNames = [...$resolvedProjectNames, ...$names];
+                        }
+
+                        return array_values(array_unique([...$ids, $id]));
+                    }
+                }
+            }
+            throw new AssistantReportScopeAmbiguous;
+        }
         if (AssistantReportEntityQuery::hasAmbiguousName($nameQuestion, 'project', preservePrepositions: true)) {
             throw new AssistantReportScopeAmbiguous;
         }
@@ -383,24 +421,34 @@ final readonly class AssistantRequestProjectScope
         }
         $quoted = preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*:?\s*(?:'.self::QUOTED_NAME.')/iu', $nameQuestion) === 1;
         foreach (self::reportNameCandidates($name, $quoted) as $candidate) {
-            $result = $search(['query' => $candidate, 'name_match' => 'exact', 'limit' => 2]);
-            $rows = is_array($result) ? ($result['results'] ?? null) : null;
-            if (! is_array($result) || ($result['status'] ?? null) !== 'success' || ! is_array($rows)
-                || ($result['result_window']['has_more'] ?? null) !== false) {
-                throw new AssistantReportScopeAmbiguous;
-            }
-            if ($rows === []) {
+            $id = self::exactReportProjectId($candidate, $search);
+            if ($id === null) {
                 continue;
             }
-            if (count($rows) !== 1 || ! is_int($rows[0]['id'] ?? null) || $rows[0]['id'] < 1) {
-                throw new AssistantReportScopeAmbiguous;
-            }
-            $resolvedProjectName = $candidate;
+            $resolvedProjectNames[] = $candidate;
 
-            return array_values(array_unique([...$ids, $rows[0]['id']]));
+            return array_values(array_unique([...$ids, $id]));
         }
 
         throw new AssistantReportScopeAmbiguous;
+    }
+
+    private static function exactReportProjectId(string $candidate, callable $search): ?int
+    {
+        $result = $search(['query' => $candidate, 'name_match' => 'exact', 'limit' => 2]);
+        $rows = is_array($result) ? ($result['results'] ?? null) : null;
+        if (! is_array($result) || ($result['status'] ?? null) !== 'success' || ! is_array($rows)
+            || ($result['result_window']['has_more'] ?? null) !== false) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+        if ($rows === []) {
+            return null;
+        }
+        if (count($rows) !== 1 || ! is_int($rows[0]['id'] ?? null) || $rows[0]['id'] < 1) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+
+        return $rows[0]['id'];
     }
 
     private static function reportNameCandidates(string $name, bool $quoted): array

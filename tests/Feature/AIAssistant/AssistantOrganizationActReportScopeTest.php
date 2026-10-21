@@ -99,6 +99,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
             'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
+            'multiple exact project names produce all comparison sheets' => [true, false, false, 7, 5, false, '', 'multiple_named'],
+            'multiple quoted project names produce all comparison sheets' => [true, false, false, 7, 5, false, '', 'multiple_named_quoted'],
+            'private second project name rejects the entire comparison' => [true, false, false, 7, 5, false, '', 'multiple_named_private'],
             'mixed domain search unrequested ID clarification' => [false, false, false, 7, 5, false, '', 'search_unrequested'],
         ];
     }
@@ -138,7 +141,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $csv = null;
         $files = $this->createMock(FileService::class);
         $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte',
-            'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied'], true)
+            'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied', 'multiple_named_private'], true)
             || str_starts_with($variant, 'compare_subject_');
         $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
@@ -221,7 +224,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
         $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
-            || str_starts_with($variant, 'compare_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
+            || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
         $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity', 'preposition_entity_explicit', 'compare_subject_organization_only'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
@@ -343,6 +346,17 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                 $arguments['sections'][] = $extraOrganization;
             }
         }
+        if (str_starts_with($variant, 'multiple_named')) {
+            $target = $variant === 'multiple_named_private' ? $private : $second;
+            $target->updateQuietly(['name' => 'Бета '.bin2hex(random_bytes(4))]);
+            $quote = static fn (string $name): string => $variant === 'multiple_named_quoted' ? '«'.$name.'»' : $name;
+            $question = 'Сделай Excel из трёх листов: сравни все акты организации с проектом '.$quote($first->name).' и проектом '.$quote($target->name);
+            $extraProject = $arguments['sections'][1];
+            $extraProject['title'] = 'Второй проект';
+            $extraProject['project_id'] = $target->id;
+            $extraProject['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $target->id]];
+            $arguments['sections'][] = $extraProject;
+        }
         $result = $this->dispatch($arguments, $question, $first, $org, $actor);
         if ($rejectedScope) {
             self::assertSame('error', $result['status']);
@@ -354,9 +368,13 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             return;
         }
         self::assertSame('success', $result['status'], json_encode($result, JSON_UNESCAPED_UNICODE));
-        self::assertSame($comparison ? [['title' => 'Организация', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows],
+        $expectedSections = $comparison ? [['title' => 'Организация', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows],
             ['title' => 'Проект', 'source_row_count' => $secondProject ? 4 : 3, 'output_rows' => $secondProject ? 4 : 3]]
-            : [['title' => 'По статусам и валютам', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows]], $result['sections']);
+            : [['title' => 'По статусам и валютам', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows]];
+        if (str_starts_with($variant, 'multiple_named')) {
+            $expectedSections[] = ['title' => 'Второй проект', 'source_row_count' => 4, 'output_rows' => 4];
+        }
+        self::assertSame($expectedSections, $result['sections']);
         self::assertIsString($csv);
         if ($comparison) {
             self::assertStringStartsWith('PK', $csv);
@@ -366,7 +384,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $workbook = null;
             try {
                 $workbook = \PhpOffice\PhpSpreadsheet\IOFactory::load($temporary);
-                self::assertSame(2, $workbook->getSheetCount());
+                self::assertSame(str_starts_with($variant, 'multiple_named') ? 3 : 2, $workbook->getSheetCount());
                 $sheetRows = [];
                 foreach ($workbook->getAllSheets() as $sheet) {
                     $sheetRows[] = array_values(array_filter($sheet->toArray(), static fn (array $row): bool => in_array($row[1] ?? null, ['RUB', 'USD', 'EUR'], true)));
@@ -376,6 +394,10 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                 self::assertEqualsCanonicalizing($secondProject
                     ? [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']]
                     : [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']], $projectGroups);
+                if (str_starts_with($variant, 'multiple_named')) {
+                    self::assertEqualsCanonicalizing([['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']],
+                        array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $sheetRows[2]));
+                }
             } finally {
                 $workbook?->disconnectWorksheets();
                 unlink($temporary);
