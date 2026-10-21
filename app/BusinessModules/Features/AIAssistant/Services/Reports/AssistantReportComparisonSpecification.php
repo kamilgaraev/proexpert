@@ -9,11 +9,16 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadS
 
 final class AssistantReportComparisonSpecification
 {
-    public static function assertCompatible(string $question, array $sections, array $projectIds): void
+    public const COMPARISON_WORD = '(?<![\pL\pN])(?:сравн|сопостав|свер)[а-яё]*(?![\pL\pN])';
+
+    public static function assertCompatible(string $question, array $sections, array $projectIds, ?string $resolvedProjectName = null): void
     {
+        if ($resolvedProjectName !== null) {
+            $question = preg_replace('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])(?:\s*:\s*|\s+)'.preg_quote($resolvedProjectName, '/').'(?![\pL\pN])/iu', ' ', $question) ?? $question;
+        }
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
-        $question = preg_replace('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?|без\s+)(?:сравн|сопостав)[а-яё]*(?![\pL\pN])/iu', ' ', $question) ?? $question;
-        if (preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?![\pL\pN])/iu', $question) !== 1) {
+        $question = preg_replace('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?|без\s+)'.self::COMPARISON_WORD.'/iu', ' ', $question) ?? $question;
+        if (preg_match('/'.self::COMPARISON_WORD.'/iu', $question) !== 1) {
             return;
         }
         $organizations = [];

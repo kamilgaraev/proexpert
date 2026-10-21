@@ -11,6 +11,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_reconciliation_verbs_preserve_organization_and_project_comparison(): void
+    {
+        foreach (['Сверь все акты организации с проектом 100', 'Сверьте все акты организации с проектом 100',
+            'Нужна сверка всех актов организации с проектом 100',
+            'Сверь выбранный проект со всеми актами организации'] as $question) {
+            $id = str_contains($question, '100') ? 100 : 52;
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+            self::assertSame(['project_id' => $id], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => $id], 52, true));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => $id]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        }
+    }
+
+    public function test_reconciliation_comparisons_reject_incomparable_subjects(): void
+    {
+        $question = 'Сверь все акты организации и проект 100';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [
+            ['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract'],
+        ]]);
+    }
+
     public function test_comparison_sections_require_the_same_subject_specification(): void
     {
         $question = 'Сравни все акты организации с проектом 100';
@@ -94,9 +118,47 @@ final class AssistantRequestProjectScopeTest extends TestCase
             ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
         foreach (['Все акты организации, а также по проекту 100 — договоры',
             'Все акты организации, а также по проекту 100 — договоры. Не сравнивай их.',
-            'Все акты организации, а также по проекту «Сравни» — договоры'] as $question) {
+            'Все акты организации, а также по проекту «Сравни» — договоры',
+            'Все акты организации, а также по проекту 100 — договоры. Не сверяй их.',
+            'Все акты организации, а также по проекту «Сверка» — договоры'] as $question) {
             $search = static fn (): array => ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
             self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search), $question);
+        }
+    }
+
+    public function test_unquoted_resolved_project_names_do_not_request_subject_comparison(): void
+    {
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
+        foreach (['Сверка', 'Сравнение', 'Сравни'] as $name) {
+            $question = 'Все акты организации, а также по проекту '.$name;
+            $search = static function (array $arguments) use ($name): array {
+                self::assertSame(['query' => $name, 'name_match' => 'exact', 'limit' => 2], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search), $question);
+        }
+    }
+
+    public function test_resolved_project_names_preserve_separate_comparison_commands(): void
+    {
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
+        foreach (['Сверка', 'Сравнение', 'Сравни', '100'] as $name) {
+            $question = $name === '100' ? 'Все акты организации, а также по проекту 100. Сверь их.'
+                : 'Сравни все акты организации с проектом '.$name;
+            $search = static function (array $arguments) use ($name): array {
+                self::assertSame(['query' => $name, 'name_match' => 'exact', 'limit' => 2], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search);
+                self::fail('Actual comparison command hidden by project name: '.$name);
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
         }
     }
 

@@ -131,6 +131,7 @@ final readonly class AssistantRequestProjectScope
         }
         $mixed = $organizationWide && self::hasExplicitProjectSections($question);
         $projectIds = null;
+        $resolvedProjectName = null;
         $boundProjects = [];
         $projectSections = [];
         $hasOrganizationSection = false;
@@ -161,7 +162,7 @@ final readonly class AssistantRequestProjectScope
                 if (! $mixed) {
                     throw new AssistantReportScopeAmbiguous;
                 }
-                $projectIds ??= $this->reportProjectIds($question, $search);
+                $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectName);
                 $id = self::positiveId($section['project_id'] ?? null);
                 if (! in_array($id, $projectIds, true)) {
                     if (count($projectIds) !== 1 || ($id !== null && $id !== $this->contextProjectId)) {
@@ -203,11 +204,11 @@ final readonly class AssistantRequestProjectScope
             }
         }
         if ($mixed) {
-            $projectIds ??= $this->reportProjectIds($question, $search);
+            $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectName);
             if (! $hasOrganizationSection || array_diff($projectIds, array_keys($boundProjects)) !== []) {
                 throw new AssistantReportScopeAmbiguous;
             }
-            AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds);
+            AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds, $resolvedProjectName);
         }
 
         return $arguments;
@@ -239,7 +240,7 @@ final readonly class AssistantRequestProjectScope
     {
         $question = self::withoutNegativeCurrentProject($question);
 
-        return preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?!\pL)/iu', $question) === 1
+        return preg_match('/'.AssistantReportComparisonSpecification::COMPARISON_WORD.'/iu', $question) === 1
             && (preg_match('/(?<![\pL\pN])(?:с|со|и|против|относительно)\s+'.self::CURRENT_PROJECT.'/iu', $question) === 1
                 || preg_match('/'.self::CURRENT_PROJECT.'\s+(?:и|с|со|против|относительно)\s+(?:(?:в|во|на|по)\s+)?(?:всех|всеми|всем|все|всей)(?![\pL\pN])/iu', $question) === 1);
     }
@@ -264,7 +265,7 @@ final readonly class AssistantRequestProjectScope
             $comparisonPrefix = substr($question, 0, $mention[0][1]);
         }
         $project = '(?:'.self::CURRENT_PROJECT.'|(?:проект|объект)[а-яё]*(?![\pL\pN]))';
-        if (preg_match('/(?<![\pL\pN])(?:сравн|сопостав)[а-яё]*(?![\pL\pN])/iu', $comparisonPrefix) === 1) {
+        if (preg_match('/'.AssistantReportComparisonSpecification::COMPARISON_WORD.'/iu', $comparisonPrefix) === 1) {
             preg_match_all('/(?<![\pL\pN])(?:с|со|против|относительно)\s+/iu', $question, $relations, PREG_OFFSET_CAPTURE);
             foreach ($relations[0] as [$relation, $offset]) {
                 $prefix = substr($question, 0, $offset);
@@ -278,7 +279,7 @@ final readonly class AssistantRequestProjectScope
             foreach ($lists as $list) {
                 $prefix = substr($question, 0, $list[0][1]);
                 if (preg_match_all('/[1-9]\d*/', $list[1][0]) > 1
-                    && preg_match('/(?:[.!?]|(?<![\pL\pN])и)\s*(?:сравн|сопостав)[а-яё]*\s*$/iu', $prefix) === 1
+                    && preg_match('/(?:[.!?]|(?<![\pL\pN])и)\s*'.AssistantReportComparisonSpecification::COMPARISON_WORD.'\s*$/iu', $prefix) === 1
                     && self::organizationScope($prefix, false)) {
                     return true;
                 }
@@ -320,8 +321,9 @@ final readonly class AssistantRequestProjectScope
         return $id;
     }
 
-    private function reportProjectIds(string $question, ?callable $search): array
+    private function reportProjectIds(string $question, ?callable $search, ?string &$resolvedProjectName = null): array
     {
+        $resolvedProjectName = null;
         $question = self::withoutExcludedProjects($question);
         $ids = [];
         if (self::hasAffirmativeCurrentProject($question) && $this->contextProjectId !== null) {
@@ -366,6 +368,7 @@ final readonly class AssistantRequestProjectScope
             if (count($rows) !== 1 || ! is_int($rows[0]['id'] ?? null) || $rows[0]['id'] < 1) {
                 throw new AssistantReportScopeAmbiguous;
             }
+            $resolvedProjectName = $candidate;
 
             return array_values(array_unique([...$ids, $rows[0]['id']]));
         }
