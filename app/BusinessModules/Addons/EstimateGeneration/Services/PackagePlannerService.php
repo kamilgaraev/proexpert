@@ -36,6 +36,14 @@ class PackagePlannerService
             $packages = $this->withRequestedScopePackages($this->documentEvidencePackages($profile), $profile);
         }
 
+        if (in_array('requested_fire_alarm', array_column($profile->planningSignals['requested_scope_packages'] ?? [], 'key'), true)) {
+            $packages = array_map(
+                static fn (array $package): array => $package['key'] === 'fire_safety'
+                    ? [...$package, 'key' => 'requested_fire_alarm']
+                    : $package,
+                $packages,
+            );
+        }
         $packages = $this->withReviewPackages($packages, $profile);
         $packages = $this->withOptionalSitePackages($packages, $profile);
 
@@ -184,7 +192,7 @@ class PackagePlannerService
             'rough_finishing', 'finish_finishing' => [$scopeType, 'finishing'],
             'finishing' => ['custom-finishing', 'finishing'],
             'site' => ['site_preparation', 'site'],
-            'fire_safety' => ['fire_safety', 'engineering'],
+            'fire_safety' => ['requested_fire_alarm', 'engineering'],
             'foundation', 'walls', 'slabs', 'roof', 'openings', 'electrical', 'plumbing',
             'heating', 'ventilation', 'stairs', 'facade', 'sewerage' => [$scopeType, $scopeType],
             default => [null, null],

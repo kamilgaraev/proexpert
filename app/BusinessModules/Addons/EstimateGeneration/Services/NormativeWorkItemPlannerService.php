@@ -1331,7 +1331,7 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Воздухораспределители склада', 'ventilation', 'монтаж воздухораспределителей складской зоны', 'ventilation.warehouse_points'),
                 $this->definition('Воздухораспределители офиса', 'ventilation', 'монтаж воздухораспределителей офисной зоны', 'ventilation.office_points'),
             ],
-            'fire_safety' => [
+            'fire_safety', 'requested_fire_alarm' => [
                 $this->definition('Пожарная сигнализация', 'engineering', 'монтаж пожарной сигнализации и оповещения', 'warehouse.fire'),
             ],
             'rough_finishing' => [

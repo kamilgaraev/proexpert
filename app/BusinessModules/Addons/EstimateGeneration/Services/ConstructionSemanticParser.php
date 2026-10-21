@@ -519,13 +519,19 @@ class ConstructionSemanticParser
     private function detectScopeTypes(string $normalizedLine, array $keywords): array
     {
         $matches = [];
+        $excluded = $this->explicitScopeExclusionSpans($normalizedLine);
         foreach ($keywords as $scopeType => $patterns) {
             foreach ($patterns as $pattern) {
                 $length = mb_strlen($pattern);
                 $offset = 0;
                 while (($position = mb_strpos($normalizedLine, $pattern, $offset)) !== false) {
-                    $matches[] = ['scope' => $scopeType, 'start' => $position, 'end' => $position + $length];
                     $offset = $position + $length;
+                    foreach ($excluded as $span) {
+                        if ($position < $span['end'] && $span['start'] < $offset) {
+                            continue 2;
+                        }
+                    }
+                    $matches[] = ['scope' => $scopeType, 'start' => $position, 'end' => $offset];
                 }
             }
         }
@@ -544,6 +550,26 @@ class ConstructionSemanticParser
         }
 
         return array_values(array_filter(array_keys($keywords), static fn (string $scope): bool => isset($scopes[$scope])));
+    }
+
+    private function explicitScopeExclusionSpans(string $line): array
+    {
+        $negative = 'не\\s+(?:требуется|требуются|нужен|нужна|нужно|нужны|предусмотрен|предусмотрена|предусмотрено|предусмотрены|входит|входят)';
+        $patterns = [
+            '~(?<![\\p{L}\\p{N}])без\\s+[^,;.!?]+~u',
+            '~(?<![\\p{L}\\p{N}])(?:не\\s+выполнять|'.$negative.')(?![\\p{L}\\p{N}])[^,;.!?]*~u',
+            '~[^,;.!?]+?\\s+'.$negative.'(?![\\p{L}\\p{N}])~u',
+        ];
+        $spans = [];
+        foreach ($patterns as $pattern) {
+            preg_match_all($pattern, $line, $matches, PREG_OFFSET_CAPTURE);
+            foreach ($matches[0] as [$text, $byteOffset]) {
+                $start = mb_strlen(substr($line, 0, $byteOffset));
+                $spans[] = ['start' => $start, 'end' => $start + mb_strlen($text)];
+            }
+        }
+
+        return $spans;
     }
 
     protected function isScopeCandidateLine(string $normalizedLine, string $scopeType): bool
@@ -951,6 +977,9 @@ class ConstructionSemanticParser
      */
     protected function expandCompoundScopePart(string $part, array $keywords): array
     {
+        if ($this->explicitScopeExclusionSpans(mb_strtolower($this->cleanLine($part))) !== []) {
+            return [$part];
+        }
         $segments = array_values(array_filter(array_map(
             static fn (string $segment): string => trim($segment),
             preg_split('/\s+и\s+/u', $part) ?: []

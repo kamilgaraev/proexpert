@@ -459,6 +459,9 @@ final class WorkPlanCompilerTest extends TestCase
                 }
             }
         }
+        if ($scope === 'fire_safety') {
+            self::assertSame([], $payload['local_estimates'][0]['sections'][0]['work_items']);
+        }
     }
 
     public static function requestedUnknownScopes(): iterable
@@ -475,7 +478,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'sewerage' => ['Устройство канализации', 'sewerage', 'sewerage', 'sewerage'];
         yield 'heating' => ['Отопление', 'heating', 'heating', 'heating'];
         yield 'ventilation' => ['Вентиляция', 'ventilation', 'ventilation', 'ventilation'];
-        yield 'fire_safety' => ['Пожарная сигнализация', 'fire_safety', 'fire_safety', 'automation'];
+        yield 'fire_safety' => ['Пожарная сигнализация', 'fire_safety', 'requested_fire_alarm', 'automation'];
         yield 'stairs' => ['Устройство лестницы', 'stairs', 'stairs', 'structures'];
         yield 'facade' => ['Устройство фасада', 'facade', 'facade', 'structures'];
         yield 'finishing' => ['Штукатурные работы', 'finishing', 'custom-finishing', 'finishing'];
@@ -530,6 +533,52 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'fire_extinguishing' => ['Монтаж пожаротушения'];
         yield 'security_alarm' => ['Монтаж охранной сигнализации'];
         yield 'fire_notification' => ['Пожарное оповещение'];
+    }
+
+    public function test_standard_warehouse_and_industrial_fire_packages_do_not_become_explicit_automation_requests(): void
+    {
+        foreach (['warehouse', 'industrial'] as $type) {
+            $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type], []);
+            $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['automation']];
+            $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+            self::assertNotContains('fire_safety', array_column($payload['package_plan']['packages'], 'key'), $type);
+            self::assertSame($type === 'industrial' ? ['automation'] : [], array_column($payload['local_estimates'], 'key'), $type);
+        }
+    }
+
+    public function test_known_profiles_preserve_their_explicit_fire_alarm_request_in_automation(): void
+    {
+        foreach (['warehouse', 'industrial'] as $type) {
+            $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type, 'description' => 'Пожарная сигнализация'], []);
+            $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['automation']];
+            $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+            $keys = array_column($payload['local_estimates'], 'key');
+            self::assertContains('requested_fire_alarm', $keys, $type);
+            self::assertNotContains('fire_safety', $keys, $type);
+            $alarm = $payload['local_estimates'][array_search('requested_fire_alarm', $keys, true)];
+            self::assertSame($type === 'warehouse' ? ['Пожарная сигнализация'] : [], array_column($alarm['sections'][0]['work_items'], 'name'), $type);
+        }
+    }
+
+    #[DataProvider('explicitScopeExclusions')]
+    public function test_explicitly_excluded_work_is_not_a_positive_requested_scope(string $description, array $expected): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame($description, $analysis['object']['manual_description']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+    }
+
+    public static function explicitScopeExclusions(): iterable
+    {
+        yield 'without_walls' => ['Устройство фундамента без стен', ['foundation']];
+        yield 'walls_not_required' => ['Устройство фундамента, стены не требуются', ['foundation']];
+        yield 'foundation_not_required' => ['Фундамент не требуется, устройство стен', ['walls']];
+        yield 'do_not_build_walls' => ['Не выполнять устройство стен, устройство фундамента', ['foundation']];
+        yield 'no_wall_required' => ['Не требуется устройство стен, фундамент', ['foundation']];
+        yield 'no_work_required' => ['Стены не требуются', []];
     }
 
     #[DataProvider('oppositeFinishingPhases')]
