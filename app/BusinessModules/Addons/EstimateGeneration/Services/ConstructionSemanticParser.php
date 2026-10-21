@@ -471,7 +471,7 @@ class ConstructionSemanticParser
     /**
      * @return array{items: array<int, array<string, mixed>>, zones: array<int, string>, constructives: array<int, string>}
      */
-    protected function extractScopes(string $text, bool $strictMode, bool $manualExplicit = false): array
+    protected function extractScopes(string $text, bool $strictMode, bool $manualExplicit = false, bool $sourceContext = false): array
     {
         $items = [];
         $zones = [];
@@ -487,15 +487,19 @@ class ConstructionSemanticParser
             $scopeTypes = $manualExplicit
                 ? $this->manualScopeTypes($normalizedLine)
                 : array_filter([$this->detectScopeType($normalizedLine, $keywords)]);
+            if ($sourceContext && $scopeTypes === []) {
+                $scopeTypes = [null];
+            }
             foreach ($scopeTypes as $scopeType) {
                 if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
                     continue;
                 }
 
                 $items[] = [
-                    'title' => $this->normalizeScopeTitle($line, $scopeType),
+                    'title' => $this->normalizeScopeTitle($line, $scopeType ?? 'custom'),
                     'scope_type' => $scopeType,
                     'source_refs' => $this->extractSourceRefs($line),
+                    ...($sourceContext ? ['rawtitle' => $line, 'positive_text' => $this->positiveWorkText($line)] : []),
                 ];
                 $zones[] = $this->extractZoneTitle($line);
                 $constructives[] = $scopeType;
@@ -503,7 +507,7 @@ class ConstructionSemanticParser
         }
 
         return [
-            'items' => $this->uniqueScopeItems($items),
+            'items' => $sourceContext ? $items : $this->uniqueScopeItems($items),
             'zones' => array_values(array_filter(array_unique($zones))),
             'constructives' => array_values(array_unique($constructives)),
         ];
@@ -555,9 +559,14 @@ class ConstructionSemanticParser
         return implode("\n", $lines);
     }
 
-    public function positiveDocumentScopeTypes(string $text, bool $manualExplicit = false): array
+    public function sourceWorkScopes(string $text): array
     {
-        return array_column($this->extractScopes($this->positiveWorkText($text), false, $manualExplicit)['items'], 'scope_type');
+        return $this->extractScopes($text, false, manualExplicit: true, sourceContext: true)['items'];
+    }
+
+    public function scopeDisplayTitle(string $scopeType): string
+    {
+        return $this->normalizeScopeTitle('', $scopeType);
     }
 
     private function hasFinishingSurfaceArgument(string $clause, array $keywords): bool

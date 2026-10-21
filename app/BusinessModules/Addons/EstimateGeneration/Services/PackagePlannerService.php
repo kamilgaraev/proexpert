@@ -113,18 +113,7 @@ class PackagePlannerService
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
         $parser = new ConstructionSemanticParser;
-        $requestedPackages = [];
-        if (trim((string) ($object['manual_description'] ?? $object['description'] ?? '')) !== '') {
-            foreach ($analysis['detected_structure']['explicit_work_scopes'] ?? [] as $scope) {
-                if (! is_array($scope)) {
-                    continue;
-                }
-                $package = $this->requestedScopePackage($scope);
-                if ($package !== null) {
-                    $requestedPackages[$package['key']] = $package;
-                }
-            }
-        }
+        $sourceWorkIntents = $this->sourceWorkIntents($parser->sourceWorkScopes((string) ($object['manual_description'] ?? $object['description'] ?? '')), 'user_request');
         $documentFragments = [];
         $documentScopeFragments = [];
         foreach ($analysis['source_documents'] ?? [] as $document) {
@@ -141,45 +130,23 @@ class PackagePlannerService
                 continue;
             }
             $documentFragments[] = $parser->positiveWorkText((string) ($document['text'] ?? ''));
-            $documentScopeTypes = $parser->positiveDocumentScopeTypes((string) ($document['text'] ?? ''));
-            $documentExplicitScopeTypes = null;
-            foreach ($document['scopes']['items'] ?? [] as $scope) {
-                if (! is_array($scope) || ! in_array($scope['scope_type'] ?? null, $documentScopeTypes, true)
-                    || ! in_array($scope['scope_type'] ?? null,
-                    $parser->positiveDocumentScopeTypes((string) ($scope['title'] ?? '')), true)) {
-                    continue;
+            $sourceScopes = $parser->sourceWorkScopes((string) ($document['text'] ?? ''));
+            foreach ($sourceScopes as $scope) {
+                if (trim((string) ($scope['positive_text'] ?? '')) !== '') {
+                    $documentScopeFragments[$scope['title']] = $scope['positive_text'];
                 }
-                $documentScopeFragments[(string) ($scope['title'] ?? '')] = $parser->positiveWorkText((string) ($scope['title'] ?? ''));
-                $scopeTypes = [$scope['scope_type']];
-                if ($scope['scope_type'] === 'site') {
-                    $documentExplicitScopeTypes ??= $parser->positiveDocumentScopeTypes((string) ($document['text'] ?? ''), manualExplicit: true);
-                    $scopeTypes = array_values(array_intersect(
-                        $documentExplicitScopeTypes,
-                        $parser->positiveDocumentScopeTypes((string) ($scope['title'] ?? ''), manualExplicit: true),
-                        ['earthworks', 'siteworks', 'site', 'roads', 'external_networks'],
-                    ));
-                }
-                $sourceRefs = [];
-                foreach (['sheets' => 'sheet', 'elevations' => 'elevation', 'floors' => 'floor'] as $refKey => $refType) {
-                    foreach ($scope['source_refs'][$refKey] ?? [] as $value) {
-                        $sourceRefs[] = ['type' => $refType, 'value' => $value];
-                    }
-                }
-                $sourceRefs[] = [
-                    ...array_intersect_key($document, array_flip(['source_version', 'filename'])),
-                    ...(isset($document['id']) ? ['document_id' => $document['id']] : []),
-                    'excerpt' => (string) ($scope['title'] ?? ''),
+            }
+            array_push($sourceWorkIntents, ...$this->sourceWorkIntents($sourceScopes, 'document', $document));
+        }
+        $requestedPackages = [];
+        foreach ($sourceWorkIntents as $intent) {
+            $package = $this->requestedScopePackage(['scope_type' => $intent['scope_type'], 'title' => $intent['rawtitle']]);
+            if ($package !== null) {
+                $key = $package['key'];
+                $requestedPackages[$key] = [
+                    ...($requestedPackages[$key] ?? $package),
+                    'source_refs' => [...($requestedPackages[$key]['source_refs'] ?? []), ...$intent['realrefs']],
                 ];
-                foreach ($scopeTypes as $scopeType) {
-                    $package = $this->requestedScopePackage([...$scope, 'scope_type' => $scopeType]);
-                    if ($package !== null) {
-                        $key = $package['key'];
-                        $requestedPackages[$key] = [
-                            ...($requestedPackages[$key] ?? $package),
-                            'source_refs' => [...($requestedPackages[$key]['source_refs'] ?? []), ...$sourceRefs],
-                        ];
-                    }
-                }
             }
         }
         $planningDescription = implode("\n", [
@@ -223,6 +190,7 @@ class PackagePlannerService
         if ($requestedPackages !== []) {
             $planningSignals['requested_scope_packages'] = array_values($requestedPackages);
         }
+        $planningSignals['source_work_intents'] = $sourceWorkIntents;
 
         return new ObjectProfileData(
             objectType: $type,
@@ -261,6 +229,7 @@ class PackagePlannerService
             'site' => ['site_preparation', 'site'],
             'earthworks' => ['earthworks', 'earthworks'],
             'siteworks' => ['siteworks', 'site'],
+            'roads', 'external_networks' => [$scopeType, 'site'],
             'fire_safety' => ['requested_fire_alarm', 'engineering'],
             'foundation', 'walls', 'slabs', 'roof', 'openings', 'electrical', 'plumbing',
             'heating', 'ventilation', 'stairs', 'facade', 'sewerage' => [$scopeType, $scopeType],
@@ -268,6 +237,45 @@ class PackagePlannerService
         };
 
         return $key === null ? null : $this->package($key, (string) ($scope['title'] ?? $key), $packageScope, 1, 20);
+    }
+
+    private function sourceWorkIntents(array $scopes, string $origin, ?array $document = null): array
+    {
+        $intents = [];
+        foreach ($scopes as $scope) {
+            $positiveText = mb_strtolower((string) ($scope['positive_text'] ?? ''));
+            if (trim($positiveText) === '') {
+                continue;
+            }
+            $scopeTypes = isset($scope['scope_type']) ? [$scope['scope_type']] : [];
+            foreach (['roads' => $this->containsRoadsSignal($positiveText),
+                'external_networks' => $this->containsExternalNetworkSignal($positiveText),
+                'siteworks' => ! isset($scope['scope_type']) && $this->containsSiteworksSignal($positiveText)] as $scopeType => $present) {
+                if ($present) {
+                    $scopeTypes[] = $scopeType;
+                }
+            }
+            $sourceRefs = [];
+            foreach (['sheets' => 'sheet', 'elevations' => 'elevation', 'floors' => 'floor'] as $refKey => $refType) {
+                foreach ($scope['source_refs'][$refKey] ?? [] as $value) {
+                    $sourceRefs[] = ['type' => $refType, 'value' => $value];
+                }
+            }
+            if ($document !== null) {
+                $sourceRefs[] = [...array_intersect_key($document, array_flip(['source_version', 'filename'])),
+                    ...(isset($document['id']) ? ['document_id' => $document['id']] : []), 'excerpt' => $scope['rawtitle']];
+            }
+            foreach (array_unique($scopeTypes) as $scopeType) {
+                $package = $this->requestedScopePackage(['scope_type' => $scopeType]);
+                if ($package !== null) {
+                    $intent = ['package_key' => $package['key'], 'scope_type' => $scopeType,
+                        'rawtitle' => $scope['rawtitle'], 'realrefs' => $sourceRefs, 'origin' => $origin];
+                    $intents[json_encode($intent, JSON_THROW_ON_ERROR)] = $intent;
+                }
+            }
+        }
+
+        return array_values($intents);
     }
 
     private function withRequestedScopePackages(array $packages, ObjectProfileData $profile, ?array $onlyKeys = null): array

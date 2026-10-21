@@ -37,6 +37,9 @@ final readonly class WorkPlanCompiler
     {
         $profile = $this->packagePlanner->profileFromAnalysis($analysis);
         $plan = $this->packagePlanner->plan($profile);
+        $documentRequirements = $this->packagePlanner->documentRequirements($profile);
+        $sourceOnly = in_array('project_scope', array_column($documentRequirements['items'], 'key'), true);
+        $sourceWorkIntents = $profile->planningSignals['source_work_intents'] ?? [];
         $selected = $analysis['evaluation_policy']['selected_sections'] ?? [];
         if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' && $selected !== []) {
             $packages = [];
@@ -77,7 +80,7 @@ final readonly class WorkPlanCompiler
                     ));
                 }
                 $items = $intents === null
-                    ? $this->workItemPlanner->build($localEstimate, $section, $workAnalysis, $workItemLimit, $allocated['by_package'][$localEstimate['key']] ?? [], $plan)
+                    ? $this->workItemPlanner->build($localEstimate, $section, $workAnalysis, $workItemLimit, $allocated['by_package'][$localEstimate['key']] ?? [], $plan, $sourceWorkIntents, $sourceOnly)
                     : array_map(fn (array $intent): array => $this->intentToWorkItem($intent, $localEstimate, $section), $intents);
                 $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
                     $items,
@@ -137,7 +140,7 @@ final readonly class WorkPlanCompiler
         $payload = [
             'object_profile' => $profile->toArray(),
             'package_plan' => $plan->toArray(),
-            'document_requirements' => $this->packagePlanner->documentRequirements($profile),
+            'document_requirements' => $documentRequirements,
             'generation_mode' => EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null)->value,
             'regional_context' => $analysis['regional_context'] ?? [],
             'normative_context_pin' => $deferNormativePin
