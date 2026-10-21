@@ -1961,7 +1961,7 @@ class AIAssistantService
         if ($requirements === null) {
             return true;
         }
-        $references = AssistantSearchScopeCoverage::references($this->activeSearchScopeAttempts, $requirements['project_ids'], $actor, $organizationId, $requirements['pairwise']);
+        $references = AssistantSearchScopeCoverage::references($this->activeSearchScopeAttempts, $requirements['project_ids'], $actor, $organizationId, $requirements['pairwise'], $requirements['subjects'] ?? []);
 
         return $references !== null && $this->readPhase(
             fn (): bool => app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, $references), $actor, $organizationId);

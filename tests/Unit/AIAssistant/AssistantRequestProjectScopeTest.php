@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComparisonSpecification;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
@@ -12,6 +14,120 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
+    public function test_independent_subject_bindings_preserve_multiple_operands_and_literal_names(): void
+    {
+        foreach (['Все акты организации, а также по проекту 100 — договоры' => [100],
+            'Расположи все акты организации сверху, а договоры проекта 100 снизу' => [100],
+            'Договоры выбранного проекта, а также все акты организации' => [52],
+            'Все акты организации, а также договоры проектов 100 и 52' => [100, 52],
+            'Все акты организации, а также договоры проекта «Акты организации, и проект 777»' => [100],
+            'Все акты организации, а также договоры проекта 100 и проекта «100»' => [100, 102],
+            'Все акты организации, а также договоры проекта Альфа и проект Бета' => [100]] as $question => $ids) {
+            $calls = [];
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $requirements = AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question,
+                static function (array $arguments) use (&$calls): array {
+                    $calls[] = $arguments['query'];
+
+                    return ['status' => 'success', 'results' => [['id' => $arguments['query'] === '100' ? 102 : 100]], 'result_window' => ['has_more' => false]];
+                });
+            self::assertEqualsCanonicalizing($ids, $requirements['project_ids']);
+            self::assertFalse($requirements['pairwise']);
+            $expected = ['["organization","acts","performance_act"]'];
+            foreach ($ids as $id) {
+                $expected[] = '["project:'.$id.'","contracts","contract"]';
+            }
+            self::assertEqualsCanonicalizing($expected, array_keys($requirements['subjects']), $question);
+            if (str_contains($question, '777')) {
+                self::assertSame(['Акты организации, и проект 777'], $calls);
+            } elseif (str_contains($question, 'Альфа')) {
+                self::assertSame(['Альфа и проект Бета'], $calls);
+            } elseif (str_contains($question, '«100»')) {
+                self::assertSame(['100'], $calls);
+            } else {
+                self::assertSame([], $calls);
+            }
+        }
+    }
+
+    public function test_independent_bindings_use_registered_entity_identity_before_organization_normalization(): void
+    {
+        $definition = new AssistantDomainDefinition('scope_test', '', 'scope_widget', [], [], [], [], '', entityTypes: ['scope_widget']);
+        app()->instance(AssistantDomainCatalog::class, new AssistantDomainCatalog([...AssistantDomainCatalog::defaults(), $definition]));
+        app('translator')->get('ai_assistant_facts.entities', [], 'ru');
+        app('translator')->addLines(['ai_assistant_facts.entities.scope_widget' => 'Карточка проверки'], 'ru');
+        $question = 'Все карточки проверки организации, а также договоры проекта 100';
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'scope_test', 'entity_type' => 'scope_widget'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
+        $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+        self::assertSame($arguments, $scope->bindReportScope($question, $arguments));
+        $arguments['sections'][0]['domain'] = 'acts';
+        $arguments['sections'][0]['entity_type'] = 'performance_act';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        $scope->bindReportScope($question, $arguments);
+    }
+
+    public function test_independent_bindings_reject_ambiguous_registered_entity_labels(): void
+    {
+        $definitions = [];
+        app('translator')->get('ai_assistant_facts.entities', [], 'ru');
+        foreach (['first', 'second'] as $type) {
+            $definitions[] = new AssistantDomainDefinition('scope_'.$type, '', $type, [], [], [], [], '', entityTypes: [$type]);
+            app('translator')->addLines(['ai_assistant_facts.entities.'.$type => 'Карточка проверки'], 'ru');
+        }
+        app()->instance(AssistantDomainCatalog::class, new AssistantDomainCatalog([...AssistantDomainCatalog::defaults(), ...$definitions]));
+        $question = 'Все карточки проверки организации, а также договоры проекта 100';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question);
+    }
+
+    public function test_registered_subject_with_a_conjunction_is_one_literal_entity_phrase(): void
+    {
+        $definition = new AssistantDomainDefinition('scope_test', '', 'scope_card', [], [], [], [], '', entityTypes: ['scope_card']);
+        app()->instance(AssistantDomainCatalog::class, new AssistantDomainCatalog([...AssistantDomainCatalog::defaults(), $definition]));
+        app('translator')->get('ai_assistant_facts.entities', [], 'ru');
+        app('translator')->addLines(['ai_assistant_facts.entities.scope_card' => 'Карточка качества и безопасности'], 'ru');
+        $question = 'Все карточки качества и безопасности организации, а также договоры проекта 100';
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'scope_test', 'entity_type' => 'scope_card'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+    }
+
+    public function test_unknown_independent_subject_is_not_inferred_from_the_other_scope(): void
+    {
+        $question = 'Все акты организации, а также по проекту 100 — каракозябры';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question);
+    }
+
+    public function test_independent_sections_cannot_swap_requested_subjects_between_scopes(): void
+    {
+        $question = 'Покажи все акты организации, а также договоры проекта 100';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'contracts', 'entity_type' => 'contract'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act']];
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+    }
+
+    public function test_reconciliation_words_do_not_include_unrelated_sver_prefixes(): void
+    {
+        foreach (['сверху', 'сверление', 'сверло', 'свернуть', 'сверкают'] as $word) {
+            self::assertFalse(AssistantReportComparisonSpecification::requestsComparison(
+                'Расположи все акты организации '.$word.', а договоры проекта 100 снизу'), $word);
+        }
+        self::assertFalse(AssistantReportComparisonSpecification::requestsComparison(
+            'Все акты организации, а также договоры проекта 100 с полями номер и статус сверки'));
+        foreach (['Нужна сверка', 'Проведи сверку', 'Выполнить сверку', 'Данные для сверки'] as $prefix) {
+            self::assertTrue(AssistantReportComparisonSpecification::requestsComparison($prefix.' актов организации с проектом 100'), $prefix);
+        }
+        foreach (['сверь', 'сверьте', 'сверять', 'сверяем', 'сверяйте', 'сверить', 'сверим', 'сверят', 'сверка', 'сверки', 'сверок'] as $word) {
+            self::assertTrue(AssistantReportComparisonSpecification::requestsComparison(
+                $word.' все акты организации с проектом 100'), $word);
+        }
+    }
+
     public function test_comparison_relations_allow_scope_prepositions_between_entity_and_project(): void
     {
         foreach (['Сравни все акты организации с актами по проекту 100',
@@ -225,8 +341,8 @@ final class AssistantRequestProjectScopeTest extends TestCase
             'Сравнение этих данных не нужно', 'Сравнивать между собой не стоит', 'Сопоставлять — не нужно',
             'Сравнивать их сейчас не надо', 'Сверка не нужна'] as $clause) {
             $question = 'Все акты организации, а также договоры проекта 100. '.$clause;
-            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts'],
-                ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts']]];
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
             self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $clause);
         }
     }
@@ -411,7 +527,7 @@ final class AssistantRequestProjectScopeTest extends TestCase
     public function test_unquoted_resolved_project_names_do_not_request_subject_comparison(): void
     {
         $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
-            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']]];
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act']]];
         foreach (['Сверка', 'Сравнение', 'Сравни'] as $name) {
             $question = 'Все акты организации, а также по проекту '.$name;
             $search = static function (array $arguments) use ($name): array {
@@ -620,10 +736,11 @@ final class AssistantRequestProjectScopeTest extends TestCase
 
     public function test_additive_project_scopes_remain_mixed_without_a_comparison_verb(): void
     {
-        foreach (['Какие камеры проекта «Вся наша организация» и по всем нашим проектам?',
-            'Все акты организации и проекта 100', 'Покажи акты проекта 100, а также по всем актам организации'] as $question) {
+        foreach (['Все акты организации и проекта 100', 'Покажи акты проекта 100, а также по всем актам организации',
+            'Покажи акты проекта 100, а также по всем нашим проектам'] as $question) {
             self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
-            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 100]]];
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act']]];
             self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments,
                 static fn (): array => ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]]), $question);
         }
@@ -1238,8 +1355,8 @@ final class AssistantRequestProjectScopeTest extends TestCase
         $search = static fn (array $arguments): array => ['status' => 'success', 'results' => match ($arguments['query']) {
             'Сверка' => [['id' => 100]], 'Сравни' => [['id' => 102]], default => [],
         }, 'result_window' => ['has_more' => false]];
-        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts'],
-            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts'], ['scope' => 'project', 'project_id' => 102, 'domain' => 'acts']]];
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract'], ['scope' => 'project', 'project_id' => 102, 'domain' => 'contracts', 'entity_type' => 'contract']]];
         $question = 'Покажи все акты организации и отдельно договоры по проекту Сверка и проекту Сравни';
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search));
         $question = 'Сравни все акты организации с проектом Сверка и проектом Сравни';
@@ -1250,8 +1367,8 @@ final class AssistantRequestProjectScopeTest extends TestCase
     public function test_overlapping_named_operands_mask_the_longest_confirmed_title_first(): void
     {
         $question = 'Покажи все акты организации и отдельно договоры по проекту Альфа и проекту Альфа Сравни';
-        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts'],
-            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts'], ['scope' => 'project', 'project_id' => 102, 'domain' => 'acts']]];
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract'], ['scope' => 'project', 'project_id' => 102, 'domain' => 'contracts', 'entity_type' => 'contract']]];
         self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments,
             static fn (array $arguments): array => ['status' => 'success', 'results' => match ($arguments['query']) {
                 'Альфа' => [['id' => 100]], 'Альфа Сравни' => [['id' => 102]], default => [],
@@ -1637,8 +1754,12 @@ final class AssistantRequestProjectScopeTest extends TestCase
             'Покажи договоры выбранного проекта, а также все акты организации' => [52, false],
             'Сравни все акты организации с договорами проекта 100' => [100, true]] as $question => [$projectId, $pairwise]) {
             self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
-            self::assertSame(['project_ids' => [$projectId], 'pairwise' => $pairwise],
-                AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question));
+            $requirements = AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question);
+            self::assertSame([$projectId], $requirements['project_ids']);
+            self::assertSame($pairwise, $requirements['pairwise']);
+            if (! $pairwise) {
+                self::assertEqualsCanonicalizing(['["organization","acts","performance_act"]', '["project:'.$projectId.'","contracts","contract"]'], array_keys($requirements['subjects']));
+            }
         }
         foreach (['Сверка', '«Сверка»'] as $name) {
             $question = 'Покажи все акты организации, а также договоры проекта '.$name;
@@ -1651,7 +1772,9 @@ final class AssistantRequestProjectScopeTest extends TestCase
 
                     return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
                 });
-            self::assertSame(['project_ids' => [100], 'pairwise' => false], $requirements);
+            self::assertSame([100], $requirements['project_ids']);
+            self::assertFalse($requirements['pairwise']);
+            self::assertEqualsCanonicalizing(['["organization","acts","performance_act"]', '["project:100","contracts","contract"]'], array_keys($requirements['subjects']));
             self::assertSame(1, $calls);
         }
     }

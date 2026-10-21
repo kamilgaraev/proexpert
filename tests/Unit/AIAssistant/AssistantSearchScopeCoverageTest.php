@@ -76,15 +76,16 @@ final class AssistantSearchScopeCoverageTest extends TestCase
 
     public function test_independent_sections_cover_each_scope_with_different_search_specifications(): void
     {
+        $subjects = array_fill_keys(['["organization","acts","performance_act"]', '["project:52","contracts","contract"]', '["project:100","acts","performance_act"]'], true);
         $attempts = [$this->attempt(null), $this->attempt(52, ['domain' => 'contracts', 'entity_type' => 'contract'], time: '-1 minute'),
             $this->attempt(100, ['query' => 'other', 'fields' => ['id']])];
         self::assertNull($this->references($attempts));
-        self::assertCount(3, $this->references($attempts, false));
+        self::assertCount(3, $this->references($attempts, false, $subjects));
         foreach ($attempts as $attempt) {
             self::assertSame(0, $attempt['evidence']['value']);
         }
         foreach ([[], [$attempts[0]], [$attempts[1], $attempts[2]], [$attempts[0], $attempts[1]]] as $incomplete) {
-            self::assertNull($this->references($incomplete, false));
+            self::assertNull($this->references($incomplete, false, $subjects));
         }
     }
 
@@ -110,12 +111,31 @@ final class AssistantSearchScopeCoverageTest extends TestCase
         self::assertCount(3, $this->references([$failed, ...$complete], false));
     }
 
-    private function references(array $attempts, bool $pairwise = true): ?array
+    public function test_independent_subjects_cannot_be_swapped_or_replaced_by_another_entity(): void
+    {
+        $subjects = array_fill_keys(['["organization","acts","performance_act"]', '["project:52","contracts","contract"]', '["project:100","contracts","contract"]'], true);
+        $contract = ['domain' => 'contracts', 'entity_type' => 'contract'];
+        self::assertCount(3, $this->references([$this->attempt(null), $this->attempt(52, $contract), $this->attempt(100, $contract)], false, $subjects));
+        foreach ([[$this->attempt(null, $contract), $this->attempt(52), $this->attempt(100)],
+            [$this->attempt(null), $this->attempt(52, $contract), $this->attempt(100)],
+            [$this->attempt(null), $this->attempt(52, $contract), $this->attempt(100, ['domain' => 'contracts', 'entity_type' => 'other_contract'])]] as $attempts) {
+            self::assertNull($this->references($attempts, false, $subjects));
+        }
+        $actor = new User;
+        $actor->setAttribute('id', 3);
+        self::assertNull(AssistantSearchScopeCoverage::references([$this->attempt(null), $this->attempt(52), $this->attempt(100)], [52, 100], $actor, 1, false));
+    }
+
+    private function references(array $attempts, bool $pairwise = true, array $subjects = []): ?array
     {
         $actor = new User;
         $actor->setAttribute('id', 3);
 
-        return AssistantSearchScopeCoverage::references($attempts, [52, 100], $actor, 1, $pairwise);
+        if (! $pairwise && $subjects === []) {
+            $subjects = array_fill_keys(['["organization","acts","performance_act"]', '["project:52","acts","performance_act"]', '["project:100","acts","performance_act"]'], true);
+        }
+
+        return AssistantSearchScopeCoverage::references($attempts, [52, 100], $actor, 1, $pairwise, $subjects);
     }
 
     private function attempt(?int $projectId, array $changes = [], int $actorId = 3, int $organizationId = 1, string $time = 'now'): array

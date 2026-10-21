@@ -8,13 +8,17 @@ use App\Models\User;
 
 final class AssistantSearchScopeCoverage
 {
-    public static function references(array $attempts, array $projectIds, User $actor, int $organizationId, bool $pairwise = true): ?array
+    public static function references(array $attempts, array $projectIds, User $actor, int $organizationId, bool $pairwise = true, array $subjects = []): ?array
     {
+        if (! $pairwise && $subjects === []) {
+            return null;
+        }
         $required = array_fill_keys(['organization', ...array_map(static fn (int $id): string => 'project:'.$id, $projectIds)], true);
         $attempted = [];
         $confirmed = [];
         $groups = [];
         $covered = [];
+        $coveredSubjects = [];
         $references = [];
         foreach ($attempts as $attempt) {
             $arguments = $attempt['arguments'];
@@ -41,11 +45,13 @@ final class AssistantSearchScopeCoverage
             }
             $confirmed[$key] = true;
             $covered[$side] = true;
+            $coveredSubjects[AssistantRequestedSourceScopes::key($side, $actual)] = true;
             $group = json_encode([$actual, $reference['_search_count_clock'] ?? null], JSON_THROW_ON_ERROR);
             $groups[$group][$side] = true;
             $references[$reference['entity_id'].':'.$reference['source_version']] = $reference;
         }
-        if ($attempted === [] || array_diff_key($attempted, $confirmed) !== [] || array_diff_key($required, $covered) !== []) {
+        if ($attempted === [] || array_diff_key($attempted, $confirmed) !== [] || array_diff_key($required, $covered) !== []
+            || array_diff_key($subjects, $coveredSubjects) !== []) {
             return null;
         }
         foreach ($groups as $sides) {

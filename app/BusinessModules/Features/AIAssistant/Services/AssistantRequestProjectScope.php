@@ -70,7 +70,7 @@ final readonly class AssistantRequestProjectScope
         $question = preg_replace('/'.self::CURRENT_PROJECT.'(*SKIP)(*F)|(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+))'.$recordScope.'\s+(?:нашей\s+)?организации(?![\pL\pN])/iu', '$1текущий', $question) ?? $question;
         $command = '(?:(?:не|пожалуйста)\s+){0,2}(?:(?:сформируй|сгенерируй|создай|сделай|собери|подготовь|составь|сохрани|экспортируй|выгрузи|выведи|построй|объедини|сведи|подведи|покажи|показывай|посмотри|найди|посчитай|подсчитай|рассчитай|вычисли|сгруппируй|группируй|отсортируй|сортируй|сравни|сопоставь|сверь|проверь|проанализируй|оцени|объясни|расскажи|перечисли|дай|добавь|учти|учитывай|включи|включай|исключи|исключай)(?:те)?|ограничивайся|ограничивайтесь)';
         $postDefinition = '(?:(?:не|частично|полностью|еще|ещё|пока)\s+){0,3}[а-яё][а-яё-]*(?:ые|ие)';
-        $continuation = '(?=\s*(?:$|[,.;:!?]|(?:в|во|на|по|за|с|со|против|относительно|без|для|из|от|до|после|перед|при|к|ко|о|об|и|или|а|но|кроме|исключая|включая|только|также|пожалуйста|сегодня|вчера|позавчера|завтра|сейчас|нужна|нужно|нужны|нужен|CSV|XLSX|PDF|Excel|отч[её]т|реестр|сводка|таблица|'.$command.'|'.$postDefinition.')(?![\pL\pN])))';
+        $continuation = '(?=\s*(?:$|[,.;:!?]|(?:в|во|на|по|за|с|со|против|относительно|без|для|из|от|до|после|перед|при|к|ко|о|об|и|или|а|но|кроме|исключая|включая|только|также|пожалуйста|сегодня|вчера|позавчера|завтра|сейчас|сверху|снизу|нужна|нужно|нужны|нужен|CSV|XLSX|PDF|Excel|отч[её]т|реестр|сводка|таблица|'.$command.'|'.$postDefinition.')(?![\pL\pN])))';
         $organization = '(?:(?:всей\s+(?:нашей\s+)?|в\s+целом\s+по\s+(?:нашей\s+)?)организаци(?:и|ей)|(?:'.$recordScope.'|'.$collective.')\s+(?:нашей\s+)?организации)(?![\pL\pN])'.$continuation;
         $scope = '(?:'.$projects.'|'.$organization.')';
 
@@ -112,6 +112,7 @@ final readonly class AssistantRequestProjectScope
 
     public function bindReportScope(string $question, array $arguments, ?callable $search = null): array
     {
+        $sourceQuestion = $question;
         $question = AssistantOrganizationRecordVocabulary::normalize($question);
         if (! is_array($arguments['sections'] ?? null)) {
             return $arguments;
@@ -125,6 +126,7 @@ final readonly class AssistantRequestProjectScope
         $mixed = $organizationWide && self::hasExplicitProjectSections($question);
         $projectIds = null;
         $resolvedProjectNames = [];
+        $projectBindings = [];
         $boundProjects = [];
         $projectSections = [];
         $hasOrganizationSection = false;
@@ -155,7 +157,7 @@ final readonly class AssistantRequestProjectScope
                 if (! $mixed) {
                     throw new AssistantReportScopeAmbiguous;
                 }
-                $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectNames);
+                $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectNames, $projectBindings);
                 $id = self::positiveId($section['project_id'] ?? null);
                 if (! in_array($id, $projectIds, true)) {
                     if (count($projectIds) !== 1 || ($id !== null && $id !== $this->contextProjectId)) {
@@ -197,9 +199,12 @@ final readonly class AssistantRequestProjectScope
             }
         }
         if ($mixed) {
-            $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectNames);
+            $projectIds ??= $this->reportProjectIds($question, $search, $resolvedProjectNames, $projectBindings);
             if (! $hasOrganizationSection || array_diff($projectIds, array_keys($boundProjects)) !== []) {
                 throw new AssistantReportScopeAmbiguous;
+            }
+            if (! AssistantReportComparisonSpecification::requestsComparison($sourceQuestion, $resolvedProjectNames)) {
+                AssistantRequestedSourceScopes::assertReport($this->independentSourceScopes($sourceQuestion, $projectIds, $projectBindings), $arguments['sections']);
             }
             AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds, $resolvedProjectNames);
         }
@@ -213,10 +218,44 @@ final readonly class AssistantRequestProjectScope
             return null;
         }
         $resolvedProjectNames = [];
-        $projectIds = $this->reportProjectIds($question, $search, $resolvedProjectNames);
+        $projectBindings = [];
+        $projectIds = $this->reportProjectIds($question, $search, $resolvedProjectNames, $projectBindings);
+        $pairwise = AssistantReportComparisonSpecification::requestsComparison($question, $resolvedProjectNames);
 
-        return ['project_ids' => $projectIds,
-            'pairwise' => AssistantReportComparisonSpecification::requestsComparison($question, $resolvedProjectNames)];
+        return ['project_ids' => $projectIds, 'pairwise' => $pairwise,
+            ...($pairwise ? [] : ['subjects' => $this->independentSourceScopes($question, $projectIds, $projectBindings)])];
+    }
+
+    private function independentSourceScopes(string $question, array $projectIds, array $projectBindings): array
+    {
+        if (str_contains($question, AssistantRequestedSourceScopes::PREFIX)) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+        $question = self::withoutExcludedProjects($question);
+        usort($projectBindings, static fn (array $first, array $second): int => strlen($second['name']) <=> strlen($first['name']));
+        foreach ($projectBindings as $binding) {
+            $name = preg_quote($binding['name'], '/');
+            $operand = $binding['quoted'] ? '[«“„"]\s*'.$name.'\s*[»”“"]' : $name;
+            $question = preg_replace('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])\s*:?\s*(?:'.$operand.')(?![\pL\pN])/iu',
+                ' '.AssistantRequestedSourceScopes::MARKER.'project_'.$binding['project_id'].'__ ', $question) ?? $question;
+        }
+        $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
+        $question = preg_replace_callback('/'.self::NUMERIC_PROJECTS.'/iu', static function (array $match): string {
+            preg_match_all('/[1-9]\d*/', $match[1], $numbers);
+
+            return implode(' ', array_map(static fn (string $number): string => AssistantRequestedSourceScopes::MARKER.'project_'.$number.'__', $numbers[0]));
+        }, $question) ?? $question;
+        $question = preg_replace('/(?<![\pL\pN])(?:(?:по\s+всем|во?\s+всех|(?:с|со)\s+всеми)\s+(?:наш(?:им|их|ими)\s+)?(?:проект|объект)[а-яё]*|всех\s+(?:наших\s+)?(?:проект|объект)ов)(?![\pL\pN])/iu', AssistantRequestedSourceScopes::MARKER.'organization__', $question) ?? $question;
+        $question = preg_replace_callback('/'.self::CURRENT_PROJECT.'/iu', function (): string {
+            if ($this->contextProjectId === null) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+
+            return AssistantRequestedSourceScopes::MARKER.'project_'.$this->contextProjectId.'__';
+        }, $question) ?? $question;
+        $question = preg_replace('/(?<![\pL\pN])(?:нашей\s+)?организаци[а-яё]*(?![\pL\pN])/iu', AssistantRequestedSourceScopes::MARKER.'organization__', $question) ?? $question;
+
+        return AssistantRequestedSourceScopes::compile($question, $projectIds);
     }
 
     private static function recordNouns(): string
@@ -349,7 +388,7 @@ final readonly class AssistantRequestProjectScope
                 }
             }
         }
-        preg_match_all('/(?<![\pL\pN])(?:и|а\s+также)\s+/iu', $question, $conjunctions, PREG_OFFSET_CAPTURE);
+        preg_match_all('/(?<![\pL\pN])(?:и|а(?:\s+также)?)\s+/iu', $question, $conjunctions, PREG_OFFSET_CAPTURE);
         foreach ($conjunctions[0] as [$conjunction, $offset]) {
             $prefix = substr($question, 0, $offset);
             $tail = substr($question, $offset + strlen($conjunction));
@@ -385,9 +424,10 @@ final readonly class AssistantRequestProjectScope
         return $id;
     }
 
-    private function reportProjectIds(string $question, ?callable $search, array &$resolvedProjectNames = []): array
+    private function reportProjectIds(string $question, ?callable $search, array &$resolvedProjectNames = [], array &$projectBindings = []): array
     {
         $resolvedProjectNames = [];
+        $projectBindings = [];
         $question = self::withoutExcludedProjects($question);
         $ids = [];
         if (self::hasAffirmativeCurrentProject($question) && $this->contextProjectId !== null) {
@@ -431,10 +471,13 @@ final readonly class AssistantRequestProjectScope
                     $id = self::exactReportProjectId($candidate, $search);
                     if ($id !== null) {
                         $resolvedProjectNames[] = $candidate;
+                        $projectBindings[] = ['name' => $candidate, 'project_id' => $id, 'quoted' => $quoted];
                         if ($boundary < count($parts)) {
                             $names = [];
-                            $ids = [...$ids, ...$this->reportProjectIds(substr($nameQuestion, $parts[$boundary][1]), $search, $names)];
+                            $bindings = [];
+                            $ids = [...$ids, ...$this->reportProjectIds(substr($nameQuestion, $parts[$boundary][1]), $search, $names, $bindings)];
                             $resolvedProjectNames = [...$resolvedProjectNames, ...$names];
+                            $projectBindings = [...$projectBindings, ...$bindings];
                         }
 
                         return array_values(array_unique([...$ids, $id]));
@@ -463,6 +506,7 @@ final readonly class AssistantRequestProjectScope
                 continue;
             }
             $resolvedProjectNames[] = $candidate;
+            $projectBindings[] = ['name' => $candidate, 'project_id' => $id, 'quoted' => $quoted];
 
             return array_values(array_unique([...$ids, $id]));
         }

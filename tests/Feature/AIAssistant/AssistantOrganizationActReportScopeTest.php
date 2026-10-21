@@ -108,6 +108,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'wrapped entity preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'wrapped_entity_explicit'],
             'wrapped current entity preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'wrapped_entity_current'],
             'postpositive negation allows heterogeneous workbook' => [true, false, false, 7, 5, false, '', 'composition_negative'],
+            'independent sections cannot swap subjects' => [true, false, false, 7, 5, false, '', 'composition_swapped'],
+            'above placement keeps independent workbook subjects' => [true, false, false, 7, 5, false, '', 'composition_above'],
             'quoted project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_named'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
@@ -155,7 +157,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $files = $this->createMock(FileService::class);
         $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte',
             'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied', 'multiple_named_private'], true)
-            || str_starts_with($variant, 'compare_subject_');
+            || str_starts_with($variant, 'compare_subject_') || $variant === 'composition_swapped';
         $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
@@ -237,7 +239,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
         $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
-            || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || str_starts_with($variant, 'project_first_') || str_starts_with($variant, 'relation_') || str_starts_with($variant, 'wrapped_entity_') || $variant === 'composition_negative' || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
+            || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || str_starts_with($variant, 'project_first_') || str_starts_with($variant, 'relation_') || str_starts_with($variant, 'wrapped_entity_') || str_starts_with($variant, 'composition_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
         $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity', 'preposition_entity_explicit', 'compare_subject_organization_only', 'project_first_explicit', 'relation_against_explicit', 'relation_relative_explicit', 'wrapped_entity_explicit'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
@@ -306,6 +308,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($comparison) {
             $question = match ($variant) {
+                'composition_swapped' => 'Сделай Excel: все акты организации, а также договоры проекта '.$first->id,
+                'composition_above' => 'Расположи все акты организации сверху, а договоры проекта '.$first->id.' снизу. Сделай Excel.',
                 'compare_noun_difference', 'compare_subject_noun_difference' => 'Сделай Excel: покажи разницу между всеми актами организации и актами проекта '.$first->id,
                 'compare_noun_distinctions', 'compare_subject_noun_distinctions' => 'Сделай Excel: покажи различия между всеми актами организации и актами проекта '.$first->id,
                 'wrapped_entity_explicit' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам проекта '.$second->id,
@@ -336,13 +340,19 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $projectSection['project_id'] = $secondProject ? $second->id : $first->id;
             $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']],
                 ...($filtered ? array_slice($filters, $nestedProject ? 1 : 0) : [])];
-            if ($variant === 'composition_negative') {
+            if (str_starts_with($variant, 'composition_')) {
                 $projectSection['domain'] = 'contracts';
                 $projectSection['entity_type'] = 'contract';
                 $projectSection['columns'] = ['id', 'number'];
                 $projectSection['group_by'] = [];
                 $projectSection['metrics'] = [];
                 $projectSection['order_by'] = [['field' => 'id', 'direction' => 'asc']];
+                if ($variant === 'composition_swapped') {
+                    $organizationSection['domain'] = 'contracts';
+                    $organizationSection['entity_type'] = 'contract';
+                    $projectSection['domain'] = 'acts';
+                    $projectSection['entity_type'] = 'performance_act';
+                }
             }
             if (in_array($variant, ['compare_subject_entity', 'compare_subject_reconcile_entity', 'compare_subject_repeated_entity', 'compare_subject_noun_difference', 'compare_subject_noun_distinctions'], true)) {
                 $projectSection['domain'] = 'contracts';
@@ -424,7 +434,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                     $sheetRows[] = array_values(array_filter($sheet->toArray(), static fn (array $row): bool => in_array($row[1] ?? null, ['RUB', 'USD', 'EUR'], true)));
                 }
                 $rows = $sheetRows[0];
-                if ($variant === 'composition_negative') {
+                if (str_starts_with($variant, 'composition_')) {
                     $contractIds = array_map(static fn (array $row): int => (int) $row[0],
                         array_values(array_filter($workbook->getSheet(1)->toArray(), static fn (array $row): bool => is_numeric($row[0] ?? null))));
                     self::assertEqualsCanonicalizing(Contract::query()->where('project_id', $first->id)->pluck('id')->all(), $contractIds);

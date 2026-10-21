@@ -9,9 +9,11 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadS
 
 final class AssistantReportComparisonSpecification
 {
-    private const COMPARISON_STEM = '(?:сравн|сопостав|свер)[а-яё]*';
+    private const COMPARISON_STEM = '(?:(?:сравн|сопостав)[а-яё]*|свер(?:ь(?:те)?|я(?:й(?:те)?|ть|ем|ешь|ет|ете|ют|л(?:а|и|о)?)|и(?:ть|м|шь|т|те|л(?:а|и|о)?)|ят)(?:ся|сь)?)';
 
-    private const COMPARISON_NOUN = '(?:разниц(?:а|ы|е|у|ей|ам|ами|ах)|различи(?:е|я|й|ю|ем|ям|ями|ях))';
+    private const RECONCILIATION_NOUN = '(?:сверк(?:а|и|е|у|ой|ою|ам|ами|ах)|сверок)';
+
+    private const COMPARISON_NOUN = '(?:разниц(?:а|ы|е|у|ей|ам|ами|ах)|различи(?:е|я|й|ю|ем|ям|ями|ях)|'.self::RECONCILIATION_NOUN.')';
 
     public const COMPARISON_WORD = '(?<![\pL\pN])(?:'.self::COMPARISON_STEM.'|'.self::COMPARISON_NOUN.')(?![\pL\pN])';
 
@@ -31,7 +33,8 @@ final class AssistantReportComparisonSpecification
         $noun = '(?<![\pL\pN])'.self::COMPARISON_NOUN.'(?![\pL\pN])';
 
         return preg_match('/(?<![\pL\pN])'.self::COMPARISON_STEM.'(?![\pL\pN])/iu', $question) === 1
-            || preg_match('/(?<![\pL\pN])(?:покажи(?:те)?|найди(?:те)?|выяви(?:те)?|определи(?:те)?|объясни(?:те)?|укажи(?:те)?|в\s+ч[её]м)\s+'.$definition.$noun.'|'.$noun.'\s+между(?![\pL\pN])/iu', $question) === 1;
+            || preg_match('/(?<![\pL\pN])(?:покажи(?:те)?|найди(?:те)?|выяви(?:те)?|определи(?:те)?|объясни(?:те)?|укажи(?:те)?|в\s+ч[её]м)\s+'.$definition.$noun.'|'.$noun.'\s+между(?![\pL\pN])/iu', $question) === 1
+            || preg_match('/(?:^\s*|(?<![\pL\pN])(?:нуж(?:на|ны|ен|но)|требуется|для|сдела(?:й(?:те)?|ть)|сформир(?:уй(?:те)?|овать)|подготов(?:ь(?:те)?|ить)|прове(?:ди(?:те)?|сти)|выполн(?:и(?:те)?|ить))\s+)'.$definition.self::RECONCILIATION_NOUN.'(?![\pL\pN])/iu', $question) === 1;
     }
 
     public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = []): void

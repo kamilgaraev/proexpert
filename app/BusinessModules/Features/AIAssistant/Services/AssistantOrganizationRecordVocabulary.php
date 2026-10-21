@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
+
 final class AssistantOrganizationRecordVocabulary
 {
     public static function normalize(string $question, bool $maskProjectNames = false): string
@@ -46,6 +48,51 @@ final class AssistantOrganizationRecordVocabulary
         return preg_match('/^[\pL\pN_-]+(?:\s+[\pL\pN_-]+){0,15}$/u', $phrase) === 1
             && preg_match('/(?<![\pL\pN])(?:не|без|кроме|исключая)(?![\pL\pN])/iu', $phrase) !== 1
             && self::matches($phrase, self::phrases());
+    }
+
+    public static function subjectMentions(string $text): array
+    {
+        if (! app()->bound('translator')) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+        $catalog = app()->bound(AssistantDomainCatalog::class)
+            ? app(AssistantDomainCatalog::class) : new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
+        $translated = app('translator')->get('ai_assistant_facts.entities', [], 'ru');
+        $labels = array_replace(is_array($translated) ? $translated : [], AssistantExtendedDomainRegistry::values('entityLabels'));
+        $phrases = [];
+        foreach ($catalog->all() as $definition) {
+            foreach ($definition->entityTypes as $type) {
+                $names = [$labels[$type] ?? null];
+                if ($type === 'performance_act') {
+                    $names[] = 'Акт выполненных работ';
+                }
+                foreach ($names as $name) {
+                    if (is_string($name)) {
+                        $phrases[self::identity($name)][$definition->domain.':'.$type] = ['domain' => $definition->domain, 'entity_type' => $type];
+                    }
+                }
+            }
+        }
+        preg_match_all('/[\pL\pN_-]+/u', $text, $words, PREG_OFFSET_CAPTURE);
+        $subjects = [];
+        for ($offset = 0; $offset < count($words[0]); $offset++) {
+            for ($length = min(16, count($words[0]) - $offset); $length > 0; $length--) {
+                $matches = $phrases[self::identity(implode(' ', array_column(array_slice($words[0], $offset, $length), 0)))] ?? [];
+                if ($matches === []) {
+                    continue;
+                }
+                if (count($matches) !== 1) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                $start = $words[0][$offset][1];
+                $end = $words[0][$offset + $length - 1];
+                $subjects[] = ['offset' => $start, 'length' => $end[1] + strlen($end[0]) - $start, 'subject' => array_values($matches)[0]];
+                $offset += $length - 1;
+                break;
+            }
+        }
+
+        return array_values($subjects);
     }
 
     private static function phrases(): array

@@ -335,7 +335,8 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
 
     public static function independentSectionQuestions(): array
     {
-        return [['numeric'], ['current'], ['named'], ['quoted'], ['negative_comparison']];
+        return ['numeric' => ['numeric'], 'current' => ['current'], 'named' => ['named'], 'quoted' => ['quoted'],
+            'negative comparison' => ['negative_comparison'], 'above' => ['above']];
     }
 
     #[DataProvider('independentSectionQuestions')]
@@ -352,6 +353,9 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         if ($kind === 'negative_comparison') {
             $question .= '. Сравнивать их не нужно.';
         }
+        if ($kind === 'above') {
+            $question = 'Расположи все акты организации сверху, а договоры '.$operand.' снизу';
+        }
         $contracts = array_replace($this->arguments($this->project->id), [
             'domain' => 'contracts', 'entity_type' => 'contract', 'fields' => ['id', 'number'],
         ]);
@@ -360,6 +364,18 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
         self::assertNotEmpty($response['message']['metadata']['source_refs']);
         $response = $this->ask([$contracts], $question);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
+    public function test_independent_searches_cannot_swap_the_requested_subjects_between_scopes(): void
+    {
+        $contracts = array_replace($this->arguments(null), [
+            'domain' => 'contracts', 'entity_type' => 'contract', 'fields' => ['id', 'number'],
+        ]);
+        $response = $this->ask([$contracts, $this->arguments($this->project->id)],
+            'Покажи все акты организации, а также договоры проекта '.$this->project->id);
+        self::assertSame([1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
         self::assertTrue($response['message']['metadata']['needs_clarification']);
         self::assertSame([], $response['message']['metadata']['source_refs']);
     }
