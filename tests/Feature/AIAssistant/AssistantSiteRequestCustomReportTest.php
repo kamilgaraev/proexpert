@@ -29,6 +29,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\Support\IsolatedPostgresTestDatabase;
@@ -190,7 +191,13 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         }
     }
 
-    public function test_exact_live_question_reaches_report_generation_and_returns_a_real_two_sheet_file(): void
+    public static function reportGenerationPositions(): array
+    {
+        return ['early' => [false], 'last_call' => [true], 'terminal_lookup_denied' => [true, false]];
+    }
+
+    #[DataProvider('reportGenerationPositions')]
+    public function test_exact_live_question_reaches_report_generation_and_returns_a_real_two_sheet_file(bool $lastCall, bool $sourceAvailable = true): void
     {
         config(['ai-assistant.enabled' => true, 'ai-assistant-credits.enforce' => true,
             'ai-assistant-credits.profiles.normal.max_calls' => 4]);
@@ -210,18 +217,51 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
             ['describe_custom_report_source', ['domain' => 'site_requests', 'entity_type' => 'site_request', 'project_id' => null]],
             ['generate_custom_report', $report],
         ];
+        if ($lastCall) {
+            array_splice($calls, 2, 0, [
+                ['describe_custom_report_source', ['domain' => 'site_requests', 'entity_type' => 'site_request', 'project_id' => null]],
+            ]);
+        }
+        if (! $sourceAvailable) {
+            $calls = array_fill(0, 4, ['assistant_domain_search', ['domain' => 'site_requests', 'entity_type' => 'site_request', 'query' => '',
+                'project_id' => null, 'limit' => 20, 'predicate' => null, 'cursor' => null, 'fields' => ['id', 'title']]]);
+        }
         $provider = $this->createMock(SiteRequestReportResponsesProvider::class);
         $provider->method('getModel')->willReturn('gpt-6-luna');
         $provider->method('isAvailable')->willReturn(true);
         $provider->method('countTokens')->willReturn(100);
         $provider->expects(self::never())->method('chat');
-        $provider->expects(self::exactly(4))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls): array {
+        $providerCalls = 0;
+        $provider->expects(self::exactly(4))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls, &$providerCalls, $lastCall, $sourceAvailable): array {
             self::assertContains('generate_custom_report', array_column($options['tools'] ?? [], 'name'));
+            if (++$providerCalls === 1) {
+                $sourceHints = [];
+                foreach ($input as $item) {
+                    $decoded = is_string($item['content'] ?? null) ? json_decode($item['content'], true) : null;
+                    if (is_array($decoded) && ($decoded['kind'] ?? null) === 'custom_report_sources') {
+                        $sourceHints = $decoded['sources'] ?? [];
+                    }
+                }
+                self::assertSame('site_requests', $sourceHints[0]['domain'] ?? null);
+                self::assertSame('site_request', $sourceHints[0]['entity_type']);
+                foreach (['id', 'title', 'project_id', 'status', 'priority', 'request_type', 'required_date', 'assigned_to'] as $field) {
+                    self::assertArrayHasKey($field, $sourceHints[0]['fields']);
+                }
+            }
+            if (! $sourceAvailable || $calls === []) {
+                self::assertArrayNotHasKey('tool_choice', $options);
+            }
             if ($calls === []) {
                 return ['content' => 'Отчёт сформирован.', 'output' => [], 'function_calls' => [], 'input_tokens' => 100,
                     'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
             }
             [$name, $arguments] = array_shift($calls);
+            if ($lastCall && $name === 'generate_custom_report'
+                && ($options['tool_choice']['function']['name'] ?? null) !== 'generate_custom_report') {
+                $name = 'assistant_domain_search';
+                $arguments = ['domain' => 'site_requests', 'entity_type' => 'site_request', 'query' => '',
+                    'project_id' => null, 'limit' => 20, 'predicate' => null, 'cursor' => null, 'fields' => ['id', 'title']];
+            }
             $id = 'site-request-report-'.(3 - count($calls));
             $call = ['type' => 'function_call', 'id' => $id, 'status' => 'completed', 'call_id' => $id, 'name' => $name,
                 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
@@ -231,7 +271,7 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         });
         $bytes = null;
         $files = $this->createMock(FileService::class);
-        $files->expects(self::once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use (&$bytes): CurrentStoredFile {
+        $files->expects($sourceAvailable ? self::once() : self::never())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use (&$bytes): CurrentStoredFile {
             $bytes = stream_get_contents($stream);
             self::assertStringStartsWith('PK', $bytes);
             self::assertSame(hash('sha256', $bytes), $hash);
@@ -260,6 +300,23 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         $this->app->instance(LoggingService::class, $logging);
         $service = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null]);
         $response = $service->ask($query, (int) $org->id, $this->actor, null, $payload);
+        if (! $sourceAvailable) {
+            self::assertSame(trans_message('ai_custom_reports.missing_file'), $response['message']['content']);
+            self::assertSame('unverified', $response['message']['metadata']['validation_status']);
+            self::assertSame([], $response['message']['metadata']['artifacts']);
+            self::assertFalse($response['message']['metadata']['needs_clarification']);
+            self::assertTrue($response['message']['metadata']['degraded_mode']);
+            self::assertSame('access_denied', $response['message']['metadata']['outcome'], json_encode([
+                'tool_failures' => $response['message']['metadata']['telemetry']['tool_failures'] ?? null,
+                'missing_data' => $response['message']['metadata']['missing_data'] ?? null,
+                'tool_evidence' => $response['message']['metadata']['tool_evidence'] ?? null,
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+            self::assertTrue($response['message']['metadata']['access_denied']);
+            self::assertSame([], $technicalErrors);
+            self::assertNull($bytes);
+
+            return;
+        }
         self::assertSame('verified', $response['message']['metadata']['validation_status'], json_encode([
             'answer' => $response['message']['content'] ?? null,
             'missing_data' => $response['message']['metadata']['missing_data'] ?? null,

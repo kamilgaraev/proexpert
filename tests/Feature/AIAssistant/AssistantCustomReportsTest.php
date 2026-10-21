@@ -1260,6 +1260,38 @@ final class AssistantCustomReportsTest extends TestCase
         }
     }
 
+    public function test_request_report_hints_prioritize_explicit_request_kind_over_project_stock_and_schedule(): void
+    {
+        $this->extraModules = ['site-requests', 'procurement', 'basic-warehouse', 'schedule-management', 'users'];
+        [$org, $actor] = $this->fixture();
+        $hints = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints(
+            new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $this->sources, $this->policy);
+        $understanding = new \App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding(
+            'generate_report', 'xlsx', 'allow_file_generation', [], ['project', 'warehouse', 'schedule'], 0.99, []);
+        foreach (['Собери Excel для контроля заявок на материалы по всей организации.',
+            'Сделай Excel по заявкам на персонал.', 'Сделай Excel по заявкам на технику.',
+            'Сделай Excel по заявкам с объекта.'] as $query) {
+            $sources = $hints->forRequest($actor, $org->id, $query, $understanding);
+            self::assertSame('site_requests', $sources[0]['domain'] ?? null, $query);
+            self::assertSame('site_request', $sources[0]['entity_type']);
+            self::assertArrayHasKey('assigned_to', $sources[0]['fields']);
+            self::assertArrayHasKey('required_date', $sources[0]['fields']);
+            self::assertLessThanOrEqual(3, count($sources));
+        }
+        foreach (['Сделай Excel по закупочным заявкам на материалы.',
+            'Сделай Excel по заявкам на закупку материалов.'] as $query) {
+            $sources = $hints->forRequest($actor, $org->id, $query, $understanding);
+            self::assertSame('procurement', $sources[0]['domain'] ?? null, $query);
+            self::assertSame('purchase_request', $sources[0]['entity_type']);
+            self::assertNotContains('site_requests', array_column($sources, 'domain'));
+        }
+        self::assertNotContains('site_requests', array_column($hints->forRequest($actor, $org->id,
+            'Сделай Excel по остаткам материалов.', $understanding), 'domain'));
+        $this->denied = ['site_requests.view'];
+        self::assertNotContains('site_requests', array_column($hints->forRequest($actor, $org->id,
+            'Собери Excel для контроля заявок на материалы.', $understanding), 'domain'));
+    }
+
     public function test_report_source_hints_recognize_act_word_forms_and_preserve_financial_access(): void
     {
         [$org, $actor] = $this->fixture();

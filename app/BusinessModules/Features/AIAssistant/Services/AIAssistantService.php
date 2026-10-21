@@ -639,6 +639,7 @@ class AIAssistantService
 
             $toolFailures = [];
             $toolEvidence = [];
+            $attemptedTools = [];
             $proposedActions = [];
             $trustedDownloadUrls = [];
             $degradedMode = false;
@@ -666,6 +667,8 @@ class AIAssistantService
                 array_push($messages, ...$response['output']);
 
                 foreach ($response['function_calls'] as $toolCall) {
+                    $toolName = (string) ($toolCall['name'] ?? '');
+                    $attemptedTools[] = $toolName;
                     $this->stage('tools');
                     $toolResult = $this->handleToolCall(
                         $toolCall,
@@ -681,7 +684,6 @@ class AIAssistantService
                         $trustedDownloadUrls
                     );
 
-                    $toolName = (string) ($toolCall['name'] ?? '');
                     $providerResult = $this->toolResultForProvider($toolName, $toolResult);
                     $toolContent = is_string($providerResult)
                         ? $providerResult
@@ -847,8 +849,15 @@ class AIAssistantService
                     }
                 }
 
+                if ($loopCount === $maxLoops - 1) {
+                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools);
+                    if ($reportToolChoice !== null) {
+                        $options['tool_choice'] = $reportToolChoice;
+                    }
+                }
                 try {
                     $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
+                    unset($options['tool_choice']);
                 } catch (AssistantBudgetExceeded) {
                     $budgetStopNotice = trans_message('ai_assistant.approved_budget_exceeded');
                     $toolFailures[] = $budgetStopNotice;
@@ -1221,6 +1230,18 @@ class AIAssistantService
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = ! $validated;
             }
+            $missingCustomReport = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::missingFile(
+                $taskPlan, $terminalToolResponse, $this->activeToolResults, $reportArtifacts, $reportControls
+            );
+            if ($missingCustomReport) {
+                if ($this->requestOutcome === null) {
+                    $this->recordRequestOutcome('insufficient_data');
+                }
+                $assistantContent = trans_message('ai_custom_reports.missing_file');
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'unverified',
+                    'source_refs' => [], 'needs_clarification' => false];
+                $degradedMode = true;
+            }
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'artifacts' => $reportArtifacts,
                 'degraded_mode' => $degradedMode,
@@ -1271,7 +1292,7 @@ class AIAssistantService
                 && ! ($financialCheck['replaced'] ?? false)
                 && ! ($structuredCheck['replaced'] ?? false);
             $assistantPayload['fetched_at'] = now()->toISOString();
-            if ($reportArtifacts !== [] || $reportControls !== []) {
+            if ($reportArtifacts !== [] || $reportControls !== [] || $missingCustomReport) {
                 $assistantPayload['artifacts'] = $reportArtifacts;
                 $assistantPayload['answer'] = $assistantContent;
                 $assistantPayload['needs_clarification'] = false;
