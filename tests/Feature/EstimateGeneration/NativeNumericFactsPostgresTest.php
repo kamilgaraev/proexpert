@@ -11,17 +11,143 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPublication;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_native_equipment_count_keeps_original_proof_and_exact_entity_mapping_until_evidence_is_invalidated(): void
+    {
+        $context = $this->context();
+        $publication = $this->equipmentCount($context);
+        self::assertCount(1, $publication->claims);
+        self::assertTrue($publication->numericSources->certifies($publication->claims[0]));
+        $this->publish($context, $publication);
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForPlanning($context->organizationId, $context->projectId, $context->sessionId, 100);
+        $snapshot = $capture['snapshot'];
+        self::assertCount(1, $snapshot->facts);
+        self::assertCount(1, $snapshot->entities);
+        self::assertCount(1, $snapshot->evidence);
+        $fact = $snapshot->facts[0];
+        $entity = $snapshot->entities[0];
+        $evidence = $snapshot->evidence[0];
+        self::assertSame('equipment_count', $fact->type);
+        self::assertSame('3', $fact->value);
+        self::assertSame('шт', $fact->unit);
+        self::assertSame('document', $fact->origin);
+        self::assertSame('confirmed', $fact->status);
+        self::assertSame($entity->id, $fact->entityId);
+        self::assertSame('equipment', $entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
+        self::assertSame('xlsx:sheet:Оборудование!C2', $evidence->nativeReference);
+        self::assertSame('native_numeric_parser', $evidence->producerName);
+        self::assertNotEmpty($evidence->fingerprint);
+        self::assertSame($evidence->fingerprint, $fact->nativeNumericProofs[$evidence->id]['evidence_fingerprint']);
+        self::assertTrue((new NativeNumericFactProof)->matches($fact, $evidence));
+        $request = $this->countRequest($entity->id, $fact->id, $capture['token']);
+        $readiness = (new DerivedQuantityFactory)->derive($snapshot, [], $request);
+        self::assertTrue($readiness->isReady(), json_encode($readiness->unresolvedInputs, JSON_THROW_ON_ERROR));
+        self::assertNotNull($readiness->quantity);
+        self::assertSame('3', $readiness->quantity->value);
+        self::assertSame('count', $readiness->quantity->unit);
+        self::assertSame('confirmed', $readiness->quantity->status);
+        self::assertSame($fact->id, $readiness->quantity->operands[0]['fact_id']);
+        self::assertSame($fact->version, $readiness->quantity->operands[0]['fact_version']);
+        self::assertSame($context->sourceVersion, $readiness->quantity->operands[0]['source_version']);
+        self::assertSame([$evidence->id], $readiness->quantity->evidenceIds);
+        self::assertSame($readiness->quantity->exactIdentity, (new DerivedQuantityFactory)->derive($snapshot, [], $request)->quantity->exactIdentity);
+        $preview = app(CurrentProjectDerivedQuantityService::class)->previewInput($context->organizationId, $context->projectId, $context->sessionId);
+        $mapper = new WorkItemQuantityMapper;
+        $mapped = $mapper->mapForEntity('equipment.install', $preview['quantities'], $entity->id);
+        self::assertNotNull($mapped);
+        self::assertSame('3', $mapped->amount);
+        self::assertSame('count', $mapped->unit);
+        self::assertSame(QuantitySource::Evidenced, $mapped->source);
+        self::assertSame([], $mapped->assumptions);
+        self::assertSame($entity->id, $mapped->formulaInputs['entity_id']);
+        self::assertSame($fact->id, $mapped->formulaInputs['operands'][0]['fact_id']);
+        self::assertNull($mapper->mapForEntity('equipment.install', $preview['quantities'], 'equipment:other'));
+        $draft = ['local_estimates' => [['sections' => [['work_items' => [[
+            'key' => 'pump-install', 'item_type' => 'priced_work', 'quantity' => '3', 'unit' => 'pcs',
+            'metadata' => ['quantity_key' => 'equipment.count', 'scope_entity_id' => $entity->id], 'quantity_evidence' => $mapped->toArray(),
+        ]]]]]]];
+        DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent($context->organizationId, $context->projectId, $context->sessionId, $draft));
+        self::addToAssertionCount(1);
+        $wrong = $draft;
+        $wrong['local_estimates'][0]['sections'][0]['work_items'][0]['quantity'] = '4';
+        $this->assertCountProofRejected($context, $wrong);
+        $this->publish($context, $publication);
+        self::assertCount(1, $models->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
+        app(EvidenceRepository::class)->invalidate($context->organizationId, $context->projectId, $context->sessionId,
+            [(int) substr($evidence->id, strlen('evidence:'))], 'native_count_source_changed');
+        $current = $models->snapshotForPlanning($context->organizationId, $context->projectId, $context->sessionId, 100)['snapshot'];
+        self::assertSame([], $current->facts);
+        self::assertFalse((new DerivedQuantityFactory)->derive($current, [], $request)->isReady());
+        self::assertSame([], app(CurrentProjectDerivedQuantityService::class)->previewInput($context->organizationId, $context->projectId, $context->sessionId)['quantities']);
+        $this->assertCountProofRejected($context, $draft);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $context->sessionId)->count());
+    }
+
+    public function test_native_equipment_count_is_not_visible_in_foreign_organization_project_or_session(): void
+    {
+        $context = $this->context();
+        $this->publish($context, $this->equipmentCount($context));
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForPlanning($context->organizationId, $context->projectId, $context->sessionId, 100);
+        $fact = $capture['snapshot']->facts[0];
+        $request = $this->countRequest($fact->entityId, $fact->id, $capture['token']);
+        $foreign = $this->context();
+        foreach ([
+            [$foreign->organizationId, $context->projectId, $context->sessionId],
+            [$context->organizationId, $foreign->projectId, $context->sessionId],
+            [$context->organizationId, $context->projectId, $foreign->sessionId],
+        ] as [$organizationId, $projectId, $sessionId]) {
+            $snapshot = $models->snapshotForPlanning($organizationId, $projectId, $sessionId, 100)['snapshot'];
+            self::assertSame([], $snapshot->facts);
+            self::assertSame([], $snapshot->evidence);
+            self::assertFalse((new DerivedQuantityFactory)->derive($snapshot, [], $request)->isReady());
+            $preview = app(CurrentProjectDerivedQuantityService::class)->previewInput($organizationId, $projectId, $sessionId);
+            self::assertNull((new WorkItemQuantityMapper)->mapForEntity('equipment.install', $preview['quantities'], $fact->entityId));
+        }
+    }
+
+    #[DataProvider('invalidEquipmentCounts')]
+    public function test_native_equipment_count_quarantines_fractional_nonpositive_or_incompatible_measurements(string $value, string $unit, string $reason): void
+    {
+        $context = $this->context();
+        $publication = $this->equipmentCount($context, $value, $unit);
+        self::assertSame([], $publication->claims);
+        self::assertSame([$reason], array_column($publication->quarantinedItems, 'reason_code'));
+        $this->publish($context, $publication);
+        self::assertSame([], app(ProjectModelRepository::class)->snapshotForPlanning($context->organizationId, $context->projectId, $context->sessionId, 100)['snapshot']->facts);
+        $preview = app(CurrentProjectDerivedQuantityService::class)->previewInput($context->organizationId, $context->projectId, $context->sessionId);
+        self::assertSame([], $preview['quantities']);
+    }
+
+    public static function invalidEquipmentCounts(): array
+    {
+        return [
+            'fractional count' => ['1.5', 'шт', 'native_engineering_measurement_invalid'],
+            'wrong dimension' => ['3', 'm', 'native_engineering_measurement_invalid'],
+            'zero count' => ['0', 'count', 'native_numeric_precision_or_value_requires_confirmation'],
+        ];
+    }
+
     public function test_literal_quantity_is_published_by_real_writer_with_exact_cell_and_original_unit(): void
     {
         $context = $this->context();
@@ -267,6 +393,32 @@ final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPo
             self::fail('Epoch rollback was accepted.');
         } catch (\Illuminate\Database\QueryException $exception) {
             self::assertStringContainsString('evidence_epoch_not_monotonic', $exception->getMessage());
+        }
+    }
+
+    private function equipmentCount(DocumentUnitExecutionContext $context, string $value = '3', string $unit = 'шт'): DocumentUnitPublication
+    {
+        return (new NativeNumericFactFactory)->spreadsheet($context, ['sheet' => 'Оборудование',
+            'header_cells' => [['address' => 'A1', 'value' => 'entity_key'], ['address' => 'B1', 'value' => 'parameter'], ['address' => 'C1', 'value' => 'value'], ['address' => 'D1', 'value' => 'unit']],
+            'cells' => [['address' => 'A2', 'value' => 'equipment:pump-1'], ['address' => 'B2', 'value' => 'equipment_count'],
+                ['address' => 'C2', 'value' => $value, 'raw_value' => $value, 'formula' => null], ['address' => 'D2', 'value' => $unit]],
+        ]) ?? throw new \LogicException('Native equipment fixture is invalid.');
+    }
+
+    private function countRequest(string $entityId, string $factId, string $token): array
+    {
+        return ['quantity_id' => 'quantity:equipment_count:'.$entityId, 'formula_identity' => 'equipment_count', 'formula_version' => '1',
+            'entity_id' => $entityId, 'operands' => ['measurement' => $factId], 'output_unit' => 'count', 'rounding_mode' => 'half_up',
+            'rounding_scale' => 0, 'snapshot' => ['input_fingerprint' => $token]];
+    }
+
+    private function assertCountProofRejected(DocumentUnitExecutionContext $context, array $draft): void
+    {
+        try {
+            DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent($context->organizationId, $context->projectId, $context->sessionId, $draft));
+            self::fail('A changed or stale native equipment count was accepted.');
+        } catch (ValidationException) {
+            self::addToAssertionCount(1);
         }
     }
 
