@@ -92,6 +92,14 @@ final class AssistantSpreadsheetRowPlacementIntentTest extends TestCase
             ['Сделай Excel по заявкам. Если заявка подходит, добавь её на оба листа.', 'xlsx'],
             ['Сделай XLSX по заявкам: статус. Добавьте их на обоих листах.', 'xlsx'],
             ['Сделай Excel по заявкам и затем добавить их в каждый из листов.', 'xlsx'],
+            ['Сделай Excel по заявкам. Добавь строки на оба листа.', 'xlsx'],
+            ['Сделай Excel по заявкам со статусом. Включи заявку на оба листа.', 'xlsx'],
+            ['Сделай XLSX по заявкам. Добавьте эту заявку на обоих листах.', 'xlsx'],
+            ['Сделай Excel по заявкам. Добавь эти строки в каждый из листов.', 'xlsx'],
+            ['Сделай Excel по заявкам. Добавь подходящие заявки на все листы.', 'xlsx'],
+            ['Сделай Excel по записям со статусом. Включи найденные записи на всех листах.', 'xlsx'],
+            ['Сделай Excel по заявкам. Добавь одну строку на оба листа.', 'xlsx'],
+            ['Сделай Excel по заявкам. Добавь все подходящие строки на оба листа.', 'xlsx'],
         ];
     }
 
@@ -99,7 +107,9 @@ final class AssistantSpreadsheetRowPlacementIntentTest extends TestCase
     {
         foreach (['Сделай Excel по заявкам. Добавь заявку на материалы.',
             'Сделай Excel по заявкам. Добавь её на оба листа. Создай новую заявку.',
-            'Если заявка подходит, добавь её на оба листа.'] as $query) {
+            'Если заявка подходит, добавь её на оба листа.',
+            'Сделай Excel по заявкам. Добавь строки на оба листа. Создай новую заявку.',
+            'Сделай Excel по заявкам. Добавь заявку в проект 102.'] as $query) {
             self::assertSame('create', AssistantMutationIntent::compoundType($query));
             self::assertTrue(AssistantMutationIntent::containsRequest($query));
             $understanding = (new AssistantRequestUnderstandingResolver)->resolve($query);
