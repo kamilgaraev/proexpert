@@ -1,0 +1,70 @@
+{
+    "fixture_kind": "manually_checked_transcription_of_official_pdf",
+    "source": {
+        "url": "https://minstroyrf.gov.ru/trades/tree_download.php?ID=0&folder=fsnb2022",
+        "order_url": "https://minstroyrf.gov.ru/docs/183471/",
+        "retrieved_at": "2026-10-21T14:40:31Z",
+        "pdf_sha256": "5a0f08dbc4ba0ab70ecb541b2ef22d4574196d08fc44f6ef3d94d0ee78a05d93",
+        "pdf_bytes": 3792290,
+        "title_page": 1,
+        "norm_page": 129,
+        "condition_pages": [1, 4, 5, 217, 218],
+        "edition": "ГЭСН 81-02-01-2022, приложение № 1 к приказу Минстроя России от 18.05.2022 № 378/пр, изменяющему приказ от 30.12.2021 № 1046/пр",
+        "current_edition_verified": false,
+        "official_xml_import_verified": false
+    },
+    "norm": {
+        "code": "01-02-057-01",
+        "name": "Разработка грунта вручную в траншеях глубиной до 2 м без креплений с откосами, группа грунтов 1",
+        "unit": "100 м3",
+        "collection_code": "ГЭСН 81-02-01-2022",
+        "collection_name": "Сборник 1. Земляные работы",
+        "section_code": "01",
+        "work_composition": [
+            "Разработка грунта с выбрасыванием на бровку.",
+            "Зачистка дна и поверхности стенок.",
+            "Откидка грунта от бровки."
+        ],
+        "resources": [
+            {"code": "1-100-20", "name": "Средний разряд работы 2,0", "unit": "чел.-ч", "quantity": "118", "type": "labor"}
+        ]
+    },
+    "scenario": {
+        "quantity": "3",
+        "unit": "м3",
+        "quantity_basis": "explicit_test_scenario_volume_not_a_native_or_geometry_proof",
+        "method": "manual_excavation",
+        "excavation_type": "trench",
+        "depth_m": "1.5",
+        "slopes": true,
+        "shoring": false,
+        "soil_group": "1",
+        "natural_moisture_and_density": true,
+        "groundwater_effect": false,
+        "strong_tool_adhesion": false,
+        "finishing_after_mechanical_excavation": false,
+        "near_cables_pipes_operating_railways_or_road_traffic": false,
+        "applied_coefficients": [],
+        "engineering_applicability": "unresolved",
+        "engineering_applicability_limitation": "Условия сценария заданы явно. Этот тест не доказывает их по проектному источнику и не проверяет полноту технической части действующими gates."
+    },
+    "oracle": {
+        "quantity_factor": "0.01",
+        "norm_quantity": "0.03",
+        "labor_per_work_unit": "1.18",
+        "labor_hours": "3.54",
+        "materials_count": 0,
+        "machinery_count": 0
+    },
+    "synthetic_price_context": {
+        "required_for_existing_selected_resolver": true,
+        "business_date": "2022-05-18",
+        "year": 2022,
+        "quarter": 2,
+        "unit": "чел.-ч",
+        "unit_price": "100",
+        "currency": "RUB",
+        "official_price_verified": false,
+        "limitation": "Только вход для ценового допуска resolver; не официальная цена и не доказательство юридической применимости редакции на эту дату."
+    }
+}
