@@ -24,7 +24,7 @@ class CoreBusinessRagSource implements RagSourceCollectorInterface
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
         foreach ($this->entities() as $type => $record) {
-            foreach ($this->query($type, $organizationId, $projectId)->lazyById(50) as $model) {
+            foreach ($this->query($type, $organizationId, $projectId, organizationBatch: true)->lazyById(50) as $model) {
                 yield $this->chunk($model, $type, $record, $organizationId);
             }
         }
@@ -59,7 +59,7 @@ class CoreBusinessRagSource implements RagSourceCollectorInterface
         return ['model' => $model, 'organization_column' => $organization, 'project_column' => $project, 'parents' => $parents,
             'actor_column' => null, 'global' => false, 'predicates' => [], 'fields' => ['id'], 'version_columns' => []];
     }
-    private function query(string $type, int $organizationId, ?int $projectId, array $seen = [], bool $skipReferences = false): Builder
+    private function query(string $type, int $organizationId, ?int $projectId, array $seen = [], bool $skipReferences = false, bool $organizationBatch = false): Builder
     {
         if (in_array($type, $seen, true)) { throw new LogicException('assistant_core_parent_cycle'); }
         $record = $this->record($type);
@@ -92,6 +92,11 @@ class CoreBusinessRagSource implements RagSourceCollectorInterface
             $parentProject = $projectId !== null && $record['project_column'] === null && $projectParent !== null && $projectParent[0] === $column ? $projectId : null;
             $parentQuery = $referenceOnly ? $this->query($type, $organizationId, null, [], true)
                 : $this->query($parent['type'], $organizationId, $parentProject, [...$seen, $type]);
+            if ($organizationBatch && $seen === [] && in_array($type, ['core_estimate_item_work', 'core_estimate_item_total'], true)
+                && $column === 'estimate_item_id' && $parent['type'] === 'estimate_item' && $parent['key'] === 'id'
+                && $query->getConnection()->getDriverName() === 'pgsql') {
+                $parentQuery->distinct();
+            }
             $parentTable = $parentQuery->getModel()->getTable();
             foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
             $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $parentTable, $table): void {
