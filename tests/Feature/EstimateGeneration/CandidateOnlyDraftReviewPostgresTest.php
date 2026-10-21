@@ -234,19 +234,49 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         $pin = app(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver::class)
             ->resolve($catalog['context'], [['work_item_key' => $item['key'], 'search_text' => $item['normative_search_text'], 'unit' => 'm2', 'code' => '11-01-011-01']]);
         self::assertSame('pinned', $pin['status'], json_encode($pin, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        $resolver = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources::class);
+        $resolutionContext = ['regional_context' => $catalog['context'], 'object_type' => 'residential',
+            'organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'session_id' => (int) $session->id];
+        $missingContext = $resolutionContext;
+        $missingContext['regional_context'] = array_intersect_key($catalog['context'], array_flip([
+            'normative_dataset_version', 'business_date', 'year', 'quarter',
+        ]));
+        self::assertNull($resolver->resolve($item, $catalog['norm_id'], $missingContext));
+        self::assertSame(['item' => null, 'blocking_issues' => ['normative_resource_context_not_pinned']],
+            $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $missingContext));
+        $missingDraft = $draft;
+        $missingDraft['regional_context'] = $missingContext['regional_context'];
+        $session->refresh()->update(['draft_payload' => $artifacts->seal($missingDraft)]);
+        try {
+            $this->assertNormativeSelectionRejected($actor, $session, $item['key'], $catalog['norm_id'],
+                'estimate_generation.normative_resolution.normative_resource_context_not_pinned');
+        } finally {
+            $session->refresh()->update(['draft_payload' => $draft]);
+        }
+        $validItem = $resolver->resolve($item, $catalog['norm_id'], $resolutionContext);
+        self::assertNotNull($validItem);
+        self::assertSame(['item' => $validItem, 'blocking_issues' => []],
+            $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $resolutionContext));
+        $originalDimension = DB::table('estimate_norms')->where('id', $catalog['norm_id'])->value('unit_dimension');
+        DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update(['unit_dimension' => 'volume']);
+        try {
+            self::assertSame(['item' => null, 'blocking_issues' => ['unit_dimension_mismatch']],
+                $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $resolutionContext));
+            $this->assertNormativeSelectionRejected($actor, $session, $item['key'], $catalog['norm_id'],
+                'estimate_generation.normative_candidate_not_available');
+        } finally {
+            DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update(['unit_dimension' => $originalDimension]);
+        }
         DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update(['object_type' => 'office']);
         try {
+            self::assertSame(['item' => null, 'blocking_issues' => ['object_type_mismatch']],
+                $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $resolutionContext));
             self::assertNull(app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources::class)
                 ->resolve($item, $catalog['norm_id'], ['regional_context' => $catalog['context'], 'object_type' => 'residential',
                     'organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'session_id' => (int) $session->id]));
-            try {
-                app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $organization->id, (int) $project->id,
-                    $actor, 2, $item['key'], $catalog['norm_id'], false);
-                self::fail('An incompatible object type was accepted.');
-            } catch (\Illuminate\Validation\ValidationException) {
-                self::assertSame(2, $session->fresh()->state_version);
-                self::assertTrue($artifacts->verifyArtifact($session->fresh()->draft_payload));
-            }
+            $this->assertNormativeSelectionRejected($actor, $session, $item['key'], $catalog['norm_id'],
+                'estimate_generation.normative_resolution.object_type_mismatch');
+            self::assertTrue($artifacts->verifyArtifact($session->fresh()->draft_payload));
         } finally {
             DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update(['object_type' => null]);
         }
@@ -739,6 +769,23 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
     public static function nativeDates(): array
     {
         return ['explicit_business_date' => [false], 'price_period_date' => [true]];
+    }
+
+    private function assertNormativeSelectionRejected(User $actor, EstimateGenerationSession $session,
+        string $workItemKey, int $normId, string $messageKey): void
+    {
+        $before = $session->fresh();
+        try {
+            app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $session->organization_id,
+                (int) $session->project_id, $actor, $before->state_version, $workItemKey, $normId, false);
+            self::fail('An unavailable normative candidate was selected.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            self::assertSame(422, $exception->status);
+            self::assertSame(['norm_id' => [trans_message($messageKey)]], $exception->errors());
+            self::assertNotSame($messageKey, trans_message($messageKey));
+            self::assertSame($before->state_version, $session->fresh()->state_version);
+            self::assertSame($before->draft_payload, $session->fresh()->draft_payload);
+        }
     }
 
     private function catalog(bool $abstract = false, int $year = 2088): array
