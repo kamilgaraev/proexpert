@@ -84,7 +84,8 @@ final class RagRetriever
         $allowedSourceTypes = $this->accessPolicy()->allowedSourceTypes($user, $organizationId, $candidateTypes);
         if (isset($requestContext['source_types']) && is_array($requestContext['source_types'])) {
             $allowedSourceTypes = array_values(array_intersect($allowedSourceTypes, array_filter($requestContext['source_types'], 'is_string')));
-        } elseif ($preferredSourceTypes === ['estimate_reference']) {
+        } elseif ($preferredSourceTypes === ['estimate_reference']
+            && $this->hasAnyMarker(mb_strtolower($query), ['из справоч', 'из каталог'])) {
             $allowedSourceTypes = array_values(array_intersect($allowedSourceTypes, $preferredSourceTypes));
         }
         $sourceTypes = $allowedSourceTypes;

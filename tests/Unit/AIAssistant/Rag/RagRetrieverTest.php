@@ -478,6 +478,18 @@ class RagRetrieverTest extends TestCase
         self::assertLessThanOrEqual(4, count($hydrations));
     }
 
+    public function test_soft_normative_query_keeps_current_learning_candidates_without_an_explicit_source_filter(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        $example = $this->learningExample($organization->id, $project->id, 'Норматив оборудования');
+        $this->indexLearning($example);
+        foreach (['semantic', 'lexical'] as $mode) {
+            $results = $this->retriever([1.0, 0.0, 0.0])->search('Норматив оборудования', $organization->id, $user,
+                ['project_id' => $project->id, 'source_types' => null, 'retrieval_mode' => $mode]);
+            self::assertSame([(string) $example->id], array_column($results, 'entityId'));
+        }
+    }
+
     private function candidateQueries(array $queries): array
     {
         return array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'WITH compatible_chunks AS MATERIALIZED')
