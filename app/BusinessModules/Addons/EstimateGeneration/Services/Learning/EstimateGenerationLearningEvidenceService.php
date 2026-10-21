@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 
 final class EstimateGenerationLearningEvidenceService
@@ -56,6 +57,7 @@ final class EstimateGenerationLearningEvidenceService
         if ($examples->isEmpty()) {
             return $summaries;
         }
+        (new EloquentCollection($candidates->all()))->loadMissing('collection');
 
         $classifiedIntent = $this->workIntentClassifier->classify($workItem, $context);
         $intent = [
@@ -121,6 +123,8 @@ final class EstimateGenerationLearningEvidenceService
                     $query->where('project_id', $projectId)
                         ->orWhereNull('project_id');
                 });
+            }, static function (Builder $query): void {
+                $query->whereNull('project_id');
             })
             ->where(static function (Builder $query) use ($candidateIds, $candidateCodes): void {
                 if ($candidateIds !== []) {
@@ -172,14 +176,24 @@ final class EstimateGenerationLearningEvidenceService
         array $intent,
         array $workTokens
     ): ?array {
-        $workUnit = (string) ($workItem['unit'] ?? '');
-        $candidateUnit = (string) ($candidate->unit ?? '');
-        if ($workUnit !== '' && $candidateUnit !== '' && !NormativeUnitNormalizer::compatible($workUnit, $candidateUnit)) {
+        $exampleVersion = $example->normative_dataset_version_id;
+        $candidateVersion = $candidate->collection?->dataset_version_id;
+        if ($exampleVersion === null || $candidateVersion === null || (int) $exampleVersion !== (int) $candidateVersion) {
             return null;
         }
 
-        $exampleUnit = (string) ($example->work_unit ?: $example->normative_unit ?: '');
-        if ($workUnit !== '' && $exampleUnit !== '' && !NormativeUnitNormalizer::compatible($workUnit, $exampleUnit)) {
+        $workUnit = (string) ($workItem['unit'] ?? '');
+        $candidateUnit = (string) ($candidate->unit ?? '');
+        $exampleWorkUnit = (string) ($example->work_unit ?? '');
+        $exampleNormativeUnit = (string) ($example->normative_unit ?? '');
+        foreach ([$workUnit, $candidateUnit, $exampleWorkUnit, $exampleNormativeUnit] as $unit) {
+            if (! NormativeUnitNormalizer::parseDetailed($unit)->isKnown()) {
+                return null;
+            }
+        }
+        if (! NormativeUnitNormalizer::compatible($workUnit, $candidateUnit)
+            || ! NormativeUnitNormalizer::compatible($workUnit, $exampleWorkUnit)
+            || ! NormativeUnitNormalizer::compatible($candidateUnit, $exampleNormativeUnit)) {
             return null;
         }
 

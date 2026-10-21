@@ -41,4 +41,18 @@ final class EstimateGenerationLearningTrustGateTest extends TestCase
 
         $this->assertFalse(EstimateGenerationLearningSourceTrustPolicy::isIndexable($example));
     }
+
+    public function test_unverified_units_cannot_be_indexed_as_trusted_scoring_or_rag_evidence(): void
+    {
+        foreach ([true, false] as $positive) {
+            $example = new EstimateGenerationLearningExample([
+                'source_type' => $positive ? 'user_selection' : 'user_rejection',
+                'is_positive' => $positive,
+                'quality_flags' => ['unit_unverified'],
+            ]);
+
+            self::assertFalse(EstimateGenerationLearningSourceTrustPolicy::isIndexable($example));
+            self::assertSame(['unit_unverified'], $example->quality_flags);
+        }
+    }
 }
