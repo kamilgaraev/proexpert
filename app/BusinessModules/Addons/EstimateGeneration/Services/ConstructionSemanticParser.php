@@ -528,7 +528,8 @@ class ConstructionSemanticParser
 
         $keywords = array_map(static fn (array $patterns): array => array_values(array_diff($patterns, $weakHints)), $this->scopeKeywords());
         $keywords['earthworks'] = array_values(array_intersect($keywords['site'], ['землян']));
-        $keywords['site'] = array_values(array_diff($keywords['site'], $keywords['earthworks']));
+        $keywords['siteworks'] = array_values(array_intersect($keywords['site'], ['благоустрой']));
+        $keywords['site'] = array_values(array_diff($keywords['site'], $keywords['earthworks'], $keywords['siteworks']));
         $keywords['site'] = [...$keywords['site'], 'наружная площадка', 'подъезд для грузового транспорта', 'разгрузочная зона'];
         $descriptors = ['наружн', 'приточн', 'утеплен', 'утеплён', 'кладоч', 'свет', 'облицовк', 'облицовка', 'клапан', 'разгруз'];
         foreach (preg_split('~[,;.\r\n]+|\s+и\s+~u', $text) ?: [] as $clause) {
@@ -538,7 +539,7 @@ class ConstructionSemanticParser
                     continue;
                 }
                 foreach (array_diff(array_intersect($patterns, $weakHints), $descriptors) as $object) {
-                    $pattern = '~(?<![\p{L}\p{N}])(?:укладк(?:а|и|у|ой|ою|е)|настил(?:а|у|ом|е)?|оклейк(?:а|и|у|ой|ою|е)|поклейк(?:а|и|у|ой|ою|е)|монтаж(?:а|у|ом|е)?|устройств(?:о|а|у|ом|е)|установк(?:а|и|у|ой|ою|е))\s+'
+                    $pattern = '~(?<![\p{L}\p{N}])'.$this->explicitOperationPattern().'\s+'
                         .$this->operationObjectPattern($object).'~u';
                     preg_match_all($pattern, $clause, $matches);
                     foreach ($matches[0] as $operation) {
@@ -567,6 +568,13 @@ class ConstructionSemanticParser
 
             return preg_quote($word, '~').(mb_strlen($word) > 3 ? '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ев|ов|ам|ям|ами|ями|ах|ях)?' : '').'(?![\p{L}\p{N}])';
         }, preg_split('/\s+/u', $keyword) ?: []));
+    }
+
+    private function explicitOperationPattern(bool $independent = false): string
+    {
+        return $independent
+            ? '(?:укладка|настил|оклейка|поклейка|монтаж|устройство|установка)'
+            : '(?:укладк(?:а|и|у|ой|ою|е)|настил(?:а|у|ом|е)?|оклейк(?:а|и|у|ой|ою|е)|поклейк(?:а|и|у|ой|ою|е)|монтаж(?:а|у|ом|е)?|устройств(?:о|а|у|ом|е)|установк(?:а|и|у|ой|ою|е))';
     }
 
     /**
@@ -627,9 +635,10 @@ class ConstructionSemanticParser
     private function explicitScopeExclusionSpans(string $line): array
     {
         $negative = 'не\\s+(?:требуется|требуются|нужен|нужна|нужно|нужны|предусмотрен|предусмотрена|предусмотрено|предусмотрены|входит|входят)';
+        $prefixTail = '(?:(?!\\s+и\\s+(?='.$this->explicitOperationPattern(independent: true).'\\s+))[^,;.!?])*';
         $patterns = [
-            '~(?<![\\p{L}\\p{N}])без\\s+[^,;.!?]+~u',
-            '~(?<![\\p{L}\\p{N}])(?:не\\s+выполнять|'.$negative.')(?![\\p{L}\\p{N}])(?!\\s+и\\s+)[^,;.!?]*~u',
+            '~(?<![\\p{L}\\p{N}])без\\s+'.$prefixTail.'~u',
+            '~(?<![\\p{L}\\p{N}])(?:не\\s+выполнять|'.$negative.')(?![\\p{L}\\p{N}])(?!\\s+и\\s+)'.$prefixTail.'~u',
             '~[^,;.!?]+?\\s+'.$negative.'(?![\\p{L}\\p{N}])~u',
         ];
         $spans = [];

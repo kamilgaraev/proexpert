@@ -1370,7 +1370,10 @@ final class NormativeWorkItemPlannerService
             'commissioning' => [
                 $this->industrialDefinition('Пусконаладка оборудования по согласованной программе', 'engineering', 'commissioning.units_count', 'count', 'commissioning'),
             ],
-            'external_networks', 'siteworks', 'roads' => [
+            'siteworks' => [
+                $this->definition('Благоустройство территории', 'site', 'благоустройство территории', 'siteworks.area'),
+            ],
+            'external_networks', 'roads' => [
                 $this->definition('Наружные сети', 'site', 'устройство наружных инженерных сетей', 'networks.external'),
                 $this->definition('Благоустройство территории', 'site', 'благоустройство территории', 'siteworks.area'),
                 $this->definition('Дороги и площадки', 'site', 'устройство дорог и площадок', 'warehouse.roads'),

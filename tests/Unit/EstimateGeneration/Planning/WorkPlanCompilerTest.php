@@ -489,6 +489,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'facade' => ['Устройство фасада', 'facade', 'facade', 'structures'];
         yield 'finishing' => ['Штукатурные работы', 'finishing', 'custom-finishing', 'finishing'];
         yield 'earthworks' => ['Земляные работы', 'earthworks', 'earthworks', 'earthworks'];
+        yield 'siteworks' => ['Благоустройство территории', 'siteworks', 'siteworks', 'earthworks'];
         yield 'site' => ['Разгрузочная зона', 'site', 'site_preparation', 'earthworks'];
     }
 
@@ -571,8 +572,9 @@ final class WorkPlanCompilerTest extends TestCase
     public function test_explicitly_excluded_work_is_not_a_positive_requested_scope(string $description, array $expected): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'roofing', 'finishing']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame($expected, array_column($analysis['detected_structure']['explicit_work_scopes'], 'scope_type'));
         self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
         self::assertSame($description, $analysis['object']['manual_description']);
         self::assertSame('document_limited', $payload['document_requirements']['coverage']);
@@ -585,7 +587,15 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'foundation_not_required' => ['Фундамент не требуется, устройство стен', ['walls']];
         yield 'ambiguous_postfix_list_not_required' => ['Устройство фундамента и стены не требуются', []];
         yield 'conjunct_foundation_not_required' => ['Фундамент не требуется и устройство стен', ['walls']];
+        yield 'without_foundation_before_independent_wall_work' => ['Без фундамента и устройство стен', ['walls']];
+        yield 'prefix_not_required_before_independent_wall_work' => ['Не требуется устройство фундамента и устройство стен', ['walls']];
         yield 'without_compound_scope' => ['Устройство фундамента без стен и перекрытий', ['foundation']];
+        yield 'without_list_before_independent_foundation' => ['Без стен и перекрытий, устройство фундамента', ['foundation']];
+        yield 'prefix_not_required_list' => ['Не требуется устройство стен и перекрытий, фундамент', ['foundation']];
+        yield 'without_genitive_construction_operations' => ['Без монтажа кровли и устройства стен', []];
+        yield 'without_genitive_finishing_operations' => ['Без укладки ламината и оклейки обоями', []];
+        yield 'without_roof_then_independent_wall_operation' => ['Без монтажа кровли и устройство стен', ['walls']];
+        yield 'without_walls_then_independent_roof_operation' => ['Без устройства стен и монтаж металлочерепицы', ['roof']];
         yield 'context_before_prefix' => ['На объекте не требуется устройство стен', []];
         yield 'context_before_foundation_prefix' => ['Для моста не требуется устройство фундамента', []];
         yield 'context_before_operation_prefix' => ['Для здания не выполнять монтаж металлочерепицы', []];
@@ -627,7 +637,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'flooring_materials_only' => ['Ламинат, плитка и обои', []];
         yield 'unspecified_insulation' => ['Утепление', []];
         yield 'unspecified_valve' => ['Приточный клапан', []];
-        yield 'site_work' => ['Благоустройство территории', ['site_preparation']];
+        yield 'site_work' => ['Благоустройство территории', ['siteworks']];
         yield 'explicit_external_area' => ['Наружная площадка', ['site_preparation']];
         yield 'facade_work' => ['Устройство фасада', ['facade']];
         yield 'roof_work' => ['Устройство кровли', ['roof']];
@@ -670,6 +680,80 @@ final class WorkPlanCompilerTest extends TestCase
             $profile = $planner->profileFromAnalysis($analysis);
             self::assertTrue($profile->planningSignals['roads']);
             self::assertContains('roads', array_column($planner->plan($profile)->packages, 'key'));
+        }
+    }
+
+    public function test_explicit_landscaping_keeps_only_its_existing_work_in_universal_earthworks(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => 'Благоустройство территории'], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame(['siteworks'], array_column($payload['package_plan']['packages'], 'key'));
+        $items = $payload['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertSame(['siteworks.area'], array_column(array_column($items, 'metadata'), 'quantity_key'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        foreach ($items as $item) {
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+        }
+    }
+
+    public function test_known_profiles_keep_separate_requested_network_and_road_packages_when_landscaping_is_narrowed(): void
+    {
+        foreach (['warehouse', 'industrial'] as $type) {
+            $takeoffs = [];
+            foreach (['siteworks.area' => ['50', 'м2'], 'networks.external' => ['120', 'м'], 'warehouse.roads' => ['40', 'м2']] as $key => [$value, $unit]) {
+                $takeoffs[] = ['quantity' => $value, 'unit' => $unit, 'source_refs' => [['document_id' => 82]],
+                    'normalized_payload' => ['quantity_key' => $key]];
+            }
+            $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type,
+                'description' => 'Благоустройство территории; устройство подъезда; наружные инженерные сети'], [[
+                'id' => 82, 'filename' => 'site-work-volumes.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'], 'quantity_takeoffs' => $takeoffs,
+            ]]);
+            $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+            $packages = array_column($payload['package_plan']['packages'], null, 'key');
+            $estimates = array_column($payload['local_estimates'], null, 'key');
+            foreach (['siteworks', 'roads', 'external_networks'] as $key) {
+                self::assertArrayHasKey($key, $packages, $type);
+                self::assertArrayHasKey($key, $estimates, $type);
+            }
+            $keys = static fn (string $package): array => array_column(array_column($estimates[$package]['sections'][0]['work_items'], 'metadata'), 'quantity_key');
+            self::assertSame(['siteworks.area'], $keys('siteworks'), $type);
+            self::assertContains('networks.external', $keys('external_networks'), $type);
+            if ($type === 'warehouse') {
+                self::assertContains('warehouse.roads', $keys('roads'));
+            } else {
+                self::assertNotContains('warehouse.roads', $keys('roads'));
+            }
+        }
+    }
+
+    public function test_site_preparation_does_not_hide_independent_landscaping_request_or_document_key(): void
+    {
+        foreach (['bridge', 'warehouse', 'industrial'] as $type) {
+            $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type,
+                'description' => 'Наружная площадка и благоустройство территории'], []);
+            $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
+            $planner = new PackagePlannerService;
+            $profile = $planner->profileFromAnalysis($analysis);
+            $keys = array_column($planner->plan($profile)->packages, 'key');
+            self::assertContains('site_preparation', $keys, $type);
+            self::assertContains('siteworks', $keys, $type);
+            self::assertSame(1, count(array_keys($keys, 'siteworks', true)), $type);
+            $items = array_column($this->compiler()->compile($analysis, deferNormativePin: true)['local_estimates'], null, 'key');
+            self::assertSame(['siteworks.area'], array_column(array_column($items['siteworks']['sections'][0]['work_items'], 'metadata'), 'quantity_key'), $type);
+
+            $documentAnalysis = (new ConstructionSemanticParser)->parse(['building_type' => $type, 'description' => 'Наружная площадка'], [[
+                'id' => 82, 'filename' => 'landscaping-volumes.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                'quantity_takeoffs' => [['quantity' => '50', 'unit' => 'м2', 'source_refs' => [['document_id' => 82]],
+                    'normalized_payload' => ['quantity_key' => 'siteworks.area']]],
+            ]]);
+            $documentAnalysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
+            $documentItems = array_column($this->compiler()->compile($documentAnalysis, deferNormativePin: true)['local_estimates'], null, 'key');
+            self::assertArrayHasKey('siteworks', $documentItems, $type);
+            self::assertSame(['siteworks.area'], array_column(array_column($documentItems['siteworks']['sections'][0]['work_items'], 'metadata'), 'quantity_key'), $type);
         }
     }
 

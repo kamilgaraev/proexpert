@@ -24,7 +24,7 @@ final class EvaluationSectionMap
             'plumbing', 'water_sewerage', 'custom-plumbing' => 'water_supply', 'custom-sewerage' => 'sewerage',
             'heating', 'custom-heating' => 'heating', 'ventilation', 'custom-ventilation' => 'ventilation',
             'process_pipelines' => 'technological_pipelines', 'automation', 'requested_fire_alarm' => 'automation',
-            'equipment', 'commissioning' => 'equipment', 'site_preparation' => 'earthworks', default => $package,
+            'equipment', 'commissioning' => 'equipment', 'site_preparation', 'siteworks' => 'earthworks', default => $package,
         };
     }
 }

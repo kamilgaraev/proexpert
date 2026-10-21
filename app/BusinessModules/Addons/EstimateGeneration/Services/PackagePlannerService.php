@@ -194,6 +194,7 @@ class PackagePlannerService
             'finishing' => ['custom-finishing', 'finishing'],
             'site' => ['site_preparation', 'site'],
             'earthworks' => ['earthworks', 'earthworks'],
+            'siteworks' => ['siteworks', 'site'],
             'fire_safety' => ['requested_fire_alarm', 'engineering'],
             'foundation', 'walls', 'slabs', 'roof', 'openings', 'electrical', 'plumbing',
             'heating', 'ventilation', 'stairs', 'facade', 'sewerage' => [$scopeType, $scopeType],
@@ -403,12 +404,18 @@ class PackagePlannerService
         }
 
         $largeObject = $this->isWarehouse($profile) || $this->isMixedWarehouseOffice($profile);
+        $requestedKeys = array_column($profile->planningSignals['requested_scope_packages'] ?? [], 'key');
+        $siteworksEvidence = array_filter($profile->planningSignals['quantity_keys'] ?? [],
+            static fn (string $key): bool => str_starts_with($key, 'siteworks.')) !== [];
+        $sitePreparationOnly = in_array('site_preparation', $requestedKeys, true)
+            && ! in_array('siteworks', $requestedKeys, true) && ! $siteworksEvidence;
 
         if ($this->hasPlanningSignal($profile, 'external_networks')) {
             $packages[] = $this->package('external_networks', 'Наружные сети', 'site', $largeObject ? 40 : 14, $largeObject ? 90 : 32);
         }
 
-        if ($this->hasPlanningSignal($profile, 'siteworks')) {
+        if ($this->hasPlanningSignal($profile, 'siteworks') && ! $sitePreparationOnly
+            && ! in_array('siteworks', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('siteworks', 'Благоустройство', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
         }
 
