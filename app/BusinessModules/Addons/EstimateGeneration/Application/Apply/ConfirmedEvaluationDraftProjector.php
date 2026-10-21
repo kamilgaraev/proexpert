@@ -104,6 +104,8 @@ final readonly class ConfirmedEvaluationDraftProjector
                         if (! self::isPersistableNormativeItem($item)) {
                             $this->reject();
                         }
+                        $item['labor_hours'] = $this->resourceQuantityTotal(array_key_exists('labor', $item) ? $item['labor'] : []);
+                        $item['machinery_hours'] = $this->resourceQuantityTotal(array_key_exists('machinery', $item) ? $item['machinery'] : []);
                         $items[] = $item;
 
                         continue;
@@ -206,6 +208,31 @@ final readonly class ConfirmedEvaluationDraftProjector
         } catch (\Throwable) {
             return false;
         }
+    }
+
+    private function resourceQuantityTotal(mixed $resources): string
+    {
+        if (! is_array($resources)) {
+            $this->reject();
+        }
+        $total = BigDecimal::zero();
+        foreach ($resources as $resource) {
+            $value = is_array($resource) ? ($resource['quantity'] ?? null) : null;
+            if (! is_string($value) && ! is_int($value) && ! (is_float($value) && is_finite($value))) {
+                $this->reject();
+            }
+            try {
+                $quantity = BigDecimal::of((string) $value);
+            } catch (\Brick\Math\Exception\MathException) {
+                $this->reject();
+            }
+            if (! $quantity->isGreaterThan(0)) {
+                $this->reject();
+            }
+            $total = $total->plus($quantity);
+        }
+
+        return (string) $total->strippedOfTrailingZeros();
     }
 
     private function reject(): never
