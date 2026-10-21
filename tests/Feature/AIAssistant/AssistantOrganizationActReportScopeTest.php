@@ -110,6 +110,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'postpositive negation allows heterogeneous workbook' => [true, false, false, 7, 5, false, '', 'composition_negative'],
             'independent sections cannot swap subjects' => [true, false, false, 7, 5, false, '', 'composition_swapped'],
             'above placement keeps independent workbook subjects' => [true, false, false, 7, 5, false, '', 'composition_above'],
+            'together connector keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_together'],
             'quoted project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_named'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
@@ -310,6 +311,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $question = match ($variant) {
                 'composition_swapped' => 'Сделай Excel: все акты организации, а также договоры проекта '.$first->id,
                 'composition_above' => 'Расположи все акты организации сверху, а договоры проекта '.$first->id.' снизу. Сделай Excel.',
+                'composition_together' => 'Сделай Excel: все акты организации вместе с договорами проекта '.$first->id,
                 'compare_noun_difference', 'compare_subject_noun_difference' => 'Сделай Excel: покажи разницу между всеми актами организации и актами проекта '.$first->id,
                 'compare_noun_distinctions', 'compare_subject_noun_distinctions' => 'Сделай Excel: покажи различия между всеми актами организации и актами проекта '.$first->id,
                 'wrapped_entity_explicit' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам проекта '.$second->id,

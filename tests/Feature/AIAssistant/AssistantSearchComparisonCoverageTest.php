@@ -336,7 +336,7 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
     public static function independentSectionQuestions(): array
     {
         return ['numeric' => ['numeric'], 'current' => ['current'], 'named' => ['named'], 'quoted' => ['quoted'],
-            'negative comparison' => ['negative_comparison'], 'above' => ['above']];
+            'negative comparison' => ['negative_comparison'], 'above' => ['above'], 'together' => ['together']];
     }
 
     #[DataProvider('independentSectionQuestions')]
@@ -350,6 +350,9 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
             default => 'проекта '.$this->project->id,
         };
         $question = 'Покажи все акты организации, а также договоры '.$operand;
+        if ($kind === 'together') {
+            $question = 'Покажи все акты организации вместе с договорами '.$operand;
+        }
         if ($kind === 'negative_comparison') {
             $question .= '. Сравнивать их не нужно.';
         }

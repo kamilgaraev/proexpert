@@ -13,6 +13,8 @@ final class AssistantRequestedSourceScopes
 
     public const MARKER = self::PREFIX.'scope_';
 
+    public const ADDITIVE_CONNECTOR = '(?:а\s+также|вместе\s+с(?:о)?|а|и)';
+
     public static function compile(string $question, array $projectIds): array
     {
         $requiredSides = array_fill_keys(['organization', ...array_map(static fn (int $id): string => 'project:'.$id, $projectIds)], true);
@@ -22,7 +24,7 @@ final class AssistantRequestedSourceScopes
             $question = substr_replace($question, self::PREFIX.'subject_'.$index.'__', $mention['offset'], $mention['length']);
         }
         $question = AssistantReportComparisonSpecification::withoutNegatedComparison($question);
-        $parts = preg_split('/[,;.!?\r\n]+|(?<![\pL\pN])(?:а\s+также|а|и|или)(?![\pL\pN])/iu', $question) ?: [];
+        $parts = preg_split('/[,;.!?\r\n]+|(?<![\pL\pN])(?:'.self::ADDITIVE_CONNECTOR.'|или)(?![\pL\pN])/iu', $question) ?: [];
         $requirements = [];
         $coveredSides = [];
         $pending = [];
