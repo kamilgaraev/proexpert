@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\ObjectProfileData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 
 use function trans_message;
 
@@ -112,11 +113,80 @@ class PackagePlannerService
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
         $parser = new ConstructionSemanticParser;
+        $requestedPackages = [];
+        if (trim((string) ($object['manual_description'] ?? $object['description'] ?? '')) !== '') {
+            foreach ($analysis['detected_structure']['explicit_work_scopes'] ?? [] as $scope) {
+                if (! is_array($scope)) {
+                    continue;
+                }
+                $package = $this->requestedScopePackage($scope);
+                if ($package !== null) {
+                    $requestedPackages[$package['key']] = $package;
+                }
+            }
+        }
+        $documentFragments = [];
+        $documentScopeFragments = [];
+        foreach ($analysis['source_documents'] ?? [] as $document) {
+            if (! is_array($document)) {
+                continue;
+            }
+            foreach ($document['scopes']['items'] ?? [] as $scope) {
+                if (is_array($scope) && is_string($scope['title'] ?? null)) {
+                    $documentScopeFragments[$scope['title']] ??= '';
+                }
+            }
+            if (! DocumentEvidencePolicy::isTrusted($document)
+                || ! DocumentEvidencePolicy::canUseScopeEvidence($document)) {
+                continue;
+            }
+            $documentFragments[] = $parser->positiveWorkText((string) ($document['text'] ?? ''));
+            $documentScopeTypes = $parser->positiveDocumentScopeTypes((string) ($document['text'] ?? ''));
+            foreach ($document['scopes']['items'] ?? [] as $scope) {
+                if (! is_array($scope) || ! in_array($scope['scope_type'] ?? null, $documentScopeTypes, true)
+                    || ! in_array($scope['scope_type'] ?? null,
+                    $parser->positiveDocumentScopeTypes((string) ($scope['title'] ?? '')), true)) {
+                    continue;
+                }
+                $documentScopeFragments[(string) ($scope['title'] ?? '')] = $parser->positiveWorkText((string) ($scope['title'] ?? ''));
+                $scopeTypes = [$scope['scope_type']];
+                if ($scope['scope_type'] === 'site') {
+                    $scopeTypes = array_values(array_intersect(
+                        $parser->positiveDocumentScopeTypes((string) ($document['text'] ?? ''), manualExplicit: true),
+                        $parser->positiveDocumentScopeTypes((string) ($scope['title'] ?? ''), manualExplicit: true),
+                        ['earthworks', 'siteworks', 'site', 'roads', 'external_networks'],
+                    ));
+                }
+                $sourceRefs = [];
+                foreach (['sheets' => 'sheet', 'elevations' => 'elevation', 'floors' => 'floor'] as $refKey => $refType) {
+                    foreach ($scope['source_refs'][$refKey] ?? [] as $value) {
+                        $sourceRefs[] = ['type' => $refType, 'value' => $value];
+                    }
+                }
+                $sourceRefs[] = [
+                    ...array_intersect_key($document, array_flip(['source_version', 'filename'])),
+                    ...(isset($document['id']) ? ['document_id' => $document['id']] : []),
+                    'excerpt' => (string) ($scope['title'] ?? ''),
+                ];
+                foreach ($scopeTypes as $scopeType) {
+                    $package = $this->requestedScopePackage([...$scope, 'scope_type' => $scopeType]);
+                    if ($package !== null) {
+                        $key = $package['key'];
+                        $requestedPackages[$key] = [
+                            ...($requestedPackages[$key] ?? $package),
+                            'source_refs' => [...($requestedPackages[$key]['source_refs'] ?? []), ...$sourceRefs],
+                        ];
+                    }
+                }
+            }
+        }
         $planningDescription = implode("\n", [
             $parser->positiveWorkText((string) ($object['manual_description'] ?? $object['description'] ?? '')),
-            (string) ($documentContext['context_text'] ?? ''), $zoneText,
+            array_key_exists('source_documents', $analysis) ? implode("\n", $documentFragments)
+                : $parser->positiveWorkText((string) ($documentContext['context_text'] ?? '')),
+            $zoneText,
         ]);
-        $planningSignals = $this->planningSignalsFromAnalysis($analysis, $planningDescription);
+        $planningSignals = $this->planningSignalsFromAnalysis($analysis, $planningDescription, $documentScopeFragments);
         $planningSignals['evaluation_profile'] = $analysis['evaluation_policy']['profile_id'] ?? null;
         $roofType = (new RoofTypeResolver)->resolve($analysis);
         if ($roofType !== null) {
@@ -148,20 +218,8 @@ class PackagePlannerService
             $type = 'document_evidence';
         }
 
-        if (trim((string) ($object['manual_description'] ?? $object['description'] ?? '')) !== '') {
-            $requestedPackages = [];
-            foreach ($analysis['detected_structure']['explicit_work_scopes'] ?? [] as $scope) {
-                if (! is_array($scope)) {
-                    continue;
-                }
-                $package = $this->requestedScopePackage($scope);
-                if ($package !== null) {
-                    $requestedPackages[$package['key']] = $package;
-                }
-            }
-            if ($requestedPackages !== []) {
-                $planningSignals['requested_scope_packages'] = array_values($requestedPackages);
-            }
+        if ($requestedPackages !== []) {
+            $planningSignals['requested_scope_packages'] = array_values($requestedPackages);
         }
 
         return new ObjectProfileData(
@@ -562,7 +620,7 @@ class PackagePlannerService
      * @param  array<string, mixed>  $analysis
      * @return array<string, mixed>
      */
-    private function planningSignalsFromAnalysis(array $analysis, string $description): array
+    private function planningSignalsFromAnalysis(array $analysis, string $description, array $documentScopeFragments = []): array
     {
         $detectedStructure = is_array($analysis['detected_structure'] ?? null) ? $analysis['detected_structure'] : [];
         $quantityKeys = $this->quantityKeysFromAnalysis($analysis);
@@ -574,8 +632,11 @@ class PackagePlannerService
         foreach (['zones', 'constructives'] as $key) {
             foreach (($detectedStructure[$key] ?? []) as $value) {
                 if (is_string($value) && trim($value) !== '') {
-                    $fragments[] = $key === 'zones' && in_array($value, $manualTitles, true)
-                        ? $parser->positiveWorkText($value) : $value;
+                    $fragment = $key === 'zones' ? ($documentScopeFragments[$value] ?? $value) : $value;
+                    if ($key === 'zones' && in_array($value, $manualTitles, true)) {
+                        $fragment = $parser->positiveWorkText($value);
+                    }
+                    $fragments[] = $fragment;
                 }
             }
         }
@@ -587,8 +648,11 @@ class PackagePlannerService
 
             foreach (['title', 'scope_type'] as $field) {
                 if (is_string($scope[$field] ?? null) && trim($scope[$field]) !== '') {
-                    $fragments[] = $field === 'title' && in_array($scope, $manualScopes, true)
-                        ? $parser->positiveWorkText($scope[$field]) : $scope[$field];
+                    $fragment = $field === 'title' ? ($documentScopeFragments[$scope[$field]] ?? $scope[$field]) : $scope[$field];
+                    if ($field === 'title' && in_array($scope, $manualScopes, true)) {
+                        $fragment = $parser->positiveWorkText($scope[$field]);
+                    }
+                    $fragments[] = $fragment;
                 }
             }
         }
@@ -827,7 +891,7 @@ class PackagePlannerService
                 'warning_flags' => [],
             ],
             'assumptions' => [],
-            'source_refs' => [],
+            'source_refs' => $package['source_refs'] ?? [],
         ];
     }
 

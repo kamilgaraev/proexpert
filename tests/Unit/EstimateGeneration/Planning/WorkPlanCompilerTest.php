@@ -919,6 +919,147 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
+    public function test_trusted_document_scope_without_a_number_preserves_a_limited_outline(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'source_version' => 'source-v1', 'filename' => 'foundation.pdf', 'status' => 'ready',
+            'quality' => ['level' => 'good'], 'extracted_text' => 'Устройство фундамента',
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        self::assertSame([], $analysis['detected_structure']['explicit_work_scopes']);
+        self::assertSame(['foundation'], array_column($analysis['detected_structure']['scopes'], 'scope_type'));
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame(['foundation'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+        $expectedRef = ['source_version' => 'source-v1', 'filename' => 'foundation.pdf', 'document_id' => 82, 'excerpt' => 'Устройство фундамента'];
+        self::assertContains($expectedRef, $payload['package_plan']['packages'][0]['source_refs']);
+        foreach ($payload['local_estimates'] as $estimate) {
+            self::assertContains($expectedRef, $estimate['source_refs']);
+            self::assertContains($expectedRef, $estimate['sections'][0]['source_refs']);
+            foreach (array_merge(...array_column($estimate['sections'], 'work_items')) as $item) {
+                self::assertContains($expectedRef, $item['source_refs']);
+                self::assertNull($item['quantity']);
+                self::assertNull($item['total_cost']);
+                self::assertNull($item['price_source']);
+                self::assertNull($item['quantity_evidence'] ?? null);
+                self::assertSame('unknown', $item['metadata']['quantity_source']);
+            }
+        }
+    }
+
+    #[DataProvider('excludedDocumentScopeOutlines')]
+    public function test_document_scope_outline_requires_positive_trusted_primary_evidence(string $text, string $status, string $quality, string $role, array $expected = []): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'source_version' => 'source-v1', 'status' => $status, 'quality' => ['level' => $quality],
+            'extracted_text' => $text, 'document_understanding' => ['role_for_estimation' => $role],
+        ]]);
+        $rawScopes = $analysis['source_documents'][0]['scopes'];
+        self::assertSame('foundation', $rawScopes['items'][0]['scope_type']);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertSame($rawScopes, $analysis['source_documents'][0]['scopes']);
+    }
+
+    public static function excludedDocumentScopeOutlines(): iterable
+    {
+        yield 'reference_only' => ['Устройство фундамента', 'ready', 'good', 'reference_estimate'];
+        yield 'no_role_context' => ['Устройство фундамента', 'ready', 'good', ''];
+        yield 'ignored' => ['Устройство фундамента', 'ignored', 'good', 'quantity_source'];
+        yield 'failed' => ['Устройство фундамента', 'failed', 'good', 'quantity_source'];
+        yield 'low_quality' => ['Устройство фундамента', 'ready', 'poor', 'quantity_source'];
+        yield 'prefix_exclusion' => ['Без фундамента', 'ready', 'good', 'quantity_source'];
+        yield 'postfix_exclusion' => ['Фундамент не требуется', 'ready', 'good', 'quantity_source'];
+        yield 'excluded_scope_with_another_positive_scope' => ['Без фундамента, стены', 'ready', 'good', 'quantity_source', ['walls']];
+    }
+
+    #[DataProvider('canonicalDocumentScopeExclusions')]
+    public function test_canonical_document_scope_title_does_not_erase_the_original_exclusion(string $text, string $scope): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'], 'extracted_text' => $text,
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+        ]]);
+        $rawScopes = $analysis['source_documents'][0]['scopes'];
+        self::assertSame([$scope], array_column($rawScopes['items'], 'scope_type'));
+        self::assertSame([], $this->compiler()->compile($analysis, deferNormativePin: true)['package_plan']['packages']);
+        self::assertSame($rawScopes, $analysis['source_documents'][0]['scopes']);
+    }
+
+    public static function canonicalDocumentScopeExclusions(): iterable
+    {
+        yield 'fire' => ['Без пожарной сигнализации', 'fire_safety'];
+        yield 'water' => ['Водоснабжение не требуется', 'plumbing'];
+        yield 'lighting' => ['Освещение не требуется', 'electrical'];
+    }
+
+    public function test_document_scope_exclusion_keeps_an_independent_positive_document_clause(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'extracted_text' => "Без пожарной сигнализации\nУстройство фундамента",
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'automation']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame(['foundation'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame(['fire_safety', 'foundation'], array_column($analysis['source_documents'][0]['scopes']['items'], 'scope_type'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+    }
+
+    #[DataProvider('documentSiteScopeOnlyCases')]
+    public function test_document_site_scope_only_uses_the_actual_existing_intent(string $text, array $packages, array $quantityKeys, string $status = 'ready', string $role = 'quantity_source'): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'status' => $status, 'quality' => ['level' => 'good'], 'extracted_text' => $text,
+            'document_understanding' => ['role_for_estimation' => $role],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame($packages, array_column($payload['package_plan']['packages'], 'key'));
+        $items = [];
+        foreach ($payload['local_estimates'] as $estimate) {
+            array_push($items, ...array_merge(...array_column($estimate['sections'], 'work_items')));
+        }
+        self::assertSame($quantityKeys, array_column(array_column($items, 'metadata'), 'quantity_key'));
+        foreach ($items as $item) {
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+        }
+    }
+
+    public static function documentSiteScopeOnlyCases(): iterable
+    {
+        yield 'earthworks' => ['Земляные работы', ['earthworks'], ['earth.trench', 'earth.backfill', 'earth.export', 'earth.plan']];
+        yield 'landscaping' => ['Благоустройство территории', ['siteworks'], ['siteworks.area']];
+        yield 'excluded_landscaping' => ['Без благоустройства', [], []];
+        yield 'excluded_networks' => ['Наружные сети не требуются', [], []];
+        yield 'ignored_landscaping' => ['Благоустройство территории', [], [], 'ignored'];
+        yield 'reference_only_landscaping' => ['Благоустройство территории', [], [], 'ready', 'reference_estimate'];
+        yield 'excluded_landscaping_keeps_positive_networks' => ["Без благоустройства\nНаружные сети", ['external_networks'], ['networks.external']];
+    }
+
+    public function test_document_text_exclusion_does_not_erase_an_independent_document_quantity(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'], 'extracted_text' => 'Без благоустройства',
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'quantity_takeoffs' => [['quantity' => 50, 'unit' => 'м2', 'source_refs' => [['document_id' => 82]],
+                'normalized_payload' => ['quantity_key' => 'siteworks.area']]],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame(['siteworks'], array_column($payload['package_plan']['packages'], 'key'));
+        $items = $payload['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertSame(['siteworks.area'], array_column(array_column($items, 'metadata'), 'quantity_key'));
+        self::assertSame('50', $items[0]['quantity']);
+        self::assertSame(82, $items[0]['source_refs'][0]['document_id']);
+    }
+
     public function test_document_only_material_row_keeps_its_legacy_scope_and_source_quantity(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[

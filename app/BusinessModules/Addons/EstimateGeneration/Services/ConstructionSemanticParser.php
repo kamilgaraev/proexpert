@@ -555,6 +555,11 @@ class ConstructionSemanticParser
         return implode("\n", $lines);
     }
 
+    public function positiveDocumentScopeTypes(string $text, bool $manualExplicit = false): array
+    {
+        return array_column($this->extractScopes($this->positiveWorkText($text), false, $manualExplicit)['items'], 'scope_type');
+    }
+
     private function hasFinishingSurfaceArgument(string $clause, array $keywords): bool
     {
         foreach (['rough_finishing', 'finish_finishing', 'finishing'] as $scope) {
