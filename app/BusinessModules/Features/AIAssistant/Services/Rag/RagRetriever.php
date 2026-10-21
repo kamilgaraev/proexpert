@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagSearchResult;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateGenerationLearningRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLimiter;
@@ -65,6 +66,7 @@ final class RagRetriever
         $allowedProjectIds = $this->allowedProjectIds($user, $organizationId);
         if ($requestProjectId !== null && ! in_array($requestProjectId, $allowedProjectIds, true)) { return []; }
         $preferredSourceTypes = $this->preferredSourceTypes($query);
+        $learningChecks = [];
         $typeCandidates = RagSource::query()->where('ai_rag_sources.organization_id', $organizationId)
             ->whereExists(static function ($chunks) use ($organizationId, $requestProjectId, $allowedProjectIds): void {
                 $chunks->selectRaw('1')->from('ai_rag_chunks as candidate_chunks')->whereColumn('candidate_chunks.source_id', 'ai_rag_sources.id')
@@ -82,6 +84,8 @@ final class RagRetriever
         $allowedSourceTypes = $this->accessPolicy()->allowedSourceTypes($user, $organizationId, $candidateTypes);
         if (isset($requestContext['source_types']) && is_array($requestContext['source_types'])) {
             $allowedSourceTypes = array_values(array_intersect($allowedSourceTypes, array_filter($requestContext['source_types'], 'is_string')));
+        } elseif ($preferredSourceTypes === ['estimate_reference']) {
+            $allowedSourceTypes = array_values(array_intersect($allowedSourceTypes, $preferredSourceTypes));
         }
         $sourceTypes = $allowedSourceTypes;
         $includeOrganizationWideSources = $this->includeOrganizationWideSources($sourceTypes);
@@ -94,7 +98,7 @@ final class RagRetriever
             $diagnostics['semantic_available'] = false;
             $diagnostics['lexical_used'] = true;
             return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit,
-                $sourceTypes, $includeOrganizationWideSources, [], $user, $checkpoint, $readWrapper, $readGuard);
+                $sourceTypes, $includeOrganizationWideSources, [], $user, $learningChecks, $checkpoint, $readWrapper, $readGuard);
         }
 
         if ($requestProjectId !== null && ! in_array($requestProjectId, $allowedProjectIds, true)) {
@@ -125,6 +129,7 @@ final class RagRetriever
                 $includeOrganizationWideSources,
                 [],
                 $user,
+                $learningChecks,
                 $checkpoint,
                 $readWrapper,
                 $readGuard
@@ -201,6 +206,7 @@ final class RagRetriever
                 $includeOrganizationWideSources,
                 [],
                 $user,
+                $learningChecks,
                 $checkpoint,
                 $readWrapper,
                 $readGuard
@@ -261,7 +267,17 @@ final class RagRetriever
                 $readWrapper,
                 $readGuard
             ));
-            $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard);
+            $learningRejected = false;
+            $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
+            $eligible = array_filter($rows, static fn (object $row): bool => (float) $row->similarity >= $threshold);
+            if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < $limit) {
+                $rows = $this->timed('semantic_sql', $organizationId, $user, fn (): iterable => $this->runRead(
+                    fn (): iterable => $this->candidateRows($embedding, $provider, $organizationId, max($limit * 8, $limit),
+                        $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources),
+                    $checkpoint, $organizationId, $readWrapper, $readGuard
+                ));
+                $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
+            }
             $profileRank = 0;
             $seenProfileResults = [];
             foreach ($rows as $row) {
@@ -339,6 +355,7 @@ final class RagRetriever
             $includeOrganizationWideSources,
             [],
             $user,
+            $learningChecks,
             $checkpoint,
             $readWrapper,
             $readGuard
@@ -527,18 +544,36 @@ final class RagRetriever
             : $this->readLimiter->run($read, $checkpoint, $organizationId, $readGuard);
     }
 
-    private function readableRows(iterable $rows, User $actor, int $organizationId, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard): array
+    private function readableRows(iterable $rows, User $actor, int $organizationId, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard, array &$learningChecks, bool &$learningRejected): array
     {
-        return $this->timed('result_acl', $organizationId, $actor, fn (): array => $this->runRead(function (?callable $readCheckpoint) use ($rows, $actor, $organizationId): array {
-            return $this->accessPolicy()->withCurrentChecks($actor, $organizationId, function () use ($rows, $actor, $organizationId, $readCheckpoint): array {
+        return $this->timed('result_acl', $organizationId, $actor, function () use ($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, &$learningChecks, &$learningRejected): array {
+            return $this->runRead(function (?callable $readCheckpoint) use ($rows, $actor, $organizationId, &$learningChecks, &$learningRejected): array {
+            return $this->accessPolicy()->withCurrentChecks($actor, $organizationId, function () use ($rows, $actor, $organizationId, $readCheckpoint, &$learningChecks, &$learningRejected): array {
+                $rows = is_array($rows) ? $rows : iterator_to_array($rows);
+                $learningReferences = [];
+                foreach ($rows as $index => $row) {
+                    if ($row->source_type === 'estimate_generation_learning') {
+                        $learningReferences[$index] = [[
+                            'source_type' => $row->source_type, 'entity_type' => $row->entity_type, 'entity_id' => $row->entity_id,
+                            'project_id' => $row->project_id, 'metadata' => $this->metadata($row->chunk_metadata),
+                        ]];
+                    }
+                }
+                $learningAccess = $learningReferences === [] ? [] : $this->accessPolicy()->canReadReferenceSets($actor, $organizationId, $learningReferences);
                 $visible = [];
-                foreach ($rows as $row) {
+                foreach ($rows as $index => $row) {
                     $readCheckpoint?->__invoke();
+                    if ($row->source_type === 'estimate_generation_learning') {
+                        if ($learningAccess[$index] ?? false) { $visible[] = $row; }
+                        else { $learningRejected = true; }
+                        continue;
+                    }
                     if ($this->accessPolicy()->canReadSource($actor, $organizationId, [
                         'source_type' => $row->source_type, 'entity_type' => $row->entity_type, 'entity_id' => $row->entity_id,
                         'project_id' => $row->project_id, 'metadata' => $this->metadata($row->chunk_metadata),
                     ])) { $visible[] = $row; }
                 }
+                $visible = $this->currentLearningRows($visible, $organizationId, $learningChecks, $learningRejected, $readCheckpoint);
                 $legacyIds = [];
                 $legacyChunkIds = [];
                 foreach ($visible as $row) {
@@ -567,7 +602,51 @@ final class RagRetriever
                 }
                 return $currentRows;
             }, fresh: true, checkpoint: $readCheckpoint);
-        }, $checkpoint, $organizationId, $readWrapper, $readGuard));
+            }, $checkpoint, $organizationId, $readWrapper, $readGuard);
+        });
+    }
+
+    private function currentLearningRows(array $rows, int $organizationId, array &$checks, bool &$rejected, ?callable $checkpoint): array
+    {
+        $missing = [];
+        foreach ($rows as $row) {
+            if ($row->source_type === 'estimate_generation_learning' && ! array_key_exists((int) $row->rag_source_id, $checks)) {
+                $missing[(int) $row->rag_source_id] = true;
+            }
+        }
+        if ($missing !== []) {
+            $checkpoint?->__invoke();
+            $sources = RagSource::query()->where('organization_id', $organizationId)->whereKey(array_keys($missing))->with('chunks')->get()->keyBy('id');
+            $checkpoint?->__invoke();
+            $chunks = app(EstimateGenerationLearningRagSource::class)->currentChunks($organizationId, $sources->pluck('entity_id')->all());
+            $checkpoint?->__invoke();
+            $indexer = new RagIndexer($this->embeddingProvider, new RagSourceRegistry([]));
+            foreach ($missing as $id => $_) {
+                $checkpoint?->__invoke();
+                $source = $sources->get($id);
+                $chunk = $source === null ? null : ($chunks[(string) $source->entity_id] ?? null);
+                $checks[$id] = $source !== null && $chunk !== null && $indexer->matchesLexicalSource($source, $chunk)
+                    ? ['source' => $source, 'chunks' => $source->chunks->keyBy('id')]
+                    : null;
+            }
+        }
+
+        return array_values(array_filter($rows, function (object $row) use ($checks, &$rejected, $checkpoint): bool {
+            $checkpoint?->__invoke();
+            if ($row->source_type !== 'estimate_generation_learning') { return true; }
+            $check = $checks[(int) $row->rag_source_id] ?? null;
+            $source = $check['source'] ?? null;
+            $chunk = $check['chunks'][(int) $row->id] ?? null;
+            $current = $source !== null && $chunk !== null
+                && $source->entity_type === $row->entity_type && (string) $source->entity_id === (string) $row->entity_id
+                && $source->project_id === ($row->project_id === null ? null : (int) $row->project_id)
+                && $source->title === $row->title && $source->checksum === $row->rag_source_checksum
+                && $source->source_version === $row->rag_source_version && $chunk->content === $row->content
+                && $chunk->metadata === $this->metadata($row->chunk_metadata);
+            if (! $current) { $rejected = true; }
+
+            return $current;
+        }));
     }
 
     private function authorizedSourceIds(int $organizationId, User $actor, array $sourceTypes, array $projectIds, ?int $projectId, bool $includeOrganizationWideSources, ?array $embedding, array $terms, ?callable $checkpoint): array
@@ -705,6 +784,7 @@ final class RagRetriever
         bool $includeOrganizationWideSources,
         Builder|array $accessibleSources,
         User $actor,
+        array &$learningChecks,
         ?callable $checkpoint = null,
         ?callable $readWrapper = null,
         ?callable $readGuard = null
@@ -721,7 +801,7 @@ final class RagRetriever
         $checkpoint?->__invoke();
         $order = implode(' + ', array_fill(0, count($terms), "CASE WHEN lower(c.content || ' ' || s.title) LIKE ? THEN 1 ELSE 0 END"));
         $orderBindings = array_map(static fn (string $term): string => '%'.$term.'%', $terms);
-        $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(fn () => DB::table('ai_rag_chunks as c')
+        $candidates = DB::table('ai_rag_chunks as c')
             ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
             ->where('c.organization_id', $organizationId)
             ->where('s.organization_id', $organizationId)
@@ -773,12 +853,20 @@ final class RagRetriever
                 's.checksum as rag_source_checksum',
                 's.source_version as rag_source_version',
             ])
-            ->orderByRaw('('.$order.') DESC', $orderBindings)
-            ->limit(max($limit * 12, 48))
-            ->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
+            ->orderByRaw('('.$order.') DESC', $orderBindings);
+        $candidateLimit = max($limit * 12, 48);
+        $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(
+            fn () => (clone $candidates)->limit($candidateLimit)->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $checkpoint?->__invoke();
+        $learningRejected = false;
+        $rows = $this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
+        if ($learningRejected && count(array_filter($rows, fn (object $row): bool => $this->lexicalScore($row, $terms) > 0)) < $limit) {
+            $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(
+                fn () => (clone $candidates)->limit($candidateLimit * 2)->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
+            $rows = $this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
+        }
 
-        return collect($this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard))
+        return collect($rows)
             ->map(function (object $row) use ($terms): object {
                 $row->lexical_score = $this->lexicalScore($row, $terms);
 
