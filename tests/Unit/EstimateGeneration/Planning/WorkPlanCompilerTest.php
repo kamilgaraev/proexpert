@@ -729,6 +729,46 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
+    #[DataProvider('documentOptionalSitePackages')]
+    public function test_document_site_package_has_one_owner_and_preserves_independent_source_rows(string $description, string $quantityKey, string $package, bool $applicable): void
+    {
+        $documents = [];
+        foreach ([82 => 'segment-a', 83 => 'segment-b'] as $documentId => $entity) {
+            $key = $quantityKey.'.'.$entity;
+            $source = [['document_id' => $documentId, 'entity_id' => $entity]];
+            $documents[] = ['id' => $documentId, 'filename' => $entity.'.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                'quantity_takeoffs' => [['quantity' => 12, 'unit' => 'м', 'source_refs' => $source,
+                    'normalized_payload' => ['quantity_key' => $key]]],
+                'scope_inferences' => [['scope_type' => 'site', 'inference_type' => 'specification_takeoff',
+                    'title' => 'Работа по ведомости', 'review_required' => false, 'source_refs' => $source,
+                    'normalized_payload' => ['quantity_key' => $key, 'entity_id' => $entity, 'quantity_value' => 12, 'unit' => 'м']]],
+            ];
+        }
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], $documents);
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+
+        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
+        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+        if (! $applicable) {
+            self::assertSame([], $items);
+
+            return;
+        }
+        $documentItems = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['generation_source'] ?? null) === 'scope_inference'));
+        self::assertCount(2, $documentItems);
+        self::assertSame(['12', '12'], array_column($documentItems, 'quantity'));
+        self::assertSame([82, 83], array_map(static fn (array $item): int => $item['source_refs'][0]['document_id'], $documentItems));
+        self::assertSame(['segment-a', 'segment-b'], array_map(static fn (array $item): string => $item['metadata']['scope_inference']['normalized_payload']['entity_id'], $documentItems));
+    }
+
+    public static function documentOptionalSitePackages(): iterable
+    {
+        yield 'networks' => ['Наружные инженерные сети', 'networks.external', 'external_networks', true];
+        yield 'roads' => ['Устройство дороги', 'warehouse.roads', 'roads', false];
+    }
+
     public function test_site_preparation_does_not_hide_independent_landscaping_request_or_document_key(): void
     {
         foreach (['bridge', 'warehouse', 'industrial'] as $type) {

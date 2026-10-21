@@ -410,7 +410,8 @@ class PackagePlannerService
         $sitePreparationOnly = in_array('site_preparation', $requestedKeys, true)
             && ! in_array('siteworks', $requestedKeys, true) && ! $siteworksEvidence;
 
-        if ($this->hasPlanningSignal($profile, 'external_networks')) {
+        if ($this->hasPlanningSignal($profile, 'external_networks')
+            && ! in_array('external_networks', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('external_networks', 'Наружные сети', 'site', $largeObject ? 40 : 14, $largeObject ? 90 : 32);
         }
 
@@ -419,7 +420,8 @@ class PackagePlannerService
             $packages[] = $this->package('siteworks', 'Благоустройство', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
         }
 
-        if ($this->hasPlanningSignal($profile, 'roads')) {
+        if ($this->hasPlanningSignal($profile, 'roads')
+            && ! in_array('roads', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('roads', 'Дороги и площадки', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
         }
 
