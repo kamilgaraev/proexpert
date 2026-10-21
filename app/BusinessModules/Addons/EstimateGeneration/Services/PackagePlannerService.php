@@ -142,6 +142,7 @@ class PackagePlannerService
             }
             $documentFragments[] = $parser->positiveWorkText((string) ($document['text'] ?? ''));
             $documentScopeTypes = $parser->positiveDocumentScopeTypes((string) ($document['text'] ?? ''));
+            $documentExplicitScopeTypes = null;
             foreach ($document['scopes']['items'] ?? [] as $scope) {
                 if (! is_array($scope) || ! in_array($scope['scope_type'] ?? null, $documentScopeTypes, true)
                     || ! in_array($scope['scope_type'] ?? null,
@@ -151,8 +152,9 @@ class PackagePlannerService
                 $documentScopeFragments[(string) ($scope['title'] ?? '')] = $parser->positiveWorkText((string) ($scope['title'] ?? ''));
                 $scopeTypes = [$scope['scope_type']];
                 if ($scope['scope_type'] === 'site') {
+                    $documentExplicitScopeTypes ??= $parser->positiveDocumentScopeTypes((string) ($document['text'] ?? ''), manualExplicit: true);
                     $scopeTypes = array_values(array_intersect(
-                        $parser->positiveDocumentScopeTypes((string) ($document['text'] ?? ''), manualExplicit: true),
+                        $documentExplicitScopeTypes,
                         $parser->positiveDocumentScopeTypes((string) ($scope['title'] ?? ''), manualExplicit: true),
                         ['earthworks', 'siteworks', 'site', 'roads', 'external_networks'],
                     ));
