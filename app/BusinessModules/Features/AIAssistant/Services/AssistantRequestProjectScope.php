@@ -14,6 +14,8 @@ final readonly class AssistantRequestProjectScope
 
     private const QUOTED_NAME = '«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"';
 
+    private const ORGANIZATION_QUALIFIER = '(?:всей\s+(?:нашей\s+)?|в\s+целом\s+по\s+(?:нашей\s+)?)';
+
     private const NUMERIC_PROJECTS = '(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*([1-9]\d*(?:\s*(?:,|и|или)\s*(?:(?:проект|объект)[а-яё]*\s*)?(?:№|#|id)?\s*[1-9]\d*)*)(?![\pL\pN])';
 
     public function __construct(public bool $requested, public ?int $projectId, private ?int $contextProjectId = null) {}
@@ -71,7 +73,7 @@ final readonly class AssistantRequestProjectScope
         $command = '(?:(?:не|пожалуйста)\s+){0,2}(?:(?:сформируй|сгенерируй|создай|сделай|собери|подготовь|составь|сохрани|экспортируй|выгрузи|выведи|построй|объедини|сведи|подведи|покажи|показывай|посмотри|найди|посчитай|подсчитай|рассчитай|вычисли|сгруппируй|группируй|отсортируй|сортируй|сравни|сопоставь|сверь|проверь|проанализируй|оцени|объясни|расскажи|перечисли|дай|добавь|учти|учитывай|включи|включай|исключи|исключай)(?:те)?|ограничивайся|ограничивайтесь)';
         $postDefinition = '(?:(?:не|частично|полностью|еще|ещё|пока)\s+){0,3}[а-яё][а-яё-]*(?:ые|ие)';
         $continuation = '(?=\s*(?:$|[,.;:!?]|(?:в|во|на|по|за|с|со|против|относительно|без|для|из|от|до|после|перед|при|к|ко|о|об|и|или|а|но|вместе|кроме|исключая|включая|только|также|пожалуйста|сегодня|вчера|позавчера|завтра|сейчас|сверху|снизу|нужна|нужно|нужны|нужен|CSV|XLSX|PDF|Excel|отч[её]т|реестр|сводка|таблица|'.$command.'|'.$postDefinition.')(?![\pL\pN])))';
-        $organization = '(?:(?:всей\s+(?:нашей\s+)?|в\s+целом\s+по\s+(?:нашей\s+)?)организаци(?:и|ей)|(?:'.$recordScope.'|'.$collective.')\s+(?:нашей\s+)?организации)(?![\pL\pN])'.$continuation;
+        $organization = '(?:'.self::ORGANIZATION_QUALIFIER.'организаци(?:и|ей)|(?:'.$recordScope.'|'.$collective.')\s+(?:нашей\s+)?организации)(?![\pL\pN])'.$continuation;
         $scope = '(?:'.$projects.'|'.$organization.')';
 
         return (preg_match('/(?<![\pL\pN])'.$projects.'/iu', $question) === 1
@@ -257,7 +259,7 @@ final readonly class AssistantRequestProjectScope
 
             return AssistantRequestedSourceScopes::MARKER.'project_'.$this->contextProjectId.'__';
         }, $question) ?? $question;
-        $question = preg_replace('/(?<![\pL\pN])(?:нашей\s+)?организаци[а-яё]*(?![\pL\pN])/iu', AssistantRequestedSourceScopes::MARKER.'organization__', $question) ?? $question;
+        $question = preg_replace('/(?<![\pL\pN])(?:'.self::ORGANIZATION_QUALIFIER.'|(?:нашей\s+)?)организаци[а-яё]*(?![\pL\pN])/iu', AssistantRequestedSourceScopes::MARKER.'organization__', $question) ?? $question;
 
         return AssistantRequestedSourceScopes::compile($question, $projectIds, $comparison);
     }

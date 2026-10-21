@@ -16,6 +16,41 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_complete_organization_qualifiers_keep_independent_source_bindings(): void
+    {
+        foreach (['акты всей организации', 'акты всей нашей организации', 'акты в целом по организации',
+            'акты в целом по нашей организации', 'все акты организации', 'все акты нашей организации'] as $phrase) {
+            foreach (['Покажи '.$phrase.', а также договоры проекта 100',
+                'Покажи договоры проекта 100, а также '.$phrase] as $question) {
+                self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+                $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+                $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+                    ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']];
+                self::assertSame(['sections' => $sections], $scope->bindReportScope($question, ['sections' => $sections]), $question);
+                self::assertEqualsCanonicalizing(['["organization","acts","performance_act"]', '["project:100","contracts","contract"]'],
+                    array_keys($scope->searchCoverageRequirements($question)['subjects']), $question);
+            }
+        }
+    }
+
+    public function test_organization_qualifiers_inside_confirmed_project_names_remain_literal(): void
+    {
+        foreach (['Акты всей организации', 'В целом по нашей организации'] as $name) {
+            $question = 'Покажи акты всей организации, а также договоры проекта «'.$name.'»';
+            $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']];
+            $search = static function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections], $search));
+        }
+        $question = 'Покажи акты всей организации за прошлый месяц, а также договоры проекта 100';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question);
+    }
+
     public function test_named_exclusion_preserves_a_following_independent_section_after_complete_empty_full_name(): void
     {
         $question = 'Все акты организации без проекта Альфа и договоры проекта 100';
