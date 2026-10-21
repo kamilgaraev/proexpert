@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Learning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,6 +20,7 @@ final class EstimateGenerationLearningEvidenceService
 
     public function __construct(
         private readonly WorkIntentClassifier $workIntentClassifier,
+        private readonly EquipmentCountKnowledgeValidationService $equipmentKnowledge,
     ) {}
 
     /**
@@ -71,13 +73,39 @@ final class EstimateGenerationLearningEvidenceService
             'system' => $classifiedIntent->system,
         ];
         $workTokens = $this->tokens($this->workText($workItem, $context));
+        $currentAssociations = [];
+        $currentSources = [];
 
         foreach ($examples as $example) {
             if (!$this->indexable($example)) {
                 continue;
             }
+            $marked = array_key_exists('knowledge_validation', is_array($example->context_payload) ? $example->context_payload : []);
+            if ($marked) {
+                if ($example->estimate_norm_id === null) {
+                    continue;
+                }
+                $knowledge = $example->context_payload['knowledge_validation'];
+                $claimKey = CanonicalPipelineJson::encode([$example->organization_id, $example->project_id,
+                    $example->generation_session_id, data_get($knowledge, 'schema_version'), data_get($knowledge, 'producer'),
+                    data_get($knowledge, 'work_item_key'), data_get($knowledge, 'claim'),
+                    data_get($knowledge, 'count_source_check.outcome'), data_get($knowledge, 'normative_association_check.outcome')]);
+                $currentSources[$claimKey] ??= $this->equipmentKnowledge->permitsSourceReuse($example);
+                if (! $currentSources[$claimKey]) {
+                    continue;
+                }
+            }
 
             foreach ($this->matchingCandidates($example, $candidates) as $candidate) {
+                if ($marked) {
+                    if ((int) $candidate->id !== (int) $example->estimate_norm_id) {
+                        continue;
+                    }
+                    $currentAssociations[(int) $candidate->id] ??= $this->equipmentKnowledge->currentAssociationPasses($workItem, (int) $candidate->id, $context);
+                    if (! $currentAssociations[(int) $candidate->id]) {
+                        continue;
+                    }
+                }
                 $evidence = $this->scoreEvidence($example, $candidate, $workItem, $context, $intent, $workTokens);
 
                 if ($evidence === null) {

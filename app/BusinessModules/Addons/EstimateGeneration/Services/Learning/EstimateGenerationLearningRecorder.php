@@ -17,6 +17,7 @@ final class EstimateGenerationLearningRecorder
     public function __construct(
         private readonly ImportedEstimateExampleExtractor $extractor,
         private readonly WorkIntentClassifier $workIntentClassifier,
+        private readonly EquipmentCountKnowledgeValidationService $equipmentKnowledge,
     ) {}
 
     public function recordImportedEstimate(object $estimate, ?object $importSession = null): int
@@ -92,6 +93,8 @@ final class EstimateGenerationLearningRecorder
                 'quantity_snapshot' => $this->quantitySnapshot($selectedWorkItem, $originalWorkItem),
                 'local_estimate_title' => $context['local_estimate_title'] ?? null,
                 'section_title' => $context['section_title'] ?? null,
+                ...(($knowledge = $this->equipmentKnowledge->capture($session, $originalWorkItem, $normId)) === null
+                    ? [] : ['knowledge_validation' => $knowledge]),
             ],
             'source_refs' => [[
                 'type' => 'estimate_generation_session',
@@ -411,7 +414,24 @@ final class EstimateGenerationLearningRecorder
      */
     public function record(array $attributes): int
     {
-        $example = EstimateGenerationLearningExample::query()->firstOrNew([
+        $query = EstimateGenerationLearningExample::query();
+        if (($attributes['source_entity_id'] ?? null) === null) {
+            $workKey = data_get($attributes, 'context_payload.work_item_key');
+            if (($attributes['source_type'] ?? null) === 'user_selection'
+                && (! is_string($workKey) || trim($workKey) === ''
+                    || ! is_int($attributes['organization_id'] ?? null) || ! is_int($attributes['generation_session_id'] ?? null)
+                    || ! EstimateGenerationSession::query()->where('organization_id', $attributes['organization_id'])
+                        ->where('project_id', $attributes['project_id'] ?? null)->whereKey($attributes['generation_session_id'])->exists())) {
+                return 0;
+            }
+            $query->where('organization_id', $attributes['organization_id'])
+                ->where('project_id', $attributes['project_id'] ?? null)
+                ->where('generation_session_id', $attributes['generation_session_id'] ?? null);
+            if (($attributes['source_entity_type'] ?? null) === 'estimate_generation_work_item') {
+                $query->where('context_payload->work_item_key', $workKey);
+            }
+        }
+        $example = $query->firstOrNew([
             'source_type' => (string) $attributes['source_type'],
             'source_entity_type' => $attributes['source_entity_type'] ?? null,
             'source_entity_id' => $attributes['source_entity_id'] ?? null,
