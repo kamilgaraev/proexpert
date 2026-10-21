@@ -202,11 +202,7 @@ final readonly class CurrentProjectDerivedQuantityService
                     'formula' => $request['formula_identity'],
                     'entity_id' => $request['entity_id'],
                     'inputs' => $readiness->unresolvedInputs,
-                    'questions' => [[
-                        'code' => $readiness->unresolvedInputs[0]['code'] ?? 'canonical_quantity_unresolved',
-                        'message_key' => 'estimate_generation.geometry_coverage_review',
-                        'entity_id' => $request['entity_id'],
-                    ]],
+                    'questions' => $this->reviewQuestions($readiness, $request['entity_id']),
                 ];
 
                 continue;
@@ -235,6 +231,26 @@ final readonly class CurrentProjectDerivedQuantityService
                 'work_packages' => $this->workPackageContext($completeness, $requests, $decisions),
             ],
         ];
+    }
+
+    private function reviewQuestions(QuantityReadiness $readiness, string $entityId): array
+    {
+        $questions = [];
+        foreach ($readiness->questions as $question) {
+            $code = is_string($question['code'] ?? null) && preg_match('/\A[a-z][a-z0-9_]{0,95}\z/', $question['code']) === 1
+                ? $question['code'] : 'canonical_quantity_unresolved';
+            $messageKey = 'estimate_generation.quantity.'.$code;
+            $questions[] = [
+                'code' => $code,
+                'message_key' => in_array($code, ['opening_exceeds_wall', 'wall_measurement_incompatible', 'opening_measurement_incompatible'], true)
+                    && ($question['message_key'] ?? null) === $messageKey ? $messageKey : 'estimate_generation.geometry_coverage_review',
+                'entity_id' => $entityId,
+            ];
+        }
+
+        return $questions !== [] ? $questions : [[
+            'code' => 'canonical_quantity_unresolved', 'message_key' => 'estimate_generation.geometry_coverage_review', 'entity_id' => $entityId,
+        ]];
     }
 
     /** @return list<array<string, mixed>> */
