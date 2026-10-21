@@ -50,6 +50,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             $documentId,
             $pageNumber,
             $publication->numericSources,
+            $publication->literalSources,
         );
         $this->writeAcceptedDocumentFacts(
             $publication,
