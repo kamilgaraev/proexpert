@@ -21,13 +21,17 @@ use App\Services\Logging\LoggingService;
 use App\Services\Modules\PackageCatalogService;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
 final class AssistantSiteRequestCustomReportTest extends TestCase
@@ -53,19 +57,34 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         $this->actor->assignedProjects()->attach([$this->firstProject->id => ['is_active' => true, 'role' => 'member'],
             $this->secondProject->id => ['is_active' => true, 'role' => 'member']]);
         $this->actingAs($this->actor);
-        self::assertSame(1, DB::transactionLevel());
-        DB::commit();
+        $this->beforeApplicationDestroyed(static function (): void {
+            self::assertFalse(Schema::hasTable('site_requests'));
+            self::assertFalse(Schema::hasTable('organizations'));
+            self::assertFalse(Schema::hasTable('users'));
+        });
+        self::assertSame(0, DB::transactionLevel());
         self::assertTrue(app(AuthorizationService::class)->canCurrent($this->actor, 'site_requests.view'));
         self::assertTrue(app(AuthorizationService::class)->canCurrent($this->actor, 'projects.view'));
         self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadDomain($this->actor, $this->fixture->organization->id, 'reports'));
     }
 
-    protected function tearDown(): void
+    protected function refreshTestDatabase(): void
     {
-        if (DB::transactionLevel() === 0) {
-            DB::beginTransaction();
-        }
-        parent::tearDown();
+        IsolatedPostgresTestDatabase::assertSafeConfiguration(DB::connection()->getConfig());
+        self::assertMatchesRegularExpression('/^most_phpunit_[a-f0-9]{24}_testing$/D', DB::connection()->getDatabaseName());
+        $this->artisan('migrate:fresh', $this->migrateFreshUsing());
+        $this->app[Kernel::class]->setArtisan(null);
+        RefreshDatabaseState::$migrated = true;
+        $this->beforeApplicationDestroyed(function (): void {
+            try {
+                DB::statement('DROP SCHEMA public CASCADE');
+                DB::statement('CREATE SCHEMA public');
+                DB::statement('CREATE EXTENSION IF NOT EXISTS vector');
+                DB::statement('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+            } finally {
+                RefreshDatabaseState::$migrated = false;
+            }
+        });
     }
 
     public function test_two_sheet_workbook_preserves_request_filters_labels_and_organization_scope(): void
