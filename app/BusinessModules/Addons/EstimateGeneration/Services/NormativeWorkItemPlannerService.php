@@ -34,15 +34,14 @@ final class NormativeWorkItemPlannerService
     {
         $quantityModel = $this->documentQuantityModel($analysis);
         $items = $this->projectReferenceItems($projectReferences ?? $this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section, $workItemLimit), $localEstimate, $section);
-
-        foreach ($this->definitions($localEstimate, $section, $analysis, $quantityModel, $packagePlan) as $index => $definition) {
+        $definitions = $this->definitions($localEstimate, $section, $analysis, $quantityModel, $packagePlan);
+        foreach ($definitions as $index => $definition) {
             $item = $this->workItemFromDefinition($definition, $localEstimate, $section, $analysis, $quantityModel, $index);
 
             if ($item !== null) {
                 $items[] = $item;
             }
         }
-
         return $this->uniquePricedItems($items);
     }
 
@@ -139,7 +138,13 @@ final class NormativeWorkItemPlannerService
 
         if ($this->isPlannerFallbackQuantity($quantity)) {
             if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal') {
-                return $this->unknownQuantityWorkItem($definition, $localEstimate, $section, $key);
+                $sourceRefs = $this->normalizeSourceRefs([
+                    ...$this->sourceRefsFromEvidence($definition),
+                    ...$this->sourceRefsFromEvidence($definition['metadata']['scope_inference'] ?? []),
+                    ...$this->sourceRefsForQuantityKey($analysis, (string) $definition['quantity_key']),
+                ]);
+
+                return $this->unknownQuantityWorkItem([...$definition, 'source_refs' => $sourceRefs], $localEstimate, $section, $key);
             }
 
             return null;
@@ -197,7 +202,7 @@ final class NormativeWorkItemPlannerService
             'quantity_formula' => $definition['quantity_key'], 'quantity_basis' => 'Количество отсутствует в исходных данных.',
             'work_cost' => null, 'materials_cost' => null, 'machinery_cost' => null, 'labor_cost' => null, 'total_cost' => null,
             'materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => [],
-            'work_composition' => $definition['operations'], 'source_refs' => [], 'confidence' => 0,
+            'work_composition' => $definition['operations'], 'source_refs' => $definition['source_refs'] ?? [], 'confidence' => 0,
             'validation_flags' => isset($definition['unit']) ? ['quantity_unknown'] : ['quantity_unknown', 'unit_requires_confirmation'], 'price_source' => null,
             'pricing_status' => 'not_calculated', 'pricing_blocker' => 'quantity_unknown',
             'skip_normative_matching' => true,
@@ -663,7 +668,6 @@ final class NormativeWorkItemPlannerService
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $universal = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal';
         $selectedResidentialEquipment = $packageKey === 'equipment' && $universal
-            && ($analysis['evaluation_policy']['profile_id'] ?? null) !== 'industrial'
             && in_array('equipment', $analysis['evaluation_policy']['selected_sections'] ?? [], true)
             && ObjectTypeSignalClassifier::isResidential($this->packagePlanner->profileFromAnalysis($analysis)->objectType);
         $separateWaterScope = $universal && in_array($packageKey, ['plumbing', 'sewerage'], true);
@@ -1370,9 +1374,13 @@ final class NormativeWorkItemPlannerService
             'commissioning' => [
                 $this->industrialDefinition('Пусконаладка оборудования по согласованной программе', 'engineering', 'commissioning.units_count', 'count', 'commissioning'),
             ],
-            'external_networks', 'siteworks', 'roads' => [
-                $this->definition('Наружные сети', 'site', 'устройство наружных инженерных сетей', 'networks.external'),
+            'siteworks' => [
                 $this->definition('Благоустройство территории', 'site', 'благоустройство территории', 'siteworks.area'),
+            ],
+            'external_networks' => [
+                $this->definition('Наружные сети', 'site', 'устройство наружных инженерных сетей', 'networks.external'),
+            ],
+            'roads' => [
                 $this->definition('Дороги и площадки', 'site', 'устройство дорог и площадок', 'warehouse.roads'),
             ],
             default => [],

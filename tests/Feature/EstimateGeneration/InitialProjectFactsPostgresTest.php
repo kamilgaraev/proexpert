@@ -19,6 +19,87 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class InitialProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_legacy_creation_preserves_description_in_scoped_composer_context_and_replays_without_writes(): void
+    {
+        [$actor, $attributes] = $this->fixture();
+        $attributes['input_payload'] = ['evaluation_mode' => 'legacy', 'description' => 'Монтаж стендов 12 шт'];
+        $service = app(CreateEstimateGenerationSession::class);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $session = $service->handle($attributes, $actor, $requestId, $attributes['input_payload']);
+        $models = app(ProjectModelRepository::class);
+        $factory = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory($models, 10000);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        self::assertCount(1, $models->snapshot(...$scope)->facts);
+        $input = $factory->capture(...[...$scope, [], [], []]);
+        self::assertCount(1, $input->facts);
+        $fact = $input->facts[0];
+        self::assertSame('evaluation_answer', $fact['type']);
+        self::assertSame('Монтаж стендов 12 шт', $fact['value']['description']);
+        self::assertFalse($fact['value']['numeric_parameters_confirmed']);
+        self::assertSame('initial_description', $fact['context_kind']);
+        self::assertSame([], $fact['declared_work_sections']);
+        self::assertSame([], $input->allowedWorkSections);
+        self::assertSame([], $input->derivedQuantities);
+        self::assertNull($fact['unit']);
+        $snapshot = $models->snapshot(...$scope);
+        self::assertCount(1, $snapshot->evidence);
+        self::assertSame('input_payload.description', $snapshot->evidence[0]->nativeReference);
+        self::assertSame($snapshot->facts[0]->sourceVersion, $snapshot->evidence[0]->sourceVersion);
+        self::assertSame([$snapshot->evidence[0]->id], $snapshot->facts[0]->evidenceIds);
+        self::assertSame('user_input', $snapshot->facts[0]->origin);
+        self::assertCount(1, $input->decisions);
+        $counts = [DB::table('estimate_generation_evidence')->count(), DB::table('estimate_generation_project_model_assertions')->count()];
+        $replay = $service->handle($attributes, $actor, $requestId, $attributes['input_payload']);
+        self::assertSame($session->id, $replay->id);
+        self::assertSame($input->snapshotToken, $factory->capture(...[...$scope, [], [], []])->snapshotToken);
+        self::assertSame($counts, [DB::table('estimate_generation_evidence')->count(), DB::table('estimate_generation_project_model_assertions')->count()]);
+        self::assertEquals($session->input_payload, $replay->input_payload);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_legacy_description_does_not_cross_organization_or_session_boundaries(): void
+    {
+        $sessions = [];
+        foreach (['Первая организация', 'Другая организация'] as $description) {
+            [$actor, $attributes] = $this->fixture();
+            $attributes['input_payload'] = ['description' => $description];
+            $sessions[] = app(CreateEstimateGenerationSession::class)->handle($attributes, $actor);
+        }
+        $attributes['input_payload']['description'] = 'Другая сессия';
+        $sessions[] = app(CreateEstimateGenerationSession::class)->handle($attributes, $actor);
+        $factory = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory(app(ProjectModelRepository::class), 10000);
+        $factIds = [];
+        foreach ($sessions as $session) {
+            $input = $factory->capture((int) $session->organization_id, (int) $session->project_id, (int) $session->id, [], [], []);
+            self::assertCount(1, $input->facts);
+            self::assertSame($session->input_payload['description'], $input->facts[0]['value']['description']);
+            self::assertCount(1, $input->decisions);
+            $factIds[] = $input->facts[0]['id'];
+        }
+        self::assertCount(3, array_unique($factIds));
+        self::assertSame([], app(ProjectModelRepository::class)->snapshot((int) $sessions[0]->organization_id, (int) $sessions[0]->project_id, (int) $sessions[1]->id)->facts);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_creation_replay_does_not_backfill_description_or_replace_frozen_input(): void
+    {
+        [$actor, $attributes] = $this->fixture();
+        $attributes['input_payload'] = ['evaluation_mode' => 'legacy'];
+        $originalInput = $attributes['input_payload'];
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $service = app(CreateEstimateGenerationSession::class);
+        $session = $service->handle($attributes, $actor, $requestId, $originalInput);
+        $attributes['input_payload']['description'] = 'Новый текст при повторе старого запроса';
+        $replay = $service->handle($attributes, $actor, $requestId, $originalInput);
+        self::assertSame($session->id, $replay->id);
+        self::assertSame($originalInput, $replay->input_payload);
+        self::assertSame($session->creation_request_hash, $replay->creation_request_hash);
+        $snapshot = app(ProjectModelRepository::class)->snapshot((int) $replay->organization_id, (int) $replay->project_id, (int) $replay->id);
+        self::assertSame([], $snapshot->facts);
+        self::assertSame([], $snapshot->evidence);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
     public function test_description_is_a_canonical_text_source_without_promoting_its_numbers_to_dimensions(): void
     {
         [$actor, $attributes] = $this->fixture();

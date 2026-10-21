@@ -35,6 +35,7 @@ final readonly class EstimateComposerInputFactory
         array $missingDocuments,
         ?AiSessionWireScope $wireScope = null,
         array $allowedWorkSections = [],
+        ?string $evaluationMode = null,
     ): EstimateComposerInput {
         $capture = $this->models->snapshotForPlanning(
             $organizationId,
@@ -73,43 +74,58 @@ final readonly class EstimateComposerInputFactory
             throw new InvalidArgumentException('estimate_composer_snapshot_changed');
         }
 
+        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode): array {
+            $entity = $entities[$fact->entityId] ?? null;
+            $related = [];
+            foreach (['room_id', 'wall_id', 'roof_id'] as $relation) {
+                $id = $entity?->attributes[$relation] ?? null;
+                if (is_string($id) && isset($entities[$id])) {
+                    $related[] = $id;
+                }
+            }
+
+            $context = [];
+            if ($fact->type === 'evaluation_answer' && $fact->origin === 'user_input' && $fact->status === 'confirmed'
+                && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'initial_description'
+                && ($fact->value['numeric_parameters_confirmed'] ?? null) === false) {
+                foreach ($fact->evidenceIds as $id) {
+                    $proof = $evidence[$id] ?? null;
+                    if ($proof?->sourceType === 'user_input' && $proof->nativeReference === 'input_payload.description'
+                        && $proof->producerName === 'user_input_normalizer') {
+                        if ($evaluationMode === 'legacy') {
+                            if ($proof->sourceVersion !== $fact->sourceVersion || ! is_string($fact->value['description'] ?? null)
+                                || trim($fact->value['description']) === '') {
+                                continue;
+                            }
+                            $context = ['context_kind' => 'initial_description', 'semantic_work_sections' => EstimateComposerInput::WORK_SECTIONS];
+                        } else {
+                            $context = ['context_kind' => 'initial_description', 'declared_work_sections' => $allowedWorkSections];
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return [...$this->fact($fact), 'entity_type' => $entity?->attributes['semantic_type'] ?? $entity?->attributes['properties']['semantic_type'] ?? $entity?->type,
+                'related_entity_ids' => array_values(array_unique($related)), ...$context];
+        }, $snapshot->facts);
+        $contractVersion = RunEstimateComposer::PROMPT_CONTRACT;
+        if ($evaluationMode === 'legacy' && array_filter($facts, static fn (array $fact): bool => isset($fact['semantic_work_sections'])) !== []) {
+            $allowedWorkSections = EstimateComposerInput::WORK_SECTIONS;
+            $contractVersion = RunEstimateComposer::LEGACY_PROMPT_CONTRACT;
+        }
+
         return new EstimateComposerInput(
             organizationId: $organizationId,
             projectId: $projectId,
             sessionId: $sessionId,
             snapshotToken: (string) $capture['token'],
-            facts: array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections): array {
-                $entity = $entities[$fact->entityId] ?? null;
-                $related = [];
-                foreach (['room_id', 'wall_id', 'roof_id'] as $relation) {
-                    $id = $entity?->attributes[$relation] ?? null;
-                    if (is_string($id) && isset($entities[$id])) {
-                        $related[] = $id;
-                    }
-                }
-
-                $context = [];
-                if ($fact->type === 'evaluation_answer' && $fact->origin === 'user_input' && $fact->status === 'confirmed'
-                    && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'initial_description'
-                    && ($fact->value['numeric_parameters_confirmed'] ?? null) === false) {
-                    foreach ($fact->evidenceIds as $id) {
-                        $proof = $evidence[$id] ?? null;
-                        if ($proof?->sourceType === 'user_input' && $proof->nativeReference === 'input_payload.description'
-                            && $proof->producerName === 'user_input_normalizer') {
-                            $context = ['context_kind' => 'initial_description', 'declared_work_sections' => $allowedWorkSections];
-                            break;
-                        }
-                    }
-                }
-
-                return [...$this->fact($fact), 'entity_type' => $entity?->attributes['semantic_type'] ?? $entity?->attributes['properties']['semantic_type'] ?? $entity?->type,
-                    'related_entity_ids' => array_values(array_unique($related)), ...$context];
-            }, $snapshot->facts),
+            facts: $facts,
             derivedQuantities: array_map($this->derivedQuantity(...), $derivedQuantities),
             decisions: array_map($this->decision(...), $decisions),
             candidates: $candidates,
             missingDocuments: $missingDocuments,
-            contractVersion: RunEstimateComposer::PROMPT_CONTRACT,
+            contractVersion: $contractVersion,
             wireScope: $wireScope,
             allowedWorkSections: $allowedWorkSections,
         );

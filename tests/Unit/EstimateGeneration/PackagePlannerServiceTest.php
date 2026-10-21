@@ -88,7 +88,7 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertNotContains('roads', $keys);
     }
 
-    public function test_profile_from_analysis_adds_optional_site_packages_when_scope_is_explicit(): void
+    public function test_optional_site_packages_require_structured_quantity_keys_instead_of_free_text(): void
     {
         $analysis = [
             'object' => [
@@ -105,6 +105,15 @@ class PackagePlannerServiceTest extends TestCase
         $profile = $this->planner()->profileFromAnalysis($analysis);
         $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
+
+        $this->assertNotContains('external_networks', $keys);
+        $this->assertNotContains('siteworks', $keys);
+        $this->assertNotContains('roads', $keys);
+        $analysis['document_context']['quantity_takeoffs'] = array_map(static fn (string $key): array => [
+            'quantity' => 20, 'unit' => 'м2', 'source_refs' => [['document_id' => 82]],
+            'normalized_payload' => ['quantity_key' => $key],
+        ], ['networks.external', 'siteworks.area', 'warehouse.roads']);
+        $keys = array_column($this->planner()->plan($this->planner()->profileFromAnalysis($analysis))->packages, 'key');
 
         $this->assertContains('external_networks', $keys);
         $this->assertContains('siteworks', $keys);
@@ -165,7 +174,7 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertContains('office_partitions', $keys);
     }
 
-    public function test_profile_from_analysis_keeps_explicit_residential_type_over_storage_wording(): void
+    public function test_profile_from_analysis_requires_clarification_for_conflicting_explicit_types(): void
     {
         $analysis = [
             'object' => [
@@ -183,9 +192,10 @@ class PackagePlannerServiceTest extends TestCase
         $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
 
-        $this->assertSame('house', $profile->objectType);
-        $this->assertContains('foundation', $keys);
-        $this->assertContains('lighting', $keys);
+        $this->assertSame('custom', $profile->objectType);
+        $this->assertSame('document_limited', $this->planner()->documentRequirements($profile)['coverage']);
+        $this->assertNotContains('foundation', $keys);
+        $this->assertNotContains('lighting', $keys);
         $this->assertNotContains('industrial_floor', $keys);
     }
 

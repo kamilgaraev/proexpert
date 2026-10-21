@@ -13,6 +13,34 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkItemPlannerServiceTest extends TestCase
 {
+    public function test_addressed_takeoff_reference_is_context_without_a_numeric_quantity(): void
+    {
+        $global = [['document_id' => 82, 'page_number' => 3]];
+        $addressed = [['document_id' => 83, 'page_number' => 1]];
+        $items = $this->planner()->build(['key' => 'foundation', 'scope_type' => 'foundation', 'source_refs' => $global],
+            ['key' => 'foundation', 'construction_part' => 'foundation', 'source_refs' => $global], [
+                'object' => ['object_type' => 'house'], 'evaluation_policy' => ['mode' => 'universal'],
+                'document_context' => ['source_refs' => $global, 'quantity_takeoffs' => [[
+                    'quantity' => null, 'unit' => 'm3', 'source_refs' => $addressed,
+                    'normalized_payload' => ['quantity_key' => 'foundation.concrete'],
+                ]]],
+            ]);
+        self::assertNotEmpty($items);
+        $concrete = [];
+        foreach ($items as $item) {
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+            self::assertArrayNotHasKey('quantity_evidence', $item);
+            if (($item['metadata']['quantity_key'] ?? null) === 'foundation.concrete') {
+                $concrete[] = $item;
+                self::assertSame($addressed, $item['source_refs']);
+            } else {
+                self::assertSame([], $item['source_refs']);
+            }
+        }
+        self::assertCount(1, $concrete);
+    }
+
     public function test_explicit_source_backed_suspended_ceiling_is_kept_in_both_finishing_packages(): void
     {
         foreach (['finish_finishing', 'office_finishing'] as $package) {

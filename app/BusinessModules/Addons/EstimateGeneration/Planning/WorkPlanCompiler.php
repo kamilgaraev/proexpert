@@ -36,6 +36,7 @@ final readonly class WorkPlanCompiler
     {
         $profile = $this->packagePlanner->profileFromAnalysis($analysis);
         $plan = $this->packagePlanner->plan($profile);
+        $documentRequirements = $this->packagePlanner->documentRequirements($profile);
         $selected = $analysis['evaluation_policy']['selected_sections'] ?? [];
         if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' && $selected !== []) {
             $packages = [];
@@ -127,7 +128,7 @@ final readonly class WorkPlanCompiler
         $payload = [
             'object_profile' => $profile->toArray(),
             'package_plan' => $plan->toArray(),
-            'document_requirements' => $this->packagePlanner->documentRequirements($profile),
+            'document_requirements' => $documentRequirements,
             'generation_mode' => EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null)->value,
             'regional_context' => $analysis['regional_context'] ?? [],
             'normative_context_pin' => $deferNormativePin

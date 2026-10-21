@@ -20,6 +20,8 @@ final readonly class RunEstimateComposer
 {
     public const PROMPT_CONTRACT = 'estimate-composer:v4';
 
+    public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v1';
+
     public function __construct(
         private AiRoleRunRepository $runs,
         private EstimateComposerModel $model,
@@ -102,7 +104,7 @@ final readonly class RunEstimateComposer
             subjectVersion: $input->batchKey === null ? $input->snapshotToken : hash('sha256', $input->snapshotToken.'|'.$input->batchKey),
             role: AiAnalysisRole::EstimateComposer,
             model: $this->modelName,
-            promptContractVersion: self::PROMPT_CONTRACT,
+            promptContractVersion: $input->contractVersion,
             inputFingerprint: $input->fingerprint(),
         );
         $owner = AiOperationContext::deterministicId('estimate-composer-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));

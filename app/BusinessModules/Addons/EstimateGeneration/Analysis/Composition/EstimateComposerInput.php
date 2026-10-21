@@ -9,6 +9,8 @@ use InvalidArgumentException;
 
 final readonly class EstimateComposerInput
 {
+    public const WORK_SECTIONS = ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating',
+        'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment'];
     /**
      * @param  list<array<string, mixed>>  $facts
      * @param  list<array<string, mixed>>  $derivedQuantities
@@ -54,8 +56,7 @@ final readonly class EstimateComposerInput
         if (! array_is_list($allowedWorkSections) || count($allowedWorkSections) > 12
             || count(array_filter($allowedWorkSections, 'is_string')) !== count($allowedWorkSections)
             || count(array_unique($allowedWorkSections)) !== count($allowedWorkSections)
-            || array_diff($allowedWorkSections, ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating',
-                'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment']) !== []) {
+            || array_diff($allowedWorkSections, self::WORK_SECTIONS) !== []) {
             throw new InvalidArgumentException('estimate_composer_work_sections_invalid');
         }
         foreach ($candidates as $candidate) {

@@ -40,7 +40,7 @@ class ConstructionSemanticParser
                 'scope_inferences' => is_array($document['scope_inferences'] ?? null) ? $document['scope_inferences'] : ($factsSummary['scope_inferences'] ?? []),
                 'quality' => is_array($document['quality'] ?? null) ? $document['quality'] : [],
                 'source_refs' => $this->extractSourceRefs($text),
-                'scopes' => $this->extractScopes($text, false),
+                'scopes' => $this->extractScopes($text),
             ];
         }, $documents);
 
@@ -48,16 +48,25 @@ class ConstructionSemanticParser
         $combinedText = trim($description."\n".($documentContext['context_text'] ?? ''));
         $objectDescription = trim($description."\n".($documentContext['context_text'] ?? ''));
         $explicitBuildingType = isset($input['building_type']) ? (string) $input['building_type'] : null;
-        $buildingType = (string) ($explicitBuildingType ?? $this->detectBuildingType($combinedText) ?? 'custom');
+        $explicitObjectType = trim((string) ($input['object_type'] ?? ''));
+        $buildingType = (string) ($explicitBuildingType
+            ?? ($explicitObjectType !== '' && mb_strtolower($explicitObjectType) !== 'custom' ? $explicitObjectType : null)
+            ?? $this->detectBuildingType($description) ?? 'custom');
         $objectType = (string) (
             $input['object_type']
             ?? $this->objectTypeFromExplicitBuildingType($explicitBuildingType)
+            ?? ($explicitBuildingType !== null && trim($explicitBuildingType) !== '' && mb_strtolower(trim($explicitBuildingType)) !== 'custom'
+                ? $explicitBuildingType : null)
             ?? $this->detectObjectType($description, $documentContext)
             ?? $buildingType
         );
+        $conflictingExplicitTypes = $explicitObjectType !== '' && mb_strtolower($explicitObjectType) !== 'custom'
+            && $explicitBuildingType !== null && trim($explicitBuildingType) !== '' && mb_strtolower(trim($explicitBuildingType)) !== 'custom'
+            && ! ObjectTypeSignalClassifier::compatible($explicitObjectType, $explicitBuildingType);
         $sourceRefs = $this->extractSourceRefs($combinedText);
+        $manualScopes = $this->extractScopes($description);
         $explicitScopes = $this->mergeScopes(
-            $this->extractScopes($description, true),
+            $manualScopes,
             ...array_map(
                 fn (array $document): array => DocumentEvidencePolicy::canUseScopeEvidence($document)
                     ? $document['scopes']
@@ -66,7 +75,7 @@ class ConstructionSemanticParser
             )
         );
 
-        $scopes = $explicitScopes['items'] !== []
+        $scopes = $explicitScopes['items'] !== [] || $conflictingExplicitTypes
             ? $explicitScopes
             : $this->inferDefaultScopes($buildingType, $sourceRefs, $objectDescription !== '' ? $objectDescription : $description);
         $regionalContext = is_array($input['regional_context'] ?? null) ? $input['regional_context'] : [];
@@ -106,6 +115,7 @@ class ConstructionSemanticParser
                 'zones' => $this->normalizeDetectedZones($scopes['zones']),
                 'constructives' => array_values(array_unique($scopes['constructives'])),
                 'scopes' => $scopes['items'],
+                'explicit_work_scopes' => [],
             ],
         ];
 
@@ -446,10 +456,11 @@ class ConstructionSemanticParser
             'roof' => ['кровл', 'стропил', 'крыша', 'металлочерепиц', 'плоская кровля'],
             'openings' => ['окна', 'двери', 'стеклопакет', 'проем', 'проём', 'ворот', 'входная группа'],
             'electrical' => ['электрика', 'электромонтаж', 'щит', 'кабель', 'розет', 'светильник', 'свет', 'освещ'],
-            'plumbing' => ['водопровод', 'водоснабжен', 'канализац', 'септик', 'скважин', 'трубы'],
+            'plumbing' => ['водопровод', 'водоснабжен', 'скважин'],
+            'sewerage' => ['канализац', 'септик'],
             'heating' => ['отоплен', 'котел', 'котёл', 'радиатор', 'разводка отопления'],
             'ventilation' => ['вентиляц', 'приточн', 'клапан'],
-            'fire_safety' => ['пожарн', 'сигнализац', 'оповещен', 'оповещён'],
+            'fire_safety' => ['пожарная сигнализац', 'пожарной сигнализац', 'пожарную сигнализац'],
             'stairs' => ['лестниц', 'лестничн'],
             'facade' => ['фасад', 'утеплен', 'утеплён', 'облицовк', 'сэндвич-панел', 'сендвич-панел'],
             'finishing' => ['отделк', 'штукатур', 'окраск', 'облицовка'],
@@ -460,7 +471,7 @@ class ConstructionSemanticParser
     /**
      * @return array{items: array<int, array<string, mixed>>, zones: array<int, string>, constructives: array<int, string>}
      */
-    protected function extractScopes(string $text, bool $strictMode): array
+    protected function extractScopes(string $text): array
     {
         $items = [];
         $zones = [];
@@ -474,21 +485,15 @@ class ConstructionSemanticParser
             }
 
             $scopeType = $this->detectScopeType($normalizedLine, $keywords);
-            if ($scopeType === null) {
-                continue;
+            if ($scopeType !== null) {
+                $items[] = [
+                    'title' => $this->normalizeScopeTitle($line, $scopeType),
+                    'scope_type' => $scopeType,
+                    'source_refs' => $this->extractSourceRefs($line),
+                ];
+                $zones[] = $this->extractZoneTitle($line);
+                $constructives[] = $scopeType;
             }
-
-            if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
-                continue;
-            }
-
-            $items[] = [
-                'title' => $this->normalizeScopeTitle($line, $scopeType),
-                'scope_type' => $scopeType,
-                'source_refs' => $this->extractSourceRefs($line),
-            ];
-            $zones[] = $this->extractZoneTitle($line);
-            $constructives[] = $scopeType;
         }
 
         return [
@@ -512,31 +517,6 @@ class ConstructionSemanticParser
         }
 
         return null;
-    }
-
-    protected function isScopeCandidateLine(string $normalizedLine, string $scopeType): bool
-    {
-        if (mb_strlen($normalizedLine) <= 120) {
-            return true;
-        }
-
-        if ($scopeType !== '' && mb_strlen($normalizedLine) <= 220) {
-            return true;
-        }
-
-        if (preg_match('/\b\d+\s*этаж\b/u', $normalizedLine) === 1) {
-            return true;
-        }
-
-        if (preg_match('/(?<![\p{L}\p{N}])(?:л\.?|лист)\s*\d+/ui', $normalizedLine) === 1) {
-            return true;
-        }
-
-        if (preg_match('/отм\.?\s*[+\-]?\d/u', $normalizedLine) === 1) {
-            return true;
-        }
-
-        return false;
     }
 
     /**

@@ -97,7 +97,7 @@ final readonly class InitialProjectFactsWriter
 
     private function writeDescription(EstimateGenerationSession $session, User $actor, array $input): void
     {
-        if (($input['evaluation_mode'] ?? null) !== 'universal' || ! is_string($input['description'] ?? null)
+        if (! is_string($input['description'] ?? null)
             || trim($input['description']) === '') {
             return;
         }

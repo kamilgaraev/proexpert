@@ -14,7 +14,7 @@ class PackagePlannerService
 {
     public function plan(ObjectProfileData $profile): PackagePlanData
     {
-        if ($profile->objectType === 'industrial' || ($profile->planningSignals['evaluation_profile'] ?? null) === 'industrial') {
+        if ($this->usesIndustrialProfile($profile)) {
             $packages = $this->industrialPackages();
         } elseif ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
             $packages = $this->floorPlanEvidencePackages($profile);
@@ -24,18 +24,17 @@ class PackagePlannerService
             $packages = $this->mixedWarehouseOfficePackages();
         } elseif ($this->isWarehouse($profile)) {
             $packages = $this->warehousePackages();
-        } else {
+        } elseif ($this->isHouse($profile)) {
             $packages = $this->housePackages();
-            if ($this->isHouse($profile)) {
-                $packages = array_map(
-                    static fn (array $package): array => $package['key'] === 'preconstruction'
-                        ? [...$package, 'coverage_required' => false, 'coverage_warning' => 'document_scope_required']
-                        : [...$package, 'coverage_required' => true],
-                    $packages,
-                );
-            }
+            $packages = array_map(
+                static fn (array $package): array => $package['key'] === 'preconstruction'
+                    ? [...$package, 'coverage_required' => false, 'coverage_warning' => 'document_scope_required']
+                    : [...$package, 'coverage_required' => true],
+                $packages,
+            );
+        } else {
+            $packages = $this->documentEvidencePackages($profile);
         }
-
         $packages = $this->withReviewPackages($packages, $profile);
         $packages = $this->withOptionalSitePackages($packages, $profile);
 
@@ -53,17 +52,25 @@ class PackagePlannerService
         $mode = $this->generationMode($profile);
         $isPlanOnlyGeometry = $this->isPlanOnlyGeometry($profile);
         $isHouse = $this->isHouse($profile);
-        $missingForFullEstimate = $isHouse && $isPlanOnlyGeometry;
+        $unknownProfile = ! $isHouse && ! $this->isWarehouse($profile)
+            && ! $this->isMixedWarehouseOffice($profile)
+            && ! $this->usesIndustrialProfile($profile);
+        $missingForFullEstimate = $unknownProfile || ($isHouse && $isPlanOnlyGeometry);
 
         return [
             'mode' => $mode->value,
             'coverage' => match (true) {
+                $unknownProfile => 'document_limited',
                 $mode === EstimateGenerationMode::AiAssisted && $missingForFullEstimate => 'assumption_expanded',
                 $mode === EstimateGenerationMode::StrictDocuments && $missingForFullEstimate => 'document_limited',
                 default => 'document_backed',
             },
             'missing_for_full_estimate' => $missingForFullEstimate,
-            'items' => $missingForFullEstimate ? $this->fullHouseRequiredDocuments() : [],
+            'items' => $unknownProfile ? [[
+                'key' => 'project_scope',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_project_scope'),
+                'required_for' => ['all'],
+            ]] : ($missingForFullEstimate ? $this->fullHouseRequiredDocuments() : []),
         ];
     }
 
@@ -75,9 +82,9 @@ class PackagePlannerService
         $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
-        $objectType = mb_strtolower((string) ($object['object_type'] ?? ''));
-        $buildingType = mb_strtolower((string) ($object['building_type'] ?? ''));
-        $type = $objectType !== '' ? $objectType : ($buildingType !== '' ? $buildingType : 'custom');
+        $objectType = mb_strtolower(trim((string) ($object['object_type'] ?? '')));
+        $buildingType = mb_strtolower(trim((string) ($object['building_type'] ?? '')));
+        $type = $objectType !== '' && $objectType !== 'custom' ? $objectType : ($buildingType !== '' ? $buildingType : 'custom');
         $zones = is_array($object['zones'] ?? null) ? $object['zones'] : [];
         $zoneText = implode(' ', array_map(
             static fn (array $zone): string => (string) ($zone['label'] ?? $zone['scope_key'] ?? ''),
@@ -104,18 +111,23 @@ class PackagePlannerService
 
         $hasExplicitObjectType = $objectType !== '' && $objectType !== 'custom';
         $hasExplicitBuildingType = $buildingType !== '' && $buildingType !== 'custom';
+        $allowsContextClassification = (! $hasExplicitObjectType && ! $hasExplicitBuildingType)
+            || $this->containsWarehouseObjectSignal($type)
+            || ObjectTypeSignalClassifier::isIndustrial($type);
 
-        if (ObjectTypeSignalClassifier::isResidential($buildingType)
-            || ObjectTypeSignalClassifier::isResidential($type)
-            || ObjectTypeSignalClassifier::isResidential($description)) {
+        if ($hasExplicitObjectType && $hasExplicitBuildingType && ! ObjectTypeSignalClassifier::compatible($objectType, $buildingType)) {
+            $type = 'custom';
+        } elseif (ObjectTypeSignalClassifier::isResidential($type)
+            || (! $hasExplicitObjectType && ! $hasExplicitBuildingType
+                && ObjectTypeSignalClassifier::isResidential((string) ($object['manual_description'] ?? $object['description'] ?? '')))) {
             $type = 'house';
-        } elseif (str_contains($type, 'mixed_warehouse_office') || (($hasWarehouse || $hasIndustrial) && $hasOffice)) {
+        } elseif (str_contains($type, 'mixed_warehouse_office') || ($allowsContextClassification && ($hasWarehouse || $hasIndustrial) && $hasOffice)) {
             $type = 'mixed_warehouse_office';
-        } elseif ($hasWarehouse || str_contains($type, 'warehouse')) {
+        } elseif (str_contains($type, 'warehouse') || ($allowsContextClassification && $hasWarehouse)) {
             $type = 'warehouse';
-        } elseif ($hasIndustrial || str_contains($type, 'industrial')) {
+        } elseif (ObjectTypeSignalClassifier::isIndustrial($type) || ($allowsContextClassification && $hasIndustrial)) {
             $type = 'industrial';
-        } elseif (($planningSignals['plan_only_geometry'] ?? false) === true) {
+        } elseif (! $hasExplicitObjectType && ! $hasExplicitBuildingType && ($planningSignals['plan_only_geometry'] ?? false) === true) {
             $type = 'floor_plan_geometry';
         } elseif (! $hasExplicitObjectType && ! $hasExplicitBuildingType && $this->hasDocumentQuantityEvidence($planningSignals)) {
             $type = 'document_evidence';
@@ -169,6 +181,13 @@ class PackagePlannerService
     {
         return mb_strtolower($profile->objectType) === 'house'
             || ObjectTypeSignalClassifier::isResidential($profile->objectType);
+    }
+
+    private function usesIndustrialProfile(ObjectProfileData $profile): bool
+    {
+        return $profile->objectType === 'industrial'
+            || (($profile->planningSignals['evaluation_profile'] ?? null) === 'industrial'
+                && ObjectTypeSignalClassifier::isIndustrial($profile->objectType));
     }
 
     private function usesAiAssistedHouseExpansion(ObjectProfileData $profile): bool
@@ -325,16 +344,18 @@ class PackagePlannerService
         }
 
         $largeObject = $this->isWarehouse($profile) || $this->isMixedWarehouseOffice($profile);
-
-        if ($this->hasPlanningSignal($profile, 'external_networks')) {
+        if ($this->hasPlanningSignal($profile, 'external_networks')
+            && ! in_array('external_networks', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('external_networks', 'Наружные сети', 'site', $largeObject ? 40 : 14, $largeObject ? 90 : 32);
         }
 
-        if ($this->hasPlanningSignal($profile, 'siteworks')) {
+        if ($this->hasPlanningSignal($profile, 'siteworks')
+            && ! in_array('siteworks', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('siteworks', 'Благоустройство', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
         }
 
-        if ($this->hasPlanningSignal($profile, 'roads')) {
+        if ($this->hasPlanningSignal($profile, 'roads')
+            && ! in_array('roads', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('roads', 'Дороги и площадки', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
         }
 
@@ -391,6 +412,9 @@ class PackagePlannerService
             str_starts_with($quantityKey, 'foundation.') => $this->package('custom-foundation', 'Фундамент', 'foundation', 1, 20),
             str_starts_with($quantityKey, 'walls.')
                 || str_starts_with($quantityKey, 'office.partitions') => $this->package('custom-walls', 'Стены и перегородки', 'walls', 1, 20),
+            in_array($quantityKey, ['slabs.formwork', 'slabs.concrete', 'slabs.rebar'], true) => $this->package('slabs', 'Перекрытия', 'slabs', 1, 20),
+            in_array($quantityKey, ['stairs.flights', 'stairs.landings', 'stairs.railings'], true) => $this->package('stairs', 'Лестницы', 'stairs', 1, 20),
+            $quantityKey === 'facade.area' => $this->package('facade', 'Фасад', 'facade', 1, 20),
             str_starts_with($quantityKey, 'roof.') => $this->package('custom-roof', 'Кровля', 'roof', 1, 20),
             str_starts_with($quantityKey, 'openings.')
                 || str_starts_with($quantityKey, 'warehouse.gates') => $this->package('custom-openings', 'Окна, двери и проемы', 'openings', 1, 20),
@@ -464,37 +488,13 @@ class PackagePlannerService
      */
     private function planningSignalsFromAnalysis(array $analysis, string $description): array
     {
-        $detectedStructure = is_array($analysis['detected_structure'] ?? null) ? $analysis['detected_structure'] : [];
         $quantityKeys = $this->quantityKeysFromAnalysis($analysis);
-        $fragments = [$description];
-
-        foreach (['zones', 'constructives'] as $key) {
-            foreach (($detectedStructure[$key] ?? []) as $value) {
-                if (is_string($value) && trim($value) !== '') {
-                    $fragments[] = $value;
-                }
-            }
-        }
-
-        foreach (($detectedStructure['scopes'] ?? []) as $scope) {
-            if (! is_array($scope)) {
-                continue;
-            }
-
-            foreach (['title', 'scope_type'] as $field) {
-                if (is_string($scope[$field] ?? null) && trim($scope[$field]) !== '') {
-                    $fragments[] = $scope[$field];
-                }
-            }
-        }
-
-        $haystack = mb_strtolower(implode(' ', $fragments));
 
         return [
-            'external_networks' => $this->containsExternalNetworkSignal($haystack),
-            'siteworks' => $this->containsSiteworksSignal($haystack),
-            'roads' => $this->containsRoadsSignal($haystack),
-            'plan_only_geometry' => $this->hasPlanOnlyGeometryEvidence($quantityKeys, $haystack),
+            'external_networks' => $this->hasQuantityPrefix($quantityKeys, 'networks.'),
+            'siteworks' => $this->hasQuantityPrefix($quantityKeys, 'siteworks.'),
+            'roads' => $this->hasQuantityPrefix($quantityKeys, 'warehouse.roads'),
+            'plan_only_geometry' => $this->hasPlanOnlyGeometryEvidence($quantityKeys, $description),
             'floor_plan_finishing' => $this->hasAnyQuantityKey($quantityKeys, [
                 'rough.floor',
                 'finish.floor',
@@ -615,21 +615,6 @@ class PackagePlannerService
         };
     }
 
-    private function containsExternalNetworkSignal(string $text): bool
-    {
-        return preg_match('/(?:external\s+networks?|utilities|utility|наружн\p{L}*\s+(?:сет|инженер)|внешн\p{L}*\s+сет|подключен\p{L}*\s+к\s+сет)/u', $text) === 1;
-    }
-
-    private function containsSiteworksSignal(string $text): bool
-    {
-        return preg_match('/(?:landscap\p{L}*|благоустрой\p{L}*|озелен\p{L}*|отмостк\p{L}*|тротуар\p{L}*|наружн\p{L}*\s+площадк\p{L}*)/u', $text) === 1;
-    }
-
-    private function containsRoadsSignal(string $text): bool
-    {
-        return preg_match('/(?:roads?|driveway|parking|дорог\p{L}*|проезд\p{L}*|подъезд\p{L}*|парковк\p{L}*|площадк\p{L}*\s+для\s+(?:транспорт|авто))/u', $text) === 1;
-    }
-
     /**
      * @return array<int, array<string, mixed>>
      */
@@ -722,7 +707,7 @@ class PackagePlannerService
                 'warning_flags' => [],
             ],
             'assumptions' => [],
-            'source_refs' => [],
+            'source_refs' => $package['source_refs'] ?? [],
         ];
     }
 
