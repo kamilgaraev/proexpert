@@ -705,7 +705,7 @@ class PackagePlannerService
 
     private function containsRoadsSignal(string $text): bool
     {
-        return preg_match('/(?:roads?|driveway|parking|дорог\p{L}*|проезд\p{L}*|подъезд\p{L}*|парковк\p{L}*|площадк\p{L}*\s+для\s+(?:транспорт|авто))/u', $text) === 1;
+        return preg_match('/(?:roads?|driveway|parking|дорог\p{L}*|(?<![\p{L}\p{N}])(?:проезд|подъезд)(?:а|у|ом|е|ы|ов|ам|ами|ах)?(?![\p{L}\p{N}])|парковк\p{L}*|площадк\p{L}*\s+для\s+(?:транспорт|авто))/u', $text) === 1;
     }
 
     /**

@@ -599,6 +599,10 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
         self::assertSame('document_limited', $payload['document_requirements']['coverage']);
         self::assertSame($description, $analysis['object']['manual_description']);
+        if ($expected === []) {
+            $planner = new PackagePlannerService;
+            self::assertSame([], $planner->plan($planner->profileFromAnalysis($analysis))->packages);
+        }
     }
 
     public static function explicitObjectsWithoutIncidentalScopes(): iterable
@@ -622,6 +626,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'explicit_flooring_operation' => ['Укладка ламината', ['finish_finishing']];
         yield 'explicit_roof_material_operation' => ['Монтаж металлочерепицы', ['roof']];
         yield 'explicit_foundation_preparation' => ['Устройство бетонной подготовки', ['foundation']];
+        yield 'explicit_equipment_base' => ['Устройство основания под оборудование', ['foundation']];
         yield 'explicit_tile_operation' => ['Укладка плитки', ['finish_finishing']];
         yield 'explicit_wallpaper_operation' => ['Оклейка обоями', ['finish_finishing']];
         yield 'explicit_wall_material_operation' => ['Монтаж газобетона', ['walls']];
@@ -633,8 +638,29 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'preparation_belongs_to_stated_roof' => ['Устройство бетонной подготовки кровли', ['roof']];
         yield 'block_material_belongs_to_stated_slab' => ['Монтаж газобетона на перекрытии', ['slabs']];
         yield 'generic_equipment_is_not_wallpaper' => ['Монтаж оборудования', []];
+        yield 'ambiguous_block_material_adjective' => ['Монтаж газобетонных блоков', []];
+        yield 'ambiguous_single_block_adjective' => ['Монтаж газобетонного блока', []];
+        yield 'ambiguous_panel_material_adjective' => ['Монтаж ламинатных панелей', []];
+        yield 'explicit_wall_with_material_adjective' => ['Устройство стен из газобетонных блоков', ['walls']];
+        yield 'explicit_roof_with_material_adjective' => ['Монтаж кровли из металлочерепичных листов', ['roof']];
+        yield 'laminator_is_equipment' => ['Установка ламинатора', []];
+        yield 'tile_cutter_is_equipment' => ['Монтаж плиткореза', []];
+        yield 'entrance_intercom_is_equipment' => ['Монтаж подъездного домофона', []];
+        yield 'excluded_operation_cannot_authorize_another_clause' => ['Не выполнять монтаж газобетона; монтаж газобетона на перекрытии', ['slabs']];
+        yield 'postfixed_exclusion_cannot_authorize_another_clause' => ['Монтаж металлочерепицы не требуется; монтаж металлочерепицы на стене', ['walls']];
         foreach (['наружных', 'приточного', 'клапана', 'кладочных', 'утепления', 'света', 'облицовки'] as $hint) {
             yield 'descriptor_operation_'.$hint => ['Устройство '.$hint, []];
+        }
+    }
+
+    public function test_explicit_road_access_nouns_keep_the_existing_optional_road_signal(): void
+    {
+        foreach (['Дорога', 'Устройство подъезда', 'Устройство проезда'] as $description) {
+            $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+            $planner = new PackagePlannerService;
+            $profile = $planner->profileFromAnalysis($analysis);
+            self::assertTrue($profile->planningSignals['roads']);
+            self::assertContains('roads', array_column($planner->plan($profile)->packages, 'key'));
         }
     }
 

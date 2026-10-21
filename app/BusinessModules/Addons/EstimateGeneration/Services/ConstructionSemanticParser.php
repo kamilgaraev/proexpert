@@ -470,7 +470,7 @@ class ConstructionSemanticParser
         $items = [];
         $zones = [];
         $constructives = [];
-        $keywords = $manualExplicit ? $this->explicitScopeKeywords(mb_strtolower($text)) : $this->scopeKeywords();
+        $keywords = $this->scopeKeywords();
 
         foreach ($this->scopeCandidateLines($text, $keywords, $manualExplicit) as $line) {
             $normalizedLine = trim(mb_strtolower($this->cleanLine($line)));
@@ -479,7 +479,7 @@ class ConstructionSemanticParser
             }
 
             $scopeTypes = $manualExplicit
-                ? $this->detectScopeTypes($normalizedLine, $keywords)
+                ? $this->manualScopeTypes($normalizedLine)
                 : array_filter([$this->detectScopeType($normalizedLine, $keywords)]);
             foreach ($scopeTypes as $scopeType) {
                 if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
@@ -503,6 +503,21 @@ class ConstructionSemanticParser
         ];
     }
 
+    private function manualScopeTypes(string $line): array
+    {
+        foreach ($this->explicitScopeExclusionSpans($line) as $span) {
+            $line = mb_substr($line, 0, $span['start']).str_repeat(' ', $span['end'] - $span['start']).mb_substr($line, $span['end']);
+        }
+        $scopes = [];
+        foreach (preg_split('~[,;.\r\n]+|\s+и\s+~u', $line) ?: [] as $clause) {
+            foreach ($this->detectScopeTypes($clause, $this->explicitScopeKeywords($clause)) as $scope) {
+                $scopes[$scope] = true;
+            }
+        }
+
+        return array_values(array_filter(array_keys($this->explicitScopeKeywords('')), static fn (string $scope): bool => isset($scopes[$scope])));
+    }
+
     private function explicitScopeKeywords(string $text): array
     {
         $weakHints = [
@@ -523,7 +538,7 @@ class ConstructionSemanticParser
                     continue;
                 }
                 foreach (array_diff(array_intersect($patterns, $weakHints), $descriptors) as $object) {
-                    $pattern = '~(?<![\p{L}\p{N}])(?:укладк|настил|оклейк|поклейк|монтаж|устройств|установк)\p{L}*\s+'
+                    $pattern = '~(?<![\p{L}\p{N}])(?:укладк(?:а|и|у|ой|ою|е)|настил(?:а|у|ом|е)?|оклейк(?:а|и|у|ой|ою|е)|поклейк(?:а|и|у|ой|ою|е)|монтаж(?:а|у|ом|е)?|устройств(?:о|а|у|ом|е)|установк(?:а|и|у|ой|ою|е))\s+'
                         .$this->operationObjectPattern($object).'~u';
                     preg_match_all($pattern, $clause, $matches);
                     foreach ($matches[0] as $operation) {
@@ -539,15 +554,18 @@ class ConstructionSemanticParser
     private function operationObjectPattern(string $keyword): string
     {
         return implode('\s+', array_map(static function (string $word): string {
-            if (mb_strlen($word) >= 6 && preg_match('/(?:ая|яя|ое|ее|ые|ый|ий|ой|ие)$/u', $word) === 1) {
+            if (mb_strlen($word) >= 6 && str_ends_with($word, 'ие')) {
+                return preg_quote(mb_substr($word, 0, -2), '~').'(?:ие|ия|ию|ием|ии|ий|иям|иями|иях)(?![\p{L}\p{N}])';
+            } elseif (mb_strlen($word) >= 6 && preg_match('/(?:ая|яя|ое|ее|ые|ый|ий|ой)$/u', $word) === 1) {
                 $word = mb_substr($word, 0, -2);
+                return preg_quote($word, '~').'(?:ая|яя|ой|ей|ую|юю|ое|ее|ые|ие|ых|их|ым|им|ыми|ими|ого|его|ому|ему|ом|ем)(?![\p{L}\p{N}])';
             } elseif (mb_strlen($word) >= 5 && preg_match('/[ая]$/u', $word) === 1) {
                 $word = mb_substr($word, 0, -1);
             } elseif (mb_strlen($word) >= 4 && str_ends_with($word, 'и')) {
                 return preg_quote(mb_substr($word, 0, -1), '~').'(?:и|ям|ями|ях|ев)(?![\p{L}\p{N}])';
             }
 
-            return preg_quote($word, '~').(mb_strlen($word) > 3 ? '\p{L}*' : '');
+            return preg_quote($word, '~').(mb_strlen($word) > 3 ? '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ев|ов|ам|ям|ами|ями|ах|ях)?' : '').'(?![\p{L}\p{N}])';
         }, preg_split('/\s+/u', $keyword) ?: []));
     }
 
@@ -872,7 +890,7 @@ class ConstructionSemanticParser
                         continue;
                     }
 
-                    if ($this->detectScopeType(mb_strtolower($this->cleanLine($part)), $keywords) !== null) {
+                    if ($preserveExclusionContext || $this->detectScopeType(mb_strtolower($this->cleanLine($part)), $keywords) !== null) {
                         foreach ($this->expandCompoundScopePart($part, $keywords, $preserveExclusionContext) as $candidate) {
                             $candidates[] = $candidate;
                         }
