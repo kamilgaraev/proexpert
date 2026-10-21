@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAud
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use DateTimeImmutable;
 
 final readonly class PublishValidatedDraft implements PipelineCompletionHook
@@ -27,6 +28,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private TargetedPackageRebuildOperationService $targetedRebuilds,
         private DraftPublicationGate $publicationGate,
         private AiEstimateQuotaService $quota,
+        private EstimateGenerationLearningRecorder $learning,
         private ?PublishUniversalEvaluation $universal = null,
     ) {}
 
@@ -35,6 +37,15 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         if ($result->stage !== ProcessingStage::ValidateDraft) {
             return;
         }
+        $this->publish($claim, $result);
+        if ($claim->context->creditOperationId !== null) {
+            $this->learning->recordComposerSourceClaims($claim->context->organizationId, $claim->context->projectId,
+                $claim->context->sessionId, $claim->context->creditOperationId);
+        }
+    }
+
+    private function publish(CheckpointClaim $claim, PipelineStageResult $result): void
+    {
         $data = $result->transientData ?? [];
         $draft = $data['draft'] ?? null;
         if (! is_array($draft) || ! is_bool($data['requires_review'] ?? null)) {

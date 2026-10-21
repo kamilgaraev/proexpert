@@ -5,13 +5,19 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Learning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 final class EstimateGenerationLearningEvidenceService
 {
@@ -22,7 +28,117 @@ final class EstimateGenerationLearningEvidenceService
     public function __construct(
         private readonly WorkIntentClassifier $workIntentClassifier,
         private readonly EquipmentCountKnowledgeValidationService $equipmentKnowledge,
+        private readonly ComposerSourceClaimValidationService $sourceClaims,
     ) {}
+
+    public function sourceClaimReferences(int $organizationId, int $projectId, int $sessionId,
+        ProjectModelSnapshot $snapshot, array $decisions, array $input): array
+    {
+        if (min($organizationId, $projectId, $sessionId) < 1 || count($snapshot->facts) > 10000) {
+            return [];
+        }
+        $scope = [$organizationId, $projectId, $sessionId];
+        $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->whereKey($sessionId)->whereHas('project', static fn (Builder $query) => $query->where('organization_id', $organizationId))->first();
+        $serverInput = static fn (array $value): array => ['evaluation_mode' => $value['evaluation_mode'] ?? 'legacy',
+            'profile_id' => $value['profile_id'] ?? 'construction', 'selected_sections' => $value['selected_sections'] ?? [],
+            'description' => $value['description'] ?? null];
+        if ($session === null || CanonicalPipelineJson::encode($serverInput($input))
+            !== CanonicalPipelineJson::encode($serverInput($session->input_payload ?? []))) {
+            return [];
+        }
+        $answerHashes = $answerIds = $documentIds = $checked = [];
+        $entities = array_column($snapshot->entities, null, 'id');
+        $facts = $snapshot->facts;
+        usort($facts, static fn (Fact $left, Fact $right): int => strcmp($left->id, $right->id));
+        foreach ($facts as $fact) {
+            if ([$fact->organizationId, $fact->projectId, $fact->sessionId] !== $scope) {
+                return [];
+            }
+            if ($fact->type === 'equipment_specification' && $fact->origin === 'document' && $fact->status === 'confirmed'
+                && $fact->unit === null && isset($entities[$fact->entityId]) && GeometryInventory::type($entities[$fact->entityId]) === 'equipment') {
+                $documentIds[] = $fact->id;
+            }
+            if ($fact->type !== 'evaluation_answer' || count($answerIds) >= ComposerSourceClaimValidationService::MAX_CLAIMS) {
+                continue;
+            }
+            $context = ResolveCurrentEstimateClarification::composerAnswerContext($fact, $snapshot, $decisions, $input, $checked);
+            if ($context !== null && in_array('equipment', $context['work_sections'], true)) {
+                $answerIds[] = $fact->id;
+                $answerHashes[] = hash('sha256', CanonicalPipelineJson::encode($fact->value));
+            }
+        }
+        if ($answerIds === [] || $documentIds === []) {
+            return [];
+        }
+        $table = 'estimate_generation_learning_examples';
+        $query = EstimateGenerationLearningExample::query()->select($table.'.*')
+            ->join('estimate_generation_ai_role_runs as receipt', 'receipt.id', '=', $table.'.source_entity_id')
+            ->join('estimate_generation_vision_physical_attempts as physical', 'physical.attempt_id', '=', 'receipt.physical_attempt_id')
+            ->join('estimate_generation_credit_attempts as credit', 'credit.attempt_id', '=', 'physical.attempt_id')
+            ->join('estimate_generation_credit_operations as operation', 'operation.operation_id', '=', 'physical.credit_operation_id')
+            ->where($table.'.organization_id', $organizationId)->where($table.'.project_id', $projectId)->where($table.'.generation_session_id', $sessionId)
+            ->where($table.'.source_type', 'composer_source_claim')->where($table.'.source_entity_type', 'ai_role_run')
+            ->where($table.'.is_positive', false)->where($table.'.decision_status', 'proposed')->whereNull($table.'.accepted_at')
+            ->whereNull($table.'.norm_code')->whereNull($table.'.estimate_norm_id')->whereNull($table.'.normative_dataset_version_id')
+            ->where($table.'.context_payload->source_claim_validation->identity->predicate', ComposerSourceClaimValidationService::PREDICATE)
+            ->whereIn($table.'.context_payload->candidate->source_answer_fact_id', $answerIds)
+            ->whereIn($table.'.context_payload->source_claim_validation->identity->answer->value_hash', $answerHashes)
+            ->whereIn(DB::raw($table.".context_payload #>> '{candidate,document_fact_ids,0}'"), $documentIds)
+            ->where('receipt.status', 'completed')->where('receipt.role', 'estimate_composer')
+            ->where('receipt.subject_type', 'estimate_session')->where('receipt.subject_id', (string) $sessionId)
+            ->whereIn('receipt.prompt_contract_version', ['estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2'])
+            ->whereRaw("receipt.result_payload->'schema_version' = '2'::jsonb")
+            ->whereRaw('receipt.result_payload->\'claim_candidates\' @> jsonb_build_array('.$table.'.context_payload->\'candidate\')')
+            ->whereColumn('physical.request_fingerprint', 'receipt.input_fingerprint')
+            ->whereColumn('physical.logical_request_fingerprint', 'receipt.input_fingerprint')
+            ->whereColumn('credit.operation_id', 'physical.credit_operation_id')
+            ->where('physical.credit_role', 'estimate_composition')->where('credit.role', 'estimate_composition')
+            ->whereIn('credit.status', ['recorded', 'unavailable'])->whereNotNull('credit.usage_transferred_at')
+            ->where('operation.kind', 'generation')->where('operation.status', 'settled')->whereNotNull('operation.receipt');
+        foreach (['receipt', 'physical', 'credit', 'operation'] as $alias) {
+            $query->where($alias.'.organization_id', $organizationId)->where($alias.'.project_id', $projectId)->where($alias.'.session_id', $sessionId);
+        }
+        $rows = $query->orderBy($table.'.id')->limit(self::MAX_EXAMPLES + 1)->get();
+        if ($rows->count() > self::MAX_EXAMPLES) {
+            return [];
+        }
+        $anchors = GeometryInventory::currentDocumentVersions($snapshot, false);
+        $grouped = [];
+        foreach ($rows as $row) {
+            $candidate = $row->context_payload['candidate'] ?? null;
+            if (! ComposerSourceClaimValidationService::isCandidate($candidate)) {
+                continue;
+            }
+            $candidateKey = hash('sha256', CanonicalPipelineJson::encode($candidate));
+            $grouped[$candidate['source_answer_fact_id']][$candidateKey]['candidate'] = $candidate;
+            $grouped[$candidate['source_answer_fact_id']][$candidateKey]['rows'][] = $row;
+        }
+        $result = [];
+        foreach ($grouped as $matches) {
+            if (count($matches) !== 1) {
+                continue;
+            }
+            $group = array_values($matches)[0];
+            $candidate = $group['candidate'];
+            $fresh = $this->sourceClaims->capture($scope, $snapshot, $decisions, $input, $candidate, $anchors, $checked);
+            if ($fresh === null) {
+                continue;
+            }
+            foreach ($group['rows'] as $row) {
+                if ($fresh['source_claim_key'] !== $row->source_claim_key) {
+                    continue;
+                }
+                $result[] = ['learning_example_id' => (int) $row->id, 'entity_id' => $candidate['entity_id'], 'fact_type' => $candidate['fact_type'],
+                    'value' => $candidate['value'], 'unit' => null, 'document_fact_ids' => $candidate['document_fact_ids'],
+                    'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved',
+                    'source_answer_fact_id' => $candidate['source_answer_fact_id']];
+                break;
+            }
+        }
+
+        return $result;
+    }
 
     /**
      * @param Collection<int, EstimateNorm> $candidates
