@@ -8,10 +8,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectUnderstandingQuestionProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
 use PHPUnit\Framework\TestCase;
+use Illuminate\Database\Connection;
+use Illuminate\Database\ConnectionResolverInterface;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\Grammars\PostgresGrammar;
+use Illuminate\Database\Query\Processors\Processor;
 
 final class EloquentEstimateClarificationSourceTest extends TestCase
 {
@@ -40,7 +46,18 @@ final class EloquentEstimateClarificationSourceTest extends TestCase
             10_001,
         );
 
-        $questions = $source->allCurrent(10, 20, 40);
+        $connection = $this->createMock(Connection::class);
+        $connection->method('query')->willReturn(new Builder($connection, new PostgresGrammar($connection), new Processor));
+        $connection->expects(self::once())->method('select')->willReturn([]);
+        $connections = $this->createMock(ConnectionResolverInterface::class);
+        $connections->method('connection')->willReturn($connection);
+        $previous = EstimateGenerationSession::getConnectionResolver();
+        EstimateGenerationSession::setConnectionResolver($connections);
+        try {
+            $questions = $source->allCurrent(10, 20, 40);
+        } finally {
+            $previous === null ? EstimateGenerationSession::unsetConnectionResolver() : EstimateGenerationSession::setConnectionResolver($previous);
+        }
 
         self::assertCount(1, $questions);
         self::assertSame('fact:wall-material', $questions[0]->targetFactId);
