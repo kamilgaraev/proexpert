@@ -36,6 +36,50 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationScenarioConfirmationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[\PHPUnit\Framework\Attributes\DataProvider('exportPermissions')]
+    public function test_confirmed_export_requires_export_permission_without_view(array $permissions, bool $allowed): void
+    {
+        [$actor, $session, , $input] = $this->fixture();
+        Queue::fake();
+        app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $before = $session->fresh()->getRawOriginal();
+        $requested = [];
+        $authorization = \Mockery::mock(AuthorizationService::class);
+        $authorization->allows('canCurrent')->andReturnUsing(static function (User $user, string $permission, array $context) use ($permissions, &$requested): bool {
+            $requested[] = $permission;
+
+            return in_array($permission, $permissions, true);
+        });
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $results = [];
+        try {
+            $projection = app(ReadConfirmedEvaluationExport::class)->read($actor, (int) $session->project_id, (int) $session->id);
+            $results['reader'] = 200;
+            self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::CONTRACT, $projection->draft_payload['generation_contract']);
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            $results['reader'] = 403;
+        }
+        foreach (['csv', 'json', 'excel'] as $format) {
+            try {
+                $results[$format] = $this->exportResponse($actor, $session, $format)->getStatusCode();
+            } catch (\Illuminate\Auth\Access\AuthorizationException) {
+                $results[$format] = 403;
+            }
+        }
+        self::assertSame(array_fill_keys(['reader', 'csv', 'json', 'excel'], $allowed ? 200 : 403), $results);
+        self::assertSame(array_fill(0, 4, 'estimate_generation.export'), $requested);
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+    }
+
+    public static function exportPermissions(): array
+    {
+        return [
+            'export without view' => [['estimate_generation.export'], true],
+            'view without export' => [['estimate_generation.view'], false],
+            'neither permission' => [[], false],
+        ];
+    }
+
     public function test_csv_json_and_xlsx_export_the_confirmed_non_base_catalog_scenario_with_separate_net_totals(): void
     {
         \Illuminate\Support\Facades\Http::preventStrayRequests();
