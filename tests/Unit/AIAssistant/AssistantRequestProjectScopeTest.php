@@ -151,6 +151,51 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_project_first_comparison_commands_preserve_both_scopes(): void
+    {
+        foreach (['Все акты проекта «Сравни» со всеми актами организации',
+            'Все акты проекта Сверка со всеми актами организации',
+            'Все акты проекта 100 не сравни со всеми актами организации',
+            'Все акты выбранного проекта не сравни со всеми актами организации',
+            'Все акты проекта 100 сравни с актами проекта 52',
+            'Все акты проекта «Альфа сравни со всеми актами организации»'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+        }
+        foreach (['Все акты проекта 100 сравни со всеми актами организации',
+            'Все акты выбранного проекта сравни со всеми актами организации',
+            'Все акты проекта «СевГУ» сравни со всеми актами организации',
+            'Все акты объекта №100 сравните со всеми актами организации',
+            'Все акты проекта 100 сопоставь со всеми актами организации',
+            'Все акты проекта 100 сверь со всеми актами организации'] as $question) {
+            $id = str_contains($question, 'выбранного') ? 52 : 100;
+            $search = static fn (): array => ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true, $search));
+            self::assertSame(['project_id' => $id], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => $id], 52, true, $search));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => $id]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search));
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question,
+                    ['sections' => [['scope' => 'project', 'project_id' => $id]]], $search);
+                self::fail('Project-first comparison lost its organization section');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_project_list_first_comparison_requires_each_project_and_organization(): void
+    {
+        $question = 'Все акты проектов 100 и 102 сравни со всеми актами организации';
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null],
+            ['scope' => 'project', 'project_id' => 100], ['scope' => 'project', 'project_id' => 102]]];
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        array_pop($arguments['sections']);
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments);
+    }
+
     public function test_reconciliation_comparisons_reject_incomparable_subjects(): void
     {
         $question = 'Сверь все акты организации и проект 100';

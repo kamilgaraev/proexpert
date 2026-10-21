@@ -254,7 +254,20 @@ final readonly class AssistantRequestProjectScope
             }
         }
 
-        return preg_match('/'.self::CURRENT_PROJECT.'\s+(?:и|с|со|против|относительно)\s+(?:(?:в|во|на|по)\s+)?(?:всех|всеми|всем|все|всей)(?![\pL\pN])/iu', $question) === 1;
+        return self::hasProjectFirstComparison($question, self::CURRENT_PROJECT)
+            || preg_match('/'.self::CURRENT_PROJECT.'\s+(?:и|с|со|против|относительно)\s+(?:(?:в|во|на|по)\s+)?(?:всех|всеми|всем|все|всей)(?![\pL\pN])/iu', $question) === 1;
+    }
+
+    private static function hasProjectFirstComparison(string $question, string $projectPattern): bool
+    {
+        preg_match_all('/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|(?:'.$projectPattern.')\s+'.AssistantReportComparisonSpecification::COMPARISON_WORD.'\s+(?:с|со|против|относительно)\s+(?<organization>.+)/iu', $question, $matches, PREG_SET_ORDER);
+        foreach ($matches as $match) {
+            if (self::organizationScope($match['organization'], false)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function startsWithProjectOperand(string $text, string $projectPattern): bool
@@ -286,7 +299,12 @@ final readonly class AssistantRequestProjectScope
 
     private static function hasMultipleProjectScopes(string $question): bool
     {
-        $question = AssistantNamedProjectReadScope::withoutQuotedNames(self::withoutExcludedProjects($question));
+        $question = self::withoutExcludedProjects($question);
+        $explicit = '(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.'|(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])\s*:?\s*(?:'.self::QUOTED_NAME.'))';
+        if (self::hasProjectFirstComparison($question, $explicit)) {
+            return true;
+        }
+        $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $comparisonPrefix = $question;
         if (preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])/iu', $question, $mention, PREG_OFFSET_CAPTURE) === 1) {
             $comparisonPrefix = substr($question, 0, $mention[0][1]);
