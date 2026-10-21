@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -225,7 +226,80 @@ final class DerivedQuantityFactoryTest extends TestCase
         $facts[2] = $this->fact('opening-width', 'opening:1', 'width', '10', 'm', ['evidence:opening-width']);
         $blocked = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $request);
         self::assertFalse($blocked->isReady());
-        self::assertSame('negative_quantity', $blocked->unresolvedInputs[0]['code'] ?? null);
+        self::assertSame('opening_exceeds_wall', $blocked->unresolvedInputs[0]['code'] ?? null);
+        $request['operands']['opening_widths'] = 'opening-width';
+        $request['operands']['opening_heights'] = 'opening-height';
+        $scalar = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $request);
+        self::assertFalse($scalar->isReady());
+        self::assertSame('opening_exceeds_wall', $scalar->unresolvedInputs[0]['code'] ?? null);
+    }
+
+    #[Test]
+    #[DataProvider('wallOpeningDimensions')]
+    public function wall_opening_dimensions_must_fit_the_parent_axes_before_subtraction(string $width, string $height, string $unit, ?string $expected, ?string $expectedVolume): void
+    {
+        $entities = [$this->entity('wall:1', 'wall'), $this->entity('opening:1', 'opening', ['wall_id' => 'wall:1'])];
+        $facts = [
+            $this->fact('wall-length', 'wall:1', 'length', '10', 'm', ['evidence:wall-length']),
+            $this->fact('wall-height', 'wall:1', 'height', '3', 'm', ['evidence:wall-height']),
+            $this->fact('opening-width', 'opening:1', 'width', $width, $unit, ['evidence:opening-width']),
+            $this->fact('opening-height', 'opening:1', 'height', $height, $unit, ['evidence:opening-height']),
+            $this->fact('wall-thickness', 'wall:1', 'thickness', '0.2', 'm', ['evidence:wall-thickness']),
+        ];
+        $evidence = array_map(fn (Fact $fact): Evidence => $this->evidence($fact->evidenceIds[0], 'native:'.$fact->id), $facts);
+        foreach (['wall_net_area', 'wall_net_volume'] as $formula) {
+            $operands = ['wall_length' => 'wall-length', 'wall_height' => 'wall-height',
+                'opening_widths' => ['opening-width'], 'opening_heights' => ['opening-height']];
+            if ($formula === 'wall_net_volume') {
+                $operands['wall_thickness'] = 'wall-thickness';
+            }
+            $result = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [],
+                $this->request($formula, 'wall:1', $operands, $formula === 'wall_net_volume' ? 'm3' : 'm2'));
+            if ($expected === null) {
+                self::assertFalse($result->isReady());
+                self::assertNull($result->quantity);
+                self::assertSame('opening_exceeds_wall', $result->unresolvedInputs[0]['code'] ?? null);
+                self::assertSame('opening:1', $result->unresolvedInputs[0]['entity_id'] ?? null);
+                self::assertSame('estimate_generation.quantity.opening_exceeds_wall', $result->questions[0]['message_key'] ?? null);
+            } else {
+                self::assertTrue($result->isReady());
+                self::assertSame($formula === 'wall_net_area' ? $expected : $expectedVolume, $result->quantity?->value);
+            }
+        }
+    }
+
+    public static function wallOpeningDimensions(): array
+    {
+        return [
+            'audit positive remainder, opening taller than wall' => ['4', '4', 'm', null, null],
+            'positive remainder, opening wider than wall' => ['11', '1', 'm', null, null],
+            'decimal excess must not be rounded into bounds' => ['10000.001', '1000', 'mm', null, null],
+            'height boundary' => ['4', '3', 'm', '18', '3.6'],
+            'width boundary' => ['10', '1', 'm', '20', '4'],
+            'converted dimensions' => ['4000', '2000', 'mm', '22', '4.4'],
+        ];
+    }
+
+    #[Test]
+    public function wall_net_area_rejects_substituted_axes_and_foreign_parent_dimensions(): void
+    {
+        $entities = [$this->entity('wall:1', 'wall'), $this->entity('wall:2', 'wall'),
+            $this->entity('opening:1', 'opening', ['wall_id' => 'wall:1'])];
+        $facts = [$this->fact('length', 'wall:1', 'length', '10', 'm', ['evidence:length']),
+            $this->fact('height', 'wall:1', 'height', '3', 'm', ['evidence:height']),
+            $this->fact('width', 'opening:1', 'width', '4', 'm', ['evidence:width']),
+            $this->fact('opening-height', 'opening:1', 'height', '2', 'm', ['evidence:opening-height'])];
+        $evidence = array_map(fn (Fact $fact): Evidence => $this->evidence($fact->evidenceIds[0], 'native:'.$fact->id), $facts);
+        $base = ['wall_length' => 'length', 'wall_height' => 'height', 'opening_widths' => ['width'], 'opening_heights' => ['opening-height']];
+        foreach ([['wall_height' => 'length'], ['wall_length' => ['length', 'height']], ['opening_widths' => ['opening-height']]] as $replace) {
+            $result = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [],
+                $this->request('wall_net_area', 'wall:1', array_replace($base, $replace)));
+            self::assertFalse($result->isReady());
+        }
+        $facts[0] = $this->fact('length', 'wall:2', 'length', '10', 'm', ['evidence:length']);
+        $result = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $this->request('wall_net_area', 'wall:1', $base));
+        self::assertFalse($result->isReady());
+        self::assertSame('entity_scope_mismatch', $result->unresolvedInputs[0]['code'] ?? null);
     }
 
     #[Test]

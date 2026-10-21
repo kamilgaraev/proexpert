@@ -49,8 +49,8 @@ final class DerivedQuantityFactory
         if (in_array($formula, ['wall_net_area', 'wall_net_volume'], true)) {
             $openingWidths = ($request['operands'] ?? [])['opening_widths'] ?? null;
             $openingHeights = ($request['operands'] ?? [])['opening_heights'] ?? null;
-            if ((is_array($openingWidths) && $openingWidths !== [])
-                || (is_array($openingHeights) && $openingHeights !== [])) {
+            if (($openingWidths !== null && $openingWidths !== [])
+                || ($openingHeights !== null && $openingHeights !== [])) {
                 $roles[] = 'opening_widths';
                 $roles[] = 'opening_heights';
             }
@@ -121,7 +121,7 @@ final class DerivedQuantityFactory
         if (! $target instanceof Entity) {
             return $this->unresolved('entity_missing', 'entity', $entityId);
         }
-        if ($formula === 'wall_net_volume' && GeometryInventory::type($target) !== 'wall') {
+        if (in_array($formula, ['wall_net_area', 'wall_net_volume'], true) && GeometryInventory::type($target) !== 'wall') {
             return $this->unresolved('wall_measurement_incompatible', 'entity', $entityId);
         }
         if (in_array($formula, ['room_ceiling_area', 'room_ceiling_perimeter'], true)) {
@@ -238,6 +238,12 @@ final class DerivedQuantityFactory
 
                 continue;
             }
+            if (in_array($formula, ['wall_net_area', 'wall_net_volume'], true)
+                && str_starts_with($role, 'wall_') && count($ids) !== 1) {
+                $issues[] = $this->issue('wall_measurement_incompatible', $role);
+
+                continue;
+            }
             foreach ($ids as $id) {
                 if (! is_string($id) || ! isset($facts[$id])) {
                     $issues[] = $this->issue('fact_missing', $role, is_string($id) ? $id : null);
@@ -259,7 +265,8 @@ final class DerivedQuantityFactory
 
                     continue;
                 }
-                if ($formula === 'wall_net_volume' && in_array($role, ['wall_length', 'wall_height', 'wall_thickness'], true)) {
+                if (in_array($formula, ['wall_net_area', 'wall_net_volume'], true)
+                    && in_array($role, ['wall_length', 'wall_height', 'wall_thickness'], true)) {
                     if ($facts[$id]->entityId !== $target->id) {
                         $issues[] = $this->issue('entity_scope_mismatch', $role, $id);
 
@@ -270,6 +277,13 @@ final class DerivedQuantityFactory
 
                         continue;
                     }
+                }
+                if (in_array($formula, ['wall_net_area', 'wall_net_volume'], true)
+                    && in_array($role, ['opening_widths', 'opening_heights'], true)
+                    && FactVocabulary::parameter($facts[$id]->type) !== ($role === 'opening_widths' ? 'width' : 'height')) {
+                    $issues[] = $this->issue('opening_measurement_incompatible', $role, $id);
+
+                    continue;
                 }
                 $operandTarget = $target;
                 $sourceEntity = $entities[$facts[$id]->entityId] ?? null;
@@ -859,8 +873,17 @@ final class DerivedQuantityFactory
                     return $this->issue('opening_operand_mismatch', 'openings');
                 }
                 $opening = $entities[$width['entity_id']] ?? null;
-                if (! $opening instanceof Entity || ($opening->attributes['wall_id'] ?? null) !== $target->id) {
+                if (! $opening instanceof Entity || GeometryInventory::type($opening) !== 'opening'
+                    || ($opening->attributes['wall_id'] ?? null) !== $target->id) {
                     return $this->issue('entity_scope_mismatch', 'openings', $width['fact_id']);
+                }
+                foreach (['width' => [$width, $resolved['wall_length'][0]], 'height' => [$height, $resolved['wall_height'][0]]] as $axis => [$child, $parent]) {
+                    if ($this->decimal($child)->isGreaterThan($this->decimal($parent))) {
+                        return [
+                            ...$this->geometryIssue('opening_exceeds_wall', 'openings', $opening->id, $axis, $child['evidence'][0] ?? null),
+                            'fact_id' => $child['fact_id'],
+                        ];
+                    }
                 }
                 $registryIssue = $this->registerPhysicalGeometry(
                     $registry, $target, 'wall_opening', $opening, 'openings', $width['fact_id'],

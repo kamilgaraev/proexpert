@@ -582,6 +582,18 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
                 'entity_fingerprint' => $question['answer']['entity_fingerprint'], 'reason' => 'Дверь подтверждена по исходному документу'],
         ]]]);
         self::assertSame('0', $chosen['cost_units']);
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $backlog = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterBacklog::class)
+            ->current($session->fresh(), $capture['snapshot'], $capture['token']);
+        $questions = array_values(array_filter($backlog['questions'], static fn ($question): bool => $question['answer']['kind'] === 'opening_system'));
+        self::assertCount(1, $questions);
+        $question = $questions[0];
+        $save->handle($actor, $scope[1], $scope[2], 6, (string) Str::uuid(), ['entities' => [[
+            'key' => 'opening-system', 'type' => 'opening', 'existing_entity_id' => $opening->id,
+            'native_question' => $question['answer']['native_question'], 'opening_system' => [
+                'system' => 'timber_hollow_core_door', 'entity_fingerprint' => $question['answer']['entity_fingerprint'],
+                'reason' => 'Система двери подтверждена по спецификации проекта'],
+        ]]]);
         $openingDraft = DB::transaction(function () use ($models, $scope, $session, $actor, $openingDraft): array {
             $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
             $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($capture['snapshot']->facts, 'id')]);
@@ -860,6 +872,43 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         self::assertEquals($result, $replay);
         self::assertSame(1, $session->fresh()->state_version);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_impossible_opening_removes_the_current_wall_quantity_and_rejects_draft_apply_proofs(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $save = app(SaveManualProjectFacts::class);
+        $input = ['entities' => [
+            [...$this->entity('wall', 'wall-1', ['length' => '10', 'height' => '3']), 'coverage' => ['wall_openings' => 'covered_with_entities']],
+            [...$this->entity('opening', 'opening-1', ['width' => '4', 'height' => '2']), 'parent_key' => 'wall-1'],
+        ]];
+        $confirmed = $save->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), $input);
+        self::assertSame('22', $confirmed['quantities']['net_wall_area']['amount']);
+        $draft = ['local_estimates' => [['sections' => [['work_items' => [[
+            'key' => 'wall:1', 'quantity' => '22', 'unit' => 'm2', 'metadata' => ['quantity_key' => 'net_wall_area'],
+            'quantity_evidence' => $confirmed['quantities']['net_wall_area'],
+        ]]]]]]];
+        $guard = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class);
+        DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $draft]));
+        self::addToAssertionCount(1);
+        $input['entities'][1]['parameters']['height']['value'] = '4';
+        $invalid = $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), $input);
+        self::assertArrayNotHasKey('net_wall_area', $invalid['quantities']);
+        $codes = [];
+        foreach ($invalid['warnings'] as $warning) {
+            $codes = [...$codes, ...array_column($warning['inputs'] ?? [], 'code')];
+        }
+        self::assertContains('opening_exceeds_wall', $codes);
+        foreach (['22', '14'] as $amount) {
+            $draft['local_estimates'][0]['sections'][0]['work_items'][0]['quantity'] = $amount;
+            try {
+                DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $draft]));
+                self::fail('An impossible or stale wall quantity proof was accepted.');
+            } catch (ValidationException) {
+                self::addToAssertionCount(1);
+            }
+        }
     }
 
     public function test_unconfirmed_empty_openings_block_wall_area_and_confirmation_creates_a_new_fact_revision(): void
