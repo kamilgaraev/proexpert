@@ -325,6 +325,79 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
 
+    public static function independentSectionQuestions(): array
+    {
+        return [['numeric'], ['current'], ['named'], ['quoted'], ['negative_comparison']];
+    }
+
+    #[DataProvider('independentSectionQuestions')]
+    public function test_independent_organization_acts_and_project_contracts_do_not_require_pairwise_searches(string $kind): void
+    {
+        $this->project->updateQuietly(['name' => 'Сверка Берег '.bin2hex(random_bytes(4))]);
+        $operand = match ($kind) {
+            'current' => 'выбранного проекта',
+            'named' => 'проекта '.$this->project->name,
+            'quoted' => 'проекта «'.$this->project->name.'»',
+            default => 'проекта '.$this->project->id,
+        };
+        $question = 'Покажи все акты организации, а также договоры '.$operand;
+        if ($kind === 'negative_comparison') {
+            $question .= '. Сравнивать их не нужно.';
+        }
+        $contracts = array_replace($this->arguments($this->project->id), [
+            'domain' => 'contracts', 'entity_type' => 'contract', 'fields' => ['id', 'number'],
+        ]);
+        $response = $this->ask([$this->arguments(null), $contracts], $question);
+        self::assertSame([1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+        self::assertNotEmpty($response['message']['metadata']['source_refs']);
+        $response = $this->ask([$contracts], $question);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
+    public function test_affirmative_comparison_still_rejects_different_subjects_in_each_scope(): void
+    {
+        $contracts = array_replace($this->arguments($this->project->id), [
+            'domain' => 'contracts', 'entity_type' => 'contract', 'fields' => ['id', 'number'],
+        ]);
+        $response = $this->ask([$this->arguments(null), $contracts],
+            'Сравни все акты организации с договорами проекта '.$this->project->id);
+        self::assertSame([1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
+    public function test_independent_sections_require_every_project_including_a_confirmed_empty_project(): void
+    {
+        $contracts = array_replace($this->arguments($this->project->id), [
+            'domain' => 'contracts', 'entity_type' => 'contract', 'fields' => ['id', 'number'],
+        ]);
+        $question = 'Покажи все акты организации, а также договоры проектов '.$this->project->id.' и '.$this->secondProject->id;
+        $response = $this->ask([$this->arguments(null), $contracts, array_replace($contracts, ['project_id' => $this->secondProject->id])], $question);
+        self::assertSame([1, 1, 0], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+        $response = $this->ask([$this->arguments(null), $contracts], $question);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
+    public function test_independent_sections_recheck_project_access_after_reads(): void
+    {
+        $contracts = array_replace($this->arguments($this->project->id), [
+            'domain' => 'contracts', 'entity_type' => 'contract', 'fields' => ['id', 'number'],
+        ]);
+        $this->beforeFinal = fn () => $this->actor->assignedProjects()->updateExistingPivot($this->project->id, ['is_active' => false]);
+        try {
+            $response = $this->ask([$this->arguments(null), $contracts],
+                'Покажи все акты организации, а также договоры проекта '.$this->project->id);
+            self::assertTrue($response['message']['metadata']['needs_clarification']);
+            self::assertSame([], $response['message']['metadata']['source_refs']);
+        } catch (\Illuminate\Auth\Access\AuthorizationException|\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+        }
+        self::assertFalse((bool) $this->actor->assignedProjects()->whereKey($this->project->id)->firstOrFail()->pivot->is_active);
+    }
+
     public static function projectNumberMarkers(): array
     {
         return ['plain' => ['', ''], 'number signs' => ['№', '№'], 'hash signs' => ['#', '#'],

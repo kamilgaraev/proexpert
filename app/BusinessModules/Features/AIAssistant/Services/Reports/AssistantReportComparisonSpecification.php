@@ -11,7 +11,7 @@ final class AssistantReportComparisonSpecification
 {
     public const COMPARISON_WORD = '(?<![\pL\pN])(?:сравн|сопостав|свер)[а-яё]*(?![\pL\pN])';
 
-    public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = []): void
+    public static function requestsComparison(string $question, array $resolvedProjectNames = []): bool
     {
         usort($resolvedProjectNames, static fn (string $first, string $second): int => strlen($second) <=> strlen($first));
         foreach ($resolvedProjectNames as $resolvedProjectName) {
@@ -22,7 +22,13 @@ final class AssistantReportComparisonSpecification
         $object = '(?:их|это|ничего|(?:(?:эти|этих|полученные|полученных)\s+)?(?:данные|данных|результаты|результатов|отч[её]ты|отч[её]тов|сведения|сведений))';
         $modifier = '(?:между\s+(?:собой|ними)|друг\s+с\s+другом|сейчас|пока|здесь|отдельно|дополнительно)';
         $question = preg_replace('/'.self::COMPARISON_WORD.'(?:\s+'.$object.')?(?:\s+'.$modifier.'){0,2}\s*(?:[—–:-]\s*)?не\s+(?:нуж(?:но|на|ны|ен)|надо|требуется|следует|стоит)(?![\pL\pN])/iu', ' ', $question) ?? $question;
-        if (preg_match('/'.self::COMPARISON_WORD.'/iu', $question) !== 1) {
+
+        return preg_match('/'.self::COMPARISON_WORD.'/iu', $question) === 1;
+    }
+
+    public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = []): void
+    {
+        if (! self::requestsComparison($question, $resolvedProjectNames)) {
             return;
         }
         $organizations = [];

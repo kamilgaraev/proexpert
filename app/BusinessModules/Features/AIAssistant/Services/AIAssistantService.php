@@ -1231,7 +1231,7 @@ class AIAssistantService
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = ! $validated;
             }
-            if ((! $customReportPublished || $reportArtifacts === []) && ! $this->hasCompleteSearchComparison($requestProjectScope,
+            if ((! $customReportPublished || $reportArtifacts === []) && ! $this->hasCompleteSearchScope($requestProjectScope,
                 (string) ($taskPlan['request']['message'] ?? ''), $user, $organizationId)) {
                 $assistantContent = trans_message('ai_assistant_facts.comparison_scope_incomplete');
                 $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
@@ -1950,18 +1950,18 @@ class AIAssistantService
             : null;
     }
 
-    private function hasCompleteSearchComparison(AssistantRequestProjectScope $scope, string $question, User $actor, int $organizationId): bool
+    private function hasCompleteSearchScope(AssistantRequestProjectScope $scope, string $question, User $actor, int $organizationId): bool
     {
         try {
-            $projectIds = $scope->comparisonProjectIds($question,
+            $requirements = $scope->searchCoverageRequirements($question,
                 fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $actor, $organizationId));
         } catch (\App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous) {
             return false;
         }
-        if ($projectIds === null) {
+        if ($requirements === null) {
             return true;
         }
-        $references = AssistantSearchScopeCoverage::references($this->activeSearchScopeAttempts, $projectIds, $actor, $organizationId);
+        $references = AssistantSearchScopeCoverage::references($this->activeSearchScopeAttempts, $requirements['project_ids'], $actor, $organizationId, $requirements['pairwise']);
 
         return $references !== null && $this->readPhase(
             fn (): bool => app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, $references), $actor, $organizationId);

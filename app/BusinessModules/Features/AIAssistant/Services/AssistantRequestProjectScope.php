@@ -76,7 +76,8 @@ final readonly class AssistantRequestProjectScope
 
         return (preg_match('/(?<![\pL\pN])'.$projects.'/iu', $question) === 1
             || (preg_match('/(?<![\pL\pN])'.$organization.'/iu', $question) === 1
-                && (! self::hasAffirmativeCurrentProject($question) || self::comparesCurrentProject($question))))
+                && (! self::hasAffirmativeCurrentProject($question) || self::comparesCurrentProject($question)
+                    || ($applyProjectRestriction && self::hasMultipleProjectScopes($originalQuestion)))))
             && preg_match('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?(?:(?:показыва|покажи|включ|учитыва|учти|добав|бери|брать|ищи|искать|работа)[а-яё]*\s+|(?:выполня|проводи)[а-яё]*\s+поиск\s+)?|(?:кроме|исключая)\s+)(?:(?:в|во|на|по|для|из|с|со)\s+)?'.$scope.'/iu', $question) !== 1
             && (! $applyProjectRestriction || ! self::hasExplicitProjectSections($originalQuestion) || self::hasMultipleProjectScopes($originalQuestion));
     }
@@ -206,10 +207,16 @@ final readonly class AssistantRequestProjectScope
         return $arguments;
     }
 
-    public function comparisonProjectIds(string $question, ?callable $search = null): ?array
+    public function searchCoverageRequirements(string $question, ?callable $search = null): ?array
     {
-        return ! $this->requested && self::organizationWide($question) && self::hasExplicitProjectSections($question)
-            ? $this->reportProjectIds($question, $search) : null;
+        if ($this->requested || ! self::organizationWide($question) || ! self::hasExplicitProjectSections($question)) {
+            return null;
+        }
+        $resolvedProjectNames = [];
+        $projectIds = $this->reportProjectIds($question, $search, $resolvedProjectNames);
+
+        return ['project_ids' => $projectIds,
+            'pairwise' => AssistantReportComparisonSpecification::requestsComparison($question, $resolvedProjectNames)];
     }
 
     private static function recordNouns(): string
@@ -303,6 +310,7 @@ final readonly class AssistantRequestProjectScope
         $question = self::withoutNegativeCurrentProject($question);
 
         return $quotedProject || self::comparesCurrentProject($question)
+            || (self::hasAffirmativeCurrentProject($question) && self::hasMultipleProjectScopes($question))
             || preg_match('/(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*[1-9]\d*(?![\pL\pN])/iu', $question) === 1
             || AssistantReportEntityQuery::extract($question, 'project') !== null
             || AssistantReportEntityQuery::hasAmbiguousName($question, 'project');

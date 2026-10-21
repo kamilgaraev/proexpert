@@ -1216,7 +1216,7 @@ final class AssistantRequestProjectScopeTest extends TestCase
             } catch (AssistantReportScopeAmbiguous) {
             }
             self::assertSame($arguments, $bound, $question);
-            self::assertSame([52, 100], $scope->comparisonProjectIds($question), $question);
+            self::assertSame(['project_ids' => [52, 100], 'pairwise' => true], $scope->searchCoverageRequirements($question), $question);
             self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 100], 52, true), $question);
             array_pop($arguments['sections']);
             $rejected = false;
@@ -1569,6 +1569,33 @@ final class AssistantRequestProjectScopeTest extends TestCase
         $this->expectException(AssistantReportScopeAmbiguous::class);
         AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question,
             ['sections' => [['scope' => 'project', 'project_id' => 100]]]);
+    }
+
+    public function test_search_coverage_distinguishes_independent_sections_using_the_same_confirmed_names(): void
+    {
+        foreach (['Покажи все акты организации, а также договоры проекта 100' => [100, false],
+            'Покажи все акты организации, а также договоры проекта 100. Сравнивать их не нужно.' => [100, false],
+            'Покажи все акты организации, а также договоры выбранного проекта' => [52, false],
+            'Покажи договоры выбранного проекта, а также все акты организации' => [52, false],
+            'Сравни все акты организации с договорами проекта 100' => [100, true]] as $question => [$projectId, $pairwise]) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_ids' => [$projectId], 'pairwise' => $pairwise],
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question));
+        }
+        foreach (['Сверка', '«Сверка»'] as $name) {
+            $question = 'Покажи все акты организации, а также договоры проекта '.$name;
+            $calls = 0;
+            $requirements = AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question,
+                static function (array $arguments) use (&$calls): array {
+                    $calls++;
+                    self::assertSame('Сверка', $arguments['query']);
+                    self::assertSame('exact', $arguments['name_match']);
+
+                    return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+                });
+            self::assertSame(['project_ids' => [100], 'pairwise' => false], $requirements);
+            self::assertSame(1, $calls);
+        }
     }
 
     private function plan(string $question): array

@@ -74,12 +74,48 @@ final class AssistantSearchScopeCoverageTest extends TestCase
         self::assertNull($this->references([$organization, $this->attempt(52, ['fields' => ['id']]), $this->attempt(100)]));
     }
 
-    private function references(array $attempts): ?array
+    public function test_independent_sections_cover_each_scope_with_different_search_specifications(): void
+    {
+        $attempts = [$this->attempt(null), $this->attempt(52, ['domain' => 'contracts', 'entity_type' => 'contract'], time: '-1 minute'),
+            $this->attempt(100, ['query' => 'other', 'fields' => ['id']])];
+        self::assertNull($this->references($attempts));
+        self::assertCount(3, $this->references($attempts, false));
+        foreach ($attempts as $attempt) {
+            self::assertSame(0, $attempt['evidence']['value']);
+        }
+        foreach ([[], [$attempts[0]], [$attempts[1], $attempts[2]], [$attempts[0], $attempts[1]]] as $incomplete) {
+            self::assertNull($this->references($incomplete, false));
+        }
+    }
+
+    public function test_independent_sections_still_require_a_trusted_receipt_for_every_attempt(): void
+    {
+        $valid = $this->attempt(null);
+        $forged = $valid;
+        $forged['evidence']['source_ref']['_search_count_proof'] = str_repeat('0', 64);
+        foreach ([$forged, $this->attempt(null, [], 3, 1, '-11 minutes'), $this->attempt(null, [], 9),
+            $this->attempt(null, [], 3, 9)] as $untrusted) {
+            self::assertNull($this->references([$untrusted, $this->attempt(52), $this->attempt(100)], false));
+        }
+        foreach ([['project_id' => 52], ['query' => 'other'], ['fields' => ['id']]] as $changes) {
+            $mismatch = $valid;
+            $mismatch['arguments'] = array_replace($mismatch['arguments'], $changes);
+            self::assertNull($this->references([$mismatch, $this->attempt(52), $this->attempt(100)], false));
+        }
+        $complete = [$valid, $this->attempt(52), $this->attempt(100)];
+        $failed = $this->attempt(52, ['query' => 'target']);
+        $failed['evidence'] = null;
+        self::assertNull($this->references([$failed, ...$complete], false));
+        $failed['arguments']['query'] = '';
+        self::assertCount(3, $this->references([$failed, ...$complete], false));
+    }
+
+    private function references(array $attempts, bool $pairwise = true): ?array
     {
         $actor = new User;
         $actor->setAttribute('id', 3);
 
-        return AssistantSearchScopeCoverage::references($attempts, [52, 100], $actor, 1);
+        return AssistantSearchScopeCoverage::references($attempts, [52, 100], $actor, 1, $pairwise);
     }
 
     private function attempt(?int $projectId, array $changes = [], int $actorId = 3, int $organizationId = 1, string $time = 'now'): array
