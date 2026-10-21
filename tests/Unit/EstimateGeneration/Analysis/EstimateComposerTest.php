@@ -95,6 +95,25 @@ final class EstimateComposerTest extends TestCase
         ]];
     }
 
+    public function test_preserved_legacy_description_does_not_declare_a_work_section(): void
+    {
+        $input = $this->declaredDescriptionInput('Монтаж стендов', []);
+        $model = new RecordedEstimateComposerModel(['work_intents' => [[
+            'kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.stands', 'name' => 'Монтаж стендов',
+            'work_section' => 'equipment', 'unit' => 'шт', 'derived_quantity_id' => null,
+            'source_fact_ids' => ['fact:description'], 'technology_package_candidate' => null,
+            'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+        ]]]);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertSame([], $outcome['intents']);
+        self::assertCount(1, $outcome['quarantined']);
+        self::assertSame('estimate_composer_work_section_not_selected', $outcome['quarantined'][0]['reason']);
+        self::assertSame([], $this->projectSemanticResult($outcome, $input));
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+    }
+
     private function assertUnpricedOutlineCannotBeApplied(array $item): void
     {
         $previous = \Illuminate\Support\Facades\Facade::getFacadeApplication();

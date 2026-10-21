@@ -138,7 +138,13 @@ final class NormativeWorkItemPlannerService
 
         if ($this->isPlannerFallbackQuantity($quantity)) {
             if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal') {
-                return $this->unknownQuantityWorkItem($definition, $localEstimate, $section, $key);
+                $sourceRefs = $this->normalizeSourceRefs([
+                    ...$this->sourceRefsFromEvidence($definition),
+                    ...$this->sourceRefsFromEvidence($definition['metadata']['scope_inference'] ?? []),
+                    ...$this->sourceRefsForQuantityKey($analysis, (string) $definition['quantity_key']),
+                ]);
+
+                return $this->unknownQuantityWorkItem([...$definition, 'source_refs' => $sourceRefs], $localEstimate, $section, $key);
             }
 
             return null;
@@ -196,7 +202,7 @@ final class NormativeWorkItemPlannerService
             'quantity_formula' => $definition['quantity_key'], 'quantity_basis' => 'Количество отсутствует в исходных данных.',
             'work_cost' => null, 'materials_cost' => null, 'machinery_cost' => null, 'labor_cost' => null, 'total_cost' => null,
             'materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => [],
-            'work_composition' => $definition['operations'], 'source_refs' => $section['source_refs'] ?? $estimate['source_refs'] ?? [], 'confidence' => 0,
+            'work_composition' => $definition['operations'], 'source_refs' => $definition['source_refs'] ?? [], 'confidence' => 0,
             'validation_flags' => isset($definition['unit']) ? ['quantity_unknown'] : ['quantity_unknown', 'unit_requires_confirmation'], 'price_source' => null,
             'pricing_status' => 'not_calculated', 'pricing_blocker' => 'quantity_unknown',
             'skip_normative_matching' => true,

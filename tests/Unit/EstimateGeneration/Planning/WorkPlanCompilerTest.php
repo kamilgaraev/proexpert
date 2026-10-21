@@ -414,6 +414,35 @@ final class WorkPlanCompilerTest extends TestCase
         );
     }
 
+    public function test_water_document_is_not_a_source_for_unrelated_unknown_catalog_quantities(): void
+    {
+        $refs = [['document_id' => 82, 'page_number' => 3]];
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'house'], [[
+            'id' => 82, 'filename' => 'water.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'extracted_text' => 'Водоснабжение', 'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'facts' => [['fact_type' => 'pipe_length', 'value' => 64, 'unit' => 'm', 'source_ref' => $refs[0]]],
+            'quantity_takeoffs' => [['quantity' => 64, 'unit' => 'm', 'source_refs' => $refs,
+                'normalized_payload' => ['quantity_key' => 'plumbing.pipe']]],
+        ]]);
+        self::assertSame($refs, $analysis['document_context']['source_refs']);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'roofing', 'electricity', 'water_supply']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        $packages = array_column($payload['local_estimates'], null, 'key');
+        foreach (['foundation', 'roof', 'electrical'] as $key) {
+            $items = array_merge(...array_column($packages[$key]['sections'], 'work_items'));
+            self::assertNotEmpty($items, $key);
+            foreach ($items as $item) {
+                self::assertNull($item['quantity']);
+                self::assertSame([], $item['source_refs'], $key);
+            }
+        }
+        $water = array_merge(...array_column($packages['plumbing']['sections'], 'work_items'));
+        $pipes = array_values(array_filter($water, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === 'plumbing.pipe'));
+        self::assertCount(1, $pipes);
+        self::assertSame('64', $pipes[0]['quantity']);
+        self::assertSame($refs, $pipes[0]['source_refs']);
+    }
+
     #[DataProvider('unresolvedManualDescriptions')]
     public function test_unresolved_manual_semantics_require_clarification_without_invented_work(string $description): void
     {
