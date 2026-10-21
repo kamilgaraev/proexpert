@@ -70,6 +70,15 @@ final class AssistantCustomReportCompletionTest extends TestCase
         self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, true, [], [], [['text' => 'Источник неполон', 'validated' => true]]));
     }
 
+    public function test_early_text_after_source_preparation_does_not_complete_the_file_request(): void
+    {
+        self::assertTrue(AssistantCustomReportCompletion::missingFile($this->plan(), false, [$this->source()], [], []));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($this->plan(), false,
+            [$this->source(), ['needs_clarification' => true]], [], []));
+        self::assertTrue(AssistantCustomReportCompletion::missingFile($this->plan(), false, [], [], [], ['generate_custom_report']));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($this->plan(), false, [], [], [], ['describe_published_reports']));
+    }
+
     private function plan(string $format = 'xlsx'): array
     {
         return ['request' => ['message' => 'Собери отчёт с полями название и статус'],

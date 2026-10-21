@@ -659,14 +659,21 @@ class AIAssistantService
                 : (int) config('ai-assistant-credits.profiles.'.$this->activeProfile.'.max_calls', TokenBudgetService::limits($this->activeProfile)['calls']) - 1;
             $organization = null;
 
-            while (! empty($response['function_calls']) && $loopCount < $maxLoops) {
+            while ($loopCount < $maxLoops) {
+                if (empty($response['function_calls'])) {
+                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools);
+                    if ($reportToolChoice === null) {
+                        break;
+                    }
+                    $options['tool_choice'] = $reportToolChoice;
+                }
                 if (! $organization instanceof Organization) {
                     $organization = $this->resolveOrganization($organizationId);
                 }
 
-                array_push($messages, ...$response['output']);
+                array_push($messages, ...($response['output'] ?? []));
 
-                foreach ($response['function_calls'] as $toolCall) {
+                foreach ($response['function_calls'] ?? [] as $toolCall) {
                     $toolName = (string) ($toolCall['name'] ?? '');
                     $attemptedTools[] = $toolName;
                     $this->stage('tools');
@@ -1231,7 +1238,7 @@ class AIAssistantService
                 $degradedMode = ! $validated;
             }
             $missingCustomReport = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::missingFile(
-                $taskPlan, $terminalToolResponse, $this->activeToolResults, $reportArtifacts, $reportControls
+                $taskPlan, $terminalToolResponse, $this->activeToolResults, $reportArtifacts, $reportControls, $attemptedTools
             );
             if ($missingCustomReport) {
                 if ($this->requestOutcome === null) {

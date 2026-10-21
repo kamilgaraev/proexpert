@@ -193,11 +193,11 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
 
     public static function reportGenerationPositions(): array
     {
-        return ['early' => [false], 'last_call' => [true], 'terminal_lookup_denied' => [true, false]];
+        return ['early' => [false], 'last_call' => [true], 'terminal_lookup_denied' => [true, false], 'early_text' => [false, true, true]];
     }
 
     #[DataProvider('reportGenerationPositions')]
-    public function test_exact_live_question_reaches_report_generation_and_returns_a_real_two_sheet_file(bool $lastCall, bool $sourceAvailable = true): void
+    public function test_exact_live_question_reaches_report_generation_and_returns_a_real_two_sheet_file(bool $lastCall, bool $sourceAvailable = true, bool $earlyText = false): void
     {
         config(['ai-assistant.enabled' => true, 'ai-assistant-credits.enforce' => true,
             'ai-assistant-credits.profiles.normal.max_calls' => 4]);
@@ -222,6 +222,9 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
                 ['describe_custom_report_source', ['domain' => 'site_requests', 'entity_type' => 'site_request', 'project_id' => null]],
             ]);
         }
+        if ($earlyText) {
+            $calls[1] = ['text', []];
+        }
         if (! $sourceAvailable) {
             $calls = array_fill(0, 4, ['assistant_domain_search', ['domain' => 'site_requests', 'entity_type' => 'site_request', 'query' => '',
                 'project_id' => null, 'limit' => 20, 'predicate' => null, 'cursor' => null, 'fields' => ['id', 'title']]]);
@@ -232,7 +235,7 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         $provider->method('countTokens')->willReturn(100);
         $provider->expects(self::never())->method('chat');
         $providerCalls = 0;
-        $provider->expects(self::exactly(4))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls, &$providerCalls, $lastCall, $sourceAvailable): array {
+        $provider->expects(self::exactly(4))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls, &$providerCalls, $lastCall, $sourceAvailable, $earlyText): array {
             self::assertContains('generate_custom_report', array_column($options['tools'] ?? [], 'name'));
             if (++$providerCalls === 1) {
                 $sourceHints = [];
@@ -256,6 +259,16 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
                     'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
             }
             [$name, $arguments] = array_shift($calls);
+            if (in_array($name, ['describe_custom_report_source', 'text'], true)) {
+                self::assertArrayNotHasKey('tool_choice', $options);
+            }
+            if ($name === 'text') {
+                return ['content' => 'Отчёт сформирован.', 'output' => [], 'function_calls' => [], 'input_tokens' => 100,
+                    'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+            }
+            if ($earlyText && $name === 'generate_custom_report') {
+                self::assertSame('generate_custom_report', $options['tool_choice']['function']['name'] ?? null);
+            }
             if ($lastCall && $name === 'generate_custom_report'
                 && ($options['tool_choice']['function']['name'] ?? null) !== 'generate_custom_report') {
                 $name = 'assistant_domain_search';

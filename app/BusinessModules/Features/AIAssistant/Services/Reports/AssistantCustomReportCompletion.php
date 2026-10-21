@@ -32,28 +32,19 @@ final class AssistantCustomReportCompletion
             [...$attemptedTools, ...array_column($results, '_tool_name')]) !== []) {
             return null;
         }
-        $format = $plan['request_understanding']['output_format'];
-        $hasSource = false;
         foreach ($results as $result) {
-            $name = $result['_tool_name'] ?? null;
             if (($result['needs_clarification'] ?? false) === true) {
                 return null;
             }
-            if ($name === 'describe_custom_report_source' && ($result['status'] ?? null) === 'success'
-                && is_string($result['domain'] ?? null) && $result['domain'] !== ''
-                && is_string($result['entity_type'] ?? null) && $result['entity_type'] !== ''
-                && is_array($result['fields'] ?? null) && $result['fields'] !== []
-                && in_array($format, $result['formats'] ?? [], true)) {
-                $hasSource = true;
-            }
         }
 
-        return $hasSource ? ['type' => 'function', 'function' => ['name' => 'generate_custom_report']] : null;
+        return self::hasSource($results, $plan['request_understanding']['output_format'])
+            ? ['type' => 'function', 'function' => ['name' => 'generate_custom_report']] : null;
     }
 
-    public static function missingFile(array $plan, bool $terminal, array $results, array $artifacts, array $controls): bool
+    public static function missingFile(array $plan, bool $terminal, array $results, array $artifacts, array $controls, array $attemptedTools = []): bool
     {
-        if (! $terminal || ! self::requiresFile($plan) || $artifacts !== [] || $controls !== []) {
+        if (! self::requiresFile($plan) || $artifacts !== [] || $controls !== []) {
             return false;
         }
         foreach ($results as $result) {
@@ -62,6 +53,22 @@ final class AssistantCustomReportCompletion
             }
         }
 
-        return true;
+        return $terminal || self::hasSource($results, $plan['request_understanding']['output_format'])
+            || in_array('generate_custom_report', [...$attemptedTools, ...array_column($results, '_tool_name')], true);
+    }
+
+    private static function hasSource(array $results, string $format): bool
+    {
+        foreach ($results as $result) {
+            if (($result['_tool_name'] ?? null) === 'describe_custom_report_source' && ($result['status'] ?? null) === 'success'
+                && is_string($result['domain'] ?? null) && $result['domain'] !== ''
+                && is_string($result['entity_type'] ?? null) && $result['entity_type'] !== ''
+                && is_array($result['fields'] ?? null) && $result['fields'] !== []
+                && in_array($format, $result['formats'] ?? [], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
