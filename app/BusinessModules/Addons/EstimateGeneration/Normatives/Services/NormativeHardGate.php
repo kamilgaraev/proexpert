@@ -81,7 +81,7 @@ final class NormativeHardGate
         $sectionMatches = $preferredSections === [];
         foreach ($preferredSections as $preferredSection) {
             if ($candidate->normativeSection !== null && $candidate->normativeSection !== ''
-                && $this->sectionCompatible($candidate->normativeSection, $preferredSection)) {
+                && NormativeSectionPrefix::matches($candidate->normativeSection, $preferredSection)) {
                 $sectionMatches = true;
 
                 break;
@@ -133,21 +133,5 @@ final class NormativeHardGate
         }
 
         return $reasons;
-    }
-
-    private function sectionCompatible(string $candidate, string $preferred): bool
-    {
-        $candidateParts = array_values(array_map('intval', array_filter(
-            preg_split('/\D+/', $candidate) ?: [],
-            static fn (string $part): bool => $part !== '',
-        )));
-        $preferredParts = array_values(array_map('intval', array_filter(
-            preg_split('/\D+/', $preferred) ?: [],
-            static fn (string $part): bool => $part !== '',
-        )));
-
-        return $preferredParts !== []
-            && count($candidateParts) >= count($preferredParts)
-            && array_slice($candidateParts, 0, count($preferredParts)) === $preferredParts;
     }
 }

@@ -163,20 +163,23 @@ final class NormativeHardGateTest extends TestCase
         ];
     }
 
-    public function test_a_pinned_candidate_still_requires_the_canonical_intent_section_gate(): void
+    public function test_pinned_selection_preserves_the_correct_section_before_top_two_and_final_gate(): void
     {
         $intent = $this->sectionIntent(['1']);
-        $pinned = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory)->forWorkItem([
-            ['candidate_id' => '10', 'normative_id' => 10, 'dataset_id' => 20, 'dataset_version' => 'v1',
-                'dataset_status' => 'published', 'code' => '10-01-001-01', 'name' => 'Кладка стен', 'unit' => 'м2',
-                'section' => ['code' => '10', 'name' => 'Раздел 10'], 'retrieval_metadata' => [], 'work_composition' => []],
-        ], ['key' => 'work-1', 'name' => 'Кладка стен', 'unit' => 'м2'], ['1'], $intent, ['work-1' => ['10']]);
+        $candidates = [];
+        foreach ([10 => '10', 11 => '10', 12 => '10', 99 => '1'] as $id => $section) {
+            $candidates[] = ['candidate_id' => (string) $id, 'normative_id' => $id, 'dataset_id' => 20, 'dataset_version' => 'v1',
+                'dataset_status' => 'published', 'code' => $section.'-01-001-01', 'name' => 'Кладка стен', 'unit' => 'м2',
+                'section' => ['code' => $section, 'name' => 'Раздел '.$section], 'retrieval_metadata' => [], 'work_composition' => []];
+        }
+        $pinned = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory)->forWorkItem($candidates,
+            ['key' => 'work-1', 'name' => 'Кладка стен', 'unit' => 'м2'], ['1'], $intent, ['work-1' => ['10', '11', '12', '99']]);
         self::assertCount(1, $pinned);
-        self::assertSame('10-01-001-01', $pinned[0]->code);
+        self::assertSame('99', $pinned[0]->id);
         $set = (new NormativeHardGate)->filter($intent, $pinned);
 
-        self::assertSame([], $set->candidates);
-        self::assertSame(['normative_section_mismatch'], $set->rejected[0]->reasonCodes);
+        self::assertSame($pinned, $set->candidates);
+        self::assertSame([], $set->rejected);
     }
 
     public function test_candidate_must_belong_to_one_of_all_allowed_sections(): void
