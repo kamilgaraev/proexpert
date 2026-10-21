@@ -26,6 +26,7 @@ final class AssistantOperationalReaderRegistry
         'get_project_report_delivery_summary' => AssistantReportDeliverySummaryReader::class,
         'get_project_camera_roster' => AssistantProjectCameraReader::class,
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
+        'get_project_journal_entries' => AssistantProjectJournalEntriesReader::class,
         'get_project_safety_summary' => AssistantProjectSafetyReader::class,
         'get_project_change_readiness' => AssistantProjectChangeReader::class,
         'get_project_design_readiness' => AssistantProjectDesignReader::class,
@@ -88,6 +89,10 @@ final class AssistantOperationalReaderRegistry
     public static function intent(string $query): ?array
     {
         $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
+        if (\App\BusinessModules\Features\AIAssistant\Services\AssistantJournalEntriesIntent::hasIntent($query)) {
+            return AssistantProjectJournalEntriesReader::matches($query)
+                ? ['name' => 'get_project_journal_entries', 'reader' => AssistantProjectJournalEntriesReader::class] : null;
+        }
         if (AssistantProjectProductionScheduleReader::hasIntent($query)) {
             if (! AssistantProjectProductionScheduleReader::matches($query) || preg_match('/каталог|справочник|шаблон/iu', $query) === 1
                 || self::hasProjectNameContinuation($query)) {

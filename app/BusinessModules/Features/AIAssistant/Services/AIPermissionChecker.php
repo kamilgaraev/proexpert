@@ -368,6 +368,7 @@ class AIPermissionChecker
             'get_project_contract_roster' => ['projects', 'contracts'],
             'get_project_handover_summary' => ['projects', 'handover_acceptance'],
             'get_project_journal_readiness' => ['projects', 'core_journals'],
+            'get_project_journal_entries' => ['projects', 'core_journals'],
             'get_project_safety_summary' => ['projects', 'safety'],
             'get_project_change_readiness' => ['projects', 'change_management'],
             'get_project_design_readiness' => ['projects', 'design'],
