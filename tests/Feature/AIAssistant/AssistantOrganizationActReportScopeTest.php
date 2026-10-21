@@ -490,6 +490,69 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         self::assertNotSame('success', $denied['status'] ?? null);
     }
 
+    public function test_independent_act_filters_bind_to_each_scope_before_writing_the_workbook(): void
+    {
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(
+            array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $actor = Model::withoutEvents(fn () => $fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate'],
+            'project-management' => ['projects.view'],
+            'contract-management' => ['contracts.view', 'contracts.performance_acts.view'],
+        ], ['reports.view', 'finance.view']));
+        $projects = Model::withoutEvents(fn () => Project::factory()->count(2)->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]));
+        foreach ($projects as $project) {
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+            foreach (['approved', 'draft'] as $status) {
+                $this->act($project, $status, 'RUB', '10.00', '2026-10-10');
+            }
+        }
+        $project = $projects->first();
+        $question = 'Сделай Excel: все утверждённые акты организации, а также черновики актов проекта '.$project->id;
+        $section = ['title' => 'Организация', 'scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'columns' => ['id', 'status'], 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']],
+            'group_by' => [], 'metrics' => [], 'order_by' => [], 'row_limit' => 100];
+        $projectSection = array_replace($section, ['title' => 'Проект', 'scope' => 'project', 'project_id' => $project->id,
+            'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => $project->id], ['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]);
+        $arguments = ['title' => 'Статусы актов', 'format' => 'xlsx', 'sections' => [$section, $projectSection]];
+        $bytes = null;
+        $files = $this->createMock(FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use (&$bytes): CurrentStoredFile {
+            $bytes = stream_get_contents($stream);
+
+            return new CurrentStoredFile($path, 'etag', strlen($bytes), $hash, $mime);
+        });
+        $this->app->instance(FileService::class, $files);
+        $swapped = $arguments;
+        $swapped['sections'][0]['filters'][0]['value'] = 'draft';
+        $swapped['sections'][1]['filters'][1]['value'] = 'approved';
+        foreach ([$swapped, array_replace($arguments, ['sections' => [$section, array_replace($projectSection, ['filters' => []])]])] as $wrong) {
+            $result = $this->dispatch($wrong, $question, $project, $fixture->organization, $actor);
+            self::assertTrue($result['needs_clarification']);
+            self::assertSame([], $result['source_refs']);
+            self::assertNull($bytes);
+        }
+        $result = $this->dispatch($arguments, $question, $project, $fixture->organization, $actor);
+        self::assertSame('success', $result['status'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame([2, 1], array_column($result['sections'], 'source_row_count'));
+        $temporary = tempnam(sys_get_temp_dir(), 'most-conditions-');
+        file_put_contents($temporary, $bytes);
+        $workbook = null;
+        try {
+            $workbook = \PhpOffice\PhpSpreadsheet\IOFactory::load($temporary);
+            self::assertSame(2, $workbook->getSheetCount());
+            foreach (['approved', 'draft'] as $index => $status) {
+                $ids = array_map(static fn (array $row): int => (int) $row[0], array_values(array_filter($workbook->getSheet($index)->toArray(), static fn (array $row): bool => is_numeric($row[0] ?? null))));
+                $expected = ContractPerformanceAct::query()->whereIn('project_id', $index === 0 ? $projects->modelKeys() : [$project->id])->where('status', $status)->pluck('id')->all();
+                self::assertEqualsCanonicalizing($expected, $ids);
+            }
+        } finally {
+            $workbook?->disconnectWorksheets();
+            unlink($temporary);
+        }
+    }
+
     private function act(Project $project, string $status, string $currency, string $amount, string $date): void
     {
         Model::withoutEvents(function () use ($project, $status, $currency, $amount, $date): void {

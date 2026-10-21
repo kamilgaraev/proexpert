@@ -45,7 +45,9 @@ final class AssistantSearchScopeCoverage
             }
             $confirmed[$key] = true;
             $covered[$side] = true;
-            $coveredSubjects[AssistantRequestedSourceScopes::key($side, $actual)] = true;
+            if ($actual['query'] === '' && $actual['predicate'] === null) {
+                $coveredSubjects[AssistantRequestedSourceScopes::key($side, $actual)] = true;
+            }
             $group = json_encode([$actual, $reference['_search_count_clock'] ?? null], JSON_THROW_ON_ERROR);
             $groups[$group][$side] = true;
             $references[$reference['entity_id'].':'.$reference['source_version']] = $reference;

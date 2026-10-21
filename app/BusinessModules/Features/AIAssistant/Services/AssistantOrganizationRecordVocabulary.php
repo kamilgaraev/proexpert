@@ -122,7 +122,7 @@ final class AssistantOrganizationRecordVocabulary
             if (isset($phrases[self::identity($phrase)])) {
                 return true;
             }
-            if (preg_match('/^(?:[а-яё][а-яё-]*(?:ые|ие|ых|их|ым|им|ыми|ими|ая|яя|ую|юю|ой|ей|ое|ее|ого|его|ому|ему|ом|ем)|частично|полностью|еще|ещё|пока|не)\s+/iu', $phrase, $match) !== 1) {
+            if (preg_match('/^(?:[а-яё][а-яё-]*(?:ые|ие|ых|их|ым|им|ыми|ими|ая|яя|ую|юю|ой|ей|ое|ее|ого|его|ому|ему|ом|ем)|черновики|частично|полностью|еще|ещё|пока|не)\s+/iu', $phrase, $match) !== 1) {
                 break;
             }
             $phrase = substr($phrase, strlen($match[0]));

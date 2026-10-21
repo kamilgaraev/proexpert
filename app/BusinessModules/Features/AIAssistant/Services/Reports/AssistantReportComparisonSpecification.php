@@ -24,17 +24,23 @@ final class AssistantReportComparisonSpecification
             $question = preg_replace('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])(?:\s*:\s*|\s+)'.preg_quote($resolvedProjectName, '/').'(?![\pL\pN])/iu', ' ', $question) ?? $question;
         }
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
+        $question = self::withoutNegatedComparison($question);
         $definition = '(?:(?:основн|ключев|существенн|главн)[а-яё]*\s+){0,2}';
-        $question = preg_replace('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нуж(?:но|на|ны|ен)|следует|стоит)\s+)?(?:(?:показ[а-яё]*|ищи|искать|най[а-яё]*|выяв[а-яё]*|определ[а-яё]*|объясн[а-яё]*|укаж[а-яё]*)\s+)?|без\s+)'.$definition.self::COMPARISON_WORD.'/iu', ' ', $question) ?? $question;
-        $object = '(?:их|это|ничего|(?:(?:эти|этих|полученные|полученных)\s+)?(?:данные|данных|результаты|результатов|отч[её]ты|отч[её]тов|сведения|сведений))';
-        $modifier = '(?:между\s+(?:собой|ними)|друг\s+с\s+другом|сейчас|пока|здесь|отдельно|дополнительно)';
-        $question = preg_replace('/'.self::COMPARISON_WORD.'(?:\s+'.$object.')?(?:\s+'.$modifier.'){0,2}\s*(?:[—–:-]\s*)?не\s+(?:нуж(?:но|на|ны|ен)|надо|требуется|следует|стоит)(?![\pL\pN])/iu', ' ', $question) ?? $question;
-
         $noun = '(?<![\pL\pN])'.self::COMPARISON_NOUN.'(?![\pL\pN])';
 
         return preg_match('/(?<![\pL\pN])'.self::COMPARISON_STEM.'(?![\pL\pN])/iu', $question) === 1
             || preg_match('/(?<![\pL\pN])(?:покажи(?:те)?|найди(?:те)?|выяви(?:те)?|определи(?:те)?|объясни(?:те)?|укажи(?:те)?|в\s+ч[её]м)\s+'.$definition.$noun.'|'.$noun.'\s+между(?![\pL\pN])/iu', $question) === 1
             || preg_match('/(?:^\s*|(?<![\pL\pN])(?:нуж(?:на|ны|ен|но)|требуется|для|сдела(?:й(?:те)?|ть)|сформир(?:уй(?:те)?|овать)|подготов(?:ь(?:те)?|ить)|прове(?:ди(?:те)?|сти)|выполн(?:и(?:те)?|ить))\s+)'.$definition.self::RECONCILIATION_NOUN.'(?![\pL\pN])/iu', $question) === 1;
+    }
+
+    public static function withoutNegatedComparison(string $question): string
+    {
+        $definition = '(?:(?:основн|ключев|существенн|главн)[а-яё]*\s+){0,2}';
+        $question = preg_replace('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нуж(?:но|на|ны|ен)|следует|стоит)\s+)?(?:(?:показ[а-яё]*|ищи|искать|най[а-яё]*|выяв[а-яё]*|определ[а-яё]*|объясн[а-яё]*|укаж[а-яё]*)\s+)?|без\s+)'.$definition.self::COMPARISON_WORD.'(?:\s+их(?![\pL\pN]))?/iu', ' ', $question) ?? $question;
+        $object = '(?:их|это|ничего|(?:(?:эти|этих|полученные|полученных)\s+)?(?:данные|данных|результаты|результатов|отч[её]ты|отч[её]тов|сведения|сведений))';
+        $modifier = '(?:между\s+(?:собой|ними)|друг\s+с\s+другом|сейчас|пока|здесь|отдельно|дополнительно)';
+
+        return preg_replace('/'.self::COMPARISON_WORD.'(?:\s+'.$object.')?(?:\s+'.$modifier.'){0,2}\s*(?:[—–:-]\s*)?не\s+(?:нуж(?:но|на|ны|ен)|надо|требуется|следует|стоит)(?![\pL\pN])/iu', ' ', $question) ?? $question;
     }
 
     public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = []): void

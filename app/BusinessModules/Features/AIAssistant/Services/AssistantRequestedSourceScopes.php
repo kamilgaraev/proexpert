@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComparisonSpecification;
 
 final class AssistantRequestedSourceScopes
 {
@@ -20,6 +21,7 @@ final class AssistantRequestedSourceScopes
             $mention = $mentions[$index];
             $question = substr_replace($question, self::PREFIX.'subject_'.$index.'__', $mention['offset'], $mention['length']);
         }
+        $question = AssistantReportComparisonSpecification::withoutNegatedComparison($question);
         $parts = preg_split('/[,;.!?\r\n]+|(?<![\pL\pN])(?:а\s+также|а|и|или)(?![\pL\pN])/iu', $question) ?: [];
         $requirements = [];
         $coveredSides = [];
@@ -29,25 +31,41 @@ final class AssistantRequestedSourceScopes
         foreach ($parts as $part) {
             preg_match_all($marker, $part, $matches, PREG_SET_ORDER);
             $text = preg_replace($marker, ' ', $part) ?? $part;
-            $text = preg_replace('/(?<![\pL\pN])(?:с\s+(?:колонками|полями|группировкой)|(?:колонки|поля)\s*:|в\s+разрезе|с\s+детализацией)\b.*$/isu', ' ', $text) ?? $text;
             preg_match_all('/'.self::PREFIX.'subject_(\d+)__/u', $text, $subjectTokens);
             $subjects = array_map(static fn (string $index): array => $mentions[(int) $index]['subject'], $subjectTokens[1]);
             $text = preg_replace('/'.self::PREFIX.'subject_\d+__/u', ' ', $text) ?? $text;
+            $filters = self::requestedFilters($text);
+            if ($filters !== [] && count($subjects) > 1) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            $entries = array_map(static fn (array $subject): array => ['subject' => $subject, 'filters' => $filters], $subjects);
             if ($matches === []) {
-                $pending = [...$pending, ...$subjects];
+                if ($subjects === [] && $filters !== []) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                $pending = [...$pending, ...$entries];
 
                 continue;
             }
-            $subjects = [...$pending, ...$subjects];
-            if ($subjects === []) {
-                $remainder = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|а|также|отдельно|лист(?:е|а)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|данные|сведения|отч[её]т|снизу|сверху|пожалуйста)(?![\pL\pN])/iu', ' ', $text) ?? $text;
-                if (preg_match('/[\pL\pN]/u', $remainder) === 1) {
+            $entries = [...$pending, ...$entries];
+            if ($entries === []) {
+                $entries = $previous;
+                if ($filters !== [] && count($entries) !== 1) {
                     throw new AssistantReportScopeAmbiguous;
                 }
-                $subjects = $previous;
-            }
-            if ($subjects === []) {
+                if ($filters !== []) {
+                    $entries[0]['filters'] = $filters;
+                }
+            } elseif ($subjects === [] && $filters !== []) {
                 throw new AssistantReportScopeAmbiguous;
+            }
+            if ($entries === []) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            foreach ($entries as $entry) {
+                if ($entry['filters'] !== [] && ($entry['subject']['domain'] !== 'acts' || $entry['subject']['entity_type'] !== 'performance_act')) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
             }
             foreach ($matches as $match) {
                 $side = $match[1] === 'organization' ? 'organization' : 'project:'.$match[2];
@@ -55,12 +73,12 @@ final class AssistantRequestedSourceScopes
                     throw new AssistantReportScopeAmbiguous;
                 }
                 $coveredSides[$side] = true;
-                foreach ($subjects as $subject) {
-                    $requirements[self::key($side, $subject)] = true;
+                foreach ($entries as $entry) {
+                    $requirements[self::key($side, $entry['subject'], $entry['filters'])] = true;
                 }
             }
             $pending = [];
-            $previous = $subjects;
+            $previous = $entries;
         }
         if ($pending !== [] || array_diff_key($requiredSides, $coveredSides) !== []) {
             throw new AssistantReportScopeAmbiguous;
@@ -69,9 +87,42 @@ final class AssistantRequestedSourceScopes
         return $requirements;
     }
 
-    public static function key(string $side, array $subject): string
+    private static function requestedFilters(string $text): array
     {
-        return json_encode([$side, $subject['domain'] ?? null, $subject['entity_type'] ?? null], JSON_THROW_ON_ERROR);
+        $statuses = [];
+        foreach (['approved' => 'утвержд[её]нн[а-яё]*', 'draft' => 'чернов[а-яё]*', 'signed' => 'подписанн[а-яё]*',
+            'rejected' => 'отклон[её]нн[а-яё]*', 'annulled' => 'аннулированн[а-яё]*'] as $status => $pattern) {
+            if (preg_match('/(?<![\pL\pN])(?:'.$pattern.')(?![\pL\pN])/iu', $text) === 1) {
+                $statuses[] = $status;
+                $text = preg_replace('/(?<![\pL\pN])(?:'.$pattern.')(?![\pL\pN])/iu', ' ', $text) ?? $text;
+            }
+        }
+        $text = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|а|также|отдельно|лист(?:е|а|ов)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|данные|сведения|отч[её]т|снизу|сверху|пожалуйста|все|всех|всем|всеми|покажи(?:те)?|сделай(?:те)?|сформируй(?:те)?|подготовь(?:те)?|расположи(?:те)?|список|excel|xlsx|csv)(?![\pL\pN])/iu', ' ', $text) ?? $text;
+        if (count($statuses) > 1 || preg_match('/[\pL\pN]/u', $text) === 1) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+
+        return $statuses === [] ? [] : [['field' => 'status', 'operator' => 'eq', 'value' => $statuses[0]]];
+    }
+
+    public static function key(string $side, array $subject, array $filters = []): string
+    {
+        $key = [$side, $subject['domain'] ?? null, $subject['entity_type'] ?? null];
+        $conditions = [];
+        foreach ($filters as $filter) {
+            if (! is_array($filter)) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            if (($filter['field'] ?? null) !== 'project_id') {
+                $conditions[] = serialize([$filter['field'] ?? null, $filter['operator'] ?? null, $filter['value'] ?? null]);
+            }
+        }
+        if ($conditions !== []) {
+            sort($conditions);
+            $key[] = array_values(array_unique($conditions));
+        }
+
+        return json_encode($key, JSON_THROW_ON_ERROR);
     }
 
     public static function assertReport(array $requirements, array $sections): void
@@ -82,7 +133,10 @@ final class AssistantRequestedSourceScopes
                 throw new AssistantReportScopeAmbiguous;
             }
             $side = ($section['scope'] ?? null) === 'organization' ? 'organization' : 'project:'.($section['project_id'] ?? '');
-            $key = self::key($side, $section);
+            if (! is_array($section['filters'] ?? [])) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            $key = self::key($side, $section, $section['filters'] ?? []);
             if (! isset($requirements[$key])) {
                 throw new AssistantReportScopeAmbiguous;
             }

@@ -6,6 +6,7 @@ namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainSearchCountEvidence;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestedSourceScopes;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSearchScopeCoverage;
 use App\Models\User;
 use PHPUnit\Framework\TestCase;
@@ -78,7 +79,7 @@ final class AssistantSearchScopeCoverageTest extends TestCase
     {
         $subjects = array_fill_keys(['["organization","acts","performance_act"]', '["project:52","contracts","contract"]', '["project:100","acts","performance_act"]'], true);
         $attempts = [$this->attempt(null), $this->attempt(52, ['domain' => 'contracts', 'entity_type' => 'contract'], time: '-1 minute'),
-            $this->attempt(100, ['query' => 'other', 'fields' => ['id']])];
+            $this->attempt(100, ['fields' => ['id']])];
         self::assertNull($this->references($attempts));
         self::assertCount(3, $this->references($attempts, false, $subjects));
         foreach ($attempts as $attempt) {
@@ -87,6 +88,22 @@ final class AssistantSearchScopeCoverageTest extends TestCase
         foreach ([[], [$attempts[0]], [$attempts[1], $attempts[2]], [$attempts[0], $attempts[1]]] as $incomplete) {
             self::assertNull($this->references($incomplete, false, $subjects));
         }
+    }
+
+    public function test_text_queries_and_predicates_cannot_prove_independent_requested_conditions(): void
+    {
+        $subjects = array_fill_keys(['["organization","acts","performance_act"]', '["project:52","acts","performance_act"]', '["project:100","acts","performance_act"]'], true);
+        self::assertNull($this->references([$this->attempt(null, ['query' => 'approved']), $this->attempt(52), $this->attempt(100)], false, $subjects));
+        $schedule = ['domain' => 'schedule', 'entity_type' => 'schedule_task'];
+        $tasks = array_fill_keys(['["organization","schedule","schedule_task"]', '["project:52","schedule","schedule_task"]', '["project:100","schedule","schedule_task"]'], true);
+        self::assertNull($this->references([$this->attempt(null, $schedule + ['predicate' => 'overdue']),
+            $this->attempt(52, $schedule), $this->attempt(100, $schedule)], false, $tasks));
+        $filtered = [];
+        foreach (['organization' => 'approved', 'project:52' => 'draft', 'project:100' => 'signed'] as $side => $status) {
+            $filtered[AssistantRequestedSourceScopes::key($side, ['domain' => 'acts', 'entity_type' => 'performance_act'],
+                [['field' => 'status', 'operator' => 'eq', 'value' => $status]])] = true;
+        }
+        self::assertNull($this->references([$this->attempt(null), $this->attempt(52), $this->attempt(100)], false, $filtered));
     }
 
     public function test_independent_sections_still_require_a_trusted_receipt_for_every_attempt(): void

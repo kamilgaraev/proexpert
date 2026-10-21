@@ -16,6 +16,71 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_independent_act_status_conditions_cannot_be_swapped_between_scopes(): void
+    {
+        $question = 'Все утверждённые акты организации, а также черновые акты проекта 100';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]];
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+        self::assertSame(['sections' => $sections], $scope->bindReportScope($question, ['sections' => $sections]));
+        $sections[0]['filters'][0]['value'] = 'draft';
+        $sections[1]['filters'][0]['value'] = 'approved';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        $scope->bindReportScope($question, ['sections' => $sections]);
+    }
+
+    public function test_unsupported_conditions_in_independent_clauses_require_clarification(): void
+    {
+        foreach (['Все акты организации за прошлый месяц, а также акты проекта 100',
+            'Все акты организации, а также акты проекта 100. Название «АВР-100».',
+            'Все акты организации, а также акты проекта 100 дороже 1000 рублей',
+            'Все акты организации, а также акты проекта 100. Только за вчера.',
+            'Все акты организации с полями номер за прошлый месяц, а также акты проекта 100'] as $question) {
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question);
+                self::fail('Unsupported condition was ignored: '.$question);
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_independent_act_conditions_preserve_nouns_ellipsis_and_each_filter_set(): void
+    {
+        foreach (['Все утверждённые акты организации, а также черновики актов проекта 100',
+            'Все утвержденные акты организации, а также черновые акты проекта 100'] as $question) {
+            $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                    'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]];
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+        }
+        $question = 'Все утверждённые акты организации и проекта 100';
+        $sections[1]['filters'][0]['value'] = 'approved';
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+        $question = 'Все утверждённые акты организации, черновые акты организации, а также подписанные акты проекта 100';
+        $sections[1]['filters'][0]['value'] = 'signed';
+        $drafts = array_replace($sections[0], ['filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]);
+        $all = ['sections' => [$sections[1], $drafts, $sections[0]]];
+        self::assertSame($all, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $all));
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+    }
+
+    public function test_unrequested_filters_cannot_narrow_an_independent_section(): void
+    {
+        $question = 'Все акты организации, а также акты проекта 100';
+        $sections = [['scope' => 'organization', 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]]];
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+    }
+
     public function test_independent_subject_bindings_preserve_multiple_operands_and_literal_names(): void
     {
         foreach (['Все акты организации, а также по проекту 100 — договоры' => [100],
