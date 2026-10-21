@@ -34,8 +34,11 @@ final class AssistantReportComparisonSpecification
                 $projects[$key][$section['project_id']] = true;
             }
         }
-        foreach ($projects as $key => $ids) {
-            if (! isset($organizations[$key]) || array_diff($projectIds, array_keys($ids)) !== []) {
+        if (array_diff_key($organizations, $projects) !== [] || array_diff_key($projects, $organizations) !== []) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+        foreach ($projects as $ids) {
+            if (array_diff($projectIds, array_keys($ids)) !== []) {
                 throw new AssistantReportScopeAmbiguous;
             }
         }

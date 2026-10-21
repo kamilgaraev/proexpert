@@ -11,6 +11,54 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_comparison_relations_allow_scope_prepositions_between_entity_and_project(): void
+    {
+        foreach (['Сравни все акты организации с актами по проекту 100',
+            'Сверь все акты организации с актами для выбранного проекта',
+            'Сопоставь все акты организации и акты из проекта 100',
+            'Сравни все акты организации с актами в выбранном проекте'] as $question) {
+            $id = str_contains($question, '100') ? 100 : 52;
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+            self::assertSame(['project_id' => $id], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => $id], 52, true));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => $id]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        }
+    }
+
+    public function test_comparisons_require_project_counterparts_for_every_organization_subject(): void
+    {
+        $question = 'Сравни все акты организации и все договоры организации с проектом 100';
+        $organizationAct = ['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'];
+        $organizationContract = ['scope' => 'organization', 'project_id' => null, 'domain' => 'contracts', 'entity_type' => 'contract'];
+        $projectAct = array_replace($organizationAct, ['scope' => 'project', 'project_id' => 100]);
+        $projectContract = array_replace($organizationContract, ['scope' => 'project', 'project_id' => 100]);
+        $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+        $complete = ['sections' => [$organizationAct, $organizationContract, $projectAct, $projectContract]];
+        self::assertSame($complete, $scope->bindReportScope($question, $complete));
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        $scope->bindReportScope($question, ['sections' => [$organizationAct, $organizationContract, $projectAct]]);
+    }
+
+    public function test_negative_project_directives_before_the_operand_keep_organization_scope(): void
+    {
+        foreach (['не включай проект 100', 'не учитывай проект 100', 'исключи проект 100',
+            'не включайте выбранный проект', 'не учитывай проект «СевГУ»'] as $clause) {
+            $question = 'Покажи все акты организации, '.$clause;
+            $id = str_contains($clause, 'выбранный') ? 52 : 100;
+            $search = static function (array $arguments): array {
+                self::assertSame(['query' => 'СевГУ', 'name_match' => 'exact', 'limit' => 2], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => $id]]]]];
+            $expected = $arguments;
+            $expected['sections'][0]['project_id'] = null;
+            self::assertSame($expected, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search));
+        }
+    }
+
     public function test_postpositive_project_exclusions_keep_organization_scope_and_report_constraints(): void
     {
         foreach (['проект 100 не включай', 'проект 100 не включать', 'проект 100 не учитывайте',

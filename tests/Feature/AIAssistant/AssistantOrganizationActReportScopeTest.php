@@ -46,6 +46,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'organization excludes postfix current project' => [true, true, false, 4, 4, true, '', 'postfix_current'],
             'organization excludes postfix exact project name' => [true, true, false, 4, 4, true, '', 'postfix_name'],
             'organization excludes postfix project directive' => [true, true, false, 4, 4, true, '', 'postfix_exclude'],
+            'organization excludes prefix project command' => [true, true, false, 4, 4, true, '', 'prefix_id'],
+            'organization excludes prefix current project command' => [true, true, false, 4, 4, true, '', 'prefix_current'],
+            'organization excludes prefix exact project name command' => [true, true, false, 4, 4, true, '', 'prefix_name'],
             'nominative organization' => [true, true, false, 7, 5, false, '', 'nominative'],
             'organization wording restricted by project ID' => [true, true, false, 4, 4, false, '', 'restricted_id'],
             'organization wording restricted by project name' => [true, true, false, 4, 4, false, '', 'restricted_name'],
@@ -91,6 +94,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'reconcile different entities is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_reconcile_entity'],
             'repeated entity preserves both comparison subjects' => [true, false, false, 7, 5, false, '', 'repeated_entity_explicit'],
             'repeated entity different subjects is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_repeated_entity'],
+            'entity preposition preserves both comparison subjects' => [true, false, false, 7, 5, false, '', 'preposition_entity_explicit'],
+            'comparison rejects organization subject without project counterpart' => [true, false, false, 7, 5, false, '', 'compare_subject_organization_only'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
             'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
@@ -216,8 +221,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
         $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
-            || str_starts_with($variant, 'compare_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit'], true);
-        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity'], true);
+            || str_starts_with($variant, 'compare_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
+        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity', 'preposition_entity_explicit', 'compare_subject_organization_only'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
         }
@@ -253,6 +258,13 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             };
             $question = 'Сформируй CSV по всем актам организации. '.$project.' '.($variant === 'postfix_exclude' ? 'исключить из отчёта' : 'не включай');
         }
+        if (str_starts_with($variant, 'prefix_')) {
+            $clause = match ($variant) {
+                'prefix_current' => 'Исключи выбранный проект', 'prefix_name' => 'Не учитывай проект «'.$first->name.'»',
+                default => 'Не включай проект '.$first->id,
+            };
+            $question = 'Сформируй CSV по всем актам организации. '.$clause;
+        }
         if ($variant === 'without_drafts') {
             $question = 'Сформируй CSV. Не включай черновики в отчет по всем актам организации, группируй по статусам и валютам.';
         }
@@ -274,6 +286,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($comparison) {
             $question = match ($variant) {
+                'preposition_entity_explicit' => 'Сравни все акты организации с актами по проекту '.$second->id.'. Сделай Excel из двух листов.',
+                'compare_subject_organization_only' => 'Сравни все акты организации и все договоры организации с проектом '.$second->id.'. Сделай Excel.',
                 'repeated_entity_explicit', 'compare_subject_repeated_entity' => 'Сравни все акты организации с актами проекта '.$second->id.'. Сделай Excel из двух листов.',
                 'reconcile_explicit', 'compare_subject_reconcile_entity' => 'Сверь все акты организации с проектом '.$second->id.'. Сделай Excel из двух листов.',
                 'explicit', 'missing_org', 'org_project_filter', 'project_range_gt', 'project_range_lte' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
@@ -324,6 +338,10 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             }
             $arguments['format'] = 'xlsx';
             $arguments['sections'] = $variant === 'missing_org' ? [$projectSection] : [$organizationSection, $projectSection];
+            if ($variant === 'compare_subject_organization_only') {
+                $extraOrganization = array_replace($organizationSection, ['domain' => 'contracts', 'entity_type' => 'contract', 'title' => 'Договоры организации']);
+                $arguments['sections'][] = $extraOrganization;
+            }
         }
         $result = $this->dispatch($arguments, $question, $first, $org, $actor);
         if ($rejectedScope) {

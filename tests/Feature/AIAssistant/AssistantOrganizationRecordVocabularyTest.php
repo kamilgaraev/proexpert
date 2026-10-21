@@ -16,7 +16,7 @@ final class AssistantOrganizationRecordVocabularyTest extends TestCase
     {
         foreach (['актами', 'утверждёнными актами', 'строками нарядов', 'событиями закупки'] as $phrase) {
             self::assertTrue(AssistantOrganizationRecordVocabulary::matchesEntityPhrase($phrase), $phrase);
-            foreach (['проекта 100' => 100, 'выбранного проекта' => 52] as $project => $id) {
+            foreach (['проекта 100' => 100, 'выбранного проекта' => 52, 'по проекту 100' => 100, 'для выбранного проекта' => 52] as $project => $id) {
                 $question = 'Сравни все акты организации с '.$phrase.' '.$project;
                 self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
                 self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));

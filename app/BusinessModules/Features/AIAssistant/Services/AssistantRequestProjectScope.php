@@ -259,10 +259,11 @@ final readonly class AssistantRequestProjectScope
 
     private static function startsWithProjectOperand(string $text, string $projectPattern): bool
     {
-        if (preg_match('/^(?:'.$projectPattern.')/iu', $text) === 1) {
+        $preposition = '(?:(?:по|для|в|во|на|из)\s+)?';
+        if (preg_match('/^'.$preposition.'(?:'.$projectPattern.')/iu', $text) === 1) {
             return true;
         }
-        if (preg_match('/^([\pL\pN_-]+(?:\s+[\pL\pN_-]+){0,15}?)\s+(?:'.$projectPattern.')/iu', $text, $match) !== 1
+        if (preg_match('/^([\pL\pN_-]+(?:\s+[\pL\pN_-]+){0,15}?)\s+'.$preposition.'(?:'.$projectPattern.')/iu', $text, $match) !== 1
             || preg_match('/(?<![\pL\pN])(?:не|без|кроме|исключая)(?![\pL\pN])/iu', $match[1]) === 1) {
             return false;
         }
@@ -316,7 +317,7 @@ final readonly class AssistantRequestProjectScope
             $prefix = substr($question, 0, $offset);
             $tail = substr($question, $offset + strlen($conjunction));
             if ((self::organizationScope($tail, false) && preg_match('/(?<![\pL\pN])'.$project.'/iu', $prefix) === 1)
-                || (self::organizationScope($prefix, false) && self::startsWithProjectOperand(preg_replace('/^(?:по|в|во|на|для)\s+/iu', '', $tail) ?? $tail, $project))) {
+                || (self::organizationScope($prefix, false) && self::startsWithProjectOperand($tail, $project))) {
                 return true;
             }
         }
@@ -423,13 +424,13 @@ final readonly class AssistantRequestProjectScope
 
     private static function excludedProjectPattern(): string
     {
-        $negative = '(?<![\pL\pN])(?:без|кроме|исключая|не\s+включая|за\s+исключением|не(?:\s+(?:в|во|на|по|для|из|с|со))?)\s+';
         $noun = '(?<![\pL\pN])(?:проект|объект)[а-яё]*(?![\pL\pN])';
         $stop = '(?:\s+(?:с|со|против|относительно)\s+(?:'.self::CURRENT_PROJECT.'|'.$noun.')|[,;.!?\r\n]|$)';
         $name = '(?:(?!'.$stop.')[^,;.!?\r\n])+';
         $operand = '(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.'|'.$noun.'\s*:?\s*(?:'.self::QUOTED_NAME.')|'.$noun.'\s+'.$name.')';
         $excluded = '(?:'.$operand.'|'.$noun.')';
         $directive = '(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?(?:включ(?:ать|ай(?:те)?|и(?:те)?)|учитыва(?:ть|й(?:те)?|ем)|уч(?:ти(?:те)?|есть))|исключ(?:ить|и(?:те)?|ай(?:те)?))(?![\pL\pN])';
+        $negative = '(?<![\pL\pN])(?:без|кроме|исключая|не\s+включая|за\s+исключением|не(?:\s+(?:в|во|на|по|для|из|с|со))?|'.$directive.')\s+';
         $ending = '(?=\s*(?:$|[,;.!?\r\n]|(?:в|из|для)\s+(?:отч[её]т[а-яё]*|сводк[а-яё]*|выборк[а-яё]*|CSV|XLSX|Excel)(?![\pL\pN])))';
         $postfix = '\s*(?:[,—–:-]\s*)?(?:пожалуйста\s*,?\s*)?'.$directive.$ending;
 
