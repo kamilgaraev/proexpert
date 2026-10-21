@@ -22,6 +22,12 @@ use function trans_message;
 
 class NormativeCandidateSelectionService
 {
+    private const RESOLUTION_MESSAGE_CODES = [
+        'normative_dataset_not_pinned', 'normative_applicability_date_not_pinned',
+        'normative_resource_context_not_pinned', 'normative_resource_context_not_approved',
+        'unit_unknown', 'unit_mismatch', 'object_type_mismatch', 'normative_section_mismatch',
+    ];
+
     public function __construct(
         protected EstimateNormativeMatcher $matcher,
         protected ResourceAssemblyService $resourceAssemblyService,
@@ -112,7 +118,7 @@ class NormativeCandidateSelectionService
                         $selected = $resolution['item'];
                         if ($selected === null) {
                             throw $this->validationException([
-                                'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
+                                'norm_id' => $this->resolutionMessages($resolution['blocking_issues']),
                             ]);
                         }
                         $selected['normative_match']['selected_by_user'] = true;
@@ -302,6 +308,19 @@ class NormativeCandidateSelectionService
         } catch (\Throwable) {
             return false;
         }
+    }
+
+    private function resolutionMessages(array $codes): array
+    {
+        $messages = [];
+        foreach ($codes !== [] ? $codes : ['normative_candidate_not_available'] as $code) {
+            $key = is_string($code) && in_array($code, self::RESOLUTION_MESSAGE_CODES, true)
+                ? 'estimate_generation.normative_resolution.'.$code
+                : 'estimate_generation.normative_candidate_not_available';
+            $messages[] = $this->message($key);
+        }
+
+        return array_values(array_unique($messages));
     }
 
     protected function message(string $key): string
