@@ -19,6 +19,9 @@ final class AssistantReportComparisonSpecification
         }
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $question = preg_replace('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?|без\s+)'.self::COMPARISON_WORD.'/iu', ' ', $question) ?? $question;
+        $object = '(?:их|это|ничего|(?:(?:эти|этих|полученные|полученных)\s+)?(?:данные|данных|результаты|результатов|отч[её]ты|отч[её]тов|сведения|сведений))';
+        $modifier = '(?:между\s+(?:собой|ними)|друг\s+с\s+другом|сейчас|пока|здесь|отдельно|дополнительно)';
+        $question = preg_replace('/'.self::COMPARISON_WORD.'(?:\s+'.$object.')?(?:\s+'.$modifier.'){0,2}\s*(?:[—–:-]\s*)?не\s+(?:нуж(?:но|на|ны|ен)|надо|требуется|следует|стоит)(?![\pL\pN])/iu', ' ', $question) ?? $question;
         if (preg_match('/'.self::COMPARISON_WORD.'/iu', $question) !== 1) {
             return;
         }

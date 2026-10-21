@@ -281,8 +281,19 @@ final readonly class AssistantRequestProjectScope
             return false;
         }
 
-        return preg_match('/^(?:'.self::recordNouns().')$/iu', $match[1]) === 1
-            || AssistantOrganizationRecordVocabulary::matchesEntityPhrase($match[1]);
+        $phrase = $match[1];
+        for ($depth = 0; $depth < 3; $depth++) {
+            if (preg_match('/^(?:'.self::recordNouns().')$/iu', $phrase) === 1
+                || AssistantOrganizationRecordVocabulary::matchesEntityPhrase($phrase)) {
+                return true;
+            }
+            if (preg_match('/^(?:данн(?:ые|ых|ым|ыми)|сведени(?:я|й|ям|ями)|информаци(?:я|и|ю|ей)|показател(?:и|ей|ям|ями)|результат(?:ы|ов|ам|ами)|отч[её]т(?:ы|ов|ам|ами)|сводк(?:а|и|у|ой|ами)|реестр(?:ы|ов|ам|ами)|спис(?:ок|ка|ки|ков|кам|ками))\s+(?:по|о|об|про)\s+(.+)$/iu', $phrase, $wrapper) !== 1) {
+                return false;
+            }
+            $phrase = $wrapper[1];
+        }
+
+        return false;
     }
 
     private static function hasExplicitProjectSections(string $question): bool

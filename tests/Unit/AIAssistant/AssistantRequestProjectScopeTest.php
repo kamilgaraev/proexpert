@@ -201,6 +201,51 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_wrapped_entity_phrases_preserve_both_comparison_operands(): void
+    {
+        foreach (['данными по актам', 'сведениями по актам', 'информацией по договорам',
+            'данными по сведениям по актам'] as $phrase) {
+            $question = 'Сравни все акты организации '.(str_starts_with($phrase, 'сведениями') ? 'со' : 'с').' '.$phrase.' проекта 100';
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+            self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 100], 52, true));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 100]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        }
+        foreach (['чужими данными по актам', 'данными чужой организации по актам', 'данными по неизвестным сущностям',
+            'не данными по актам', 'колонками по актам'] as $phrase) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide('Сравни все акты организации с '.$phrase.' проекта 100'), $phrase);
+        }
+    }
+
+    public function test_postpositive_comparison_negation_allows_heterogeneous_report_sections(): void
+    {
+        foreach (['Сравнивать их не нужно', 'Сопоставлять их не надо', 'Сверять данные между собой не требуется',
+            'Сравнение этих данных не нужно', 'Сравнивать между собой не стоит', 'Сопоставлять — не нужно',
+            'Сравнивать их сейчас не надо', 'Сверка не нужна'] as $clause) {
+            $question = 'Все акты организации, а также договоры проекта 100. '.$clause;
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts'],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts']]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments), $clause);
+        }
+    }
+
+    public function test_postpositive_negation_does_not_remove_a_separate_comparison(): void
+    {
+        foreach (['Все акты организации, а также договоры проекта 100. Сравнивать их не нужно. Но сверь итоги.',
+            'Сравни все акты организации с проектом 100. Файл создавать не нужно.'] as $question) {
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => [
+                    ['scope' => 'organization', 'project_id' => null, 'domain' => 'acts'],
+                    ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts'],
+                ]]);
+                self::fail('An independent affirmative comparison was removed');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
     public function test_project_list_first_comparison_requires_each_project_and_organization(): void
     {
         $question = 'Все акты проектов 100 и 102 сравни со всеми актами организации';

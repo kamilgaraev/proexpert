@@ -99,6 +99,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_explicit'],
             'against relation preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'relation_against_explicit'],
             'relative relation preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'relation_relative_explicit'],
+            'wrapped entity preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'wrapped_entity_explicit'],
+            'wrapped current entity preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'wrapped_entity_current'],
+            'postpositive negation allows heterogeneous workbook' => [true, false, false, 7, 5, false, '', 'composition_negative'],
             'quoted project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_named'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
@@ -228,8 +231,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
         $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
-            || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || str_starts_with($variant, 'project_first_') || str_starts_with($variant, 'relation_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
-        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity', 'preposition_entity_explicit', 'compare_subject_organization_only', 'project_first_explicit', 'relation_against_explicit', 'relation_relative_explicit'], true);
+            || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || str_starts_with($variant, 'project_first_') || str_starts_with($variant, 'relation_') || str_starts_with($variant, 'wrapped_entity_') || $variant === 'composition_negative' || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
+        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity', 'preposition_entity_explicit', 'compare_subject_organization_only', 'project_first_explicit', 'relation_against_explicit', 'relation_relative_explicit', 'wrapped_entity_explicit'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
         }
@@ -293,6 +296,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($comparison) {
             $question = match ($variant) {
+                'wrapped_entity_explicit' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам проекта '.$second->id,
+                'wrapped_entity_current' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам выбранного проекта',
+                'composition_negative' => 'Сделай Excel: все акты организации, а также договоры проекта '.$first->id.'. Сравнивать их не нужно',
                 'relation_against_explicit' => 'Сделай Excel из двух листов: сравни все акты организации против проекта '.$second->id,
                 'relation_relative_explicit' => 'Сделай Excel из двух листов: сравни все акты организации относительно проекта '.$second->id,
                 'project_first_explicit' => 'Сделай Excel из двух листов: все акты проекта '.$second->id.' сравни со всеми актами организации',
@@ -318,6 +324,14 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $projectSection['project_id'] = $secondProject ? $second->id : $first->id;
             $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']],
                 ...($filtered ? array_slice($filters, $nestedProject ? 1 : 0) : [])];
+            if ($variant === 'composition_negative') {
+                $projectSection['domain'] = 'contracts';
+                $projectSection['entity_type'] = 'contract';
+                $projectSection['columns'] = ['id', 'number'];
+                $projectSection['group_by'] = [];
+                $projectSection['metrics'] = [];
+                $projectSection['order_by'] = [['field' => 'id', 'direction' => 'asc']];
+            }
             if (in_array($variant, ['compare_subject_entity', 'compare_subject_reconcile_entity', 'compare_subject_repeated_entity'], true)) {
                 $projectSection['domain'] = 'contracts';
                 $projectSection['entity_type'] = 'contract';
@@ -398,10 +412,16 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                     $sheetRows[] = array_values(array_filter($sheet->toArray(), static fn (array $row): bool => in_array($row[1] ?? null, ['RUB', 'USD', 'EUR'], true)));
                 }
                 $rows = $sheetRows[0];
-                $projectGroups = array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $sheetRows[1]);
-                self::assertEqualsCanonicalizing($secondProject
-                    ? [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']]
-                    : [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']], $projectGroups);
+                if ($variant === 'composition_negative') {
+                    $contractIds = array_map(static fn (array $row): int => (int) $row[0],
+                        array_values(array_filter($workbook->getSheet(1)->toArray(), static fn (array $row): bool => is_numeric($row[0] ?? null))));
+                    self::assertEqualsCanonicalizing(Contract::query()->where('project_id', $first->id)->pluck('id')->all(), $contractIds);
+                } else {
+                    $projectGroups = array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $sheetRows[1]);
+                    self::assertEqualsCanonicalizing($secondProject
+                        ? [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']]
+                        : [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']], $projectGroups);
+                }
                 if (str_starts_with($variant, 'multiple_named')) {
                     self::assertEqualsCanonicalizing([['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']],
                         array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $sheetRows[2]));
