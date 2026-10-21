@@ -581,6 +581,62 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'no_work_required' => ['Стены не требуются', []];
     }
 
+    #[DataProvider('explicitObjectsWithoutIncidentalScopes')]
+    public function test_weak_material_or_adjective_hints_do_not_authorize_another_explicit_work_scope(string $description, array $expected): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [
+            'structures', 'roofing', 'earthworks', 'finishing', 'ventilation', 'water_supply', 'electricity',
+        ]];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertSame($description, $analysis['object']['manual_description']);
+    }
+
+    public static function explicitObjectsWithoutIncidentalScopes(): iterable
+    {
+        yield 'external_walls' => ['Устройство наружных стен', ['walls']];
+        yield 'roof_insulation' => ['Утепление кровли', ['roof']];
+        yield 'roof_material' => ['Кровля из сэндвич-панелей', ['roof']];
+        yield 'roof_tiles' => ['Монтаж кровли из металлочерепицы', ['roof']];
+        yield 'slab_material' => ['Монолитная плита из газобетона', ['slabs']];
+        yield 'water_supply_valve' => ['Приточный клапан водопровода', ['plumbing']];
+        yield 'stair_landing' => ['Площадка лестницы', ['stairs']];
+        yield 'material_only' => ['Сэндвич-панели и газобетон', []];
+        yield 'flooring_materials_only' => ['Ламинат, плитка и обои', []];
+        yield 'unspecified_insulation' => ['Утепление', []];
+        yield 'unspecified_valve' => ['Приточный клапан', []];
+        yield 'site_work' => ['Благоустройство территории', ['site_preparation']];
+        yield 'explicit_external_area' => ['Наружная площадка', ['site_preparation']];
+        yield 'facade_work' => ['Устройство фасада', ['facade']];
+        yield 'roof_work' => ['Устройство кровли', ['roof']];
+        yield 'wall_work' => ['Устройство стен', ['walls']];
+        yield 'explicit_flooring_operation' => ['Укладка ламината', ['finish_finishing']];
+    }
+
+    public function test_document_only_material_row_keeps_its_legacy_scope_and_source_quantity(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'filename' => 'floor-statement.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'extracted_text' => 'Ламинат', 'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'quantity_takeoffs' => [['quantity' => 12, 'unit' => 'м2', 'source_refs' => [['document_id' => 82]],
+                'normalized_payload' => ['quantity_key' => 'finish.floor']]],
+            'scope_inferences' => [['scope_type' => 'finishing', 'inference_type' => 'specification_takeoff',
+                'title' => 'Ламинат по ведомости', 'review_required' => false, 'source_refs' => [['document_id' => 82]],
+                'normalized_payload' => ['quantity_key' => 'finish.floor', 'quantity_value' => 12, 'unit' => 'м2']]],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['finishing']];
+        self::assertSame('finish_finishing', $analysis['source_documents'][0]['scopes']['items'][0]['scope_type']);
+        self::assertSame([], $analysis['detected_structure']['explicit_work_scopes']);
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame(['custom-finishing'], array_column($payload['local_estimates'], 'key'));
+        $items = $payload['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(1, $items);
+        self::assertSame('12', $items[0]['quantity']);
+        self::assertSame(82, $items[0]['source_refs'][0]['document_id']);
+    }
+
     #[DataProvider('oppositeFinishingPhases')]
     public function test_document_finishing_phase_does_not_suppress_a_different_requested_phase(string $description, string $quantityKey, string $requestedPackage): void
     {

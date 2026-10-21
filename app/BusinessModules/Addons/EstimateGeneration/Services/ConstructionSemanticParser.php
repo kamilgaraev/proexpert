@@ -58,7 +58,7 @@ class ConstructionSemanticParser
             ?? $buildingType
         );
         $sourceRefs = $this->extractSourceRefs($combinedText);
-        $manualScopes = $this->extractScopes($description, true);
+        $manualScopes = $this->extractScopes($description, true, manualExplicit: true);
         $explicitScopes = $this->mergeScopes(
             $manualScopes,
             ...array_map(
@@ -465,20 +465,23 @@ class ConstructionSemanticParser
     /**
      * @return array{items: array<int, array<string, mixed>>, zones: array<int, string>, constructives: array<int, string>}
      */
-    protected function extractScopes(string $text, bool $strictMode): array
+    protected function extractScopes(string $text, bool $strictMode, bool $manualExplicit = false): array
     {
         $items = [];
         $zones = [];
         $constructives = [];
-        $keywords = $this->scopeKeywords();
+        $keywords = $manualExplicit ? $this->explicitScopeKeywords(mb_strtolower($text)) : $this->scopeKeywords();
 
-        foreach ($this->scopeCandidateLines($text, $keywords) as $line) {
+        foreach ($this->scopeCandidateLines($text, $keywords, $manualExplicit) as $line) {
             $normalizedLine = trim(mb_strtolower($this->cleanLine($line)));
             if ($normalizedLine === '') {
                 continue;
             }
 
-            foreach ($this->detectScopeTypes($normalizedLine, $keywords) as $scopeType) {
+            $scopeTypes = $manualExplicit
+                ? $this->detectScopeTypes($normalizedLine, $keywords)
+                : array_filter([$this->detectScopeType($normalizedLine, $keywords)]);
+            foreach ($scopeTypes as $scopeType) {
                 if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
                     continue;
                 }
@@ -498,6 +501,26 @@ class ConstructionSemanticParser
             'zones' => array_values(array_filter(array_unique($zones))),
             'constructives' => array_values(array_unique($constructives)),
         ];
+    }
+
+    private function explicitScopeKeywords(string $text): array
+    {
+        $weakHints = [
+            'ламинат', 'плитка', 'обои', 'основание под', 'бетонная подготовка', 'кладоч', 'газобетон',
+            'металлочерепиц', 'свет', 'приточн', 'клапан', 'утеплен', 'утеплён', 'облицовк',
+            'облицовка', 'сэндвич-панел', 'сендвич-панел', 'наружн', 'разгруз', 'площадк', 'подъезд', 'проезд',
+        ];
+
+        $keywords = array_map(static fn (array $patterns): array => array_values(array_diff($patterns, $weakHints)), $this->scopeKeywords());
+        $keywords['site'] = [...$keywords['site'], 'наружная площадка', 'подъезд для грузового транспорта', 'разгрузочная зона'];
+        foreach (['ламинат', 'плитка', 'обои'] as $material) {
+            preg_match_all('~(?<![\p{L}\p{N}])(?:укладк|настил|оклейк|поклейк|монтаж)\p{L}*\s+'.preg_quote($material, '~').'\p{L}*~u', $text, $matches);
+            foreach ($matches[0] as $operation) {
+                $keywords['finish_finishing'][] = $operation;
+            }
+        }
+
+        return $keywords;
     }
 
     /**
@@ -526,6 +549,9 @@ class ConstructionSemanticParser
                 $offset = 0;
                 while (($position = mb_strpos($normalizedLine, $pattern, $offset)) !== false) {
                     $offset = $position + $length;
+                    if ($position > 0 && preg_match('/[\p{L}\p{N}]$/u', mb_substr($normalizedLine, 0, $position)) === 1) {
+                        continue;
+                    }
                     foreach ($excluded as $span) {
                         if ($position < $span['end'] && $span['start'] < $offset) {
                             continue 2;
@@ -790,7 +816,7 @@ class ConstructionSemanticParser
      * @param  array<string, array<int, string>>  $keywords
      * @return array<int, string>
      */
-    protected function scopeCandidateLines(string $text, array $keywords): array
+    protected function scopeCandidateLines(string $text, array $keywords, bool $preserveExclusionContext = false): array
     {
         $lines = preg_split('/\r\n|\r|\n/u', $text) ?: [];
         $candidates = [];
@@ -819,7 +845,7 @@ class ConstructionSemanticParser
                     }
 
                     if ($this->detectScopeType(mb_strtolower($this->cleanLine($part)), $keywords) !== null) {
-                        foreach ($this->expandCompoundScopePart($part, $keywords) as $candidate) {
+                        foreach ($this->expandCompoundScopePart($part, $keywords, $preserveExclusionContext) as $candidate) {
                             $candidates[] = $candidate;
                         }
                     }
@@ -975,9 +1001,9 @@ class ConstructionSemanticParser
      * @param  array<string, array<int, string>>  $keywords
      * @return array<int, string>
      */
-    protected function expandCompoundScopePart(string $part, array $keywords): array
+    protected function expandCompoundScopePart(string $part, array $keywords, bool $preserveExclusionContext = false): array
     {
-        if ($this->explicitScopeExclusionSpans(mb_strtolower($this->cleanLine($part))) !== []) {
+        if ($preserveExclusionContext && $this->explicitScopeExclusionSpans(mb_strtolower($this->cleanLine($part))) !== []) {
             return [$part];
         }
         $segments = array_values(array_filter(array_map(
