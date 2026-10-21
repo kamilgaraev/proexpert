@@ -30,51 +30,19 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
-    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null, ?array $projectReferences = null, ?PackagePlanData $packagePlan = null, array $sourceWorkIntents = [], bool $sourceOnly = false): array
+    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null, ?array $projectReferences = null, ?PackagePlanData $packagePlan = null): array
     {
         $quantityModel = $this->documentQuantityModel($analysis);
         $items = $this->projectReferenceItems($projectReferences ?? $this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section, $workItemLimit), $localEstimate, $section);
-        $packageKey = (string) ($localEstimate['key'] ?? '');
-        $packageIntents = array_values(array_filter($sourceWorkIntents, static fn (array $intent): bool => in_array($packageKey,
-            [$intent['package_key'], 'custom-'.$intent['package_key']], true)));
-        $replacedFallback = false;
-
         $definitions = $this->definitions($localEstimate, $section, $analysis, $quantityModel, $packagePlan);
         foreach ($definitions as $index => $definition) {
             $item = $this->workItemFromDefinition($definition, $localEstimate, $section, $analysis, $quantityModel, $index);
 
             if ($item !== null) {
-                if ($sourceOnly && $packageIntents !== [] && ($item['metadata']['generation_source'] ?? null) === 'qualitative_work_catalog') {
-                    $replacedFallback = true;
-                    continue;
-                }
                 $items[] = $item;
             }
         }
-        if ($packageIntents !== [] && ($replacedFallback || ($items === [] && ($sourceOnly || $definitions === [])))) {
-            foreach ($packageIntents as $intent) {
-                $items[] = $this->sourceWorkOutline($intent, $sourceWorkIntents, $localEstimate, $section);
-            }
-        }
-
         return $this->uniquePricedItems($items);
-    }
-
-    private function sourceWorkOutline(array $intent, array $sourceWorkIntents, array $estimate, array $section): array
-    {
-        $siblings = array_filter($sourceWorkIntents, static fn (array $candidate): bool => $candidate['origin'] === $intent['origin']
-            && $candidate['rawtitle'] === $intent['rawtitle'] && $candidate['realrefs'] === $intent['realrefs']);
-        $name = count(array_unique(array_column($siblings, 'package_key'))) > 1
-            ? (new ConstructionSemanticParser)->scopeDisplayTitle($intent['scope_type']) : $intent['rawtitle'];
-        $key = $estimate['key'].'-source-intent-'.substr(hash('sha256', json_encode($intent, JSON_THROW_ON_ERROR)), 0, 16);
-        $item = $this->unknownQuantityWorkItem(['name' => $name, 'normative_search_text' => $intent['rawtitle'],
-            'category' => $intent['scope_type'], 'quantity_key' => null, 'operations' => []], $estimate, $section, $key);
-        $item['source_refs'] = $intent['realrefs'];
-        unset($item['metadata']['quantity_key']);
-        $item['metadata']['generation_source'] = 'source_work_intent';
-        $item['metadata']['source_work_intent'] = $intent;
-
-        return $item;
     }
 
     /** @return list<array<string,mixed>> */
@@ -1361,7 +1329,7 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Воздухораспределители склада', 'ventilation', 'монтаж воздухораспределителей складской зоны', 'ventilation.warehouse_points'),
                 $this->definition('Воздухораспределители офиса', 'ventilation', 'монтаж воздухораспределителей офисной зоны', 'ventilation.office_points'),
             ],
-            'fire_safety', 'requested_fire_alarm' => [
+            'fire_safety' => [
                 $this->definition('Пожарная сигнализация', 'engineering', 'монтаж пожарной сигнализации и оповещения', 'warehouse.fire'),
             ],
             'rough_finishing' => [

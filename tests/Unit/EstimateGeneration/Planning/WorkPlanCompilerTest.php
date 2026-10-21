@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Planning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlannerResponseData;
@@ -401,48 +400,9 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame(['status' => 'pinned'], $pin);
     }
 
-    private function assertSourceWorkOutline(array $item, string $rawtitle, string $origin): void
-    {
-        self::assertSame('priced_work', $item['item_type']);
-        foreach (['unit', 'quantity', 'quantity_formula', 'total_cost', 'price_source', 'normative_rate_code'] as $field) {
-            self::assertNull($item[$field]);
-        }
-        foreach (['work_composition', 'materials', 'labor', 'machinery', 'other_resources'] as $field) {
-            self::assertSame([], $item[$field]);
-        }
-        self::assertTrue($item['skip_normative_matching']);
-        self::assertSame('not_calculated', $item['pricing_status']);
-        self::assertSame('quantity_unknown', $item['pricing_blocker']);
-        self::assertContains('unit_requires_confirmation', $item['validation_flags']);
-        self::assertArrayNotHasKey('quantity_key', $item['metadata']);
-        self::assertArrayNotHasKey('specialization_scenario', $item['metadata']);
-        self::assertArrayNotHasKey('material_scenario_work_key', $item['metadata']);
-        self::assertSame('source_work_intent', $item['metadata']['generation_source']);
-        self::assertSame($rawtitle, $item['metadata']['source_work_intent']['rawtitle']);
-        self::assertSame($origin, $item['metadata']['source_work_intent']['origin']);
-    }
 
-    public function test_source_work_outline_and_quantity_alone_do_not_pass_verified_selection(): void
-    {
-        $payload = $this->compiler()->compile(['object' => ['object_type' => 'bridge', 'manual_description' => 'Устройство фундамента'],
-            'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['structures']]], deferNormativePin: true);
-        $item = $payload['local_estimates'][0]['sections'][0]['work_items'][0];
-        $this->assertSourceWorkOutline($item, 'Устройство фундамента', 'user_request');
-        $container = Facade::getFacadeApplication();
-        $container->instance('validator', new \Illuminate\Validation\Factory($container->make('translator')));
-        $projector = (new \ReflectionClass(ConfirmedEvaluationDraftProjector::class))->newInstanceWithoutConstructor();
-        foreach ([null, '3'] as $quantity) {
-            $current = [...$item, 'quantity' => $quantity, 'unit' => $quantity === null ? null : 'm3'];
-            $fresh = ['local_estimates' => [['sections' => [['work_items' => [$current]]]]]];
-            $selected = ['scenario' => ['positions' => [['key' => $item['key'], 'quantity' => '3', 'money_breakdown' => [], 'price_snapshot' => []]]]];
-            try {
-                $projector->projectVerifiedSelection($fresh, $selected, ['scenario_id' => 'base']);
-                self::fail('A source outline without a verified price was accepted.');
-            } catch (\Illuminate\Validation\ValidationException $exception) {
-                self::assertArrayHasKey('draft', $exception->errors());
-            }
-        }
-    }
+
+
 
     private function compiler(): WorkPlanCompiler
     {
@@ -452,6 +412,69 @@ final class WorkPlanCompilerTest extends TestCase
             new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
             new NormativeContextPinResolver,
         );
+    }
+
+    #[DataProvider('unresolvedManualDescriptions')]
+    public function test_unresolved_manual_semantics_require_clarification_without_invented_work(string $description): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'equipment']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+        self::assertContains('project_scope', array_column($payload['document_requirements']['items'], 'key'));
+        self::assertSame($description, $analysis['object']['manual_description']);
+    }
+
+    public static function unresolvedManualDescriptions(): iterable
+    {
+        yield 'stands are not walls' => ['Монтаж стендов'];
+        yield 'exhibition stands are not walls' => ['Монтаж выставочных стендов'];
+        yield 'unknown technology needs clarification' => ['Требуется уточнить неизвестную технологию'];
+    }
+
+
+
+    public static function combinedSourceWorkDescriptions(): iterable
+    {
+        yield 'earthworks and landscaping' => ['Земляные работы и благоустройство территории', ['earthworks']];
+        yield 'water and sewerage' => ['Водоснабжение и канализация', ['water_supply', 'sewerage']];
+    }
+
+    #[DataProvider('rawManualWorkDescriptions')]
+    public function test_raw_manual_work_description_waits_for_composer_semantics(string $description): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $this->assertNoPreComposerWork($analysis);
+        self::assertSame($description, $analysis['object']['manual_description']);
+    }
+
+    public static function rawManualWorkDescriptions(): iterable
+    {
+        foreach ([self::requestedUnknownScopes(), self::multipleExplicitScopes(), self::unknownOptionalSiteRequests(),
+            self::independentOptionalSiteRequests(), self::constructiveRequestsWithExcludedSiteWorks(),
+            self::explicitScopeExclusions(), self::explicitObjectsWithoutIncidentalScopes(),
+            self::nonwarehouseExplicitWorkRequests(), self::combinedSourceWorkDescriptions()] as $index => $cases) {
+            foreach ($cases as $name => $case) {
+                yield $index.'_'.$name => [$case[0]];
+            }
+        }
+    }
+
+    private function assertNoPreComposerWork(array $analysis): void
+    {
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [
+            'structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating',
+            'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment',
+        ]];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+        self::assertContains('project_scope', array_column($payload['document_requirements']['items'], 'key'));
     }
 
     #[DataProvider('unknownSelectedSections')]
@@ -480,38 +503,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'equipment_industrial_profile' => [['equipment'], 'industrial'];
     }
 
-    #[DataProvider('requestedUnknownScopes')]
-    public function test_named_unknown_preserves_each_supported_explicit_work_scope(string $description, string $scope, string $package, string $selected): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $planner = new PackagePlannerService;
-        $profile = $planner->profileFromAnalysis($analysis);
-        self::assertSame([$scope], array_column($analysis['detected_structure']['explicit_work_scopes'], 'scope_type'));
-        self::assertSame('bridge', $profile->objectType);
-        self::assertSame([$package], array_column($planner->plan($profile)->packages, 'key'));
 
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [$selected]];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
-        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
-        foreach ($payload['local_estimates'] as $estimate) {
-            foreach ($estimate['sections'] as $section) {
-                foreach ($section['work_items'] as $item) {
-                    self::assertNull($item['quantity']);
-                    self::assertNull($item['total_cost']);
-                    self::assertNull($item['price_source']);
-                }
-            }
-        }
-        $items = $payload['local_estimates'][0]['sections'][0]['work_items'];
-        self::assertCount(1, $items);
-        $this->assertSourceWorkOutline($items[0], $description, 'user_request');
-        if ($scope === 'earthworks') {
-            self::assertNotContains('site.geodesy', array_column(array_column($items, 'metadata'), 'quantity_key'));
-        }
-    }
 
     public static function requestedUnknownScopes(): iterable
     {
@@ -536,25 +528,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'site' => ['Разгрузочная зона', 'site', 'site_preparation', 'earthworks'];
     }
 
-    #[DataProvider('multipleExplicitScopes')]
-    public function test_multiple_explicit_work_scopes_survive_universal_selection_without_nested_keyword_duplicates(string $description, array $expected, array $selected): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => $selected];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
 
-        self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame($expected, array_column($payload['local_estimates'], 'key'));
-        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-        foreach ($payload['local_estimates'] as $estimate) {
-            foreach ($estimate['sections'] as $section) {
-                foreach ($section['work_items'] as $item) {
-                    self::assertNull($item['quantity']);
-                    self::assertNull($item['total_cost']);
-                }
-            }
-        }
-    }
 
     public static function multipleExplicitScopes(): iterable
     {
@@ -600,24 +574,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'finishing_list_does_not_swallow_slabs' => ['Покраска потолков, перекрытия', ['finish_finishing', 'slabs'], ['finishing', 'structures']];
     }
 
-    #[DataProvider('unknownOptionalSiteRequests')]
-    public function test_unknown_optional_site_request_survives_universal_earthworks_without_source_quantities(string $description, string $package): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['earthworks']];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
-        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
-        self::assertCount(1, $items);
-        $this->assertSourceWorkOutline($items[0], $description, 'user_request');
-        foreach ($items as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-            self::assertNull($item['price_source']);
-        }
-    }
+
 
     public static function unknownOptionalSiteRequests(): iterable
     {
@@ -645,16 +602,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'siteworks' => ['Без благоустройства'];
     }
 
-    #[DataProvider('independentOptionalSiteRequests')]
-    public function test_optional_site_exclusion_keeps_an_independent_positive_clause(string $description, string $package): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
-        self::assertSame($description, $analysis['object']['manual_description']);
-    }
+
 
     public static function independentOptionalSiteRequests(): iterable
     {
@@ -664,17 +612,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'independent_operation_same_sentence' => ['Без дорог и устройство наружных сетей', 'external_networks'];
     }
 
-    #[DataProvider('constructiveRequestsWithExcludedSiteWorks')]
-    public function test_manual_zone_mirror_does_not_revive_excluded_site_flags(string $description): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'earthworks']];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame(['walls'], array_column($analysis['detected_structure']['explicit_work_scopes'], 'scope_type'));
-        self::assertSame(['walls'], array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame(['walls'], array_column($payload['local_estimates'], 'key'));
-        self::assertSame($description, $analysis['object']['manual_description']);
-    }
+
 
     public static function constructiveRequestsWithExcludedSiteWorks(): iterable
     {
@@ -716,34 +654,20 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
-    public function test_known_profiles_preserve_their_explicit_fire_alarm_request_in_automation(): void
+    public function test_raw_manual_fire_alarm_description_does_not_add_an_automation_request(): void
     {
         foreach (['warehouse', 'industrial', 'house'] as $type) {
             $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type, 'description' => 'Пожарная сигнализация'], []);
             $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['automation']];
             $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
             $keys = array_column($payload['local_estimates'], 'key');
-            self::assertContains('requested_fire_alarm', $keys, $type);
+            self::assertNotContains('requested_fire_alarm', $keys, $type);
             self::assertNotContains('fire_safety', $keys, $type);
-            $alarm = $payload['local_estimates'][array_search('requested_fire_alarm', $keys, true)];
-            self::assertSame(['Пожарная сигнализация'], array_column($alarm['sections'][0]['work_items'], 'name'), $type);
-            if ($type !== 'warehouse') {
-                $this->assertSourceWorkOutline($alarm['sections'][0]['work_items'][0], 'Пожарная сигнализация', 'user_request');
-            }
+            self::assertSame($type === 'industrial' ? ['automation'] : [], $keys, $type);
         }
     }
 
-    #[DataProvider('explicitScopeExclusions')]
-    public function test_explicitly_excluded_work_is_not_a_positive_requested_scope(string $description, array $expected): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'roofing', 'finishing']];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame($expected, array_column($analysis['detected_structure']['explicit_work_scopes'], 'scope_type'));
-        self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame($description, $analysis['object']['manual_description']);
-        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-    }
+
 
     public static function explicitScopeExclusions(): iterable
     {
@@ -772,22 +696,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'no_work_required' => ['Стены не требуются', []];
     }
 
-    #[DataProvider('explicitObjectsWithoutIncidentalScopes')]
-    public function test_weak_material_or_adjective_hints_do_not_authorize_another_explicit_work_scope(string $description, array $expected): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [
-            'structures', 'roofing', 'earthworks', 'finishing', 'ventilation', 'water_supply', 'electricity',
-        ]];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-        self::assertSame($description, $analysis['object']['manual_description']);
-        if ($expected === []) {
-            $planner = new PackagePlannerService;
-            self::assertSame([], $planner->plan($planner->profileFromAnalysis($analysis))->packages);
-        }
-    }
+
 
     public static function explicitObjectsWithoutIncidentalScopes(): iterable
     {
@@ -837,31 +746,19 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
-    public function test_explicit_road_access_nouns_keep_the_existing_optional_road_signal(): void
+    public function test_raw_manual_road_access_nouns_wait_for_composer_semantics(): void
     {
         foreach (['Дорога', 'Устройство подъезда', 'Устройство проезда'] as $description) {
             $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
-            $planner = new PackagePlannerService;
-            $profile = $planner->profileFromAnalysis($analysis);
-            self::assertTrue($profile->planningSignals['roads']);
-            self::assertContains('roads', array_column($planner->plan($profile)->packages, 'key'));
+            $this->assertNoPreComposerWork($analysis);
         }
     }
 
-    public function test_explicit_landscaping_keeps_only_its_existing_work_in_universal_earthworks(): void
+    public function test_raw_manual_landscaping_waits_for_composer_semantics(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => 'Благоустройство территории'], []);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame(['siteworks'], array_column($payload['package_plan']['packages'], 'key'));
-        $items = $payload['local_estimates'][0]['sections'][0]['work_items'];
-        self::assertCount(1, $items);
-        $this->assertSourceWorkOutline($items[0], 'Благоустройство территории', 'user_request');
-        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-        foreach ($items as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-        }
+        $this->assertNoPreComposerWork($analysis);
     }
 
     public function test_known_profiles_keep_separate_requested_network_and_road_packages_when_landscaping_is_narrowed(): void
@@ -918,12 +815,7 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
         $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
         if (! $applicable) {
-            if ($description === 'Устройство дороги') {
-                self::assertCount(1, $items);
-                $this->assertSourceWorkOutline($items[0], $description, 'user_request');
-            } else {
                 self::assertSame([], $items);
-            }
 
             return;
         }
@@ -942,24 +834,23 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'document_road_scope_with_excluded_manual_request' => ['Без дорог', 'warehouse.roads', 'roads', false];
     }
 
-    public function test_site_preparation_does_not_hide_independent_landscaping_request_or_document_key(): void
+    public function test_raw_manual_site_and_landscaping_requests_do_not_create_work_but_document_quantity_survives(): void
     {
         foreach (['bridge', 'warehouse', 'industrial'] as $type) {
             $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type,
                 'description' => 'Наружная площадка и благоустройство территории'], []);
             $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
-            $planner = new PackagePlannerService;
-            $profile = $planner->profileFromAnalysis($analysis);
-            $keys = array_column($planner->plan($profile)->packages, 'key');
-            self::assertContains('site_preparation', $keys, $type);
-            self::assertContains('siteworks', $keys, $type);
-            self::assertSame(1, count(array_keys($keys, 'siteworks', true)), $type);
-            $items = array_column($this->compiler()->compile($analysis, deferNormativePin: true)['local_estimates'], null, 'key');
             if ($type === 'bridge') {
-                self::assertCount(1, $items['siteworks']['sections'][0]['work_items']);
-                $this->assertSourceWorkOutline($items['siteworks']['sections'][0]['work_items'][0], 'Наружная площадка и благоустройство территории', 'user_request');
+                $this->assertNoPreComposerWork($analysis);
             } else {
-                self::assertSame(['siteworks.area'], array_column(array_column($items['siteworks']['sections'][0]['work_items'], 'metadata'), 'quantity_key'), $type);
+                $baseline = (new ConstructionSemanticParser)->parse(['building_type' => $type], []);
+                $baseline['evaluation_policy'] = $analysis['evaluation_policy'];
+                $withDescription = $this->compiler()->compile($analysis, deferNormativePin: true);
+                $withoutDescription = $this->compiler()->compile($baseline, deferNormativePin: true);
+                self::assertSame(array_column($withoutDescription['package_plan']['packages'], 'key'),
+                    array_column($withDescription['package_plan']['packages'], 'key'), $type);
+                self::assertSame(array_column($withoutDescription['local_estimates'], 'key'),
+                    array_column($withDescription['local_estimates'], 'key'), $type);
             }
 
             $documentAnalysis = (new ConstructionSemanticParser)->parse(['building_type' => $type, 'description' => 'Наружная площадка'], [[
@@ -975,7 +866,7 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
-    public function test_trusted_document_multiple_work_requests_keep_each_scope_without_numeric_quantities(): void
+    public function test_trusted_document_multiple_work_requests_keep_source_context_without_inventing_work(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
             'id' => 82, 'source_version' => 'source-v1', 'status' => 'ready', 'quality' => ['level' => 'good'],
@@ -983,19 +874,18 @@ final class WorkPlanCompilerTest extends TestCase
         ]]);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
         self::assertSame([], $analysis['detected_structure']['explicit_work_scopes']);
+        $rawScopes = $analysis['source_documents'][0]['scopes'];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame(['foundation', 'walls'], array_column($payload['package_plan']['packages'], 'key'));
-        $items = array_map(static fn (array $estimate): array => $estimate['sections'][0]['work_items'][0], $payload['local_estimates']);
-        self::assertSame(['Фундамент', 'Стены и перегородки'], array_column($items, 'name'));
-        foreach ($items as $item) {
-            $this->assertSourceWorkOutline($item, 'Устройство фундамента и стен', 'document');
-            self::assertSame([82], array_column($item['source_refs'], 'document_id'));
-            self::assertSame(['source-v1'], array_column($item['source_refs'], 'source_version'));
-        }
+        self::assertSame([], $analysis['detected_structure']['explicit_work_scopes']);
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame([82], array_column($analysis['source_documents'], 'id'));
+        self::assertSame('source-v1', $analysis['source_documents'][0]['source_version']);
+        self::assertSame($rawScopes, $analysis['source_documents'][0]['scopes']);
     }
 
     #[DataProvider('documentOptionalScopeProvenance')]
-    public function test_document_optional_work_request_keeps_its_source_provenance(string $text, string $package): void
+    public function test_document_optional_work_request_keeps_its_source_provenance_without_creating_work(string $text, string $package): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
             'id' => 82, 'source_version' => 'source-v1', 'status' => 'ready', 'quality' => ['level' => 'good'],
@@ -1003,16 +893,11 @@ final class WorkPlanCompilerTest extends TestCase
         ]]);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
-        $refs = $payload['package_plan']['packages'][0]['source_refs'];
-        self::assertSame([82], array_column($refs, 'document_id'));
-        self::assertSame(['source-v1'], array_column($refs, 'source_version'));
-        self::assertSame($refs, $payload['local_estimates'][0]['source_refs']);
-        self::assertSame($refs, $payload['local_estimates'][0]['sections'][0]['source_refs']);
-        $items = $payload['local_estimates'][0]['sections'][0]['work_items'];
-        self::assertCount(1, $items);
-        $this->assertSourceWorkOutline($items[0], $text, 'document');
-        self::assertSame($refs, $items[0]['source_refs']);
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame([82], array_column($analysis['source_documents'], 'id'));
+        self::assertSame('source-v1', $analysis['source_documents'][0]['source_version']);
+        self::assertNotEmpty($analysis['source_documents'][0]['scopes']['items']);
     }
 
     public static function documentOptionalScopeProvenance(): iterable
@@ -1034,9 +919,7 @@ final class WorkPlanCompilerTest extends TestCase
         foreach ($payload['local_estimates'] as $estimate) {
             array_push($items, ...array_merge(...array_column($estimate['sections'], 'work_items')));
         }
-        self::assertNotEmpty($items);
-        self::assertCount(1, $items);
-        $this->assertSourceWorkOutline($items[0], $text, 'document');
+        self::assertSame([], $items);
         $keys = array_column(array_column($items, 'metadata'), 'quantity_key');
         self::assertNotContains('electrical.main_cable', $keys);
         self::assertNotContains('electrical.panel', $keys);
@@ -1048,24 +931,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'fixtures' => ['Монтаж светильников'];
     }
 
-    #[DataProvider('nonwarehouseExplicitWorkRequests')]
-    public function test_nonwarehouse_explicit_work_request_keeps_a_work_outline(string $text, string $section): void
-    {
-        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $text], []);
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [$section]];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        $items = [];
-        foreach ($payload['local_estimates'] as $estimate) {
-            array_push($items, ...array_merge(...array_column($estimate['sections'], 'work_items')));
-        }
-        self::assertNotEmpty($items);
-        self::assertCount(1, $items);
-        $this->assertSourceWorkOutline($items[0], $text, 'user_request');
-        foreach ($items as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-        }
-    }
+
 
     public static function nonwarehouseExplicitWorkRequests(): iterable
     {
@@ -1073,7 +939,7 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'roads' => ['Устройство дороги', 'earthworks'];
     }
 
-    public function test_equal_source_work_titles_from_independent_documents_keep_distinct_work_identity(): void
+    public function test_equal_source_scope_titles_from_independent_documents_remain_in_source_context(): void
     {
         $documents = [];
         foreach ([82, 83] as $documentId) {
@@ -1084,18 +950,13 @@ final class WorkPlanCompilerTest extends TestCase
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], $documents);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        foreach ($payload['local_estimates'] as $estimate) {
-            $items = $estimate['sections'][0]['work_items'];
-            self::assertCount(2, $items);
-            self::assertNotSame($items[0]['key'], $items[1]['key']);
-            self::assertSame([82, 83], array_map(static fn (array $item): int => $item['source_refs'][0]['document_id'], $items));
-            foreach ($items as $item) {
-                $this->assertSourceWorkOutline($item, 'Устройство фундамента и стен', 'document');
-            }
-        }
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame([82, 83], array_column($analysis['source_documents'], 'id'));
+        self::assertSame(['source-v1', 'source-v1'], array_column($analysis['source_documents'], 'source_version'));
     }
 
-    public function test_trusted_document_scope_without_a_number_preserves_a_limited_outline(): void
+    public function test_trusted_document_scope_without_a_number_preserves_source_context_only(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
             'id' => 82, 'source_version' => 'source-v1', 'filename' => 'foundation.pdf', 'status' => 'ready',
@@ -1104,40 +965,35 @@ final class WorkPlanCompilerTest extends TestCase
         ]]);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
         self::assertSame([], $analysis['detected_structure']['explicit_work_scopes']);
-        self::assertSame(['foundation'], array_column($analysis['detected_structure']['scopes'], 'scope_type'));
+        self::assertSame(['foundation'], array_column($analysis['source_documents'][0]['scopes']['items'], 'scope_type'));
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame(['foundation'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
         self::assertSame('document_limited', $payload['document_requirements']['coverage']);
         self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
-        $expectedRef = ['source_version' => 'source-v1', 'filename' => 'foundation.pdf', 'document_id' => 82, 'excerpt' => 'Устройство фундамента'];
-        self::assertContains($expectedRef, $payload['package_plan']['packages'][0]['source_refs']);
-        foreach ($payload['local_estimates'] as $estimate) {
-            self::assertContains($expectedRef, $estimate['source_refs']);
-            self::assertContains($expectedRef, $estimate['sections'][0]['source_refs']);
-            foreach (array_merge(...array_column($estimate['sections'], 'work_items')) as $item) {
-                self::assertContains($expectedRef, $item['source_refs']);
-                self::assertNull($item['quantity']);
-                self::assertNull($item['total_cost']);
-                self::assertNull($item['price_source']);
-                self::assertNull($item['quantity_evidence'] ?? null);
-                self::assertSame('unknown', $item['metadata']['quantity_source']);
-            }
-        }
+        self::assertSame(82, $analysis['source_documents'][0]['id']);
+        self::assertSame('source-v1', $analysis['source_documents'][0]['source_version']);
+        self::assertSame('foundation.pdf', $analysis['source_documents'][0]['filename']);
+        self::assertContains('foundation', array_column($analysis['source_documents'][0]['scopes']['items'], 'scope_type'));
     }
 
     #[DataProvider('excludedDocumentScopeOutlines')]
-    public function test_document_scope_outline_requires_positive_trusted_primary_evidence(string $text, string $status, string $quality, string $role, array $expected = []): void
+    public function test_document_scope_text_does_not_create_work_regardless_of_trust_status(string $text, string $status, string $quality, string $role, array $expected = []): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
             'id' => 82, 'source_version' => 'source-v1', 'status' => $status, 'quality' => ['level' => $quality],
             'extracted_text' => $text, 'document_understanding' => ['role_for_estimation' => $role],
         ]]);
         $rawScopes = $analysis['source_documents'][0]['scopes'];
-        self::assertSame('foundation', $rawScopes['items'][0]['scope_type']);
+        self::assertContains('foundation', array_column($rawScopes['items'], 'scope_type'));
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame($expected, array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([], $payload['local_estimates']);
         self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        foreach ($expected as $scope) {
+            self::assertContains($scope, array_column($rawScopes['items'], 'scope_type'));
+        }
         self::assertSame($rawScopes, $analysis['source_documents'][0]['scopes']);
     }
 
@@ -1182,13 +1038,14 @@ final class WorkPlanCompilerTest extends TestCase
         ]]);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'automation']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame(['foundation'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([], array_column($payload['package_plan']['packages'], 'key'));
         self::assertSame(['fire_safety', 'foundation'], array_column($analysis['source_documents'][0]['scopes']['items'], 'scope_type'));
+        self::assertSame([], $payload['local_estimates']);
         self::assertSame('document_limited', $payload['document_requirements']['coverage']);
     }
 
     #[DataProvider('documentSiteScopeOnlyCases')]
-    public function test_document_site_scope_only_uses_the_actual_existing_intent(string $text, array $packages, array $quantityKeys, string $status = 'ready', string $role = 'quantity_source'): void
+    public function test_document_site_scope_text_keeps_source_context_without_creating_work(string $text, string $status = 'ready', string $role = 'quantity_source'): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
             'id' => 82, 'status' => $status, 'quality' => ['level' => 'good'], 'extracted_text' => $text,
@@ -1196,27 +1053,22 @@ final class WorkPlanCompilerTest extends TestCase
         ]]);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame($packages, array_column($payload['package_plan']['packages'], 'key'));
-        $items = [];
-        foreach ($payload['local_estimates'] as $estimate) {
-            array_push($items, ...array_merge(...array_column($estimate['sections'], 'work_items')));
-        }
-        self::assertSame($quantityKeys, array_column(array_column($items, 'metadata'), 'quantity_key'));
-        self::assertCount(count($packages), $items);
-        foreach ($items as $item) {
-            $this->assertSourceWorkOutline($item, str_contains($text, "\n") ? 'Наружные сети' : $text, 'document');
-        }
+        self::assertSame([], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame(82, $analysis['source_documents'][0]['id']);
+        self::assertSame($status, $analysis['source_documents'][0]['status']);
+        self::assertNotEmpty($analysis['source_documents'][0]['scopes']['items']);
     }
 
     public static function documentSiteScopeOnlyCases(): iterable
     {
-        yield 'earthworks' => ['Земляные работы', ['earthworks'], []];
-        yield 'landscaping' => ['Благоустройство территории', ['siteworks'], []];
-        yield 'excluded_landscaping' => ['Без благоустройства', [], []];
-        yield 'excluded_networks' => ['Наружные сети не требуются', [], []];
-        yield 'ignored_landscaping' => ['Благоустройство территории', [], [], 'ignored'];
-        yield 'reference_only_landscaping' => ['Благоустройство территории', [], [], 'ready', 'reference_estimate'];
-        yield 'excluded_landscaping_keeps_positive_networks' => ["Без благоустройства\nНаружные сети", ['external_networks'], []];
+        yield 'earthworks' => ['Земляные работы'];
+        yield 'landscaping' => ['Благоустройство территории'];
+        yield 'excluded_landscaping' => ['Без благоустройства'];
+        yield 'excluded_networks' => ['Наружные сети не требуются'];
+        yield 'ignored_landscaping' => ['Благоустройство территории', 'ignored'];
+        yield 'reference_only_landscaping' => ['Благоустройство территории', 'ready', 'reference_estimate'];
+        yield 'excluded_landscaping_keeps_positive_networks' => ["Без благоустройства\nНаружные сети"];
     }
 
     public function test_document_text_exclusion_does_not_erase_an_independent_document_quantity(): void
@@ -1259,7 +1111,7 @@ final class WorkPlanCompilerTest extends TestCase
     }
 
     #[DataProvider('oppositeFinishingPhases')]
-    public function test_document_finishing_phase_does_not_suppress_a_different_requested_phase(string $description, string $quantityKey, string $requestedPackage): void
+    public function test_raw_manual_finishing_phase_does_not_add_work_beside_document_quantity(string $description, string $quantityKey, string $requestedPackage): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['description' => $description], [[
             'id' => 82, 'filename' => 'work-statement.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
@@ -1273,8 +1125,9 @@ final class WorkPlanCompilerTest extends TestCase
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['finishing']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
 
-        self::assertSame(['custom-finishing', $requestedPackage], array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame(['custom-finishing', $requestedPackage], array_column($payload['local_estimates'], 'key'));
+        self::assertSame(['custom-finishing'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame(['custom-finishing'], array_column($payload['local_estimates'], 'key'));
+        self::assertNotContains($requestedPackage, array_column($payload['local_estimates'], 'key'));
         $items = array_merge(...array_map(static fn (array $estimate): array => array_merge(...array_column($estimate['sections'], 'work_items')), $payload['local_estimates']));
         $documentItems = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === $quantityKey));
         self::assertSame(12, array_sum(array_column($documentItems, 'quantity')));
@@ -1282,11 +1135,6 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame('12', $documentItems[0]['quantity']);
         self::assertSame(82, $documentItems[0]['source_refs'][0]['document_id']);
         self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-        foreach (array_merge(...array_column($payload['local_estimates'][1]['sections'], 'work_items')) as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-            self::assertSame([], $item['source_refs']);
-        }
     }
 
     public static function oppositeFinishingPhases(): iterable
@@ -1312,40 +1160,25 @@ final class WorkPlanCompilerTest extends TestCase
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['finishing']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
 
-        self::assertSame(['custom-finishing', 'rough_finishing'], array_column($payload['local_estimates'], 'key'));
+        self::assertSame(['custom-finishing'], array_column($payload['local_estimates'], 'key'));
         $documentItems = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
         self::assertCount(2, $documentItems);
         self::assertSame(['12', '12'], array_column($documentItems, 'quantity'));
         self::assertSame(['room-a', 'room-b'], array_map(static fn (array $item): string => $item['metadata']['scope_inference']['normalized_payload']['entity_id'], $documentItems));
-        $outlineItems = array_merge(...array_column($payload['local_estimates'][1]['sections'], 'work_items'));
-        self::assertNotEmpty($outlineItems);
-        foreach ($outlineItems as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-            self::assertArrayNotHasKey('scope_inference', $item['metadata']);
-        }
     }
 
-    public function test_named_unknown_explicit_foundation_remains_a_limited_outline_in_selected_structures(): void
+    public function test_raw_manual_foundation_description_waits_for_composer_semantics(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => 'Устройство фундамента'], []);
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
 
         self::assertSame('bridge', $payload['object_profile']['object_type']);
-        self::assertSame(['foundation'], array_column($payload['local_estimates'], 'key'));
-        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
-        self::assertNotEmpty($items);
-        foreach ($items as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-            self::assertNull($item['price_source']);
-        }
-        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+        $this->assertNoPreComposerWork($analysis);
     }
 
     #[DataProvider('explicitRequestEvidenceBranches')]
-    public function test_explicit_request_survives_document_and_geometry_only_branches(string $description, string $quantityKey, string $context, string $expectedProfile, array $expectedPackages, string $selected): void
+    public function test_document_quantity_survives_without_raw_manual_scope_inference(string $description, string $quantityKey, string $context, string $expectedProfile, array $expectedPackages, string $selected): void
     {
         $analysis = (new ConstructionSemanticParser)->parse([
             'description' => $description, 'generation_mode' => 'strict_documents',
@@ -1366,25 +1199,26 @@ final class WorkPlanCompilerTest extends TestCase
 
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [$selected]];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        $requestedKey = $selected === 'roofing' ? 'roof' : 'heating';
-        self::assertSame([$requestedKey], array_column($payload['local_estimates'], 'key'));
-        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
-        self::assertNotEmpty($items);
-        foreach ($items as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-            self::assertNull($item['price_source']);
-            self::assertSame([], $item['source_refs']);
+        self::assertSame([], array_column($payload['package_plan']['packages'], 'key'));
+        $items = [];
+        foreach ($payload['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                array_push($items, ...$section['work_items']);
+            }
         }
+        $documentItems = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === $quantityKey));
+        self::assertSame([], $documentItems);
+        self::assertSame([], $items);
+        self::assertNotContains($selected === 'roofing' ? 'roof' : 'heating', array_column($payload['local_estimates'], 'key'));
     }
 
     public static function explicitRequestEvidenceBranches(): iterable
     {
-        yield 'document_evidence' => ['Устройство отопления', 'foundation.concrete', 'Ведомость объёмов', 'document_evidence', ['custom-foundation', 'heating'], 'heating'];
-        yield 'floor_plan_geometry' => ['Устройство кровли', 'rough.walls', 'Планировка помещений', 'floor_plan_geometry', ['rough_finishing', 'finish_finishing', 'roof'], 'roofing'];
+        yield 'document_evidence' => ['Устройство отопления', 'foundation.concrete', 'Ведомость объёмов', 'document_evidence', ['custom-foundation'], 'heating'];
+        yield 'floor_plan_geometry' => ['Устройство кровли', 'rough.walls', 'Планировка помещений', 'floor_plan_geometry', ['rough_finishing', 'finish_finishing'], 'roofing'];
     }
 
-    public function test_unknown_document_work_retains_source_and_selected_scope(): void
+    public function test_manual_scope_does_not_duplicate_document_backed_quantity_work(): void
     {
         $source = [['document_id' => 82, 'page_number' => 3]];
         $analysis = ['object' => ['building_type' => 'bridge', 'description' => 'Устройство фундамента'],
@@ -1403,14 +1237,10 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame(['custom-foundation'], array_column($payload['package_plan']['packages'], 'key'));
         self::assertSame(['custom-foundation'], array_column($payload['local_estimates'], 'key'));
         $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
-        self::assertNotEmpty($items);
-        foreach ($items as $item) {
-            self::assertNotEmpty($item['source_refs']);
-            self::assertSame(82, $item['source_refs'][0]['document_id']);
-            self::assertSame(0, $item['total_cost']);
-            self::assertNull($item['price_source']);
-        }
-        self::assertSame(['12'], array_values(array_unique(array_column($items, 'quantity'))));
+        self::assertCount(1, $items);
+        self::assertSame('12', $items[0]['quantity']);
+        self::assertSame([['document_id' => 82, 'page_number' => 3]], $items[0]['source_refs']);
+        self::assertSame('foundation.concrete', $items[0]['metadata']['quantity_key']);
         self::assertSame('document_limited', $payload['document_requirements']['coverage']);
 
         $analysis['evaluation_policy']['selected_sections'] = ['equipment'];
@@ -1765,28 +1595,12 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
-    public function test_universal_description_without_dimensions_keeps_a_work_list_with_unknown_volumes(): void
+    public function test_raw_manual_description_without_dimensions_waits_for_composer_semantics(): void
     {
         $analysis = $this->analysis();
         $analysis['object'] = ['description' => 'Устройство фундамента'];
         $analysis['document_context'] = [];
-        $analysis['evaluation_policy'] = ['mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'construction', 'selected_sections' => ['structures']];
-        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame(['foundation'], array_column($payload['package_plan']['packages'], 'key'));
-        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
-        $items = [];
-        foreach ($payload['local_estimates'] as $estimate) {
-            foreach ($estimate['sections'] as $section) {
-                array_push($items, ...$section['work_items']);
-            }
-        }
-        self::assertNotEmpty($items);
-        foreach ($items as $item) {
-            self::assertNull($item['quantity']);
-            self::assertNull($item['total_cost']);
-            self::assertNotSame('компл', $item['unit']);
-        }
-        self::assertNotEmpty((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector)->candidates($payload['local_estimates']));
+        $this->assertNoPreComposerWork($analysis);
     }
 
     private function analysis(): array

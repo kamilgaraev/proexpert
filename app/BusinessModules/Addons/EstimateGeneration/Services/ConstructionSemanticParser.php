@@ -40,7 +40,7 @@ class ConstructionSemanticParser
                 'scope_inferences' => is_array($document['scope_inferences'] ?? null) ? $document['scope_inferences'] : ($factsSummary['scope_inferences'] ?? []),
                 'quality' => is_array($document['quality'] ?? null) ? $document['quality'] : [],
                 'source_refs' => $this->extractSourceRefs($text),
-                'scopes' => $this->extractScopes($text, false),
+                'scopes' => $this->extractScopes($text),
             ];
         }, $documents);
 
@@ -64,7 +64,7 @@ class ConstructionSemanticParser
             && $explicitBuildingType !== null && trim($explicitBuildingType) !== '' && mb_strtolower(trim($explicitBuildingType)) !== 'custom'
             && ! ObjectTypeSignalClassifier::compatible($explicitObjectType, $explicitBuildingType);
         $sourceRefs = $this->extractSourceRefs($combinedText);
-        $manualScopes = $this->extractScopes($description, true, manualExplicit: true);
+        $manualScopes = $this->extractScopes($description);
         $explicitScopes = $this->mergeScopes(
             $manualScopes,
             ...array_map(
@@ -115,7 +115,7 @@ class ConstructionSemanticParser
                 'zones' => $this->normalizeDetectedZones($scopes['zones']),
                 'constructives' => array_values(array_unique($scopes['constructives'])),
                 'scopes' => $scopes['items'],
-                'explicit_work_scopes' => $manualScopes['items'],
+                'explicit_work_scopes' => [],
             ],
         ];
 
@@ -471,35 +471,25 @@ class ConstructionSemanticParser
     /**
      * @return array{items: array<int, array<string, mixed>>, zones: array<int, string>, constructives: array<int, string>}
      */
-    protected function extractScopes(string $text, bool $strictMode, bool $manualExplicit = false, bool $sourceContext = false): array
+    protected function extractScopes(string $text): array
     {
         $items = [];
         $zones = [];
         $constructives = [];
         $keywords = $this->scopeKeywords();
 
-        foreach ($this->scopeCandidateLines($text, $keywords, $manualExplicit) as $line) {
+        foreach ($this->scopeCandidateLines($text, $keywords) as $line) {
             $normalizedLine = trim(mb_strtolower($this->cleanLine($line)));
             if ($normalizedLine === '') {
                 continue;
             }
 
-            $scopeTypes = $manualExplicit
-                ? $this->manualScopeTypes($normalizedLine)
-                : array_filter([$this->detectScopeType($normalizedLine, $keywords)]);
-            if ($sourceContext && $scopeTypes === []) {
-                $scopeTypes = [null];
-            }
-            foreach ($scopeTypes as $scopeType) {
-                if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
-                    continue;
-                }
-
+            $scopeType = $this->detectScopeType($normalizedLine, $keywords);
+            if ($scopeType !== null) {
                 $items[] = [
-                    'title' => $this->normalizeScopeTitle($line, $scopeType ?? 'custom'),
+                    'title' => $this->normalizeScopeTitle($line, $scopeType),
                     'scope_type' => $scopeType,
                     'source_refs' => $this->extractSourceRefs($line),
-                    ...($sourceContext ? ['rawtitle' => $line, 'positive_text' => $this->positiveWorkText($line)] : []),
                 ];
                 $zones[] = $this->extractZoneTitle($line);
                 $constructives[] = $scopeType;
@@ -507,158 +497,10 @@ class ConstructionSemanticParser
         }
 
         return [
-            'items' => $sourceContext ? $items : $this->uniqueScopeItems($items),
+            'items' => $this->uniqueScopeItems($items),
             'zones' => array_values(array_filter(array_unique($zones))),
             'constructives' => array_values(array_unique($constructives)),
         ];
-    }
-
-    private function manualScopeTypes(string $line): array
-    {
-        $line = $this->positiveWorkText($line);
-        $scopes = [];
-        $finishingContext = null;
-        foreach (preg_split('~,+~u', $line) ?: [] as $group) {
-            $groupScopes = [];
-            foreach (preg_split('~\s+и\s+~u', $group) ?: [] as $clause) {
-                $keywords = $this->explicitScopeKeywords($clause);
-                $clauseScopes = $this->detectScopeTypes($clause, $keywords, bindFinishingSurfaces: true);
-                $finishingScopes = array_values(array_intersect($clauseScopes, ['rough_finishing', 'finish_finishing', 'finishing']));
-                $newOperation = preg_match('~(?<![\p{L}\p{N}])'.$this->explicitOperationPattern(independent: true).'\s+~u', $clause) === 1;
-                $surfaceOnly = $clauseScopes !== [] && array_diff($clauseScopes, ['walls', 'facade', 'roof']) === [];
-                if ($finishingContext !== null && ! $newOperation && $surfaceOnly) {
-                    $clauseScopes = $finishingContext;
-                } else {
-                    $finishingContext = $finishingScopes !== [] && count($finishingScopes) === count($clauseScopes)
-                        && $this->hasFinishingSurfaceArgument($clause, $keywords)
-                        ? $finishingScopes : null;
-                }
-                foreach ($clauseScopes as $scope) {
-                    $groupScopes[$scope] = true;
-                }
-            }
-            foreach (array_keys($this->explicitScopeKeywords('')) as $scope) {
-                if (isset($groupScopes[$scope])) {
-                    $scopes[$scope] = true;
-                }
-            }
-        }
-
-        return array_keys($scopes);
-    }
-
-    public function positiveWorkText(string $text): string
-    {
-        $lines = preg_split('/\r\n|\r|\n/u', mb_strtolower($text)) ?: [];
-        foreach ($lines as &$line) {
-            foreach ($this->explicitScopeExclusionSpans($line) as $span) {
-                $line = mb_substr($line, 0, $span['start']).str_repeat(' ', $span['end'] - $span['start']).mb_substr($line, $span['end']);
-            }
-        }
-
-        return implode("\n", $lines);
-    }
-
-    public function sourceWorkScopes(string $text): array
-    {
-        return $this->extractScopes($text, false, manualExplicit: true, sourceContext: true)['items'];
-    }
-
-    public function scopeDisplayTitle(string $scopeType): string
-    {
-        return $this->normalizeScopeTitle('', $scopeType);
-    }
-
-    private function hasFinishingSurfaceArgument(string $clause, array $keywords): bool
-    {
-        foreach (['rough_finishing', 'finish_finishing', 'finishing'] as $scope) {
-            foreach ($keywords[$scope] ?? [] as $pattern) {
-                if (preg_match('~(?<![\p{L}\p{N}])'.preg_quote($pattern, '~').$this->finishingSurfaceGapPattern().'(?=\p{L})~u', $clause) === 1) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private function finishingSurfaceGapPattern(): string
-    {
-        return '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ов|ам|ям|ами|ями|ах|ях|ка|ки|ку|кой|кою|ке)?\s+'
-            .'(?:(?!'.$this->explicitOperationPattern().'(?=\s))\p{L}{2,}'.$this->adjectiveEndingsPattern().'\s+)*';
-    }
-
-    private function adjectiveEndingsPattern(): string
-    {
-        return '(?:ая|яя|ой|ей|ую|юю|ое|ее|ые|ие|ых|их|ым|им|ыми|ими|ого|его|ому|ему|ом|ем)';
-    }
-
-    private function explicitScopeKeywords(string $text): array
-    {
-        $weakHints = [
-            'ламинат', 'плитка', 'обои', 'основание под', 'бетонная подготовка', 'кладоч', 'газобетон',
-            'металлочерепиц', 'свет', 'приточн', 'клапан', 'утеплен', 'утеплён', 'облицовк',
-            'облицовка', 'сэндвич-панел', 'сендвич-панел', 'наружн', 'разгруз', 'площадк', 'подъезд', 'проезд',
-        ];
-
-        $keywords = array_map(static fn (array $patterns): array => array_values(array_diff($patterns, $weakHints)), $this->scopeKeywords());
-        $keywords['earthworks'] = array_values(array_intersect($keywords['site'], ['землян']));
-        $keywords['siteworks'] = array_values(array_intersect($keywords['site'], ['благоустрой']));
-        $keywords['site'] = array_values(array_diff($keywords['site'], $keywords['earthworks'], $keywords['siteworks']));
-        $keywords['site'] = [...$keywords['site'], 'наружная площадка', 'подъезд для грузового транспорта', 'разгрузочная зона'];
-        preg_match_all('~(?<![\p{L}\p{N}])(?:ок(?:на|но|он|ну|ном|не|нам|нами|нах)|двер(?:ь|и|ей|ью|ям|ями|ях))(?![\p{L}\p{N}])~u', $text, $openings);
-        $keywords['openings'] = [...$keywords['openings'], ...$openings[0]];
-        $descriptors = ['наружн', 'приточн', 'утеплен', 'утеплён', 'кладоч', 'свет', 'облицовк', 'облицовка', 'клапан', 'разгруз'];
-        foreach (preg_split('~[,;.\r\n]+|\s+и\s+~u', $text) ?: [] as $clause) {
-            $heads = $this->detectScopeTypes($clause, $keywords);
-            foreach ($this->scopeKeywords() as $scope => $patterns) {
-                if (array_diff($heads, [$scope]) !== []) {
-                    continue;
-                }
-                foreach (array_diff(array_intersect($patterns, $weakHints), $descriptors) as $object) {
-                    $pattern = '~(?<![\p{L}\p{N}])'.$this->explicitOperationPattern().'\s+'
-                        .$this->operationObjectPattern($object).'~u';
-                    preg_match_all($pattern, $clause, $matches);
-                    foreach ($matches[0] as $operation) {
-                        $keywords[$scope][] = $operation;
-                    }
-                }
-            }
-        }
-
-        if (preg_match('~^\s*('.$this->explicitOperationPattern(independent: true).')\s+~u', $text, $operation) === 1
-            && in_array($operation[1], ['оклейка', 'поклейка'], true)) {
-            $keywords['finishing'][] = $operation[1];
-        }
-
-        return $keywords;
-    }
-
-    private function operationObjectPattern(string $keyword): string
-    {
-        $adjectiveEndings = $this->adjectiveEndingsPattern();
-
-        return implode('\s+', array_map(static function (string $word) use ($adjectiveEndings): string {
-            if (mb_strlen($word) >= 6 && str_ends_with($word, 'ие')) {
-                return preg_quote(mb_substr($word, 0, -2), '~').'(?:ие|ия|ию|ием|ии|ий|иям|иями|иях)(?![\p{L}\p{N}])';
-            } elseif (mb_strlen($word) >= 6 && preg_match('/(?:ая|яя|ое|ее|ые|ый|ий|ой)$/u', $word) === 1) {
-                $word = mb_substr($word, 0, -2);
-                return preg_quote($word, '~').$adjectiveEndings.'(?![\p{L}\p{N}])';
-            } elseif (mb_strlen($word) >= 5 && preg_match('/[ая]$/u', $word) === 1) {
-                $word = mb_substr($word, 0, -1);
-            } elseif (mb_strlen($word) >= 4 && str_ends_with($word, 'и')) {
-                return preg_quote(mb_substr($word, 0, -1), '~').'(?:и|ям|ями|ях|ев)(?![\p{L}\p{N}])';
-            }
-
-            return preg_quote($word, '~').(mb_strlen($word) > 3 ? '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ев|ов|ам|ям|ами|ями|ах|ях)?' : '').'(?![\p{L}\p{N}])';
-        }, preg_split('/\s+/u', $keyword) ?: []));
-    }
-
-    private function explicitOperationPattern(bool $independent = false): string
-    {
-        return $independent
-            ? '(?:укладка|настил|оклейка|поклейка|монтаж|устройство|установка)'
-            : '(?:укладк(?:а|и|у|ой|ою|е)|настил(?:а|у|ом|е)?|оклейк(?:а|и|у|ой|ою|е)|поклейк(?:а|и|у|ой|ою|е)|монтаж(?:а|у|ом|е)?|устройств(?:о|а|у|ом|е)|установк(?:а|и|у|ой|ою|е))';
     }
 
     /**
@@ -675,109 +517,6 @@ class ConstructionSemanticParser
         }
 
         return null;
-    }
-
-    private function detectScopeTypes(string $normalizedLine, array $keywords, bool $bindFinishingSurfaces = false): array
-    {
-        $matches = [];
-        $excluded = $this->explicitScopeExclusionSpans($normalizedLine);
-        foreach ($keywords as $scopeType => $patterns) {
-            foreach ($patterns as $pattern) {
-                $length = mb_strlen($pattern);
-                $offset = 0;
-                while (($position = mb_strpos($normalizedLine, $pattern, $offset)) !== false) {
-                    $offset = $position + $length;
-                    if ($position > 0 && preg_match('/[\p{L}\p{N}]$/u', mb_substr($normalizedLine, 0, $position)) === 1) {
-                        continue;
-                    }
-                    foreach ($excluded as $span) {
-                        if ($position < $span['end'] && $span['start'] < $offset) {
-                            continue 2;
-                        }
-                    }
-                    $matches[] = ['scope' => $scopeType, 'start' => $position, 'end' => $offset];
-                }
-            }
-        }
-        if ($bindFinishingSurfaces) {
-            $surfaceMatches = $matches;
-            $finishingScopes = ['rough_finishing', 'finish_finishing', 'finishing'];
-            foreach ($surfaceMatches as $operation) {
-                if (! in_array($operation['scope'], $finishingScopes, true)) {
-                    continue;
-                }
-                foreach ($surfaceMatches as $surface) {
-                    if ($surface['start'] <= $operation['end'] || in_array($surface['scope'], $finishingScopes, true)) {
-                        continue;
-                    }
-                    $gap = mb_substr($normalizedLine, $operation['end'], $surface['start'] - $operation['end']);
-                    if (preg_match('~^'.$this->finishingSurfaceGapPattern().'$~u', $gap) === 1) {
-                        $matches[] = [...$operation, 'end' => $surface['end']];
-                    }
-                }
-            }
-        }
-        usort($matches, static fn (array $left, array $right): int =>
-            (($right['end'] - $right['start']) <=> ($left['end'] - $left['start'])) ?: ($left['start'] <=> $right['start']));
-        $accepted = [];
-        $scopes = [];
-        foreach ($matches as $match) {
-            foreach ($accepted as $span) {
-                if ($match['start'] < $span['end'] && $span['start'] < $match['end']) {
-                    continue 2;
-                }
-            }
-            $accepted[] = $match;
-            $scopes[$match['scope']] = true;
-        }
-
-        return array_values(array_filter(array_keys($keywords), static fn (string $scope): bool => isset($scopes[$scope])));
-    }
-
-    private function explicitScopeExclusionSpans(string $line): array
-    {
-        $negative = 'не\\s+(?:требуется|требуются|нужен|нужна|нужно|нужны|предусмотрен|предусмотрена|предусмотрено|предусмотрены|входит|входят)';
-        $prefixTail = '(?:(?!\\s+и\\s+(?='.$this->explicitOperationPattern(independent: true).'\\s+))[^,;.!?])*';
-        $patterns = [
-            '~(?<![\\p{L}\\p{N}])без\\s+'.$prefixTail.'~u',
-            '~(?<![\\p{L}\\p{N}])(?:не\\s+выполнять|'.$negative.')(?![\\p{L}\\p{N}])(?!\\s+и\\s+)'.$prefixTail.'~u',
-            '~[^,;.!?]+?\\s+'.$negative.'(?![\\p{L}\\p{N}])~u',
-        ];
-        $spans = [];
-        foreach ($patterns as $pattern) {
-            preg_match_all($pattern, $line, $matches, PREG_OFFSET_CAPTURE);
-            foreach ($matches[0] as [$text, $byteOffset]) {
-                $start = mb_strlen(substr($line, 0, $byteOffset));
-                $spans[] = ['start' => $start, 'end' => $start + mb_strlen($text)];
-            }
-        }
-
-        return $spans;
-    }
-
-    protected function isScopeCandidateLine(string $normalizedLine, string $scopeType): bool
-    {
-        if (mb_strlen($normalizedLine) <= 120) {
-            return true;
-        }
-
-        if ($scopeType !== '' && mb_strlen($normalizedLine) <= 220) {
-            return true;
-        }
-
-        if (preg_match('/\b\d+\s*этаж\b/u', $normalizedLine) === 1) {
-            return true;
-        }
-
-        if (preg_match('/(?<![\p{L}\p{N}])(?:л\.?|лист)\s*\d+/ui', $normalizedLine) === 1) {
-            return true;
-        }
-
-        if (preg_match('/отм\.?\s*[+\-]?\d/u', $normalizedLine) === 1) {
-            return true;
-        }
-
-        return false;
     }
 
     /**
@@ -973,23 +712,16 @@ class ConstructionSemanticParser
      * @param  array<string, array<int, string>>  $keywords
      * @return array<int, string>
      */
-    protected function scopeCandidateLines(string $text, array $keywords, bool $preserveExclusionContext = false): array
+    protected function scopeCandidateLines(string $text, array $keywords): array
     {
         $lines = preg_split('/\r\n|\r|\n/u', $text) ?: [];
         $candidates = [];
 
         foreach ($lines as $line) {
-            foreach (preg_split($preserveExclusionContext ? '/[.;!?]\s*/u' : '/[.;]\s*/u', $line) ?: [] as $sentence) {
+            foreach (preg_split('/[.;]\s*/u', $line) ?: [] as $sentence) {
                 $sentence = trim($sentence);
 
                 if ($sentence === '') {
-                    continue;
-                }
-
-                $normalizedSentence = mb_strtolower($this->cleanLine($sentence));
-                if ($preserveExclusionContext && $this->hasFinishingSurfaceArgument($normalizedSentence, $this->explicitScopeKeywords($normalizedSentence))) {
-                    $candidates[] = $sentence;
-
                     continue;
                 }
 
@@ -1008,8 +740,8 @@ class ConstructionSemanticParser
                         continue;
                     }
 
-                    if ($preserveExclusionContext || $this->detectScopeType(mb_strtolower($this->cleanLine($part)), $keywords) !== null) {
-                        foreach ($this->expandCompoundScopePart($part, $keywords, $preserveExclusionContext) as $candidate) {
+                    if ($this->detectScopeType(mb_strtolower($this->cleanLine($part)), $keywords) !== null) {
+                        foreach ($this->expandCompoundScopePart($part, $keywords) as $candidate) {
                             $candidates[] = $candidate;
                         }
                     }
@@ -1165,11 +897,8 @@ class ConstructionSemanticParser
      * @param  array<string, array<int, string>>  $keywords
      * @return array<int, string>
      */
-    protected function expandCompoundScopePart(string $part, array $keywords, bool $preserveExclusionContext = false): array
+    protected function expandCompoundScopePart(string $part, array $keywords): array
     {
-        if ($preserveExclusionContext && $this->explicitScopeExclusionSpans(mb_strtolower($this->cleanLine($part))) !== []) {
-            return [$part];
-        }
         $segments = array_values(array_filter(array_map(
             static fn (string $segment): string => trim($segment),
             preg_split('/\s+и\s+/u', $part) ?: []

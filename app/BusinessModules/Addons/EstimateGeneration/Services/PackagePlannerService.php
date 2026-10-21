@@ -7,7 +7,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\ObjectProfileData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 
 use function trans_message;
 
@@ -18,9 +17,9 @@ class PackagePlannerService
         if ($this->usesIndustrialProfile($profile)) {
             $packages = $this->industrialPackages();
         } elseif ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
-            $packages = $this->withRequestedScopePackages($this->floorPlanEvidencePackages($profile), $profile);
+            $packages = $this->floorPlanEvidencePackages($profile);
         } elseif ($this->isDocumentEvidenceOnly($profile)) {
-            $packages = $this->withRequestedScopePackages($this->documentEvidencePackages($profile), $profile);
+            $packages = $this->documentEvidencePackages($profile);
         } elseif ($this->isMixedWarehouseOffice($profile)) {
             $packages = $this->mixedWarehouseOfficePackages();
         } elseif ($this->isWarehouse($profile)) {
@@ -34,17 +33,7 @@ class PackagePlannerService
                 $packages,
             );
         } else {
-            $packages = $this->withRequestedScopePackages($this->documentEvidencePackages($profile), $profile);
-        }
-
-        if (in_array('requested_fire_alarm', array_column($profile->planningSignals['requested_scope_packages'] ?? [], 'key'), true)) {
-            $packages = array_map(
-                static fn (array $package): array => $package['key'] === 'fire_safety'
-                    ? [...$package, 'key' => 'requested_fire_alarm']
-                    : $package,
-                $packages,
-            );
-            $packages = $this->withRequestedScopePackages($packages, $profile, ['requested_fire_alarm']);
+            $packages = $this->documentEvidencePackages($profile);
         }
         $packages = $this->withReviewPackages($packages, $profile);
         $packages = $this->withOptionalSitePackages($packages, $profile);
@@ -112,50 +101,7 @@ class PackagePlannerService
             || $this->containsIndustrialObjectSignal($description);
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
-        $parser = new ConstructionSemanticParser;
-        $sourceWorkIntents = $this->sourceWorkIntents($parser->sourceWorkScopes((string) ($object['manual_description'] ?? $object['description'] ?? '')), 'user_request');
-        $documentFragments = [];
-        $documentScopeFragments = [];
-        foreach ($analysis['source_documents'] ?? [] as $document) {
-            if (! is_array($document)) {
-                continue;
-            }
-            foreach ($document['scopes']['items'] ?? [] as $scope) {
-                if (is_array($scope) && is_string($scope['title'] ?? null)) {
-                    $documentScopeFragments[$scope['title']] ??= '';
-                }
-            }
-            if (! DocumentEvidencePolicy::isTrusted($document)
-                || ! DocumentEvidencePolicy::canUseScopeEvidence($document)) {
-                continue;
-            }
-            $documentFragments[] = $parser->positiveWorkText((string) ($document['text'] ?? ''));
-            $sourceScopes = $parser->sourceWorkScopes((string) ($document['text'] ?? ''));
-            foreach ($sourceScopes as $scope) {
-                if (trim((string) ($scope['positive_text'] ?? '')) !== '') {
-                    $documentScopeFragments[$scope['title']] = $scope['positive_text'];
-                }
-            }
-            array_push($sourceWorkIntents, ...$this->sourceWorkIntents($sourceScopes, 'document', $document));
-        }
-        $requestedPackages = [];
-        foreach ($sourceWorkIntents as $intent) {
-            $package = $this->requestedScopePackage(['scope_type' => $intent['scope_type'], 'title' => $intent['rawtitle']]);
-            if ($package !== null) {
-                $key = $package['key'];
-                $requestedPackages[$key] = [
-                    ...($requestedPackages[$key] ?? $package),
-                    'source_refs' => [...($requestedPackages[$key]['source_refs'] ?? []), ...$intent['realrefs']],
-                ];
-            }
-        }
-        $planningDescription = implode("\n", [
-            $parser->positiveWorkText((string) ($object['manual_description'] ?? $object['description'] ?? '')),
-            array_key_exists('source_documents', $analysis) ? implode("\n", $documentFragments)
-                : $parser->positiveWorkText((string) ($documentContext['context_text'] ?? '')),
-            $zoneText,
-        ]);
-        $planningSignals = $this->planningSignalsFromAnalysis($analysis, $planningDescription, $documentScopeFragments);
+        $planningSignals = $this->planningSignalsFromAnalysis($analysis, $description);
         $planningSignals['evaluation_profile'] = $analysis['evaluation_policy']['profile_id'] ?? null;
         $roofType = (new RoofTypeResolver)->resolve($analysis);
         if ($roofType !== null) {
@@ -187,11 +133,6 @@ class PackagePlannerService
             $type = 'document_evidence';
         }
 
-        if ($requestedPackages !== []) {
-            $planningSignals['requested_scope_packages'] = array_values($requestedPackages);
-        }
-        $planningSignals['source_work_intents'] = $sourceWorkIntents;
-
         return new ObjectProfileData(
             objectType: $type,
             area: isset($object['area']) ? (float) $object['area'] : null,
@@ -218,88 +159,6 @@ class PackagePlannerService
             || str_contains($type, 'склад')
             || str_contains($type, 'industrial')
             || str_contains($type, 'производ');
-    }
-
-    private function requestedScopePackage(array $scope): ?array
-    {
-        $scopeType = (string) ($scope['scope_type'] ?? '');
-        [$key, $packageScope] = match ($scopeType) {
-            'rough_finishing', 'finish_finishing' => [$scopeType, 'finishing'],
-            'finishing' => ['custom-finishing', 'finishing'],
-            'site' => ['site_preparation', 'site'],
-            'earthworks' => ['earthworks', 'earthworks'],
-            'siteworks' => ['siteworks', 'site'],
-            'roads', 'external_networks' => [$scopeType, 'site'],
-            'fire_safety' => ['requested_fire_alarm', 'engineering'],
-            'foundation', 'walls', 'slabs', 'roof', 'openings', 'electrical', 'plumbing',
-            'heating', 'ventilation', 'stairs', 'facade', 'sewerage' => [$scopeType, $scopeType],
-            default => [null, null],
-        };
-
-        return $key === null ? null : $this->package($key, (string) ($scope['title'] ?? $key), $packageScope, 1, 20);
-    }
-
-    private function sourceWorkIntents(array $scopes, string $origin, ?array $document = null): array
-    {
-        $intents = [];
-        foreach ($scopes as $scope) {
-            $positiveText = mb_strtolower((string) ($scope['positive_text'] ?? ''));
-            if (trim($positiveText) === '') {
-                continue;
-            }
-            $scopeTypes = isset($scope['scope_type']) ? [$scope['scope_type']] : [];
-            foreach (['roads' => $this->containsRoadsSignal($positiveText),
-                'external_networks' => $this->containsExternalNetworkSignal($positiveText),
-                'siteworks' => ! isset($scope['scope_type']) && $this->containsSiteworksSignal($positiveText)] as $scopeType => $present) {
-                if ($present) {
-                    $scopeTypes[] = $scopeType;
-                }
-            }
-            $sourceRefs = [];
-            foreach (['sheets' => 'sheet', 'elevations' => 'elevation', 'floors' => 'floor'] as $refKey => $refType) {
-                foreach ($scope['source_refs'][$refKey] ?? [] as $value) {
-                    $sourceRefs[] = ['type' => $refType, 'value' => $value];
-                }
-            }
-            if ($document !== null) {
-                $sourceRefs[] = [...array_intersect_key($document, array_flip(['source_version', 'filename'])),
-                    ...(isset($document['id']) ? ['document_id' => $document['id']] : []), 'excerpt' => $scope['rawtitle']];
-            }
-            foreach (array_unique($scopeTypes) as $scopeType) {
-                $package = $this->requestedScopePackage(['scope_type' => $scopeType]);
-                if ($package !== null) {
-                    $intent = ['package_key' => $package['key'], 'scope_type' => $scopeType,
-                        'rawtitle' => $scope['rawtitle'], 'realrefs' => $sourceRefs, 'origin' => $origin];
-                    $intents[json_encode($intent, JSON_THROW_ON_ERROR)] = $intent;
-                }
-            }
-        }
-
-        return array_values($intents);
-    }
-
-    private function withRequestedScopePackages(array $packages, ObjectProfileData $profile, ?array $onlyKeys = null): array
-    {
-        $packageKeys = array_column($packages, 'key');
-        $quantityKeys = $profile->planningSignals['quantity_keys'] ?? [];
-        foreach ($profile->planningSignals['requested_scope_packages'] ?? [] as $package) {
-            $key = $package['key'];
-            if ($onlyKeys !== null && ! in_array($key, $onlyKeys, true)) {
-                continue;
-            }
-            if (in_array($key, $packageKeys, true) || in_array('custom-'.$key, $packageKeys, true)) {
-                continue;
-            }
-            if (in_array('custom-finishing', $packageKeys, true)
-                && (($key === 'rough_finishing' && $this->hasQuantityPrefix($quantityKeys, 'rough.'))
-                    || ($key === 'finish_finishing' && ($this->hasQuantityPrefix($quantityKeys, 'finish.')
-                        || $this->hasAnyQuantityKey($quantityKeys, ['office.ceiling', 'sanitary.tile']))))) {
-                continue;
-            }
-            $packages[] = $package;
-        }
-
-        return $packages;
     }
 
     private function isMixedWarehouseOffice(ObjectProfileData $profile): bool
@@ -485,18 +344,12 @@ class PackagePlannerService
         }
 
         $largeObject = $this->isWarehouse($profile) || $this->isMixedWarehouseOffice($profile);
-        $requestedKeys = array_column($profile->planningSignals['requested_scope_packages'] ?? [], 'key');
-        $siteworksEvidence = array_filter($profile->planningSignals['quantity_keys'] ?? [],
-            static fn (string $key): bool => str_starts_with($key, 'siteworks.')) !== [];
-        $sitePreparationOnly = in_array('site_preparation', $requestedKeys, true)
-            && ! in_array('siteworks', $requestedKeys, true) && ! $siteworksEvidence;
-
         if ($this->hasPlanningSignal($profile, 'external_networks')
             && ! in_array('external_networks', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('external_networks', 'Наружные сети', 'site', $largeObject ? 40 : 14, $largeObject ? 90 : 32);
         }
 
-        if ($this->hasPlanningSignal($profile, 'siteworks') && ! $sitePreparationOnly
+        if ($this->hasPlanningSignal($profile, 'siteworks')
             && ! in_array('siteworks', array_column($packages, 'key'), true)) {
             $packages[] = $this->package('siteworks', 'Благоустройство', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
         }
@@ -630,50 +483,15 @@ class PackagePlannerService
      * @param  array<string, mixed>  $analysis
      * @return array<string, mixed>
      */
-    private function planningSignalsFromAnalysis(array $analysis, string $description, array $documentScopeFragments = []): array
+    private function planningSignalsFromAnalysis(array $analysis, string $description): array
     {
-        $detectedStructure = is_array($analysis['detected_structure'] ?? null) ? $analysis['detected_structure'] : [];
         $quantityKeys = $this->quantityKeysFromAnalysis($analysis);
-        $fragments = [$description];
-        $manualScopes = is_array($detectedStructure['explicit_work_scopes'] ?? null) ? $detectedStructure['explicit_work_scopes'] : [];
-        $manualTitles = array_column($manualScopes, 'title');
-        $parser = new ConstructionSemanticParser;
-
-        foreach (['zones', 'constructives'] as $key) {
-            foreach (($detectedStructure[$key] ?? []) as $value) {
-                if (is_string($value) && trim($value) !== '') {
-                    $fragment = $key === 'zones' ? ($documentScopeFragments[$value] ?? $value) : $value;
-                    if ($key === 'zones' && in_array($value, $manualTitles, true)) {
-                        $fragment = $parser->positiveWorkText($value);
-                    }
-                    $fragments[] = $fragment;
-                }
-            }
-        }
-
-        foreach (($detectedStructure['scopes'] ?? []) as $scope) {
-            if (! is_array($scope)) {
-                continue;
-            }
-
-            foreach (['title', 'scope_type'] as $field) {
-                if (is_string($scope[$field] ?? null) && trim($scope[$field]) !== '') {
-                    $fragment = $field === 'title' ? ($documentScopeFragments[$scope[$field]] ?? $scope[$field]) : $scope[$field];
-                    if ($field === 'title' && in_array($scope, $manualScopes, true)) {
-                        $fragment = $parser->positiveWorkText($scope[$field]);
-                    }
-                    $fragments[] = $fragment;
-                }
-            }
-        }
-
-        $haystack = mb_strtolower(implode(' ', $fragments));
 
         return [
-            'external_networks' => $this->containsExternalNetworkSignal($haystack),
-            'siteworks' => $this->containsSiteworksSignal($haystack),
-            'roads' => $this->containsRoadsSignal($haystack),
-            'plan_only_geometry' => $this->hasPlanOnlyGeometryEvidence($quantityKeys, $haystack),
+            'external_networks' => $this->hasQuantityPrefix($quantityKeys, 'networks.'),
+            'siteworks' => $this->hasQuantityPrefix($quantityKeys, 'siteworks.'),
+            'roads' => $this->hasQuantityPrefix($quantityKeys, 'warehouse.roads'),
+            'plan_only_geometry' => $this->hasPlanOnlyGeometryEvidence($quantityKeys, $description),
             'floor_plan_finishing' => $this->hasAnyQuantityKey($quantityKeys, [
                 'rough.floor',
                 'finish.floor',
@@ -792,21 +610,6 @@ class PackagePlannerService
             'engineering_route_length' => 'plumbing.pipe',
             default => '',
         };
-    }
-
-    private function containsExternalNetworkSignal(string $text): bool
-    {
-        return preg_match('/(?:external\s+networks?|utilities|utility|наружн\p{L}*\s+(?:сет|инженер)|внешн\p{L}*\s+сет|подключен\p{L}*\s+к\s+сет)/u', $text) === 1;
-    }
-
-    private function containsSiteworksSignal(string $text): bool
-    {
-        return preg_match('/(?:landscap\p{L}*|благоустрой\p{L}*|озелен\p{L}*|отмостк\p{L}*|тротуар\p{L}*|наружн\p{L}*\s+площадк\p{L}*)/u', $text) === 1;
-    }
-
-    private function containsRoadsSignal(string $text): bool
-    {
-        return preg_match('/(?:roads?|driveway|parking|дорог\p{L}*|(?<![\p{L}\p{N}])(?:проезд|подъезд)(?:а|у|ом|е|ы|ов|ам|ами|ах)?(?![\p{L}\p{N}])|парковк\p{L}*|площадк\p{L}*\s+для\s+(?:транспорт|авто))/u', $text) === 1;
     }
 
     /**

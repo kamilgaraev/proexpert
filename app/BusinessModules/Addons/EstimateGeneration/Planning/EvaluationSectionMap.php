@@ -23,7 +23,7 @@ final class EvaluationSectionMap
             'electrical', 'power_supply', 'lighting', 'low_current', 'server_room', 'custom-electrical' => 'electricity',
             'plumbing', 'water_sewerage', 'custom-plumbing' => 'water_supply', 'custom-sewerage' => 'sewerage',
             'heating', 'custom-heating' => 'heating', 'ventilation', 'custom-ventilation' => 'ventilation',
-            'process_pipelines' => 'technological_pipelines', 'automation', 'requested_fire_alarm' => 'automation',
+            'process_pipelines' => 'technological_pipelines', 'automation' => 'automation',
             'equipment', 'commissioning' => 'equipment', 'site_preparation', 'siteworks', 'roads', 'external_networks' => 'earthworks', default => $package,
         };
     }

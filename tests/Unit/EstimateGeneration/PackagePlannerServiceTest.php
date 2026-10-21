@@ -88,7 +88,7 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertNotContains('roads', $keys);
     }
 
-    public function test_profile_from_analysis_adds_optional_site_packages_when_scope_is_explicit(): void
+    public function test_optional_site_packages_require_structured_quantity_keys_instead_of_free_text(): void
     {
         $analysis = [
             'object' => [
@@ -105,6 +105,15 @@ class PackagePlannerServiceTest extends TestCase
         $profile = $this->planner()->profileFromAnalysis($analysis);
         $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
+
+        $this->assertNotContains('external_networks', $keys);
+        $this->assertNotContains('siteworks', $keys);
+        $this->assertNotContains('roads', $keys);
+        $analysis['document_context']['quantity_takeoffs'] = array_map(static fn (string $key): array => [
+            'quantity' => 20, 'unit' => 'м2', 'source_refs' => [['document_id' => 82]],
+            'normalized_payload' => ['quantity_key' => $key],
+        ], ['networks.external', 'siteworks.area', 'warehouse.roads']);
+        $keys = array_column($this->planner()->plan($this->planner()->profileFromAnalysis($analysis))->packages, 'key');
 
         $this->assertContains('external_networks', $keys);
         $this->assertContains('siteworks', $keys);

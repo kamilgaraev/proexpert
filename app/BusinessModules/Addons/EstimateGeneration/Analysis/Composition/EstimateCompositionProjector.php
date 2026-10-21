@@ -165,7 +165,7 @@ final readonly class EstimateCompositionProjector
                 'item_type' => 'priced_work',
                 'unit' => is_array($quantity)
                     ? $this->boundedString($quantity['unit'] ?? null, 32)
-                    : $this->boundedString($intent['unit'] ?? null, 32),
+                    : null,
                 'quantity' => is_array($quantity)
                     ? $this->positiveDecimal($quantity['value'] ?? null)
                     : null,
@@ -178,6 +178,16 @@ final readonly class EstimateCompositionProjector
                 'validation_flags' => $binding !== null && ! $binding['eligible'] ? ['work_quantity_purpose_unverified'] : [],
                 'metadata' => $metadata,
                 'composition_intent' => $intent,
+                ...($quantity === null ? [
+                    'work_cost' => null, 'materials_cost' => null, 'machinery_cost' => null, 'labor_cost' => null, 'total_cost' => null,
+                    'materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => [], 'work_composition' => [],
+                    'price_source' => null, 'pricing_status' => 'not_calculated', 'pricing_blocker' => 'quantity_unknown',
+                    'skip_normative_matching' => true,
+                    'validation_flags' => array_values(array_unique([
+                        ...($binding !== null && ! $binding['eligible'] ? ['work_quantity_purpose_unverified'] : []),
+                        'quantity_unknown', 'unit_requires_confirmation',
+                    ])),
+                ] : []),
             ];
         }
 

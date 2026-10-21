@@ -32,6 +32,234 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    #[DataProvider('declaredSemanticWorks')]
+    public function test_existing_composer_owns_free_text_work_semantics_without_another_call(string $description, array $sections, array $works): void
+    {
+        $input = $this->declaredDescriptionInput($description, $sections);
+        self::assertSame([], $input->candidates);
+        self::assertSame('initial_description', $input->facts[0]['context_kind']);
+        $records = array_map(static fn (array $work): array => [
+            'kind' => 'supplementary', 'candidate_id' => null, 'work_key' => $work[0], 'name' => $work[1],
+            'work_section' => $work[2], 'unit' => $work[3], 'derived_quantity_id' => null,
+            'source_fact_ids' => ['fact:description'], 'technology_package_candidate' => null,
+            'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+        ], $works);
+        $model = new RecordedEstimateComposerModel(['work_intents' => $records]);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertSame([], $outcome['quarantined']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+        $locals = $this->projectSemanticResult($outcome, $input);
+        $items = [];
+        foreach ($locals as $local) {
+            array_push($items, ...$local['sections'][0]['work_items']);
+        }
+        self::assertEqualsCanonicalizing(array_column($works, 1), array_column($items, 'name'));
+        self::assertCount(count($works), array_unique(array_column($items, 'name')));
+        $worksByName = array_column($works, null, 1);
+        foreach ($items as $item) {
+            self::assertNull($item['unit']);
+            self::assertNull($item['quantity']);
+            self::assertNull($item['quantity_formula']);
+            self::assertNull($item['total_cost']);
+            self::assertSame($worksByName[$item['name']][3], $item['composition_intent']['unit']);
+            self::assertSame([['fact_id' => 'fact:description', 'role' => 'context']], $item['source_refs']);
+            self::assertSame('entity:description', $item['metadata']['scope_entity_id']);
+            self::assertArrayNotHasKey('quantity_key', $item['metadata']);
+            self::assertArrayNotHasKey('specialization_scenario', $item);
+            foreach (['materials', 'labor', 'machinery', 'other_resources', 'work_composition'] as $field) {
+                self::assertSame([], $item[$field]);
+            }
+            self::assertTrue($item['skip_normative_matching']);
+            self::assertSame('quantity_unknown', $item['pricing_blocker']);
+            self::assertContains('unit_requires_confirmation', $item['validation_flags']);
+            $rebound = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\CanonicalWorkItemQuantityBinder)->bind($item, []);
+            self::assertArrayNotHasKey('quantity', $rebound);
+            self::assertNull($rebound['unit']);
+            self::assertArrayNotHasKey('quantity_key', $rebound['metadata']);
+            self::assertSame('quantity_mapping_missing', $rebound['pricing_blocker']);
+            $this->assertUnpricedOutlineCannotBeApplied($item);
+        }
+        self::assertFalse($this->semanticEvaluation($locals, $sections)['can_confirm_for_apply']);
+    }
+
+    public static function declaredSemanticWorks(): iterable
+    {
+        yield 'stands are equipment' => ['Монтаж стендов', ['equipment'], [['custom.stands', 'Монтаж стендов', 'equipment', 'шт']]];
+        yield 'separate earthworks and landscaping' => ['Земляные работы и благоустройство территории', ['earthworks'], [
+            ['custom.earthworks', 'Земляные работы', 'earthworks', 'm3'], ['custom.landscaping', 'Благоустройство территории', 'earthworks', 'м²'],
+        ]];
+        yield 'separate water and sewerage' => ['Водоснабжение и канализация', ['water_supply', 'sewerage'], [
+            ['custom.water', 'Водоснабжение', 'water_supply', 'm'], ['custom.sewerage', 'Канализация', 'sewerage', 'm'],
+        ]];
+    }
+
+    private function assertUnpricedOutlineCannotBeApplied(array $item): void
+    {
+        $previous = \Illuminate\Support\Facades\Facade::getFacadeApplication();
+        $container = new \Illuminate\Container\Container;
+        $container->instance('validator', new \Illuminate\Validation\Factory(new \Illuminate\Translation\Translator(new \Illuminate\Translation\ArrayLoader, 'ru')));
+        \Illuminate\Support\Facades\Facade::clearResolvedInstances();
+        \Illuminate\Support\Facades\Facade::setFacadeApplication($container);
+        $projector = (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::class))->newInstanceWithoutConstructor();
+        try {
+            foreach ([null, '3'] as $quantity) {
+                $current = [...$item, 'quantity' => $quantity, 'unit' => $quantity === null ? null : 'count'];
+                $selected = ['scenario' => ['positions' => [['key' => $item['key'], 'quantity' => '3', 'money_breakdown' => [], 'price_snapshot' => []]]]];
+                try {
+                    $projector->projectVerifiedSelection(['local_estimates' => [['sections' => [['work_items' => [$current]]]]]], $selected, ['scenario_id' => 'base']);
+                    self::fail('An unpriced semantic outline was applied.');
+                } catch (\Illuminate\Validation\ValidationException $exception) {
+                    self::assertArrayHasKey('draft', $exception->errors());
+                }
+            }
+        } finally {
+            \Illuminate\Support\Facades\Facade::clearResolvedInstances();
+            \Illuminate\Support\Facades\Facade::setFacadeApplication($previous);
+        }
+    }
+
+    public function test_ambiguous_semantics_with_empty_candidates_uses_the_existing_request_info_blocker(): void
+    {
+        $input = $this->declaredDescriptionInput('Требуется уточнить неизвестную технологию', ['equipment']);
+        $model = new RecordedEstimateComposerModel(['work_intents' => []]);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertSame([], $outcome['intents']);
+        self::assertSame('estimate_composer_work_scope_unresolved', $outcome['quarantined'][0]['reason']);
+        self::assertSame('provide_work_scope', $outcome['quarantined'][0]['next_action']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+        $draft = $this->validateUnresolvedComposition($outcome);
+        self::assertTrue($draft['source_info_only']);
+        self::assertSame('source_info_required', $draft['stage6_status']);
+        self::assertSame([], $draft['local_estimates']);
+        self::assertNull($draft['evaluation_result']);
+        self::assertFalse($draft['is_complete']);
+        self::assertSame($outcome['quarantined'], $draft['estimate_composition']['request_info']);
+        self::assertSame(1, $model->calls);
+    }
+
+    private function validateUnresolvedComposition(array $outcome): array
+    {
+        $base = 'sha256:'.str_repeat('a', 64);
+        $attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $graph = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph::standard();
+        $results = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory(
+            new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore, $graph);
+        $build = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage::BuildDraft;
+        $validate = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage::ValidateDraft;
+        $dependencies = array_fill_keys(array_map(static fn ($stage): string => $stage->value, $graph->get($build)->dependencies), $base);
+        $draft = ['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+            'evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['equipment']],
+            'local_estimates' => [], 'estimate_composition' => ['request_info' => $outcome['quarantined']]];
+        $built = $results->make(new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext(30, 10, 20, 1, $base, 'generating',
+            generationAttemptId: $attempt, baseInputVersion: $base, stage: $build, dependencyVersions: $dependencies), $build, ['draft' => $draft]);
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext(30, 10, 20, 1, $base, 'generating',
+            priorOutputs: new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs(
+                [$build->value => $built->output], [$build->value => ['draft' => $draft]]),
+            generationAttemptId: $attempt, baseInputVersion: $base, stage: $validate, dependencyVersions: [$build->value => $built->output->version]);
+        $stage = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage(
+            new \App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService,
+            new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector, $results,
+            (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory::class))->newInstanceWithoutConstructor());
+
+        return $stage->execute($context)->transientData['draft'];
+    }
+
+    #[DataProvider('wholeCompositionFailures')]
+    public function test_provider_or_whole_envelope_failure_remains_a_failed_run(bool $unavailable): void
+    {
+        $runs = new ComposerRoleRunMemoryRepository;
+        $model = new class($unavailable) implements EstimateComposerModel
+        {
+            public int $calls = 0;
+
+            public function __construct(private bool $unavailable) {}
+
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->calls++;
+                $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+                if ($this->unavailable) {
+                    throw new \RuntimeException('provider_unavailable');
+                }
+
+                return ['invalid_envelope' => []];
+            }
+        };
+        try {
+            (new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna'))->runDetailed($this->declaredDescriptionInput('Монтаж стендов', ['equipment']));
+            self::fail('A provider or envelope failure became successful composition.');
+        } catch (\RuntimeException|InvalidArgumentException $exception) {
+            self::assertSame($unavailable ? 'provider_unavailable' : 'estimate_composer_result_shape_invalid', $exception->getMessage());
+        }
+        self::assertSame(1, $model->calls);
+        self::assertCount(1, $runs->failures);
+        self::assertSame('estimate_composer_failed', $runs->failures[0]->code);
+        self::assertNull($runs->lastResult);
+    }
+
+    public static function wholeCompositionFailures(): iterable
+    {
+        yield 'provider unavailable' => [true];
+        yield 'whole malformed envelope' => [false];
+    }
+
+    private function declaredDescriptionInput(string $description, array $sections): EstimateComposerInput
+    {
+        $models = new InMemoryProjectModelRepository;
+        $version = 'sha256:'.str_repeat('d', 64);
+        $entity = new Entity('entity:description', 10, 20, 30, $version, 'quantity', 'initial-description');
+        $proof = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
+            'evidence:description', 10, 20, 30, $version, 'input:30', 'user_input',
+            nativeReference: 'input_payload.description', producerName: 'user_input_normalizer');
+        $fact = new Fact('fact:description', 10, 20, 30, $version, $entity->id, 'evaluation_answer',
+            ['kind' => 'initial_description', 'description' => $description, 'numeric_parameters_confirmed' => false],
+            null, 0.0, 'user_input', 'confirmed', [$proof->id]);
+        $models->saveSourceModel([$entity], [$fact], [$proof]);
+        $models->applyDecision(new Decision('decision:description', 10, 20, 30, $version, 'fact', $fact->id, $fact->id,
+            'user', 'actor:7', 'Описание пользователя', 1, [$proof->id]), $fact);
+
+        return (new EstimateComposerInputFactory($models, 10000))->capture(10, 20, 30, [], [], [], allowedWorkSections: $sections);
+    }
+
+    private function projectSemanticResult(array $outcome, EstimateComposerInput $input): array
+    {
+        $application = \Illuminate\Support\Facades\Facade::getFacadeApplication();
+        $previous = ['app' => [\Illuminate\Support\Facades\App::class, \Illuminate\Support\Facades\App::getFacadeRoot()],
+            'config' => [\Illuminate\Support\Facades\Config::class, \Illuminate\Support\Facades\Config::getFacadeRoot()],
+            'translator' => [\Illuminate\Support\Facades\Lang::class, \Illuminate\Support\Facades\Lang::getFacadeRoot()]];
+        \Illuminate\Support\Facades\App::swap(new class
+        {
+            public function getLocale(): string { return 'ru'; }
+        });
+        \Illuminate\Support\Facades\Config::swap(new \Illuminate\Config\Repository(['app' => ['fallback_locale' => 'ru']]));
+        $loader = new \Illuminate\Translation\ArrayLoader;
+        $loader->addMessages('ru', 'estimate_generation', ['composition' => ['supplementary_title' => 'Дополнительные работы', 'supplementary_section' => 'Работы']]);
+        \Illuminate\Support\Facades\Lang::swap(new \Illuminate\Translation\Translator($loader, 'ru'));
+        try {
+            return (new EstimateCompositionProjector)->apply([], $outcome['intents'], $input->derivedQuantities, $input->facts);
+        } finally {
+            foreach ($previous as $accessor => [$facade, $value]) {
+                if ($value !== null) { $facade::swap($value); } else {
+                    \Illuminate\Support\Facades\Facade::clearResolvedInstance($accessor);
+                    $application?->forgetInstance($accessor);
+                }
+            }
+        }
+    }
+
+    private function semanticEvaluation(array $locals, array $sections, array $requests = []): array
+    {
+        return (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build([
+            'evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => $sections],
+            'local_estimates' => $locals, 'estimate_composition' => ['request_info' => $requests],
+        ], new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([], [], [], []));
+    }
+
     public function test_registered_supplementary_work_name_is_owned_by_the_server_on_fresh_and_saved_results(): void
     {
         $input = $this->input(allowedWorkSections: ['roofing']);
@@ -558,7 +786,8 @@ final class EstimateComposerTest extends TestCase
         }
         self::assertSame('ai-composer-supplementary:finishing', $locals[0]['key']);
         $item = $locals[0]['sections'][0]['work_items'][0];
-        self::assertSame('m2', $item['unit']);
+        self::assertNull($item['unit']);
+        self::assertSame('m2', $item['composition_intent']['unit']);
         self::assertNull($item['quantity']);
         $evaluation = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build(
             ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['finishing']], 'local_estimates' => $locals],
@@ -811,6 +1040,8 @@ final class ComposerRoleRunMemoryRepository implements AiRoleRunRepository
 {
     public array $inputs = [];
 
+    public array $failures = [];
+
     public ?AiRoleRunResult $lastResult = null;
 
     private ?AiRoleRunResult $result = null;
@@ -832,7 +1063,10 @@ final class ComposerRoleRunMemoryRepository implements AiRoleRunRepository
         $this->lastResult = $result;
     }
 
-    public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}
+    public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void
+    {
+        $this->failures[] = $failure;
+    }
 
     public function loadCurrent(AiRoleRunInput $input): ?AiRoleRunClaim
     {

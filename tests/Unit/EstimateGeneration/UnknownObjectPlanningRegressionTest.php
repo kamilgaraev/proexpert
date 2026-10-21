@@ -65,14 +65,15 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
         self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
     }
 
-    public function test_parser_keeps_a_requested_known_work_scope_without_a_building_template(): void
+    public function test_free_text_work_waits_for_composition_without_a_building_template(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse(['description' => 'Устройство фундамента'], []);
         $planner = new PackagePlannerService;
         $profile = $planner->profileFromAnalysis($analysis);
 
         self::assertSame('custom', $profile->objectType);
-        self::assertSame(['foundation'], array_column($planner->plan($profile)->packages, 'key'));
+        self::assertSame([], $planner->plan($profile)->packages);
+        self::assertSame('Устройство фундамента', $analysis['object']['manual_description']);
         self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
     }
 
@@ -198,7 +199,7 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
         yield 'primary_legacy_residential' => [['description' => 'Жилой дом'], 'house'];
     }
 
-    public function test_conflicting_types_keep_explicit_and_document_work_without_defaults(): void
+    public function test_conflicting_types_keep_document_quantity_without_free_text_work_or_defaults(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse([
             'object_type' => 'warehouse', 'building_type' => 'industrial', 'description' => 'Устройство стен',
@@ -211,7 +212,8 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
         $planner = new PackagePlannerService;
         $profile = $planner->profileFromAnalysis($analysis);
         self::assertSame('custom', $profile->objectType);
-        self::assertSame(['custom-foundation', 'walls'], array_column($planner->plan($profile)->packages, 'key'));
+        self::assertSame(['custom-foundation'], array_column($planner->plan($profile)->packages, 'key'));
+        self::assertSame('Устройство стен', $analysis['object']['manual_description']);
         self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
     }
 
