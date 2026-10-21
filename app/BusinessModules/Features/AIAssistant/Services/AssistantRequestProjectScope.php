@@ -112,6 +112,7 @@ final readonly class AssistantRequestProjectScope
 
     public function bindReportScope(string $question, array $arguments, ?callable $search = null): array
     {
+        $question = $this->resolveExclusionBoundaries($question, $search);
         $sourceQuestion = $question;
         $question = AssistantOrganizationRecordVocabulary::normalize($question);
         if (! is_array($arguments['sections'] ?? null)) {
@@ -551,7 +552,74 @@ final readonly class AssistantRequestProjectScope
 
     private static function withoutExcludedProjects(string $question): string
     {
-        return preg_replace(self::excludedProjectPattern(), ' ', $question) ?? $question;
+        return preg_replace_callback(self::excludedProjectPattern(), static function (array $match): string {
+            $operand = $match['excluded_project'] ?? '';
+            $boundaries = self::exclusionBoundaries($operand);
+
+            return $boundaries === [] ? ' ' : ' '.substr($operand, $boundaries[0]['offset']).' ';
+        }, $question) ?? $question;
+    }
+
+    private static function exclusionBoundaries(string $operand): array
+    {
+        $noun = '(?<![\pL\pN])(?:проект|объект)[а-яё]*(?![\pL\pN])';
+        if (preg_match('/^(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.'|'.$noun.'\s*:?\s*[«“„"])/iu', $operand) === 1
+            || preg_match('/^'.$noun.'\s*:?\s*(.+)$/isu', $operand, $name, PREG_OFFSET_CAPTURE) !== 1) {
+            return [];
+        }
+        $project = '(?:'.self::CURRENT_PROJECT.'|'.$noun.')';
+        preg_match_all('/(?<![\pL\pN])'.AssistantRequestedSourceScopes::ADDITIVE_CONNECTOR.'\s+/iu', $name[1][0], $connectors, PREG_OFFSET_CAPTURE);
+        $boundaries = [];
+        foreach ($connectors[0] as [$connector, $offset]) {
+            $prefix = trim(substr($name[1][0], 0, $offset));
+            $tail = substr($name[1][0], $offset + strlen($connector));
+            if ($prefix !== '' && preg_match('/^(?:(?:по|для|в|во|на|из)\s+)?'.$project.'/iu', $tail) !== 1
+                && self::startsWithProjectOperand($tail, $project)) {
+                $boundaries[] = ['name' => $prefix, 'offset' => $name[1][1] + $offset];
+            }
+        }
+
+        return $boundaries;
+    }
+
+    private function resolveExclusionBoundaries(string $question, ?callable $search): string
+    {
+        for ($depth = 0; $depth < 5; $depth++) {
+            preg_match_all(self::excludedProjectPattern(), $question, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+            $changed = false;
+            foreach (array_reverse($matches) as $match) {
+                $operand = $match['excluded_project'][0] ?? '';
+                $boundaries = self::exclusionBoundaries($operand);
+                if ($boundaries === []) {
+                    continue;
+                }
+                if ($search === null || count($boundaries) > 5) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                preg_match('/^(?:проект|объект)[а-яё]*\s*:?\s*(.+)$/isu', $operand, $name);
+                $id = self::exactReportProjectId(trim($name[1]), $search);
+                $replacement = $id === null ? null : 'проект '.$id;
+                foreach (array_reverse($boundaries) as $boundary) {
+                    if ($replacement !== null) {
+                        break;
+                    }
+                    $id = self::exactReportProjectId($boundary['name'], $search);
+                    if ($id !== null) {
+                        $replacement = 'проект '.$id.' '.substr($operand, $boundary['offset']);
+                    }
+                }
+                if ($replacement === null) {
+                    throw new AssistantReportScopeAmbiguous;
+                }
+                $question = substr_replace($question, $replacement, $match['excluded_project'][1], strlen($operand));
+                $changed = true;
+            }
+            if (! $changed) {
+                return $question;
+            }
+        }
+
+        throw new AssistantReportScopeAmbiguous;
     }
 
     private static function excludedProjectPattern(): string

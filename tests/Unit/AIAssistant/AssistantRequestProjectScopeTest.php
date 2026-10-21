@@ -16,6 +16,91 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_named_exclusion_preserves_a_following_independent_section_after_complete_empty_full_name(): void
+    {
+        $question = 'Все акты организации без проекта Альфа и договоры проекта 100';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 52]]],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']];
+        $calls = [];
+        $search = static function (array $arguments) use (&$calls): array {
+            $calls[] = $arguments['query'];
+
+            return ['status' => 'success', 'results' => $arguments['query'] === 'Альфа' ? [['id' => 52]] : [], 'result_window' => ['has_more' => false]];
+        };
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections], $search));
+        self::assertSame(['Альфа и договоры проекта 100', 'Альфа'], $calls);
+    }
+
+    public function test_full_literal_excluded_project_name_precedes_a_possible_new_section(): void
+    {
+        $question = 'Все акты организации без проекта Альфа и договоры проекта 100';
+        $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 77]]]]];
+        $calls = [];
+        $search = static function (array $arguments) use (&$calls): array {
+            $calls[] = $arguments['query'];
+            self::assertSame('Альфа и договоры проекта 100', $arguments['query']);
+
+            return ['status' => 'success', 'results' => [['id' => 77]], 'result_window' => ['has_more' => false]];
+        };
+        self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search));
+        self::assertSame(['Альфа и договоры проекта 100'], $calls);
+    }
+
+    public function test_incomplete_or_failed_full_exclusion_lookup_never_falls_back_to_a_shorter_name(): void
+    {
+        $question = 'Все акты организации без проекта Альфа и договоры проекта 100';
+        foreach ([['status' => 'error'],
+            ['status' => 'success', 'results' => [], 'result_window' => ['has_more' => true]],
+            ['status' => 'success', 'results' => []],
+            ['status' => 'success', 'results' => [['id' => 52], ['id' => 77]], 'result_window' => ['has_more' => false]]] as $result) {
+            $calls = [];
+            try {
+                AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => []],
+                    static function (array $arguments) use (&$calls, $result): array {
+                        $calls[] = $arguments['query'];
+
+                        return $result;
+                    });
+                self::fail('Unproven complete empty result allowed a shorter project name');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertSame(['Альфа и договоры проекта 100'], $calls);
+            }
+        }
+    }
+
+    public function test_longest_existing_excluded_name_precedes_an_earlier_possible_section_boundary(): void
+    {
+        $question = 'Все акты организации без проекта Альфа и договоры проекта 100 и договоры проекта 200';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 77]]],
+            ['scope' => 'project', 'project_id' => 200, 'domain' => 'contracts', 'entity_type' => 'contract']];
+        $calls = [];
+        $search = static function (array $arguments) use (&$calls): array {
+            $calls[] = $arguments['query'];
+
+            return ['status' => 'success', 'results' => $arguments['query'] === 'Альфа и договоры проекта 100' ? [['id' => 77]] : [],
+                'result_window' => ['has_more' => false]];
+        };
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections], $search));
+        self::assertSame(['Альфа и договоры проекта 100 и договоры проекта 200', 'Альфа и договоры проекта 100'], $calls);
+    }
+
+    public function test_quoted_excluded_name_keeps_internal_section_words_literal(): void
+    {
+        $question = 'Все акты организации без проекта «Альфа и договоры проекта 100» и договоры проекта 200';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 77]]],
+            ['scope' => 'project', 'project_id' => 200, 'domain' => 'contracts', 'entity_type' => 'contract']];
+        $search = static function (array $arguments): array {
+            self::assertSame('Альфа и договоры проекта 100', $arguments['query']);
+
+            return ['status' => 'success', 'results' => [['id' => 77]], 'result_window' => ['has_more' => false]];
+        };
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections], $search));
+    }
+
     public function test_comparison_cannot_replace_explicitly_different_requested_status_conditions_with_equal_filters(): void
     {
         $question = 'Сравни все утверждённые акты организации с черновыми актами проекта 100';

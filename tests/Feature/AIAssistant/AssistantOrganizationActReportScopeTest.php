@@ -111,6 +111,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'independent sections cannot swap subjects' => [true, false, false, 7, 5, false, '', 'composition_swapped'],
             'above placement keeps independent workbook subjects' => [true, false, false, 7, 5, false, '', 'composition_above'],
             'together connector keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_together'],
+            'named exclusion preserves next independent workbook source' => [true, true, false, 4, 4, true, '', 'composition_named_exclusion'],
+            'private named exclusion rejects next independent workbook' => [true, true, false, 4, 4, true, '', 'composition_private_exclusion'],
             'quoted project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_named'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
@@ -158,7 +160,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $files = $this->createMock(FileService::class);
         $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte',
             'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied', 'multiple_named_private'], true)
-            || str_starts_with($variant, 'compare_subject_') || $variant === 'composition_swapped';
+            || str_starts_with($variant, 'compare_subject_') || in_array($variant, ['composition_swapped', 'composition_private_exclusion'], true);
         $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
@@ -312,6 +314,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                 'composition_swapped' => 'Сделай Excel: все акты организации, а также договоры проекта '.$first->id,
                 'composition_above' => 'Расположи все акты организации сверху, а договоры проекта '.$first->id.' снизу. Сделай Excel.',
                 'composition_together' => 'Сделай Excel: все акты организации вместе с договорами проекта '.$first->id,
+                'composition_named_exclusion', 'composition_private_exclusion' => 'Сделай Excel: все акты организации без проекта '.($variant === 'composition_named_exclusion' ? $first->name : $private->name).' и договоры проекта '.$first->id,
                 'compare_noun_difference', 'compare_subject_noun_difference' => 'Сделай Excel: покажи разницу между всеми актами организации и актами проекта '.$first->id,
                 'compare_noun_distinctions', 'compare_subject_noun_distinctions' => 'Сделай Excel: покажи различия между всеми актами организации и актами проекта '.$first->id,
                 'wrapped_entity_explicit' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам проекта '.$second->id,
