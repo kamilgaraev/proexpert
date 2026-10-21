@@ -26,6 +26,7 @@ final readonly class DocumentUnitPublication
         array $decisions,
         array $quarantinedItems = [],
         public ?VerifiedNativeNumericSources $numericSources = null,
+        public ?NativeSpreadsheetLiteralSources $literalSources = null,
     ) {
         if (($claims === []) !== ($decisions === []) || ($claims === [] && $quarantinedItems === [])) {
             throw new InvalidArgumentException('document_unit_publication_empty');

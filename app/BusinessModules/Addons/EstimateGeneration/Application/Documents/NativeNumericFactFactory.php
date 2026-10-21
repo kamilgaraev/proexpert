@@ -17,7 +17,7 @@ use Throwable;
 
 final class NativeNumericFactFactory
 {
-    public function spreadsheet(DocumentUnitExecutionContext $context, array $native): ?DocumentUnitPublication
+    public function spreadsheet(DocumentUnitExecutionContext $context, array $native, ?NativeSpreadsheetLiteralSources $literalSources = null): ?DocumentUnitPublication
     {
         $cells = is_array($native['cells'] ?? null) ? $native['cells'] : [];
         $headers = is_array($native['header_cells'] ?? null) ? $native['header_cells'] : [];
@@ -61,6 +61,7 @@ final class NativeNumericFactFactory
             }
         }
         $records = [];
+        $literalIdentityHeaders = array_filter($headers, static fn (mixed $cell): bool => is_array($cell) && ($cell['formula'] ?? null) !== null) === [];
         foreach ($rows as $row => $cellsByColumn) {
             $cell = $cellsByColumn[$columns['value']] ?? null;
             if (! is_array($cell)) {
@@ -118,6 +119,12 @@ final class NativeNumericFactFactory
                     $location['document_role'] = $role;
                 }
             }
+            $literalIdentityCells = true;
+            foreach (['entity', 'parameter'] as $field) {
+                $identityCell = $cellsByColumn[$columns[$field] ?? ''] ?? [];
+                $literalIdentityCells = $literalIdentityCells && is_string($identityCell['raw_value'] ?? null)
+                    && $identityCell['raw_value'] === ($identityCell['value'] ?? null);
+            }
             $records[] = ['entity' => $key, 'parameter' => $parameter, 'value' => $value,
                 'unit' => $document !== null || $roomLiteral !== null ? null : $rawUnit,
                 'literal_type' => $document !== null || $roomLiteral !== null ? 'string'
@@ -125,11 +132,27 @@ final class NativeNumericFactFactory
                         : (FactVocabulary::documentDomain($parameter) !== null ? 'invalid_document_context' : 'number')),
                 'reference' => 'xlsx:sheet:'.(string) ($native['sheet'] ?? '').'!'.$cell['address'],
                 'confirmed' => $formula === null && ! $locationRequiresConfirmation,
+                'literal_source_eligible' => $literalIdentityHeaders && $literalIdentityCells
+                    && array_filter(array_intersect_key($cellsByColumn, array_flip(array_values($columns))),
+                        static fn (array $identityCell): bool => ($identityCell['formula'] ?? null) !== null) === [],
                 'reason' => $formula !== null ? 'native_formula_requires_confirmation'
                     : ($locationRequiresConfirmation ? 'native_location_requires_confirmation' : null), 'location' => $location];
         }
 
-        return $this->publication($context, $records);
+        $publication = $this->publication($context, $records);
+        if ($publication === null || $literalSources === null) {
+            return $publication;
+        }
+        $eligible = [];
+        foreach ($records as $index => $record) {
+            if (($record['literal_type'] ?? null) === 'string' && $record['confirmed'] && $record['literal_source_eligible']) {
+                $eligible['literal:native:'.($index + 1)] = true;
+            }
+        }
+
+        return new DocumentUnitPublication($publication->claims, $publication->decisions, $publication->quarantinedItems,
+            $publication->numericSources, $literalSources->bind($context, $native,
+                array_values(array_filter($publication->claims, static fn (ObservationClaim $claim): bool => isset($eligible[$claim->id])))));
     }
 
     public function cad(DocumentUnitExecutionContext $context, array $geometry): ?DocumentUnitPublication
