@@ -64,6 +64,76 @@ final class RagCoverageRefreshDiagnosticsTest extends TestCase
         self::assertStringNotContainsString('private_', json_encode($records, JSON_THROW_ON_ERROR));
     }
 
+    #[DataProvider('projectionQueries')]
+    public function test_expected_projection_query_events_export_only_mode_and_bounded_numeric_metadata(bool $proof, bool $completed, int $ordinal, float $elapsed, string $mode, float $expectedElapsed): void
+    {
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery($proof, $ordinal, $elapsed, $completed);
+        self::assertIsArray($record);
+        self::assertSame(['projection_mode', 'query_ordinal', 'query_elapsed_ms', 'query_completed', 'release_sha'], array_keys($record));
+        self::assertSame($mode, $record['projection_mode']);
+        self::assertSame($ordinal, $record['query_ordinal']);
+        self::assertSame($expectedElapsed, $record['query_elapsed_ms']);
+        self::assertSame($completed, $record['query_completed']);
+        self::assertSame(str_repeat('a', 40), $record['release_sha']);
+    }
+
+    public static function projectionQueries(): array
+    {
+        return [[true, true, 1, 500.125, 'proof', 500.13], [false, true, 32, 500.0, 'counts', 500.0],
+            [true, false, 32, 991.124, 'proof', 991.12], [false, false, 1, 705.0, 'counts', 705.0]];
+    }
+
+    #[DataProvider('excludedProjectionQueries')]
+    public function test_expected_projection_query_diagnostics_skip_fast_invalid_and_over_limit_queries(int $ordinal, float $elapsed): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldNotReceive('channel');
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, $ordinal, $elapsed, true);
+        self::assertTrue(true);
+    }
+
+    public static function excludedProjectionQueries(): array
+    {
+        return [[0, 500.0], [-1, 500.0], [33, 500.0], [1, 499.99], [1, -1.0], [1, NAN], [1, INF], [1, -INF]];
+    }
+
+    public function test_expected_projection_query_logger_failure_does_not_escape(): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andThrow(new RuntimeException('private_logger_failure_fixture'));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(true, 1, 600.0, false);
+        self::assertTrue(true);
+    }
+
+    public function test_expected_projection_query_diagnostics_do_not_export_invalid_release(): void
+    {
+        config(['ai-assistant.status_snapshot_release' => 'private_release_fixture']);
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, 1, 600.0, true);
+        self::assertIsArray($record);
+        self::assertNull($record['release_sha']);
+        self::assertStringNotContainsString('private_', json_encode($record, JSON_THROW_ON_ERROR));
+    }
+
     public static function phases(): array
     {
         return [['queued', true], ['queue_failed', false], ['started', true], ['finished', false], ['failed', true], ['terminal_failed', false]];
