@@ -523,7 +523,8 @@ class ConstructionSemanticParser
                 if ($finishingContext !== null && ! $newOperation && $surfaceOnly) {
                     $clauseScopes = $finishingContext;
                 } else {
-                    $finishingContext = ! $newOperation && $finishingScopes !== [] && $this->hasFinishingSurfaceArgument($clause, $keywords)
+                    $finishingContext = $finishingScopes !== [] && count($finishingScopes) === count($clauseScopes)
+                        && $this->hasFinishingSurfaceArgument($clause, $keywords)
                         ? $finishingScopes : null;
                 }
                 foreach ($clauseScopes as $scope) {
@@ -589,6 +590,11 @@ class ConstructionSemanticParser
                     }
                 }
             }
+        }
+
+        if (preg_match('~^\s*('.$this->explicitOperationPattern(independent: true).')\s+~u', $text, $operation) === 1
+            && in_array($operation[1], ['оклейка', 'поклейка'], true)) {
+            $keywords['finishing'][] = $operation[1];
         }
 
         return $keywords;

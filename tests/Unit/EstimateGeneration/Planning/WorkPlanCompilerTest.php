@@ -537,6 +537,12 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'paint_then_new_operation_owns_list' => ['Покраска потолков и устройство стен и фасада', ['finish_finishing', 'walls', 'facade'], ['finishing', 'structures']];
         yield 'paint_context_ends_at_other_work' => ['Покраска потолков, электромонтаж, стены', ['finish_finishing', 'electrical', 'walls'], ['finishing', 'electricity', 'structures']];
         yield 'paint_context_ends_at_sentence' => ['Покраска потолков. Стены', ['finish_finishing', 'walls'], ['finishing', 'structures']];
+        yield 'finishing_operation_owns_its_surface_list' => ['Укладка плитки на пол и стены', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'finishing_operation_then_new_wall_operation' => ['Укладка плитки на пол и устройство стен', ['finish_finishing', 'walls'], ['finishing', 'structures']];
+        yield 'surface_gluing_operation_and_list' => ['Оклейка потолков и стен', ['custom-finishing'], ['finishing', 'structures']];
+        yield 'surface_gluing_operation_comma_list' => ['Поклейка потолков, стен', ['custom-finishing'], ['finishing', 'structures']];
+        yield 'surface_gluing_then_independent_wall' => ['Оклейка потолков и устройство стен', ['walls', 'custom-finishing'], ['finishing', 'structures']];
+        yield 'surface_gluing_comma_then_independent_wall' => ['Поклейка потолков, устройство стен', ['custom-finishing', 'walls'], ['finishing', 'structures']];
     }
 
     #[DataProvider('unsupportedFireSystems')]
