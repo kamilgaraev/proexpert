@@ -655,6 +655,43 @@ final class EstimateComposerTest extends TestCase
         self::assertSame($input->candidates[0]['candidate_id'], $intents[0]['candidate_id']);
     }
 
+    public function test_composer_answer_numbers_and_model_prices_cannot_replace_an_eligible_server_quantity(): void
+    {
+        $original = $this->declaredDescriptionInput('Монтаж стендов', ['equipment']);
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), [...$original->facts, [
+            'id' => 'fact:answer', 'entity_id' => 'entity:answer', 'entity_type' => 'quantity', 'type' => 'evaluation_answer',
+            'value' => ['kind' => 'composer_answer', 'answer' => 'Монтаж 3 стендов по 999 рублей, применить норму 123.',
+                'question_key' => 'composer_source_'.str_repeat('b', 40), 'numeric_parameters_confirmed' => false],
+            'unit' => null, 'origin' => 'user_assumption', 'status' => 'confirmed', 'evidence_ids' => ['evidence:answer'],
+            'context_kind' => 'composer_answer', 'context_entity_id' => 'entity:description', 'answer_work_sections' => ['equipment'],
+        ]], [], [], [], [], RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']);
+        $model = new RecordedEstimateComposerModel(['work_intents' => [[
+            'kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.stands', 'name' => 'Монтаж стендов',
+            'work_section' => 'equipment', 'unit' => 'count', 'derived_quantity_id' => null, 'source_fact_ids' => ['fact:answer'],
+            'technology_package_candidate' => null, 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+            'quantity' => '3', 'unit_price' => '999', 'total_cost' => '2997', 'norm_id' => 123,
+        ]]]);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertSame([], $outcome['quarantined']);
+        self::assertCount(1, $outcome['intents']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+        $locals = $this->projectSemanticResult($outcome, $input);
+        $item = $locals[0]['sections'][0]['work_items'][0];
+        self::assertSame('Монтаж стендов', $item['name']);
+        self::assertNull($item['quantity']);
+        self::assertNull($item['unit']);
+        self::assertNull($item['total_cost']);
+        self::assertArrayNotHasKey('unit_price', $item);
+        self::assertArrayNotHasKey('norm_id', $item);
+        self::assertArrayNotHasKey('quantity_evidence', $item);
+        self::assertSame([], $item['materials']);
+        self::assertSame([], $item['labor']);
+        self::assertTrue($item['skip_normative_matching']);
+        self::assertSame('quantity_unknown', $item['pricing_blocker']);
+    }
+
     public function test_input_fingerprint_fences_exact_snapshot_decisions_quantities_candidates_and_missing_documents(): void
     {
         $base = $this->input();
