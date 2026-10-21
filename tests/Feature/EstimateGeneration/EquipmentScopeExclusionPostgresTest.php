@@ -23,11 +23,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectMod
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SaveEvaluationRequirementDecisionRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -43,7 +46,7 @@ final class EquipmentScopeExclusionPostgresTest extends EstimateGenerationCanoni
         foreach (['equipment_purchase', 'delivery', 'commissioning'] as $phase) {
             $input = $this->target($session, $entityId, $phase);
             $sources = app(GetEvaluationRequirementSources::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
-            self::assertSame(['not_applicable'], $sources['allowed_dispositions']);
+            self::assertSame(['not_applicable', 'in_scope'], $sources['allowed_dispositions']);
             self::assertSame([], $sources['sources']);
             $this->exclude($actor, $session, $entityId, $phase);
         }
@@ -55,6 +58,107 @@ final class EquipmentScopeExclusionPostgresTest extends EstimateGenerationCanoni
         self::assertNotSame($before, app(EvaluationInputFingerprint::class)->fromSession($session->fresh()));
         self::assertSame(4, $session->fresh()->state_version);
         self::assertArrayNotHasKey('confirmed_evaluation', $session->fresh()->input_payload);
+    }
+
+    #[DataProvider('excludedPhases')]
+    public function test_equipment_scope_exclusion_can_be_reversed_without_hiding_missing_work_or_its_history(string $phase): void
+    {
+        [$actor, $session, $entityId] = $this->fixture();
+        foreach (['equipment_purchase', 'delivery', 'commissioning'] as $requirement) {
+            $this->exclude($actor, $session, $entityId, $requirement);
+        }
+        [$before] = $this->model($session);
+        $previous = array_values(array_filter($before->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_requirement.'.$phase))[0];
+        $draft = $session->fresh()->draft_payload;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][] = $this->work($entityId, $phase);
+        self::assertContains('scope_exclusion_conflict', array_column($this->evaluation($session, $draft)['coverage']['missing_requirements'], 'reason'));
+        $input = [...$this->target($session, $entityId, $phase), 'request_id' => (string) Str::uuid(), 'disposition' => 'in_scope',
+            'reason' => 'Этап возвращён в согласованный состав этой сметы, стоимость проверяется отдельно.'];
+        $save = app(SaveEvaluationRequirementDecision::class);
+        $receipt = $save->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        self::assertSame(CanonicalPipelineJson::encode($receipt), CanonicalPipelineJson::encode($save->handle($actor, (int) $session->project_id, (int) $session->id, $input)));
+        [$current] = $this->model($session);
+        $choice = array_column($current->facts, null, 'id')[$receipt['fact_id']];
+        self::assertSame('in_scope', $choice->value['disposition']);
+        self::assertSame($previous->id, $choice->supersedesFactId);
+        self::assertSame(2, $choice->version);
+        self::assertSame(5, $session->fresh()->state_version);
+        self::assertSame($previous->sourceVersion, $choice->sourceVersion);
+        self::assertArrayNotHasKey('confirmed_evaluation', $session->fresh()->input_payload);
+        $covered = $this->evaluation($session, $draft);
+        self::assertTrue($covered['coverage']['scope_complete']);
+        self::assertFalse($covered['can_confirm_for_apply']);
+        self::assertContains($phase, array_column($covered['scenarios'][0]['positions'], 'key'));
+        $withoutWork = $this->evaluation($session)['coverage'];
+        self::assertFalse($withoutWork['scope_complete']);
+        self::assertSame([$phase], array_column($withoutWork['missing_requirements'], 'requirement'));
+        self::assertSame('work_scope_missing', $withoutWork['missing_requirements'][0]['reason']);
+        $this->exclude($actor, $session, $entityId, $phase);
+        [$again] = $this->model($session);
+        $excluded = array_values(array_filter($again->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_requirement.'.$phase))[0];
+        self::assertSame(3, $excluded->version);
+        self::assertSame($choice->id, $excluded->supersedesFactId);
+        self::assertContains('scope_exclusion_conflict', array_column($this->evaluation($session, $draft)['coverage']['missing_requirements'], 'reason'));
+    }
+
+    public function test_in_scope_without_an_exclusion_is_only_intent_and_keeps_replay_and_authorization_guards(): void
+    {
+        [$actor, $session, $entityId] = $this->fixture();
+        $input = [...$this->target($session, $entityId, 'delivery'), 'request_id' => (string) Str::uuid(), 'disposition' => 'in_scope',
+            'reason' => 'Доставка входит в выбранную смету, состав и стоимость пока не подтверждены.'];
+        $save = app(SaveEvaluationRequirementDecision::class);
+        $receipt = $save->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        self::assertSame(2, $receipt['state_version']);
+        self::assertSame(['equipment_purchase', 'delivery', 'commissioning'], array_column($this->evaluation($session)['coverage']['missing_requirements'], 'requirement'));
+        try {
+            $save->handle($actor, (int) $session->project_id, (int) $session->id, [...$input, 'reason' => 'Изменено решение под прежним идентификатором запроса.']);
+            self::fail('A changed in-scope replay was accepted.');
+        } catch (ValidationException) {
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+        try {
+            $save->handle($actor, (int) $session->project_id, (int) $session->id, [...$input, 'request_id' => (string) Str::uuid()]);
+            self::fail('A stale in-scope request was accepted.');
+        } catch (StaleEstimateGenerationState) {
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+        $actor->update(['is_active' => false]);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $save->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+    }
+
+    public function test_in_scope_cannot_replace_a_mandatory_document_installation_or_another_section(): void
+    {
+        [$actor, $session, $entityId] = $this->fixture();
+        foreach ([['equipment', 'equipment_specification'], ['equipment', 'installation'], ['heating', 'delivery']] as [$section, $requirement]) {
+            try {
+                app(SaveEvaluationRequirementDecision::class)->handle($actor, (int) $session->project_id, (int) $session->id,
+                    [...$this->target($session, $entityId, $requirement), 'section' => $section, 'request_id' => (string) Str::uuid(),
+                        'disposition' => 'in_scope', 'reason' => 'Этап выбран в состав сметы, требуется дальнейшая проверка.']);
+                self::fail('An unrelated requirement accepted an equipment in-scope decision.');
+            } catch (ValidationException) {
+                self::assertSame(1, $session->fresh()->state_version);
+            }
+        }
+        [$repairActor, $repairSession, $repairEntity] = $this->repairFixture(['finishing']);
+        $this->expectException(ValidationException::class);
+        app(SaveEvaluationRequirementDecision::class)->handle($repairActor, (int) $repairSession->project_id, (int) $repairSession->id,
+            ['entity_id' => $repairEntity, 'section' => 'finishing', 'requirement' => 'demolition', 'state_version' => 0,
+                'request_id' => (string) Str::uuid(), 'disposition' => 'in_scope', 'reason' => 'Этап выбран в состав сметы, требуется дальнейшая проверка.']);
+    }
+
+    public function test_in_scope_request_accepts_the_additive_enum_and_prohibits_document_proof_fields(): void
+    {
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => 1, 'entity_id' => 'equipment:p1', 'section' => 'equipment',
+            'requirement' => 'delivery', 'disposition' => 'in_scope', 'reason' => 'Доставка входит в согласованный состав сметы.'];
+        $rules = (new SaveEvaluationRequirementDecisionRequest)->rules();
+        self::assertFalse(Validator::make($input, $rules)->fails());
+        foreach (['document_fact_id' => 'fact:spec', 'document_applicability_confirmed' => true, 'document_fact_version' => 1,
+            'document_value_hash' => str_repeat('a', 64)] as $field => $value) {
+            $validator = Validator::make([...$input, $field => $value], $rules);
+            self::assertTrue($validator->fails());
+            self::assertArrayHasKey($field, $validator->errors()->toArray());
+        }
     }
 
     #[DataProvider('excludedPhases')]

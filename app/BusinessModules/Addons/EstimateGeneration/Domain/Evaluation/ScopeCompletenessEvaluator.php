@@ -58,7 +58,12 @@ final class ScopeCompletenessEvaluator
     public static function allowsNotApplicable(string $section, string $requirement): bool
     {
         return in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)
-            || ($section === 'equipment' && in_array($requirement, self::EQUIPMENT_SCOPE_EXCLUSIONS, true));
+            || self::allowsEquipmentScopeDecision($section, $requirement);
+    }
+
+    public static function allowsEquipmentScopeDecision(string $section, string $requirement): bool
+    {
+        return $section === 'equipment' && in_array($requirement, self::EQUIPMENT_SCOPE_EXCLUSIONS, true);
     }
 
     public function evaluate(ProjectModelSnapshot $snapshot, string $profile, string $constructionType, array $selectedScope, array $positions, array $decisions = [], array $technologies = []): array

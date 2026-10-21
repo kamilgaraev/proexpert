@@ -56,6 +56,9 @@ final readonly class GetEvaluationRequirementSources
             if (ScopeCompletenessEvaluator::allowsNotApplicable($section, $requirement)) {
                 $dispositions[] = 'not_applicable';
             }
+            if (ScopeCompletenessEvaluator::allowsEquipmentScopeDecision($section, $requirement)) {
+                $dispositions[] = 'in_scope';
+            }
             $snapshot = $this->models->snapshotForPlanning((int) $session->organization_id, $projectId, $sessionId, 10001)['snapshot'];
             if (count($snapshot->facts) > 10000) {
                 throw ValidationException::withMessages(['requirement' => trans_message('estimate_generation.room_identity.fact_limit')]);

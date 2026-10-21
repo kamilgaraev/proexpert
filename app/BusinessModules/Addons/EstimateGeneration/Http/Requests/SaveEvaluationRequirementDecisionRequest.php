@@ -20,11 +20,11 @@ final class SaveEvaluationRequirementDecisionRequest extends FormRequest
             'entity_id' => ['required', 'string', 'max:191', 'regex:/\A[a-z][a-z0-9._:-]+\z/'],
             'section' => ['required', 'string', 'max:64', 'regex:/\A[a-z][a-z0-9_]+\z/'],
             'requirement' => ['required', 'string', 'max:40', 'regex:/\A[a-z][a-z0-9_]+\z/'],
-            'disposition' => ['required', Rule::in(['document_verified', 'not_applicable'])],
-            'document_fact_id' => ['required_if:disposition,document_verified', 'prohibited_if:disposition,not_applicable', 'string', 'max:191', 'regex:/\A[a-z][a-z0-9._:-]+\z/'],
-            'document_applicability_confirmed' => ['sometimes', 'boolean', 'prohibited_if:disposition,not_applicable'],
-            'document_fact_version' => ['required_if:document_applicability_confirmed,true', 'integer', 'min:1', 'prohibited_if:disposition,not_applicable'],
-            'document_value_hash' => ['required_if:document_applicability_confirmed,true', 'string', 'regex:/\A[a-f0-9]{64}\z/', 'prohibited_if:disposition,not_applicable'],
+            'disposition' => ['required', Rule::in(['document_verified', 'not_applicable', 'in_scope'])],
+            'document_fact_id' => ['required_if:disposition,document_verified', 'prohibited_unless:disposition,document_verified', 'string', 'max:191', 'regex:/\A[a-z][a-z0-9._:-]+\z/'],
+            'document_applicability_confirmed' => ['sometimes', 'boolean', 'prohibited_unless:disposition,document_verified'],
+            'document_fact_version' => ['required_if:document_applicability_confirmed,true', 'integer', 'min:1', 'prohibited_unless:disposition,document_verified'],
+            'document_value_hash' => ['required_if:document_applicability_confirmed,true', 'string', 'regex:/\A[a-f0-9]{64}\z/', 'prohibited_unless:disposition,document_verified'],
             'reason' => ['required', 'string', 'min:12', 'max:300']];
     }
 }
