@@ -15,8 +15,14 @@ final class AssistantRequestedSourceScopes
 
     public const ADDITIVE_CONNECTOR = '(?:а\s+также|вместе\s+с(?:о)?|а|и)';
 
-    public static function compile(string $question, array $projectIds): array
+    private const ACT_STATUS_PATTERNS = ['approved' => 'утвержд[её]нн[а-яё]*', 'draft' => 'чернов[а-яё]*', 'signed' => 'подписанн[а-яё]*',
+        'rejected' => 'отклон[её]нн[а-яё]*', 'annulled' => 'аннулированн[а-яё]*'];
+
+    public static function compile(string $question, array $projectIds, bool $comparison = false): array
     {
+        if ($comparison && ! self::containsStatusCondition($question)) {
+            return [];
+        }
         $requiredSides = array_fill_keys(['organization', ...array_map(static fn (int $id): string => 'project:'.$id, $projectIds)], true);
         $mentions = AssistantOrganizationRecordVocabulary::subjectMentions($question);
         foreach (array_reverse(array_keys($mentions)) as $index) {
@@ -24,7 +30,14 @@ final class AssistantRequestedSourceScopes
             $question = substr_replace($question, self::PREFIX.'subject_'.$index.'__', $mention['offset'], $mention['length']);
         }
         $question = AssistantReportComparisonSpecification::withoutNegatedComparison($question);
-        $parts = preg_split('/[,;.!?\r\n]+|(?<![\pL\pN])(?:'.self::ADDITIVE_CONNECTOR.'|или)(?![\pL\pN])/iu', $question) ?: [];
+        if ($comparison) {
+            if (! self::containsStatusCondition($question)) {
+                return [];
+            }
+            $question = AssistantReportComparisonSpecification::withoutComparisonDirective($question);
+        }
+        $relations = $comparison ? '|с|со|против|относительно' : '';
+        $parts = preg_split('/[,;.!?\r\n]+|(?<![\pL\pN])(?:'.self::ADDITIVE_CONNECTOR.'|или'.$relations.')(?![\pL\pN])/iu', $question) ?: [];
         $requirements = [];
         $coveredSides = [];
         $pending = [];
@@ -92,8 +105,7 @@ final class AssistantRequestedSourceScopes
     private static function requestedFilters(string $text): array
     {
         $statuses = [];
-        foreach (['approved' => 'утвержд[её]нн[а-яё]*', 'draft' => 'чернов[а-яё]*', 'signed' => 'подписанн[а-яё]*',
-            'rejected' => 'отклон[её]нн[а-яё]*', 'annulled' => 'аннулированн[а-яё]*'] as $status => $pattern) {
+        foreach (self::ACT_STATUS_PATTERNS as $status => $pattern) {
             if (preg_match('/(?<![\pL\pN])(?:'.$pattern.')(?![\pL\pN])/iu', $text) === 1) {
                 $statuses[] = $status;
                 $text = preg_replace('/(?<![\pL\pN])(?:'.$pattern.')(?![\pL\pN])/iu', ' ', $text) ?? $text;
@@ -105,6 +117,11 @@ final class AssistantRequestedSourceScopes
         }
 
         return $statuses === [] ? [] : [['field' => 'status', 'operator' => 'eq', 'value' => $statuses[0]]];
+    }
+
+    private static function containsStatusCondition(string $question): bool
+    {
+        return preg_match('/(?<![\pL\pN])(?:'.implode('|', self::ACT_STATUS_PATTERNS).')(?![\pL\pN])/iu', $question) === 1;
     }
 
     public static function key(string $side, array $subject, array $filters = []): string

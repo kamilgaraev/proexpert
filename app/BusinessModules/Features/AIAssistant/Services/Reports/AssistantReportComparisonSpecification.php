@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestedSourceScopes;
 
 final class AssistantReportComparisonSpecification
 {
@@ -43,10 +44,18 @@ final class AssistantReportComparisonSpecification
         return preg_replace('/'.self::COMPARISON_WORD.'(?:\s+'.$object.')?(?:\s+'.$modifier.'){0,2}\s*(?:[—–:-]\s*)?не\s+(?:нуж(?:но|на|ны|ен)|надо|требуется|следует|стоит)(?![\pL\pN])/iu', ' ', $question) ?? $question;
     }
 
-    public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = []): void
+    public static function withoutComparisonDirective(string $question): string
+    {
+        return preg_replace('/'.self::COMPARISON_WORD.'|(?<![\pL\pN])(?:между|в\s+ч[её]м)(?![\pL\pN])/iu', ' ', $question) ?? $question;
+    }
+
+    public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = [], array $requestedSources = []): void
     {
         if (! self::requestsComparison($question, $resolvedProjectNames)) {
             return;
+        }
+        if ($requestedSources !== []) {
+            AssistantRequestedSourceScopes::assertReport($requestedSources, $sections);
         }
         $organizations = [];
         $projects = [];
@@ -54,7 +63,7 @@ final class AssistantReportComparisonSpecification
             if (! is_array($section)) {
                 throw new AssistantReportScopeAmbiguous;
             }
-            $key = serialize(self::subject($section));
+            $key = serialize(self::subject($section, $requestedSources !== []));
             if (($section['scope'] ?? null) === 'organization') {
                 $organizations[$key] = true;
             } elseif (($section['scope'] ?? null) === 'project') {
@@ -71,7 +80,7 @@ final class AssistantReportComparisonSpecification
         }
     }
 
-    private static function subject(array $section): array
+    private static function subject(array $section, bool $conditionsBound = false): array
     {
         foreach (['columns', 'filters', 'group_by', 'metrics', 'order_by'] as $field) {
             if (! is_array($section[$field] ?? [])) {
@@ -83,7 +92,7 @@ final class AssistantReportComparisonSpecification
             if (! is_array($filter)) {
                 throw new AssistantReportScopeAmbiguous;
             }
-            if (($filter['field'] ?? null) === 'project_id') {
+            if (($filter['field'] ?? null) === 'project_id' || ($conditionsBound && ($filter['field'] ?? null) === 'status')) {
                 continue;
             }
             $value = $filter['value'] ?? null;

@@ -392,6 +392,15 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertSame([], $response['message']['metadata']['source_refs']);
     }
 
+    public function test_compared_act_status_conditions_are_not_proven_by_unfiltered_searches(): void
+    {
+        $response = $this->ask([$this->arguments(null), $this->arguments($this->project->id)],
+            'Сравни все утверждённые акты организации с черновыми актами проекта '.$this->project->id);
+        self::assertSame([1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
     #[DataProvider('comparisonCommands')]
     public function test_affirmative_comparison_still_rejects_different_subjects_in_each_scope(string $prefix): void
     {

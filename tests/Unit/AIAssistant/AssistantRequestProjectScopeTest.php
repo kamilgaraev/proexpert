@@ -16,6 +16,40 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_comparison_cannot_replace_explicitly_different_requested_status_conditions_with_equal_filters(): void
+    {
+        $question = 'Сравни все утверждённые акты организации с черновыми актами проекта 100';
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]]];
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+    }
+
+    public function test_comparison_preserves_each_explicit_requested_act_status_condition(): void
+    {
+        $question = 'Сравни все утверждённые акты организации с черновыми актами проекта 100';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]];
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]));
+        $sections[1]['columns'] = ['id'];
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections]);
+    }
+
+    public function test_comparison_status_words_in_a_confirmed_project_name_do_not_add_conditions(): void
+    {
+        $question = 'Сравни все акты организации с проектом «Утверждённые акты»';
+        $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+            ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act']];
+        $search = static fn (): array => ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+        self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections], $search));
+    }
+
     public function test_independent_act_status_conditions_cannot_be_swapped_between_scopes(): void
     {
         $question = 'Все утверждённые акты организации, а также черновые акты проекта 100';

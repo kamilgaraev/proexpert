@@ -492,7 +492,13 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         self::assertNotSame('success', $denied['status'] ?? null);
     }
 
-    public function test_independent_act_filters_bind_to_each_scope_before_writing_the_workbook(): void
+    public static function actConditionQuestions(): array
+    {
+        return ['independent' => [false], 'comparison' => [true]];
+    }
+
+    #[DataProvider('actConditionQuestions')]
+    public function test_independent_act_filters_bind_to_each_scope_before_writing_the_workbook(bool $comparison): void
     {
         Queue::fake();
         config(['cache.default' => 'array']);
@@ -511,7 +517,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             }
         }
         $project = $projects->first();
-        $question = 'Сделай Excel: все утверждённые акты организации, а также черновики актов проекта '.$project->id;
+        $question = $comparison ? 'Сделай Excel: сравни все утверждённые акты организации с черновыми актами проекта '.$project->id
+            : 'Сделай Excel: все утверждённые акты организации, а также черновики актов проекта '.$project->id;
         $section = ['title' => 'Организация', 'scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
             'columns' => ['id', 'status'], 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']],
             'group_by' => [], 'metrics' => [], 'order_by' => [], 'row_limit' => 100];

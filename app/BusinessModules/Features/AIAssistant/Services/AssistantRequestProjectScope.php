@@ -203,10 +203,12 @@ final readonly class AssistantRequestProjectScope
             if (! $hasOrganizationSection || array_diff($projectIds, array_keys($boundProjects)) !== []) {
                 throw new AssistantReportScopeAmbiguous;
             }
-            if (! AssistantReportComparisonSpecification::requestsComparison($sourceQuestion, $resolvedProjectNames)) {
-                AssistantRequestedSourceScopes::assertReport($this->independentSourceScopes($sourceQuestion, $projectIds, $projectBindings), $arguments['sections']);
+            $comparison = AssistantReportComparisonSpecification::requestsComparison($sourceQuestion, $resolvedProjectNames);
+            $requestedSources = $this->requestedSourceScopes($sourceQuestion, $projectIds, $projectBindings, $comparison);
+            if (! $comparison) {
+                AssistantRequestedSourceScopes::assertReport($requestedSources, $arguments['sections']);
             }
-            AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds, $resolvedProjectNames);
+            AssistantReportComparisonSpecification::assertCompatible($question, $arguments['sections'], $projectIds, $resolvedProjectNames, $comparison ? $requestedSources : []);
         }
 
         return $arguments;
@@ -222,11 +224,12 @@ final readonly class AssistantRequestProjectScope
         $projectIds = $this->reportProjectIds($question, $search, $resolvedProjectNames, $projectBindings);
         $pairwise = AssistantReportComparisonSpecification::requestsComparison($question, $resolvedProjectNames);
 
-        return ['project_ids' => $projectIds, 'pairwise' => $pairwise,
-            ...($pairwise ? [] : ['subjects' => $this->independentSourceScopes($question, $projectIds, $projectBindings)])];
+        $subjects = $this->requestedSourceScopes($question, $projectIds, $projectBindings, $pairwise);
+
+        return ['project_ids' => $projectIds, 'pairwise' => $pairwise, ...($subjects === [] ? [] : ['subjects' => $subjects])];
     }
 
-    private function independentSourceScopes(string $question, array $projectIds, array $projectBindings): array
+    private function requestedSourceScopes(string $question, array $projectIds, array $projectBindings, bool $comparison = false): array
     {
         if (str_contains($question, AssistantRequestedSourceScopes::PREFIX)) {
             throw new AssistantReportScopeAmbiguous;
@@ -255,7 +258,7 @@ final readonly class AssistantRequestProjectScope
         }, $question) ?? $question;
         $question = preg_replace('/(?<![\pL\pN])(?:нашей\s+)?организаци[а-яё]*(?![\pL\pN])/iu', AssistantRequestedSourceScopes::MARKER.'organization__', $question) ?? $question;
 
-        return AssistantRequestedSourceScopes::compile($question, $projectIds);
+        return AssistantRequestedSourceScopes::compile($question, $projectIds, $comparison);
     }
 
     private static function recordNouns(): string
