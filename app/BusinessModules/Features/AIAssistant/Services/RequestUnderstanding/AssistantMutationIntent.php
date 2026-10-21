@@ -51,6 +51,7 @@ final class AssistantMutationIntent
 
     public static function containsRequest(string $message): bool
     {
+        $message = self::withoutSpreadsheetRowPlacement($message);
         if (AssistantReportSubscriptionIntent::type($message) !== null) {
             return true;
         }
@@ -80,6 +81,7 @@ final class AssistantMutationIntent
 
     public static function compoundType(string $message): ?string
     {
+        $message = self::withoutSpreadsheetRowPlacement($message);
         $parts = preg_split('/([.!?;,:\r\n]|\s+[-—–]\s+|\s+(?:и|затем|потом)\s+)/u', mb_strtolower($message), -1, PREG_SPLIT_DELIM_CAPTURE) ?: [];
         for ($index = 2; $index < count($parts); $index += 2) {
             $part = $parts[$index];
@@ -109,6 +111,7 @@ final class AssistantMutationIntent
 
     public static function containsFollowUpCommand(string $message): bool
     {
+        $message = self::withoutSpreadsheetRowPlacement($message);
         $query = str_replace('ё', 'е', mb_strtolower($message));
 
         return preg_match('/(?:\s+(?:и|затем|потом)\s+|\s+[-—–]\s+|[.!?;,:\r\n]\s*)(?:пожалуйста[,\s]+)?(?:сделай(?:те)?|сделать|'.self::UPDATE_COMMANDS.'|'.self::TOGGLE_COMMANDS.')(?!\pL)/u', $query) === 1;
@@ -117,6 +120,15 @@ final class AssistantMutationIntent
     public static function hasPresentationRequest(string $message): bool
     {
         return preg_match('/'.self::PRESENTATION_REQUEST.'/u', str_replace('ё', 'е', mb_strtolower($message))) === 1;
+    }
+
+    private static function withoutSpreadsheetRowPlacement(string $message): string
+    {
+        if (preg_match('/(?<![\pL\pN])(?:excel|xlsx|csv|эксель)(?![\pL\pN])/iu', $message) !== 1) {
+            return $message;
+        }
+
+        return preg_replace('/(?<![\pL\pN])(?:включи(?:те)?|включить)(?=\s+(?:е[её]|его|их)\s+(?:на|в)\s+(?:оба\s+листа|все\s+листы|каждый\s+лист)(?![\pL\pN]))/iu', 'покажи', $message) ?? $message;
     }
 
     private static function normalize(string $message): string
