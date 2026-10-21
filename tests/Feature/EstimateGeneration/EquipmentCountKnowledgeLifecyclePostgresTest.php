@@ -173,6 +173,95 @@ final class EquipmentCountKnowledgeLifecyclePostgresTest extends EstimateGenerat
         yield 'independent_source_disagrees' => ['4', 'failed'];
     }
 
+    #[DataProvider('knowledgeValidationLoads')]
+    public function test_learning_validation_work_is_bounded_after_cheap_eligibility(int $claimCount, int $normCount, bool $ineligibleFirst, int $sourceLimit, int $associationLimit): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $context = $this->nativeContext($session, $actor, 'c');
+        $this->publishNative($context, '3', array_map(static fn (int $index): string => 'equipment.claim'.$index, range(1, $claimCount)));
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $originals = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_count'));
+        self::assertCount($claimCount, $originals);
+        foreach ($originals as $index => $source) {
+            self::assertSame('document', $source->origin);
+            app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], $index, (string) Str::uuid(), $this->countAnswer($source->entityId));
+        }
+        $quantities = app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'];
+        $items = [];
+        foreach ($originals as $index => $source) {
+            $quantity = app(WorkItemQuantityMapper::class)->mapForEntity('equipment.install', $quantities, $source->entityId);
+            self::assertNotNull($quantity);
+            $items[] = ['key' => 'equipment:claim'.$index.':install', 'name' => 'Монтаж неизвестной установки', 'unit' => 'count',
+                'quantity' => '3', 'quantity_evidence' => $quantity->toArray(),
+                'metadata' => ['quantity_key' => 'equipment.install', 'scope_entity_id' => $source->entityId]];
+        }
+        $norm = $this->norm();
+        $norms = collect([$norm]);
+        for ($index = 1; $index < $normCount; $index++) {
+            $another = $norm->replicate();
+            $another->code = '37-01-001-'.str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT);
+            $another->save();
+            $norms->push($another);
+        }
+        $draft = ['regional_context' => $this->regionalContext($norm),
+            'local_estimates' => [['sections' => [['work_items' => $items]]]],
+            'source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh())];
+        $session->fresh()->update(['draft_payload' => app(UniversalReviewSummaryProjector::class)->project($draft)]);
+        $recorder = app(EstimateGenerationLearningRecorder::class);
+        $first = null;
+        foreach (range(0, max($claimCount, $normCount) - 1) as $index) {
+            $item = $items[$index % $claimCount];
+            $candidate = $norms[$index % $normCount];
+            self::assertSame(1, $recorder->recordUserSelection($session->fresh(), $item, $item, (int) $candidate->id, []));
+            $example = EstimateGenerationLearningExample::query()->where('generation_session_id', $session->id)
+                ->where('estimate_norm_id', $candidate->id)->where('context_payload->work_item_key', $item['key'])->sole();
+            self::assertSame('passed', data_get($example->context_payload, 'knowledge_validation.count_source_check.outcome'));
+            $payload = $example->context_payload;
+            $payload['knowledge_validation']['normative_association_check']['outcome'] = 'passed';
+            $example->update(['context_payload' => $payload, 'accepted_at' => now()->addSeconds($index),
+                'work_unit' => $ineligibleFirst && $index > 0 ? 'unsupported-history-unit' : 'count']);
+            $first ??= $example;
+        }
+        $legacy = $first->toArray();
+        unset($legacy['id'], $legacy['created_at'], $legacy['updated_at'], $legacy['context_payload']['knowledge_validation']);
+        $legacy['source_type'] = 'imported_estimate';
+        $legacy['source_entity_id'] = (int) $first->id;
+        self::assertSame(1, $recorder->record($legacy));
+
+        $sourceIds = array_map(static fn (Fact $fact): int => (int) substr($fact->evidenceIds[0], strlen('evidence:')), $originals);
+        $sourceReads = $associationReads = 0;
+        DB::listen(static function (QueryExecuted $query) use (&$sourceReads, &$associationReads, $sourceIds, $scope): void {
+            if (str_contains($query->sql, 'select * from "estimate_generation_evidence" where "id" = ?')
+                && in_array($query->bindings[0] ?? null, $sourceIds, true)
+                && array_slice($query->bindings, 1) === $scope) {
+                $sourceReads++;
+            }
+            if (str_contains($query->sql, 'select "code" from "estimate_norms"')) {
+                $associationReads++;
+            }
+        });
+        $summaries = app(EstimateGenerationLearningEvidenceService::class)->summarizeForCandidates($norms, $items[0],
+            ['organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2]]);
+        self::assertSame($sourceLimit, $sourceReads);
+        self::assertSame($associationLimit, $associationReads);
+        self::assertGreaterThan(0, $summaries[$norm->id]['learning_score']);
+        self::assertSame(1, $summaries[$norm->id]['learning_positive_count']);
+        self::assertSame(['imported_estimate'], array_column($summaries[$norm->id]['learning_sources'], 'source_type'));
+        foreach ($norms->skip(1) as $candidate) {
+            self::assertSame(0.0, $summaries[$candidate->id]['learning_score']);
+            self::assertSame(0, $summaries[$candidate->id]['learning_positive_count']);
+        }
+    }
+
+    public static function knowledgeValidationLoads(): iterable
+    {
+        yield 'distinct_native_claims' => [12, 1, false, 8, 1];
+        yield 'one_claim_distinct_norms' => [1, 12, false, 1, 8];
+        yield 'incompatible_units_before_current_claim' => [12, 1, true, 1, 1];
+    }
+
     public function test_learning_selection_without_package_item_preserves_organization_session_and_work_identity(): void
     {
         [, $first] = $this->fixture();
@@ -315,12 +404,15 @@ final class EquipmentCountKnowledgeLifecyclePostgresTest extends EstimateGenerat
             'source.xlsx', 'application/octet-stream', 'source.xlsx', 'fixture-native', 1, 0, 'draft', (int) $page->id);
     }
 
-    private function publishNative(DocumentUnitExecutionContext $context, ?string $count = null): void
+    private function publishNative(DocumentUnitExecutionContext $context, ?string $count = null, array $entityKeys = ['equipment.p1']): void
     {
         $cells = [];
-        $rows = [['equipment.p1', 'equipment_specification', 'Неизвестная установка', '']];
-        if ($count !== null) {
-            $rows[] = ['equipment.p1', 'equipment_count', $count, 'шт'];
+        $rows = [];
+        foreach ($entityKeys as $entityKey) {
+            $rows[] = [$entityKey, 'equipment_specification', 'Неизвестная установка', ''];
+            if ($count !== null) {
+                $rows[] = [$entityKey, 'equipment_count', $count, 'шт'];
+            }
         }
         foreach ($rows as $index => $values) {
             foreach (array_combine(['A', 'B', 'C', 'D'], $values) as $column => $value) {

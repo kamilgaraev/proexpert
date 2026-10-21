@@ -120,12 +120,10 @@ final readonly class EquipmentCountKnowledgeValidationService
 
     public function permitsSourceReuse(EstimateGenerationLearningExample $example): bool
     {
-        $stored = $example->context_payload['knowledge_validation'] ?? null;
-        if (! is_array($stored) || ($stored['schema_version'] ?? null) !== 1 || ($stored['producer'] ?? null) !== self::PRODUCER
-            || data_get($stored, 'count_source_check.outcome') !== 'passed'
-            || data_get($stored, 'normative_association_check.outcome') !== 'passed') {
+        if (! self::hasPassingValidationMetadata($example)) {
             return false;
         }
+        $stored = $example->context_payload['knowledge_validation'];
         $session = EstimateGenerationSession::query()->where('organization_id', $example->organization_id)
             ->where('project_id', $example->project_id)->whereKey($example->generation_session_id)->first();
         if ($session === null || $example->estimate_norm_id === null) {
@@ -135,6 +133,17 @@ final readonly class EquipmentCountKnowledgeValidationService
 
         return data_get($fresh, 'count_source_check.outcome') === 'passed'
             && CanonicalPipelineJson::encode($stored['claim'] ?? null) === CanonicalPipelineJson::encode($fresh['claim'] ?? null);
+    }
+
+    public static function hasPassingValidationMetadata(EstimateGenerationLearningExample $example): bool
+    {
+        $stored = $example->context_payload['knowledge_validation'] ?? null;
+        if (! is_array($stored) || ($stored['schema_version'] ?? null) !== 1 || ($stored['producer'] ?? null) !== self::PRODUCER
+            || data_get($stored, 'count_source_check.outcome') !== 'passed'
+            || data_get($stored, 'normative_association_check.outcome') !== 'passed') {
+            return false;
+        }
+        return true;
     }
 
     public function currentAssociationPasses(array $item, int $normId, array $context): bool
