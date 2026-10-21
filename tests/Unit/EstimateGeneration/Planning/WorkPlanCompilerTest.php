@@ -411,10 +411,10 @@ final class WorkPlanCompilerTest extends TestCase
     }
 
     #[DataProvider('unknownSelectedSections')]
-    public function test_unknown_selected_scope_does_not_create_house_work_or_claim_completeness(array $selected): void
+    public function test_unknown_selected_scope_does_not_create_house_work_or_claim_completeness(array $selected, ?string $profileId = null): void
     {
         $analysis = ['object' => ['building_type' => 'bridge', 'description' => 'Мост через реку'],
-            'evaluation_policy' => ['mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => $selected],
+            'evaluation_policy' => ['mode' => 'universal', 'profile_id' => $profileId, 'price_policy' => 'catalog', 'selected_sections' => $selected],
             'assumptions' => ['Нужно обследование'], 'missing_inputs' => ['Спецификация опор']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
 
@@ -432,6 +432,8 @@ final class WorkPlanCompilerTest extends TestCase
     {
         yield 'structures' => [['structures']];
         yield 'equipment' => [['equipment']];
+        yield 'structures_industrial_profile' => [['structures'], 'industrial'];
+        yield 'equipment_industrial_profile' => [['equipment'], 'industrial'];
     }
 
     #[DataProvider('requestedUnknownScopes')]
@@ -1136,7 +1138,7 @@ final class WorkPlanCompilerTest extends TestCase
             self::assertNotContains('equipment', array_column($payload['package_plan']['packages'], 'key'));
             self::assertNotContains('equipment', array_column($payload['local_estimates'], 'key'));
         }
-        foreach (['industrial', 'house'] as $type) {
+        foreach (['industrial', 'factory'] as $type) {
             $industrial = $this->compiler()->compile(['object' => ['object_type' => $type],
                 'evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'industrial', 'selected_sections' => ['equipment']]], deferNormativePin: true);
             self::assertSame(['equipment', 'commissioning'], array_column($industrial['package_plan']['packages'], 'key'));
@@ -1144,6 +1146,11 @@ final class WorkPlanCompilerTest extends TestCase
             self::assertSame(['equipment.units_count', 'equipment.deliveries_count', 'equipment.units_count'], array_column($items, 'quantity_formula'));
             self::assertSame(['equipment_purchase', 'delivery', 'installation'], array_column(array_column($items, 'metadata'), 'requirement_key'));
         }
+        $house = $this->compiler()->compile(['object' => ['object_type' => 'house'],
+            'evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'industrial', 'selected_sections' => ['equipment']]], deferNormativePin: true);
+        self::assertSame(['equipment'], array_column($house['package_plan']['packages'], 'key'));
+        $items = array_merge(...array_column($house['local_estimates'][0]['sections'], 'work_items'));
+        self::assertSame(['equipment.purchase', 'equipment.delivery', 'equipment.install'], array_column(array_column($items, 'metadata'), 'composition_work_key'));
     }
 
     public function test_selected_equipment_candidates_obey_the_frozen_work_item_ceiling(): void

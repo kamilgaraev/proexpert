@@ -103,10 +103,11 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
         self::assertSame([], $planner->plan($profile)->packages);
     }
 
-    public function test_unknown_keeps_only_document_supported_packages_and_input_uncertainty(): void
+    #[DataProvider('evaluationProfiles')]
+    public function test_unknown_keeps_only_document_supported_packages_and_input_uncertainty(?string $evaluationProfile): void
     {
         $planner = new PackagePlannerService;
-        $analysis = ['object' => ['building_type' => 'bridge'],
+        $analysis = ['object' => ['building_type' => 'bridge'], 'evaluation_policy' => ['profile_id' => $evaluationProfile],
             'assumptions' => ['Требуется обследование'], 'missing_inputs' => ['Спецификация опор'],
             'document_context' => ['quantity_takeoffs' => [[
                 'quantity_key' => 'foundation.concrete', 'quantity' => 12, 'unit' => 'м3',
@@ -120,6 +121,12 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
         self::assertSame($analysis['assumptions'], $plan->assumptions);
         self::assertSame($analysis['missing_inputs'], $profile->missingInputs);
         self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
+    }
+
+    public static function evaluationProfiles(): iterable
+    {
+        yield 'default' => [null];
+        yield 'industrial' => ['industrial'];
     }
 
     public function test_known_warehouse_keeps_the_existing_mixed_office_specialization(): void
@@ -206,5 +213,35 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
         self::assertSame('custom', $profile->objectType);
         self::assertSame(['custom-foundation', 'walls'], array_column($planner->plan($profile)->packages, 'key'));
         self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
+    }
+
+    #[DataProvider('unknownIndustrialProfileTypes')]
+    public function test_industrial_evaluation_profile_is_not_object_identity_or_document_evidence(string $type): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['object_type' => $type, 'description' => 'Новый объект'], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'profile_id' => 'industrial', 'selected_sections' => ['structures']];
+        $planner = new PackagePlannerService;
+        $profile = $planner->profileFromAnalysis($analysis);
+        self::assertSame($type, $profile->objectType);
+        self::assertSame([], $planner->plan($profile)->packages);
+        self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
+        self::assertTrue($planner->documentRequirements($profile)['missing_for_full_estimate']);
+    }
+
+    public static function unknownIndustrialProfileTypes(): iterable
+    {
+        foreach (['bridge', 'custom', 'orbital_lab_42'] as $type) { yield $type => [$type]; }
+    }
+
+    public function test_industrial_evaluation_profile_preserves_known_primary_types_and_industrial_aliases(): void
+    {
+        $planner = new PackagePlannerService;
+        foreach (['industrial', 'factory', 'производственный', 'house', 'warehouse'] as $type) {
+            $expectedType = in_array($type, ['factory', 'производственный'], true) ? 'industrial' : $type;
+            $expected = $planner->plan(ObjectProfileData::fromArray(['object_type' => $expectedType]));
+            $profile = ObjectProfileData::fromArray(['object_type' => $type, 'planning_signals' => ['evaluation_profile' => 'industrial']]);
+            self::assertSame(array_column($expected->packages, 'key'), array_column($planner->plan($profile)->packages, 'key'), $type);
+            self::assertSame('document_backed', $planner->documentRequirements($profile)['coverage']);
+        }
     }
 }

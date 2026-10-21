@@ -663,7 +663,6 @@ final class NormativeWorkItemPlannerService
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $universal = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal';
         $selectedResidentialEquipment = $packageKey === 'equipment' && $universal
-            && ($analysis['evaluation_policy']['profile_id'] ?? null) !== 'industrial'
             && in_array('equipment', $analysis['evaluation_policy']['selected_sections'] ?? [], true)
             && ObjectTypeSignalClassifier::isResidential($this->packagePlanner->profileFromAnalysis($analysis)->objectType);
         $separateWaterScope = $universal && in_array($packageKey, ['plumbing', 'sewerage'], true);

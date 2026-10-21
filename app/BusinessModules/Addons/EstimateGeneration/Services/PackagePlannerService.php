@@ -14,7 +14,7 @@ class PackagePlannerService
 {
     public function plan(ObjectProfileData $profile): PackagePlanData
     {
-        if ($profile->objectType === 'industrial' || ($profile->planningSignals['evaluation_profile'] ?? null) === 'industrial') {
+        if ($this->usesIndustrialProfile($profile)) {
             $packages = $this->industrialPackages();
         } elseif ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
             $packages = $this->withRequestedScopePackages($this->floorPlanEvidencePackages($profile), $profile);
@@ -64,7 +64,7 @@ class PackagePlannerService
         $isHouse = $this->isHouse($profile);
         $unknownProfile = ! $isHouse && ! $this->isWarehouse($profile)
             && ! $this->isMixedWarehouseOffice($profile)
-            && ($profile->planningSignals['evaluation_profile'] ?? null) !== 'industrial';
+            && ! $this->usesIndustrialProfile($profile);
         $missingForFullEstimate = $unknownProfile || ($isHouse && $isPlanOnlyGeometry);
 
         return [
@@ -249,6 +249,13 @@ class PackagePlannerService
     {
         return mb_strtolower($profile->objectType) === 'house'
             || ObjectTypeSignalClassifier::isResidential($profile->objectType);
+    }
+
+    private function usesIndustrialProfile(ObjectProfileData $profile): bool
+    {
+        return $profile->objectType === 'industrial'
+            || (($profile->planningSignals['evaluation_profile'] ?? null) === 'industrial'
+                && ObjectTypeSignalClassifier::isIndustrial($profile->objectType));
     }
 
     private function usesAiAssistedHouseExpansion(ObjectProfileData $profile): bool
