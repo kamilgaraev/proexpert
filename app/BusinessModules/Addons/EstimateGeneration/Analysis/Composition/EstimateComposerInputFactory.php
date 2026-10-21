@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
 use InvalidArgumentException;
 
 final readonly class EstimateComposerInputFactory
@@ -36,6 +37,7 @@ final readonly class EstimateComposerInputFactory
         ?AiSessionWireScope $wireScope = null,
         array $allowedWorkSections = [],
         ?string $evaluationMode = null,
+        array $answerPolicy = [],
     ): EstimateComposerInput {
         $capture = $this->models->snapshotForPlanning(
             $organizationId,
@@ -74,7 +76,32 @@ final readonly class EstimateComposerInputFactory
             throw new InvalidArgumentException('estimate_composer_snapshot_changed');
         }
 
-        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode): array {
+        $answerContexts = [];
+        $checkedAnswers = [];
+        $eligibleFacts = [];
+        $policy = $answerPolicy === [] ? null : ResolveCurrentEstimateClarification::composerPolicy($answerPolicy);
+        foreach ($snapshot->facts as $fact) {
+            if ($fact->type === 'evaluation_answer' && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'composer_answer') {
+                if ($answerPolicy !== [] && ($policy === null || $policy['mode'] !== ($evaluationMode ?? 'legacy')
+                    || ($policy['mode'] === 'universal' && $policy['selected_sections'] !== $allowedWorkSections))) {
+                    throw new InvalidArgumentException('estimate_composer_snapshot_changed');
+                }
+                $answerContext = ResolveCurrentEstimateClarification::composerAnswerContext($fact, $snapshot, $decisions, $answerPolicy, $checkedAnswers);
+                if ($answerContext === null) {
+                    continue;
+                }
+                $answerContexts[$fact->id] = $answerContext;
+            }
+            $eligibleFacts[] = $fact;
+        }
+        $eligibleIds = array_fill_keys(array_column($eligibleFacts, 'id'), true);
+        foreach ($candidates as $candidate) {
+            if (array_diff($candidate['source_fact_ids'] ?? [], array_keys($eligibleIds)) !== []) {
+                throw new InvalidArgumentException('estimate_composer_candidate_source_invalid');
+            }
+        }
+        $decisions = array_values(array_filter($decisions, static fn (Decision $decision): bool => $decision->selectedFactId === null || isset($eligibleIds[$decision->selectedFactId])));
+        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts): array {
             $entity = $entities[$fact->entityId] ?? null;
             $related = [];
             foreach (['room_id', 'wall_id', 'roof_id'] as $relation) {
@@ -85,6 +112,12 @@ final readonly class EstimateComposerInputFactory
             }
 
             $context = [];
+            if (isset($answerContexts[$fact->id])) {
+                return [...$this->fact($fact), 'value' => ['kind' => 'composer_answer', 'answer' => $fact->value['other'],
+                    'question_key' => $fact->value['question_key'], 'numeric_parameters_confirmed' => false],
+                    'entity_type' => $entity?->type, 'related_entity_ids' => [], 'context_kind' => 'composer_answer',
+                    'context_entity_id' => $answerContexts[$fact->id]['entity_id'], 'answer_work_sections' => $answerContexts[$fact->id]['work_sections']];
+            }
             if ($fact->type === 'evaluation_answer' && $fact->origin === 'user_input' && $fact->status === 'confirmed'
                 && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'initial_description'
                 && ($fact->value['numeric_parameters_confirmed'] ?? null) === false) {
@@ -108,11 +141,15 @@ final readonly class EstimateComposerInputFactory
 
             return [...$this->fact($fact), 'entity_type' => $entity?->attributes['semantic_type'] ?? $entity?->attributes['properties']['semantic_type'] ?? $entity?->type,
                 'related_entity_ids' => array_values(array_unique($related)), ...$context];
-        }, $snapshot->facts);
+        }, $eligibleFacts);
         $contractVersion = RunEstimateComposer::PROMPT_CONTRACT;
         if ($evaluationMode === 'legacy' && array_filter($facts, static fn (array $fact): bool => isset($fact['semantic_work_sections'])) !== []) {
             $allowedWorkSections = EstimateComposerInput::WORK_SECTIONS;
             $contractVersion = RunEstimateComposer::LEGACY_PROMPT_CONTRACT;
+        }
+        if ($answerContexts !== []) {
+            $contractVersion = $contractVersion === RunEstimateComposer::LEGACY_PROMPT_CONTRACT
+                ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::ANSWER_PROMPT_CONTRACT;
         }
 
         return new EstimateComposerInput(

@@ -1078,9 +1078,15 @@ final class EstimateComposerTest extends TestCase
     }
 
     #[DataProvider('composerPromptPolicies')]
-    public function test_actual_composer_wire_instructions_distinguish_semantic_vocabulary_from_selected_scope(bool $legacy): void
+    public function test_actual_composer_wire_instructions_distinguish_semantic_vocabulary_from_selected_scope(bool $legacy, bool $answered = false): void
     {
         $input = $this->declaredDescriptionInput('Монтаж стендов', $legacy ? [] : ['equipment'], $legacy ? 'legacy' : 'universal');
+        if ($answered) {
+            $input = new EstimateComposerInput($input->organizationId, $input->projectId, $input->sessionId, $input->snapshotToken,
+                $input->facts, $input->derivedQuantities, $input->decisions, $input->candidates, $input->missingDocuments,
+                $legacy ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::ANSWER_PROMPT_CONTRACT,
+                allowedWorkSections: $input->allowedWorkSections);
+        }
         $messages = [];
         $wire = $this->createMock(RerankWireClient::class);
         $wire->method('provider')->willReturn('timeweb');
@@ -1111,17 +1117,26 @@ final class EstimateComposerTest extends TestCase
         $payload = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project'];
         self::assertSame($input->canonicalPayload(), $payload);
         self::assertStringContainsString('Не вычисляй и не возвращай цены', $messages[0]['content']);
+        if ($answered) {
+            self::assertStringContainsString('context_kind=composer_answer', $messages[0]['content']);
+            self::assertStringContainsString('Это user_assumption, не независимое подтверждение', $messages[0]['content']);
+            self::assertStringContainsString('answer_work_sections', $messages[0]['content']);
+        } else {
+            self::assertStringNotContainsString('context_kind=composer_answer', $messages[0]['content']);
+        }
         if ($legacy) {
             self::assertStringContainsString('semantic_work_sections', $messages[0]['content']);
             self::assertStringContainsString('канонический словарь', $messages[0]['content']);
             self::assertStringContainsString('не выбранный пользователем состав', $messages[0]['content']);
             self::assertStringNotContainsString('оно допускает предварительный состав только в declared_work_sections', $messages[0]['content']);
-            self::assertSame('estimate-composer:legacy:v1', $input->contractVersion);
+            self::assertSame($answered ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::LEGACY_PROMPT_CONTRACT, $input->contractVersion);
             self::assertArrayNotHasKey('declared_work_sections', $payload['facts'][0]);
         } else {
-            self::assertSame('f3624d41635d297be7a1eb5445115e2ad67dbdac0685a27b0d2400d610e9432a', hash('sha256', $messages[0]['content']));
+            if (! $answered) {
+                self::assertSame('f3624d41635d297be7a1eb5445115e2ad67dbdac0685a27b0d2400d610e9432a', hash('sha256', $messages[0]['content']));
+            }
             self::assertStringContainsString('только в declared_work_sections', $messages[0]['content']);
-            self::assertSame('estimate-composer:v4', $input->contractVersion);
+            self::assertSame($answered ? RunEstimateComposer::ANSWER_PROMPT_CONTRACT : RunEstimateComposer::PROMPT_CONTRACT, $input->contractVersion);
             self::assertSame(['equipment'], $payload['facts'][0]['declared_work_sections']);
         }
         self::assertSame($legacy ? ['estimate-composer:v4', $input->contractVersion, $input->contractVersion]
@@ -1132,6 +1147,8 @@ final class EstimateComposerTest extends TestCase
     {
         yield 'legacy semantic vocabulary' => [true];
         yield 'universal selected scope' => [false];
+        yield 'legacy separate answer context' => [true, true];
+        yield 'universal separate answer context' => [false, true];
     }
 
     private function input(
