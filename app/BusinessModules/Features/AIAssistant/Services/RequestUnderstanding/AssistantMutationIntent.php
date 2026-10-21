@@ -128,7 +128,7 @@ final class AssistantMutationIntent
             return $message;
         }
 
-        return preg_replace('/(?<![\pL\pN])(?:включи(?:те)?|включить)(?=\s+(?:е[её]|его|их)\s+(?:на|в)\s+(?:оба\s+листа|все\s+листы|каждый\s+лист)(?![\pL\pN]))/iu', 'покажи', $message) ?? $message;
+        return preg_replace('/(?<![\pL\pN])(?:включи(?:те)?|включить)(?=\s+(?:е[её]|его|их)\s+(?:на|во?)\s+(?:оба|обоих|все|всех|каждый|каждом)\s+(?:из\s+)?лист(?:а|ы|ах|е|ов)?(?![\pL\pN]))/iu', 'покажи', $message) ?? $message;
     }
 
     private static function normalize(string $message): string
