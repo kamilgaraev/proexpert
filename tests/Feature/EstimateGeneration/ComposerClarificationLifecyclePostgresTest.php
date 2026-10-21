@@ -152,7 +152,7 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
                 'kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.request', 'name' => 'Монтаж стендов',
                 'work_section' => 'equipment', 'unit' => 'шт', 'derived_quantity_id' => null, 'source_fact_ids' => [$answers[0]->id],
                 'technology_package_candidate' => null, 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
-            ]]];
+            ]], ...($input->acceptsSourceClaims() ? ['claim_candidates' => []] : [])];
         });
         [$next, $results, $payloads] = $this->plan($session->fresh(), $nextModel);
         self::assertCount(1, $next['local_estimates']);

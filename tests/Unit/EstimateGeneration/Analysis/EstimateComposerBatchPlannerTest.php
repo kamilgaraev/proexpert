@@ -18,6 +18,84 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateComposerBatchPlannerTest extends TestCase
 {
+    public function test_global_eight_answer_ids_bound_every_batch_and_refs_are_sent_only_once_without_more_calls(): void
+    {
+        [$input, $reference] = $this->sourceClaims();
+        $planner = new EstimateComposerBatchPlanner(candidatesPerBatch: 1);
+        $parts = $planner->plan($input->withSourceClaimReferences([$reference]));
+        self::assertCount(2, $parts);
+        self::assertCount(8, $input->claimAnswerFactIds);
+        self::assertNotContains('answer:09', $input->claimAnswerFactIds);
+        self::assertSame([1, 0], array_map(static fn (EstimateComposerInput $part): int => count($part->sourceClaimReferences), $parts));
+        foreach ($parts as $part) {
+            self::assertSame($input->claimAnswerFactIds, $part->canonicalPayload()['claim_answer_fact_ids']);
+            self::assertContains('answer:09', array_column($part->facts, 'id'));
+        }
+        $model = new class implements EstimateComposerModel
+        {
+            public int $calls = 0;
+
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->calls++;
+                $onPhysicalAttemptReserved(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext::deterministicId($input->fingerprint()));
+
+                return ['work_intents' => [], 'claim_candidates' => array_map(static fn (string $answer): array => [
+                    'source_answer_fact_id' => $answer, 'entity_id' => 'equipment:child', 'fact_type' => 'equipment_specification',
+                    'value' => ['type' => 'string', 'data' => 'AISI 316'], 'unit' => null, 'document_fact_ids' => ['fact:document'],
+                ], $input->claimAnswerFactIds)];
+            }
+        };
+        $runs = new BatchComposerMemoryRepository;
+        $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna', $planner);
+        $outcome = $composer->runDetailed($input->withSourceClaimReferences([$reference]));
+        self::assertSame($outcome, $composer->runDetailed($input->withSourceClaimReferences([$reference])));
+        self::assertSame(2, $model->calls);
+        self::assertCount(2, $runs->results);
+        foreach ($runs->results as $receipt) {
+            self::assertSame(2, $receipt->payload['schema_version']);
+            self::assertCount(8, $receipt->payload['claim_candidates']);
+            self::assertSame($input->claimAnswerFactIds, array_column($receipt->payload['claim_candidates'], 'source_answer_fact_id'));
+        }
+    }
+
+    public function test_optional_refs_do_not_create_a_batch_or_expand_the_existing_wire_budget(): void
+    {
+        [$input, $reference] = $this->sourceClaims();
+        $bytes = strlen(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['project' => $input->canonicalPayload()]));
+        $planner = new EstimateComposerBatchPlanner(maxInputBytes: $bytes + 1);
+        $plain = $planner->plan($input);
+        $withRef = $planner->plan($input->withSourceClaimReferences([$reference]));
+        self::assertCount(1, $plain);
+        self::assertCount(1, $withRef);
+        self::assertSame($plain[0]->canonicalPayload(), $withRef[0]->canonicalPayload());
+        self::assertArrayNotHasKey('source_claim_refs', $withRef[0]->canonicalPayload());
+    }
+
+    private function sourceClaims(): array
+    {
+        $facts = [];
+        foreach (range(1, 9) as $index) {
+            $facts[] = ['id' => sprintf('answer:%02d', $index), 'entity_id' => 'project:root', 'type' => 'evaluation_answer',
+                'value' => ['kind' => 'composer_answer', 'answer' => 'Корпус AISI 316', 'numeric_parameters_confirmed' => false],
+                'origin' => 'user_assumption', 'status' => 'confirmed', 'unit' => null, 'context_kind' => 'composer_answer',
+                'context_entity_id' => 'project:root', 'answer_work_sections' => ['equipment']];
+        }
+        $facts[] = ['id' => 'fact:document', 'entity_id' => 'equipment:child', 'entity_type' => 'equipment',
+            'type' => 'equipment_specification', 'value' => 'AISI 316', 'origin' => 'document', 'status' => 'confirmed', 'unit' => null];
+        $candidates = [];
+        foreach ([1, 2] as $index) {
+            $candidates[] = ['candidate_id' => 'candidate:'.$index, 'work_key' => 'equipment:'.$index, 'name' => 'Работа '.$index,
+                'unit' => null, 'quantity' => null, 'quantity_formula' => null, 'source_fact_ids' => [], 'technology_package_candidate' => null];
+        }
+        return [new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], $candidates, [],
+            RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']),
+            ['learning_example_id' => 123, 'entity_id' => 'equipment:child', 'fact_type' => 'equipment_specification',
+                'value' => ['type' => 'string', 'data' => 'AISI 316'], 'unit' => null, 'document_fact_ids' => ['fact:document'],
+                'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved',
+                'source_answer_fact_id' => 'answer:01']];
+    }
+
     public function test_large_project_covers_all_work_and_unassigned_facts_and_replays_each_batch_without_another_model_call(): void
     {
         $facts = [];
@@ -147,7 +225,7 @@ final class BatchComposerMemoryRepository implements AiRoleRunRepository
 {
     public array $versions = [];
 
-    private array $results = [];
+    public array $results = [];
 
     private array $keys = [];
 

@@ -22,9 +22,9 @@ final readonly class RunEstimateComposer
 
     public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v1';
 
-    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v1';
+    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v2';
 
-    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v1';
+    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v2';
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -114,6 +114,17 @@ final readonly class RunEstimateComposer
         $owner = AiOperationContext::deterministicId('estimate-composer-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($runInput, $owner);
         if ($claim->disposition === 'replay' && $claim->result !== null) {
+            if ($input->acceptsSourceClaims()) {
+                if (($claim->result->payload['schema_version'] ?? null) !== 2
+                    || ! is_array($claim->result->payload['claim_candidates'] ?? null)) {
+                    throw new RuntimeException('estimate_composer_replay_invalid');
+                }
+                $rechecked = $this->sourceClaims($claim->result->payload['claim_candidates'], $input);
+                if (\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($rechecked)
+                    !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($claim->result->payload['claim_candidates'])) {
+                    throw new RuntimeException('estimate_composer_replay_invalid');
+                }
+            }
             $stored = $claim->result->payload['work_intents'] ?? null;
             if (! is_array($stored) || ! array_is_list($stored)) {
                 throw new RuntimeException('estimate_composer_replay_invalid');
@@ -159,16 +170,20 @@ final readonly class RunEstimateComposer
             if ($physicalAttemptId === null) {
                 throw new UsageInvariantViolation('Estimate composer returned without a physical attempt identity.');
             }
-            if (array_keys($raw) !== ['work_intents']) {
+            if ($input->acceptsSourceClaims()
+                ? count($raw) !== 2 || ! array_key_exists('work_intents', $raw) || ! array_key_exists('claim_candidates', $raw)
+                : array_keys($raw) !== ['work_intents']) {
                 throw new InvalidArgumentException('estimate_composer_result_shape_invalid');
             }
             $projection = $this->project($raw['work_intents'], $input);
+            $claims = $input->acceptsSourceClaims() ? $this->sourceClaims($raw['claim_candidates'], $input) : [];
             $this->runs->complete($claim->runId, $claim->ownerUuid, new AiRoleRunResult([
-                'schema_version' => 1,
+                'schema_version' => $input->acceptsSourceClaims() ? 2 : 1,
                 'role' => AiAnalysisRole::EstimateComposer->value,
                 'work_intents' => $projection['intents'],
                 'quarantined_intents' => $projection['quarantined'],
                 'result_state' => $projection['quarantined'] === [] ? 'ready' : 'partial',
+                ...($input->acceptsSourceClaims() ? ['claim_candidates' => $claims] : []),
             ], $physicalAttemptId));
 
             return $projection;
@@ -182,6 +197,31 @@ final readonly class RunEstimateComposer
 
             throw $exception;
         }
+    }
+
+    private function sourceClaims(mixed $raw, EstimateComposerInput $input): array
+    {
+        if (! is_array($raw) || ! array_is_list($raw) || count($raw) > EstimateComposerInput::MAX_SOURCE_CLAIMS) {
+            throw new InvalidArgumentException('estimate_composer_claim_candidates_invalid');
+        }
+        $claims = [];
+        $seen = [];
+        foreach ($raw as $candidate) {
+            if (! EstimateComposerInput::sourceClaimCandidate($candidate, $input->facts, $input->claimAnswerFactIds)) {
+                continue;
+            }
+            $answer = $candidate['source_answer_fact_id'];
+            if (isset($seen[$answer])) {
+                unset($claims[$answer]);
+                continue;
+            }
+            $seen[$answer] = true;
+            $candidate = array_replace(array_fill_keys(['source_answer_fact_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids'], null), $candidate);
+            $claims[$answer] = $candidate;
+        }
+        ksort($claims, SORT_STRING);
+
+        return array_values($claims);
     }
 
     /** @return array{intents:list<array<string,mixed>>,quarantined:list<array{index:int,reason:string}>} */

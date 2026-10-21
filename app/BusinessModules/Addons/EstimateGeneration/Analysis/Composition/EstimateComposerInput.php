@@ -9,6 +9,10 @@ use InvalidArgumentException;
 
 final readonly class EstimateComposerInput
 {
+    public const MAX_SOURCE_CLAIMS = 8;
+
+    public array $claimAnswerFactIds;
+
     public const WORK_SECTIONS = ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating',
         'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment'];
     /**
@@ -33,6 +37,8 @@ final readonly class EstimateComposerInput
         public ?string $batchKey = null,
         public ?array $contextManifest = null,
         public array $allowedWorkSections = [],
+        ?array $claimAnswerFactIds = null,
+        public array $sourceClaimReferences = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -78,6 +84,88 @@ final readonly class EstimateComposerInput
                 throw new InvalidArgumentException('estimate_composer_candidate_invalid');
             }
         }
+        $answers = [];
+        if ($this->acceptsSourceClaims()) {
+            foreach ($facts as $fact) {
+                if (($fact['context_kind'] ?? null) === 'composer_answer' && ($fact['type'] ?? null) === 'evaluation_answer'
+                    && ($fact['origin'] ?? null) === 'user_assumption' && ($fact['status'] ?? null) === 'confirmed'
+                    && ($fact['value']['kind'] ?? null) === 'composer_answer'
+                    && ($fact['value']['numeric_parameters_confirmed'] ?? null) === false
+                    && in_array('equipment', $fact['answer_work_sections'] ?? [], true)) {
+                    $answers[] = $fact['id'];
+                }
+            }
+        }
+        sort($answers, SORT_STRING);
+        if ($claimAnswerFactIds !== null && (! array_is_list($claimAnswerFactIds)
+            || count($claimAnswerFactIds) > self::MAX_SOURCE_CLAIMS || array_diff($claimAnswerFactIds, $answers) !== []
+            || count(array_unique($claimAnswerFactIds)) !== count($claimAnswerFactIds))) {
+            throw new InvalidArgumentException('estimate_composer_claim_answers_invalid');
+        }
+        $this->claimAnswerFactIds = $claimAnswerFactIds ?? array_slice($answers, 0, self::MAX_SOURCE_CLAIMS);
+        if (! array_is_list($sourceClaimReferences) || count($sourceClaimReferences) > self::MAX_SOURCE_CLAIMS) {
+            throw new InvalidArgumentException('estimate_composer_source_claim_refs_invalid');
+        }
+        foreach ($sourceClaimReferences as $reference) {
+            if (! self::sourceClaimReference($reference, $facts, $this->claimAnswerFactIds)) {
+                throw new InvalidArgumentException('estimate_composer_source_claim_refs_invalid');
+            }
+        }
+    }
+
+    public function acceptsSourceClaims(): bool
+    {
+        return in_array($this->contractVersion, [RunEstimateComposer::ANSWER_PROMPT_CONTRACT,
+            RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
+    }
+
+    public function withSourceClaimReferences(array $references): self
+    {
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken,
+            $this->facts, $this->derivedQuantities, $this->decisions, $this->candidates, $this->missingDocuments,
+            $this->contractVersion, $this->wireScope, $this->batchKey, $this->contextManifest, $this->allowedWorkSections,
+            $this->claimAnswerFactIds, $references);
+    }
+
+    public static function sourceClaimReference(mixed $reference, array $facts, array $answerIds): bool
+    {
+        if (! is_array($reference) || count($reference) !== 10 || ! is_int($reference['learning_example_id'] ?? null)
+            || $reference['learning_example_id'] < 1 || ($reference['interpretation_status'] ?? null) !== 'proposed'
+            || ($reference['source_correspondence'] ?? null) !== 'passed'
+            || ($reference['engineering_applicability'] ?? null) !== 'unresolved'
+            || ! in_array($reference['source_answer_fact_id'] ?? null, $answerIds, true)) {
+            return false;
+        }
+
+        return self::sourceClaimCandidate(array_intersect_key($reference, array_flip([
+            'source_answer_fact_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids',
+        ])), $facts, $answerIds);
+    }
+
+    public static function sourceClaimCandidate(mixed $candidate, array $facts, array $answerIds): bool
+    {
+        if (! is_array($candidate) || count($candidate) !== 6
+            || array_diff(array_keys($candidate), ['source_answer_fact_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids']) !== []
+            || ! in_array($candidate['source_answer_fact_id'] ?? null, $answerIds, true)
+            || ! self::identifier($candidate['entity_id'] ?? null)
+            || ($candidate['fact_type'] ?? null) !== 'equipment_specification'
+            || ! array_key_exists('unit', $candidate) || $candidate['unit'] !== null
+            || ! is_array($candidate['value'] ?? null) || count($candidate['value']) !== 2
+            || ($candidate['value']['type'] ?? null) !== 'string'
+            || ! is_string($candidate['value']['data'] ?? null) || trim($candidate['value']['data']) === ''
+            || mb_strlen($candidate['value']['data']) > 500
+            || ! is_array($candidate['document_fact_ids'] ?? null) || ! array_is_list($candidate['document_fact_ids'])
+            || count($candidate['document_fact_ids']) !== 1 || ! self::identifier($candidate['document_fact_ids'][0])) {
+            return false;
+        }
+        $byId = array_column($facts, null, 'id');
+        $document = $byId[$candidate['document_fact_ids'][0]] ?? null;
+
+        return isset($byId[$candidate['source_answer_fact_id']])
+            && $candidate['document_fact_ids'][0] !== $candidate['source_answer_fact_id']
+            && ($document['origin'] ?? null) === 'document' && ($document['status'] ?? null) === 'confirmed'
+            && ($document['type'] ?? null) === 'equipment_specification' && ($document['entity_type'] ?? null) === 'equipment'
+            && ($document['entity_id'] ?? null) === $candidate['entity_id'] && ($document['unit'] ?? null) === null;
     }
 
     public function fingerprint(): string
@@ -115,6 +203,14 @@ final readonly class EstimateComposerInput
         }
         if ($this->allowedWorkSections !== []) {
             $payload['allowed_work_sections'] = $this->allowedWorkSections;
+        }
+        if ($this->acceptsSourceClaims()) {
+            $payload['claim_answer_fact_ids'] = $this->claimAnswerFactIds;
+        }
+        if ($this->sourceClaimReferences !== []) {
+            $payload['source_claim_refs'] = array_map(static fn (array $reference): array => array_intersect_key($reference, array_flip([
+                'learning_example_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids',
+            ])), $this->sourceClaimReferences);
         }
 
         return $payload;

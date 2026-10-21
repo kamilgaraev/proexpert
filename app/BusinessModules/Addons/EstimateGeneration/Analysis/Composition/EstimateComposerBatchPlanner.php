@@ -34,8 +34,8 @@ final readonly class EstimateComposerBatchPlanner
                 }
             }
         }
-        if (count($input->candidates) <= $this->candidatesPerBatch && $this->fits($input)) {
-            return [$input];
+        if (count($input->candidates) <= $this->candidatesPerBatch && $this->fits($input->withSourceClaimReferences([]))) {
+            return $this->withReferences([$input->withSourceClaimReferences([])], $input);
         }
         $batches = [];
         $coveredFacts = [];
@@ -83,7 +83,7 @@ final readonly class EstimateComposerBatchPlanner
             $this->append($batches, $coveredFacts, $coveredQuantities, $batch);
         }
 
-        return $batches;
+        return $this->withReferences($batches, $input);
     }
 
     private function context(EstimateComposerInput $input, array $candidates, array $facts, array $quantities): EstimateComposerInput
@@ -162,7 +162,33 @@ final readonly class EstimateComposerBatchPlanner
             ['contract' => 'composer-context:v1', 'parent_input_fingerprint' => $parent,
                 'parent_counts' => ['facts' => count($input->facts), 'quantities' => count($input->derivedQuantities),
                     'decisions' => count($input->decisions), 'candidates' => count($input->candidates), 'missing_documents' => count($input->missingDocuments)]],
-            $input->allowedWorkSections);
+            $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, array_column($facts, 'id'))));
+    }
+
+    private function withReferences(array $batches, EstimateComposerInput $input): array
+    {
+        if ($input->sourceClaimReferences === []) {
+            return $batches;
+        }
+        $included = [];
+        foreach ($batches as $index => $batch) {
+            $references = array_values(array_filter($input->sourceClaimReferences,
+                static fn (array $reference): bool => ! isset($included[$reference['learning_example_id']])
+                    && EstimateComposerInput::sourceClaimReference($reference, $batch->facts, $batch->claimAnswerFactIds)));
+            do {
+                $candidate = $batch->withSourceClaimReferences($references);
+                if ($this->fits($candidate)) {
+                    $batches[$index] = $candidate;
+                    foreach ($references as $reference) {
+                        $included[$reference['learning_example_id']] = true;
+                    }
+                    break;
+                }
+                array_pop($references);
+            } while ($references !== []);
+        }
+
+        return $batches;
     }
 
     private function fits(EstimateComposerInput $input): bool
