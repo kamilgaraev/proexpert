@@ -443,6 +443,132 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame($refs, $pipes[0]['source_refs']);
     }
 
+    #[DataProvider('supportedDocumentQuantityPackages')]
+    public function test_unknown_object_keeps_supported_document_quantity_in_compiled_work(string $quantityKey, string $scope, string $unit): void
+    {
+        $refs = [['document_id' => 82, 'page_number' => 3]];
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'filename' => 'slab.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'quantity_takeoffs' => [['quantity' => 12, 'unit' => $unit, 'source_refs' => $refs,
+                'normalized_payload' => ['quantity_key' => $quantityKey]]],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([$scope], array_column($payload['package_plan']['packages'], 'scope_type'));
+        self::assertCount(1, $payload['local_estimates']);
+        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+        $addressed = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === $quantityKey));
+        self::assertCount(1, $addressed);
+        self::assertSame('12', $addressed[0]['quantity']);
+        self::assertSame($refs, $addressed[0]['source_refs']);
+        foreach ($items as $item) {
+            if (($item['metadata']['quantity_key'] ?? null) !== $quantityKey) {
+                self::assertNull($item['quantity']);
+                self::assertSame([], $item['source_refs']);
+            }
+        }
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+    }
+
+    public static function supportedDocumentQuantityPackages(): iterable
+    {
+        yield 'slab concrete' => ['slabs.concrete', 'slabs', 'м3'];
+        yield 'slab formwork' => ['slabs.formwork', 'slabs', 'м2'];
+        yield 'slab rebar' => ['slabs.rebar', 'slabs', 'т'];
+        yield 'stair flights' => ['stairs.flights', 'stairs', 'м3'];
+        yield 'stair landings' => ['stairs.landings', 'stairs', 'м2'];
+        yield 'stair railings' => ['stairs.railings', 'stairs', 'м'];
+        yield 'facade area' => ['facade.area', 'facade', 'м2'];
+    }
+
+    #[DataProvider('unsupportedUnknownQuantityPackages')]
+    public function test_unknown_typed_keys_do_not_open_gated_industrial_or_invented_packages(string $quantityKey): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'quantity_takeoffs' => [['quantity' => 3, 'unit' => 'count', 'source_refs' => [['document_id' => 82]],
+                'normalized_payload' => ['quantity_key' => $quantityKey]]],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'automation', 'equipment']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame($quantityKey, $analysis['document_context']['quantity_takeoffs'][0]['normalized_payload']['quantity_key']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+        self::assertContains('project_scope', array_column($payload['document_requirements']['items'], 'key'));
+    }
+
+    public static function unsupportedUnknownQuantityPackages(): iterable
+    {
+        foreach (['automation.devices_count', 'automation.loops_count', 'equipment.units_count', 'equipment.deliveries_count',
+            'equipment.count', 'slabs.unsupported', 'stairs.unsupported', 'facade.unsupported'] as $key) {
+            yield $key => [$key];
+        }
+    }
+
+    #[DataProvider('typedDocumentAdmissionCases')]
+    public function test_new_typed_package_mapping_preserves_document_and_selected_scope_gates(string $quantityKey, string $role, string $status, string $quality, array $sections): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], [[
+            'id' => 82, 'status' => $status, 'quality' => ['level' => $quality],
+            'document_understanding' => ['role_for_estimation' => $role],
+            'quantity_takeoffs' => [['quantity' => 12, 'unit' => 'м3', 'source_refs' => [['document_id' => 82]],
+                'normalized_payload' => ['quantity_key' => $quantityKey]]],
+        ]]);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => $sections];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+    }
+
+    public static function typedDocumentAdmissionCases(): iterable
+    {
+        foreach (['slabs.concrete', 'stairs.flights', 'facade.area'] as $key) {
+            yield $key.' context only' => [$key, 'context_only', 'ready', 'good', ['structures']];
+            yield $key.' ignored' => [$key, 'quantity_source', 'ignored', 'good', ['structures']];
+            yield $key.' low quality' => [$key, 'quantity_source', 'ready', 'poor', ['structures']];
+            yield $key.' outside selected scope' => [$key, 'quantity_source', 'ready', 'good', ['equipment']];
+        }
+    }
+
+    public function test_slab_catalog_quantity_preserves_both_independent_source_contributions(): void
+    {
+        $documents = [];
+        foreach ([82 => 'deck-a', 83 => 'deck-b'] as $id => $entity) {
+            $refs = [['document_id' => $id, 'entity_id' => $entity]];
+            $documents[] = ['id' => $id, 'status' => 'ready', 'quality' => ['level' => 'good'],
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                'quantity_takeoffs' => [['quantity' => 12, 'unit' => 'м3', 'source_refs' => $refs,
+                    'normalized_payload' => ['quantity_key' => 'slabs.concrete', 'entity_id' => $entity]]],
+                'scope_inferences' => [['scope_type' => 'slabs', 'inference_type' => 'specification_takeoff',
+                    'title' => 'Бетонирование перекрытия', 'review_required' => false, 'source_refs' => $refs,
+                    'normalized_payload' => ['quantity_key' => 'slabs.concrete', 'entity_id' => $entity, 'quantity_value' => 12, 'unit' => 'м3']]],
+            ];
+        }
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge'], $documents);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertCount(1, $payload['local_estimates']);
+        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+        $rows = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === 'slabs.concrete'));
+        self::assertCount(1, $rows);
+        self::assertSame('24', $rows[0]['quantity']);
+        self::assertNull($rows[0]['price_source']);
+        self::assertNull($rows[0]['normative_rate_code']);
+        self::assertSame([], $rows[0]['materials']);
+        self::assertSame([], $rows[0]['labor']);
+        self::assertArrayNotHasKey('quantity_evidence', $rows[0]);
+        self::assertArrayNotHasKey('quantity_basis_details', $rows[0]);
+        self::assertSame([82, 83], array_column($rows[0]['source_refs'], 'document_id'));
+        self::assertSame(['deck-a', 'deck-b'], array_column($rows[0]['source_refs'], 'entity_id'));
+        self::assertCount(2, $analysis['document_context']['quantity_takeoffs']);
+    }
+
     #[DataProvider('unresolvedManualDescriptions')]
     public function test_unresolved_manual_semantics_require_clarification_without_invented_work(string $description): void
     {

@@ -412,6 +412,9 @@ class PackagePlannerService
             str_starts_with($quantityKey, 'foundation.') => $this->package('custom-foundation', 'Фундамент', 'foundation', 1, 20),
             str_starts_with($quantityKey, 'walls.')
                 || str_starts_with($quantityKey, 'office.partitions') => $this->package('custom-walls', 'Стены и перегородки', 'walls', 1, 20),
+            in_array($quantityKey, ['slabs.formwork', 'slabs.concrete', 'slabs.rebar'], true) => $this->package('slabs', 'Перекрытия', 'slabs', 1, 20),
+            in_array($quantityKey, ['stairs.flights', 'stairs.landings', 'stairs.railings'], true) => $this->package('stairs', 'Лестницы', 'stairs', 1, 20),
+            $quantityKey === 'facade.area' => $this->package('facade', 'Фасад', 'facade', 1, 20),
             str_starts_with($quantityKey, 'roof.') => $this->package('custom-roof', 'Кровля', 'roof', 1, 20),
             str_starts_with($quantityKey, 'openings.')
                 || str_starts_with($quantityKey, 'warehouse.gates') => $this->package('custom-openings', 'Окна, двери и проемы', 'openings', 1, 20),
