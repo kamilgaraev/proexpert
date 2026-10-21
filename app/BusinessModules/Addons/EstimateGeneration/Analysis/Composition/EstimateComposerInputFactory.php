@@ -109,8 +109,10 @@ final readonly class EstimateComposerInputFactory
             return [...$this->fact($fact), 'entity_type' => $entity?->attributes['semantic_type'] ?? $entity?->attributes['properties']['semantic_type'] ?? $entity?->type,
                 'related_entity_ids' => array_values(array_unique($related)), ...$context];
         }, $snapshot->facts);
+        $contractVersion = RunEstimateComposer::PROMPT_CONTRACT;
         if ($evaluationMode === 'legacy' && array_filter($facts, static fn (array $fact): bool => isset($fact['semantic_work_sections'])) !== []) {
             $allowedWorkSections = EstimateComposerInput::WORK_SECTIONS;
+            $contractVersion = RunEstimateComposer::LEGACY_PROMPT_CONTRACT;
         }
 
         return new EstimateComposerInput(
@@ -123,7 +125,7 @@ final readonly class EstimateComposerInputFactory
             decisions: array_map($this->decision(...), $decisions),
             candidates: $candidates,
             missingDocuments: $missingDocuments,
-            contractVersion: RunEstimateComposer::PROMPT_CONTRACT,
+            contractVersion: $contractVersion,
             wireScope: $wireScope,
             allowedWorkSections: $allowedWorkSections,
         );

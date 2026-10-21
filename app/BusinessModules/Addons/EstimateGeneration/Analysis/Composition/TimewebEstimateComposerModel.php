@@ -77,7 +77,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 return $replay['parsed_response'];
             }
             $response = $this->wire->call($this->modelName, [
-                ['role' => 'system', 'content' => $this->prompt()],
+                ['role' => 'system', 'content' => $this->prompt($input)],
                 ['role' => 'user', 'content' => $payload],
             ], [
                 'profile' => 'json',
@@ -220,13 +220,19 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
         }
     }
 
-    private function prompt(): string
+    private function prompt(EstimateComposerInput $input): string
     {
+        $legacy = $input->contractVersion === RunEstimateComposer::LEGACY_PROMPT_CONTRACT;
+
         return 'Ты составитель строительной сметы. Детерминированные кандидаты уже принадлежат серверу; возвращай kind=existing только когда нужно добавить к выбранному кандидату смысловые допущения, исключения или рекомендации. '
             .'Если подтверждённый факт модели требует отсутствующей в кандидатах работы, добавь bounded намерение kind=supplementary с work_key, русским name и при наличии точного объёма derived_quantity_id. Сервер создаст candidate_id. '
             .'Используй только существующие source fact ids, derived quantity ids и technology package candidates. Не дублируй существующие work_key. '
-            .'Наличие fact id не подтверждает необходимость работы: факт должен быть подтверждён, относиться к той же сущности и выбранному разделу. Тип кровли не обосновывает отопление. '
-            .'context_kind=initial_description обозначает введённое пользователем описание; оно допускает предварительный состав только в declared_work_sections и не подтверждает размеры или объёмы. '
+            .($legacy
+                ? 'Наличие fact id не подтверждает необходимость работы: факт должен быть подтверждён, относиться к той же сущности и допустимому разделу. Тип кровли не обосновывает отопление. '
+                : 'Наличие fact id не подтверждает необходимость работы: факт должен быть подтверждён, относиться к той же сущности и выбранному разделу. Тип кровли не обосновывает отопление. ')
+            .($legacy
+                ? 'context_kind=initial_description с semantic_work_sections обозначает проверенный сервером источник пользовательского запроса в режиме legacy. Определи смысл запрошенных работ и их work_section в пределах semantic_work_sections и allowed_work_sections: это канонический словарь допустимых разделов, не выбранный пользователем состав. Не добавляй работы только из-за наличия раздела в словаре. Описание допускает лишь предварительный состав и не подтверждает размеры, объёмы или технологию. '
+                : 'context_kind=initial_description обозначает введённое пользователем описание; оно допускает предварительный состав только в declared_work_sections и не подтверждает размеры или объёмы. ')
             .'Если подходящего основания состава нет, не создавай работу: сервер сохранит запрос исходных данных отдельно от сметных позиций. '
             .'Числовое основание работы берётся только из переданной серверной производной величины с entity_id и operand_fact_ids. '
             .'Для supplementary можно указать entity_id из переданного контекста; он должен совпадать с сущностью выбранной величины. '
