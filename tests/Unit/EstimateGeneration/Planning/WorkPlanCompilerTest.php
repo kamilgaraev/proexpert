@@ -528,6 +528,15 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'independent_facade_then_plaster' => ['Устройство фасада; штукатурка фасада', ['facade', 'custom-finishing'], ['finishing', 'structures']];
         yield 'window_genitive' => ['Устройство окон', ['openings'], ['structures']];
         yield 'door_genitive' => ['Установка дверей', ['openings'], ['structures']];
+        yield 'paint_surface_list_and' => ['Покраска потолков и стен', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'paint_facade_list_and' => ['Покраска потолков и фасада', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'paint_surface_list_comma' => ['Покраска потолков, стен', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'paint_facade_list_comma' => ['Покраска потолков, фасада', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'paint_list_then_wall_operation' => ['Покраска потолков и стен и устройство стен', ['finish_finishing', 'walls'], ['finishing', 'structures']];
+        yield 'paint_list_then_facade_operation' => ['Покраска потолков, фасада, устройство фасада', ['finish_finishing', 'facade'], ['finishing', 'structures']];
+        yield 'paint_then_new_operation_owns_list' => ['Покраска потолков и устройство стен и фасада', ['finish_finishing', 'walls', 'facade'], ['finishing', 'structures']];
+        yield 'paint_context_ends_at_other_work' => ['Покраска потолков, электромонтаж, стены', ['finish_finishing', 'electrical', 'walls'], ['finishing', 'electricity', 'structures']];
+        yield 'paint_context_ends_at_sentence' => ['Покраска потолков. Стены', ['finish_finishing', 'walls'], ['finishing', 'structures']];
     }
 
     #[DataProvider('unsupportedFireSystems')]

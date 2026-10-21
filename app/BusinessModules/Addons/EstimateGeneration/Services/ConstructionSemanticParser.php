@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\EvaluationSectionMap;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 
 class ConstructionSemanticParser
@@ -509,13 +510,52 @@ class ConstructionSemanticParser
             $line = mb_substr($line, 0, $span['start']).str_repeat(' ', $span['end'] - $span['start']).mb_substr($line, $span['end']);
         }
         $scopes = [];
-        foreach (preg_split('~[,;.\r\n]+|\s+и\s+~u', $line) ?: [] as $clause) {
-            foreach ($this->detectScopeTypes($clause, $this->explicitScopeKeywords($clause), bindFinishingSurfaces: true) as $scope) {
-                $scopes[$scope] = true;
+        $finishingContext = null;
+        foreach (preg_split('~,+~u', $line) ?: [] as $group) {
+            $groupScopes = [];
+            foreach (preg_split('~\s+и\s+~u', $group) ?: [] as $clause) {
+                $keywords = $this->explicitScopeKeywords($clause);
+                $clauseScopes = $this->detectScopeTypes($clause, $keywords, bindFinishingSurfaces: true);
+                $finishingScopes = array_values(array_intersect($clauseScopes, ['rough_finishing', 'finish_finishing', 'finishing']));
+                $newOperation = preg_match('~(?<![\p{L}\p{N}])'.$this->explicitOperationPattern(independent: true).'\s+~u', $clause) === 1;
+                $surfaceOnly = array_filter($clauseScopes, static fn (string $scope): bool =>
+                    ! in_array(EvaluationSectionMap::forPackage($scope), ['structures', 'roofing'], true)) === [];
+                if ($finishingContext !== null && ! $newOperation && $surfaceOnly) {
+                    $clauseScopes = $finishingContext;
+                } else {
+                    $finishingContext = ! $newOperation && $finishingScopes !== [] && $this->hasFinishingSurfaceArgument($clause, $keywords)
+                        ? $finishingScopes : null;
+                }
+                foreach ($clauseScopes as $scope) {
+                    $groupScopes[$scope] = true;
+                }
+            }
+            foreach (array_keys($this->explicitScopeKeywords('')) as $scope) {
+                if (isset($groupScopes[$scope])) {
+                    $scopes[$scope] = true;
+                }
             }
         }
 
-        return array_values(array_filter(array_keys($this->explicitScopeKeywords('')), static fn (string $scope): bool => isset($scopes[$scope])));
+        return array_keys($scopes);
+    }
+
+    private function hasFinishingSurfaceArgument(string $clause, array $keywords): bool
+    {
+        foreach (['rough_finishing', 'finish_finishing', 'finishing'] as $scope) {
+            foreach ($keywords[$scope] ?? [] as $pattern) {
+                if (preg_match('~(?<![\p{L}\p{N}])'.preg_quote($pattern, '~').$this->finishingSurfaceGapPattern().'(?=\p{L})~u', $clause) === 1) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function finishingSurfaceGapPattern(): string
+    {
+        return '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ов|ам|ям|ами|ями|ах|ях|ка|ки|ку|кой|кою|ке)?\s+';
     }
 
     private function explicitScopeKeywords(string $text): array
@@ -629,7 +669,7 @@ class ConstructionSemanticParser
                         continue;
                     }
                     $gap = mb_substr($normalizedLine, $operation['end'], $surface['start'] - $operation['end']);
-                    if (preg_match('~^(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ов|ам|ям|ами|ями|ах|ях|ка|ки|ку|кой|кою|ке)?\s+$~u', $gap) === 1) {
+                    if (preg_match('~^'.$this->finishingSurfaceGapPattern().'$~u', $gap) === 1) {
                         $matches[] = [...$operation, 'end' => $surface['end']];
                     }
                 }
@@ -897,10 +937,17 @@ class ConstructionSemanticParser
         $candidates = [];
 
         foreach ($lines as $line) {
-            foreach (preg_split('/[.;]\s*/u', $line) ?: [] as $sentence) {
+            foreach (preg_split($preserveExclusionContext ? '/[.;!?]\s*/u' : '/[.;]\s*/u', $line) ?: [] as $sentence) {
                 $sentence = trim($sentence);
 
                 if ($sentence === '') {
+                    continue;
+                }
+
+                $normalizedSentence = mb_strtolower($this->cleanLine($sentence));
+                if ($preserveExclusionContext && $this->hasFinishingSurfaceArgument($normalizedSentence, $this->explicitScopeKeywords($normalizedSentence))) {
+                    $candidates[] = $sentence;
+
                     continue;
                 }
 
