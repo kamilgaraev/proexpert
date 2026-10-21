@@ -93,8 +93,7 @@ final class EstimateGenerationLearningRecorder
                 'quantity_snapshot' => $this->quantitySnapshot($selectedWorkItem, $originalWorkItem),
                 'local_estimate_title' => $context['local_estimate_title'] ?? null,
                 'section_title' => $context['section_title'] ?? null,
-                ...(($knowledge = $this->equipmentKnowledge->capture($session, $originalWorkItem, $normId)) === null
-                    ? [] : ['knowledge_validation' => $knowledge]),
+                ...$this->knowledgeContext($session, $originalWorkItem, $normId),
             ],
             'source_refs' => [[
                 'type' => 'estimate_generation_session',
@@ -338,6 +337,7 @@ final class EstimateGenerationLearningRecorder
                 'comments' => $feedback->comments,
                 'normative_match' => $workItem['normative_match'] ?? null,
                 'quantity_snapshot' => $this->quantitySnapshot($workItem, $workItem),
+                ...$this->knowledgeContext($session, $workItem, (int) $norm->id),
             ],
             'source_refs' => [[
                 'type' => 'estimate_generation_feedback',
@@ -407,6 +407,13 @@ final class EstimateGenerationLearningRecorder
             'quality_flags' => ['user_confirmed_quantity', 'manual_quantity_review'],
             'accepted_at' => now(),
         ]);
+    }
+
+    private function knowledgeContext(EstimateGenerationSession $session, array $workItem, int $normId): array
+    {
+        $knowledge = $this->equipmentKnowledge->capture($session, $workItem, $normId);
+
+        return $knowledge === null ? [] : ['knowledge_validation' => $knowledge];
     }
 
     /**

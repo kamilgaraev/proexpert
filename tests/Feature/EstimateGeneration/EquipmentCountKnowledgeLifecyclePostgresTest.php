@@ -18,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
@@ -260,6 +261,82 @@ final class EquipmentCountKnowledgeLifecyclePostgresTest extends EstimateGenerat
         yield 'distinct_native_claims' => [12, 1, false, 8, 1];
         yield 'one_claim_distinct_norms' => [1, 12, false, 1, 8];
         yield 'incompatible_units_before_current_claim' => [12, 1, true, 1, 1];
+    }
+
+    #[DataProvider('confirmationSourceStates')]
+    public function test_normative_feedback_rechecks_equipment_count_instead_of_creating_a_legacy_hint(string $sourceState): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $context = $this->nativeContext($session, $actor, 'd');
+        $this->publishNative($context, $sourceState === 'missing' ? null : '3');
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $entityId = $snapshot->entities[0]->id;
+        app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), $this->countAnswer($entityId));
+        $quantities = app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'];
+        $quantity = app(WorkItemQuantityMapper::class)->mapForEntity('equipment.install', $quantities, $entityId);
+        self::assertNotNull($quantity);
+        $item = ['key' => 'equipment:unknown:install', 'name' => 'Монтаж неизвестной установки', 'unit' => 'count',
+            'quantity' => '3', 'quantity_evidence' => $quantity->toArray(),
+            'metadata' => ['quantity_key' => 'equipment.install', 'scope_entity_id' => $entityId]];
+        $norm = $this->norm();
+        $draft = ['regional_context' => $this->regionalContext($norm),
+            'local_estimates' => [['sections' => [['work_items' => [$item]]]]],
+            'source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh())];
+        $session->fresh()->update(['draft_payload' => app(UniversalReviewSummaryProjector::class)->project($draft)]);
+        if ($sourceState === 'retracted') {
+            $original = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_count'))[0];
+            $evidenceId = (int) substr($original->evidenceIds[0], strlen('evidence:'));
+            app(EvidenceRepository::class)->invalidate(...[...$scope, [$evidenceId], 'knowledge_source_retracted']);
+        }
+        $example = $this->confirmNormative($session->fresh(), $item, $norm);
+        $summary = app(EstimateGenerationLearningEvidenceService::class)->summarizeForCandidates(collect([$norm]), $item,
+            ['organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2]])[$norm->id];
+        self::assertSame(0.0, $summary['learning_score']);
+        self::assertSame(0, $summary['learning_positive_count']);
+        self::assertSame([], $summary['learning_sources']);
+        self::assertSame($sourceState === 'current' ? 'passed' : 'unresolved', data_get($example->context_payload, 'knowledge_validation.count_source_check.outcome'));
+        self::assertSame('unresolved', data_get($example->context_payload, 'knowledge_validation.normative_association_check.outcome'));
+    }
+
+    public static function confirmationSourceStates(): iterable
+    {
+        yield 'missing_native_source' => ['missing'];
+        yield 'retracted_native_source' => ['retracted'];
+        yield 'current_native_source' => ['current'];
+    }
+
+    public function test_non_equipment_normative_feedback_keeps_existing_hint_semantics(): void
+    {
+        [, $session] = $this->fixture();
+        $item = ['key' => 'openings:windows', 'name' => 'Монтаж окон', 'unit' => 'count', 'quantity' => '3',
+            'metadata' => ['quantity_key' => 'openings.windows']];
+        $draft = ['local_estimates' => [['sections' => [['work_items' => [$item]]]]],
+            'source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh())];
+        $session->update(['draft_payload' => app(UniversalReviewSummaryProjector::class)->project($draft)]);
+        $norm = $this->norm();
+        $example = $this->confirmNormative($session->fresh(), $item, $norm);
+        self::assertArrayNotHasKey('knowledge_validation', $example->context_payload);
+        $summary = app(EstimateGenerationLearningEvidenceService::class)->summarizeForCandidates(collect([$norm]), $item,
+            ['organization_id' => $session->organization_id, 'project_id' => $session->project_id, 'session_id' => $session->id])[$norm->id];
+        self::assertGreaterThan(0, $summary['learning_score']);
+        self::assertSame(1, $summary['learning_positive_count']);
+    }
+
+    private function confirmNormative(EstimateGenerationSession $session, array $item, EstimateNorm $norm): EstimateGenerationLearningExample
+    {
+        $feedback = EstimateGenerationFeedback::query()->create(['session_id' => $session->id, 'user_id' => $session->user_id,
+            'feedback_type' => 'normative_confirmation', 'work_item_key' => $item['key'],
+            'payload' => ['norm_id' => $norm->id, 'normative_code' => $norm->code,
+                'knowledge_validation' => ['producer' => 'forged-request', 'count_source_check' => ['outcome' => 'passed'],
+                    'normative_association_check' => ['outcome' => 'passed']]],
+        ]);
+        $recorder = app(EstimateGenerationLearningRecorder::class);
+        self::assertSame(1, $recorder->recordFeedbackDecision($session, $feedback));
+        self::assertSame(0, $recorder->recordFeedbackDecision($session, $feedback));
+
+        return EstimateGenerationLearningExample::query()->where('source_type', 'manual_review_choice')
+            ->where('source_entity_type', 'estimate_generation_feedback')->where('source_entity_id', $feedback->id)->sole();
     }
 
     public function test_learning_selection_without_package_item_preserves_organization_session_and_work_identity(): void
