@@ -29,6 +29,63 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_section_components_filter_distractors_before_the_sql_pool_limit_and_final_ranking(): void
+    {
+        $catalog = $this->catalog();
+        $original = DB::table('estimate_norms')->where('id', $catalog['norm_id'])->first();
+        $resource = DB::table('estimate_norm_resources')->where('estimate_norm_id', $catalog['norm_id'])->first();
+        $datasetId = (int) DB::table('estimate_norm_collections')->where('id', $original->collection_id)->value('dataset_version_id');
+        $target = null;
+        for ($index = 1; $index <= 302; $index++) {
+            $section = $index === 302 ? '1' : '10';
+            $norm = DB::table('estimate_norms')->insertGetId(['collection_id' => $original->collection_id,
+                'code' => sprintf('%02d-01-%03d-01', (int) $section, $index), 'section_code' => $section,
+                'section_name' => 'Полы', 'section_id' => $original->section_id, 'name' => 'Устройство пола',
+                'unit' => 'м2', 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('estimate_norm_resources')->insert(['estimate_norm_id' => $norm, 'resource_code' => $resource->resource_code,
+                'resource_name' => 'Труд рабочих', 'unit' => 'h', 'quantity' => '1.000000', 'resource_type' => 'labor',
+                'created_at' => now(), 'updated_at' => now()]);
+            if ($index === 302) {
+                $target = $norm;
+            }
+        }
+        $context = $catalog['context'];
+        $priceVersion = (string) DB::table('estimate_regional_price_versions')->where('id', $context['estimate_regional_price_version_id'])->value('version_key');
+        $requested = new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinData($datasetId,
+            $context['normative_dataset_version'], '2088-10-01', $context['region_id'], $context['price_zone_id'], $context['period_id'],
+            $context['estimate_regional_price_version_id'], $priceVersion);
+        $source = new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentNormativeContextPinSource(DB::connection());
+        foreach ([['1'], ['01']] as $preferred) {
+            $lookupCounts = [];
+            $work = ['work_item_key' => 'floor', 'search_text' => 'Устройство пола', 'unit' => 'm2', 'normative_sections' => $preferred];
+            $pin = $source->resolveForIntentsWithProgress($requested, [$work], static function (string $step, array $details) use (&$lookupCounts): void {
+                if ($step === 'intent_lookup_completed') {
+                    $lookupCounts[] = $details['candidate_count'];
+                }
+            });
+            self::assertSame([1], $lookupCounts);
+            self::assertNotNull($pin);
+            self::assertSame([$target], array_column($pin->catalogCandidates, 'normative_id'));
+            $intent = new \App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData(1, 2, 3, 'floor', 'Устройство пола',
+                'm2', 'area', '', '', '', '', '', $requested->datasetVersion, 'parsed', null, new \DateTimeImmutable('2088-10-01'), [], $preferred);
+            $candidates = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory)->forWorkItem(
+                $pin->catalogCandidates, ['key' => 'floor', 'name' => 'Устройство пола', 'unit' => 'm2'], $preferred, $intent, $pin->candidateIdsByWorkItem);
+            $accepted = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate)->filter($intent, $candidates);
+            self::assertCount(1, $accepted->candidates);
+            self::assertSame($target, $accepted->candidates[0]->normativeId);
+            $diagnostics = (new \ReflectionMethod($source, 'prePriceCandidateDiagnostics'))->invoke($source, $requested, [$datasetId], $work,
+                (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeSearchQueryBuilder)->build($work['search_text']),
+                '', $preferred, '0 AS pin_semantic_priority', []);
+            self::assertSame(['01-01-302-01'], array_column($diagnostics, 'code'));
+        }
+        foreach ([['1', '10', false], ['01', '1', true], ['08', '8.1', true], ['06-1', '06-10', false],
+            ['06.1', '6-01-002', true], ['08-01', '08', false], ["1') OR TRUE --", '10', false]] as [$preferred, $candidate, $expected]) {
+            $pattern = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeSectionPrefix::postgresPattern($preferred);
+            $matched = DB::selectOne('SELECT CASE WHEN ?::text ~ ?::text THEN 1 ELSE 0 END AS matched', [$candidate, $pattern]);
+            self::assertSame($expected ? 1 : 0, (int) $matched->matched);
+        }
+    }
+
     #[DataProvider('nativeDates')]
     public function test_universal_native_selection_keeps_pinned_resources_through_scoped_apply_and_recalculation(bool $periodOnly): void
     {
