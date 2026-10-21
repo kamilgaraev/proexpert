@@ -43,6 +43,7 @@ class PackagePlannerService
                     : $package,
                 $packages,
             );
+            $packages = $this->withRequestedScopePackages($packages, $profile, ['requested_fire_alarm']);
         }
         $packages = $this->withReviewPackages($packages, $profile);
         $packages = $this->withOptionalSitePackages($packages, $profile);
@@ -192,6 +193,7 @@ class PackagePlannerService
             'rough_finishing', 'finish_finishing' => [$scopeType, 'finishing'],
             'finishing' => ['custom-finishing', 'finishing'],
             'site' => ['site_preparation', 'site'],
+            'earthworks' => ['earthworks', 'earthworks'],
             'fire_safety' => ['requested_fire_alarm', 'engineering'],
             'foundation', 'walls', 'slabs', 'roof', 'openings', 'electrical', 'plumbing',
             'heating', 'ventilation', 'stairs', 'facade', 'sewerage' => [$scopeType, $scopeType],
@@ -201,12 +203,15 @@ class PackagePlannerService
         return $key === null ? null : $this->package($key, (string) ($scope['title'] ?? $key), $packageScope, 1, 20);
     }
 
-    private function withRequestedScopePackages(array $packages, ObjectProfileData $profile): array
+    private function withRequestedScopePackages(array $packages, ObjectProfileData $profile, ?array $onlyKeys = null): array
     {
         $packageKeys = array_column($packages, 'key');
         $quantityKeys = $profile->planningSignals['quantity_keys'] ?? [];
         foreach ($profile->planningSignals['requested_scope_packages'] ?? [] as $package) {
             $key = $package['key'];
+            if ($onlyKeys !== null && ! in_array($key, $onlyKeys, true)) {
+                continue;
+            }
             if (in_array($key, $packageKeys, true) || in_array('custom-'.$key, $packageKeys, true)) {
                 continue;
             }

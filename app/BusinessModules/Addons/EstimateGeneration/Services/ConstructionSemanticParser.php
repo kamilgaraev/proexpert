@@ -512,15 +512,43 @@ class ConstructionSemanticParser
         ];
 
         $keywords = array_map(static fn (array $patterns): array => array_values(array_diff($patterns, $weakHints)), $this->scopeKeywords());
+        $keywords['earthworks'] = array_values(array_intersect($keywords['site'], ['землян']));
+        $keywords['site'] = array_values(array_diff($keywords['site'], $keywords['earthworks']));
         $keywords['site'] = [...$keywords['site'], 'наружная площадка', 'подъезд для грузового транспорта', 'разгрузочная зона'];
-        foreach (['ламинат', 'плитка', 'обои'] as $material) {
-            preg_match_all('~(?<![\p{L}\p{N}])(?:укладк|настил|оклейк|поклейк|монтаж)\p{L}*\s+'.preg_quote($material, '~').'\p{L}*~u', $text, $matches);
-            foreach ($matches[0] as $operation) {
-                $keywords['finish_finishing'][] = $operation;
+        $descriptors = ['наружн', 'приточн', 'утеплен', 'утеплён', 'кладоч', 'свет', 'облицовк', 'облицовка', 'клапан', 'разгруз'];
+        foreach (preg_split('~[,;.\r\n]+|\s+и\s+~u', $text) ?: [] as $clause) {
+            $heads = $this->detectScopeTypes($clause, $keywords);
+            foreach ($this->scopeKeywords() as $scope => $patterns) {
+                if (array_diff($heads, [$scope]) !== []) {
+                    continue;
+                }
+                foreach (array_diff(array_intersect($patterns, $weakHints), $descriptors) as $object) {
+                    $pattern = '~(?<![\p{L}\p{N}])(?:укладк|настил|оклейк|поклейк|монтаж|устройств|установк)\p{L}*\s+'
+                        .$this->operationObjectPattern($object).'~u';
+                    preg_match_all($pattern, $clause, $matches);
+                    foreach ($matches[0] as $operation) {
+                        $keywords[$scope][] = $operation;
+                    }
+                }
             }
         }
 
         return $keywords;
+    }
+
+    private function operationObjectPattern(string $keyword): string
+    {
+        return implode('\s+', array_map(static function (string $word): string {
+            if (mb_strlen($word) >= 6 && preg_match('/(?:ая|яя|ое|ее|ые|ый|ий|ой|ие)$/u', $word) === 1) {
+                $word = mb_substr($word, 0, -2);
+            } elseif (mb_strlen($word) >= 5 && preg_match('/[ая]$/u', $word) === 1) {
+                $word = mb_substr($word, 0, -1);
+            } elseif (mb_strlen($word) >= 4 && str_ends_with($word, 'и')) {
+                return preg_quote(mb_substr($word, 0, -1), '~').'(?:и|ям|ями|ях|ев)(?![\p{L}\p{N}])';
+            }
+
+            return preg_quote($word, '~').(mb_strlen($word) > 3 ? '\p{L}*' : '');
+        }, preg_split('/\s+/u', $keyword) ?: []));
     }
 
     /**

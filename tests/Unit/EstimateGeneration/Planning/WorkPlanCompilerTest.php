@@ -462,6 +462,12 @@ final class WorkPlanCompilerTest extends TestCase
         if ($scope === 'fire_safety') {
             self::assertSame([], $payload['local_estimates'][0]['sections'][0]['work_items']);
         }
+        if ($scope === 'earthworks') {
+            $items = $payload['local_estimates'][0]['sections'][0]['work_items'];
+            self::assertNotEmpty($items);
+            self::assertContains('earth.trench', array_column(array_column($items, 'metadata'), 'quantity_key'));
+            self::assertNotContains('site.geodesy', array_column(array_column($items, 'metadata'), 'quantity_key'));
+        }
     }
 
     public static function requestedUnknownScopes(): iterable
@@ -482,7 +488,8 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'stairs' => ['Устройство лестницы', 'stairs', 'stairs', 'structures'];
         yield 'facade' => ['Устройство фасада', 'facade', 'facade', 'structures'];
         yield 'finishing' => ['Штукатурные работы', 'finishing', 'custom-finishing', 'finishing'];
-        yield 'site' => ['Земляные работы', 'site', 'site_preparation', 'earthworks'];
+        yield 'earthworks' => ['Земляные работы', 'earthworks', 'earthworks', 'earthworks'];
+        yield 'site' => ['Разгрузочная зона', 'site', 'site_preparation', 'earthworks'];
     }
 
     #[DataProvider('multipleExplicitScopes')]
@@ -548,7 +555,7 @@ final class WorkPlanCompilerTest extends TestCase
 
     public function test_known_profiles_preserve_their_explicit_fire_alarm_request_in_automation(): void
     {
-        foreach (['warehouse', 'industrial'] as $type) {
+        foreach (['warehouse', 'industrial', 'house'] as $type) {
             $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type, 'description' => 'Пожарная сигнализация'], []);
             $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['automation']];
             $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
@@ -613,6 +620,22 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'roof_work' => ['Устройство кровли', ['roof']];
         yield 'wall_work' => ['Устройство стен', ['walls']];
         yield 'explicit_flooring_operation' => ['Укладка ламината', ['finish_finishing']];
+        yield 'explicit_roof_material_operation' => ['Монтаж металлочерепицы', ['roof']];
+        yield 'explicit_foundation_preparation' => ['Устройство бетонной подготовки', ['foundation']];
+        yield 'explicit_tile_operation' => ['Укладка плитки', ['finish_finishing']];
+        yield 'explicit_wallpaper_operation' => ['Оклейка обоями', ['finish_finishing']];
+        yield 'explicit_wall_material_operation' => ['Монтаж газобетона', ['walls']];
+        yield 'explicit_panel_operation' => ['Монтаж сэндвич-панелей', ['facade']];
+        yield 'explicit_area_operation' => ['Устройство площадки', ['site_preparation']];
+        yield 'explicit_access_operation' => ['Устройство подъезда', ['site_preparation']];
+        yield 'explicit_driveway_operation' => ['Устройство проезда', ['site_preparation']];
+        yield 'separate_roof_and_wall_operations' => ['Монтаж металлочерепицы и устройство стен', ['walls', 'roof']];
+        yield 'preparation_belongs_to_stated_roof' => ['Устройство бетонной подготовки кровли', ['roof']];
+        yield 'block_material_belongs_to_stated_slab' => ['Монтаж газобетона на перекрытии', ['slabs']];
+        yield 'generic_equipment_is_not_wallpaper' => ['Монтаж оборудования', []];
+        foreach (['наружных', 'приточного', 'клапана', 'кладочных', 'утепления', 'света', 'облицовки'] as $hint) {
+            yield 'descriptor_operation_'.$hint => ['Устройство '.$hint, []];
+        }
     }
 
     public function test_document_only_material_row_keeps_its_legacy_scope_and_source_quantity(): void
