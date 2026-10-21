@@ -61,6 +61,16 @@ final class EstimateGenerationLearningRagSource implements RagSourceCollectorInt
             : [];
     }
 
+    public function currentChunks(int $organizationId, array $entityIds): array
+    {
+        $chunks = [];
+        foreach (EstimateGenerationLearningExample::query()->where('organization_id', $organizationId)->whereKey($entityIds)->get() as $example) {
+            if ($this->indexable($example)) { $chunks[(string) $example->id] = $this->chunk($example); }
+        }
+
+        return $chunks;
+    }
+
     public function pruneForOrganization(int $organizationId, ?int $projectId = null): int
     {
         $sources = RagSource::query()
@@ -176,9 +186,12 @@ final class EstimateGenerationLearningRagSource implements RagSourceCollectorInt
         return is_numeric($value) ? rtrim(rtrim(number_format((float) $value, 6, '.', ''), '0'), '.') : '';
     }
 
-    private function numericValue(mixed $value): ?float
+    private function numericValue(mixed $value): int|float|null
     {
-        return is_numeric($value) ? (float) $value : null;
+        if (! is_numeric($value)) { return null; }
+        $number = (float) $value;
+
+        return $number === (float) (int) $number ? (int) $number : $number;
     }
 
     private function updatedAt(EstimateGenerationLearningExample $example): ?DateTimeInterface

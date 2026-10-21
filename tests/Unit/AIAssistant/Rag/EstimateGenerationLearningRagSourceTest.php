@@ -12,11 +12,63 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateGenerationLearningRagSource;
 use App\Models\Organization;
 use App\Models\Project;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 final class EstimateGenerationLearningRagSourceTest extends TestCase
 {
+    public function test_current_chunks_batch_uses_current_policy_and_the_existing_serializer(): void
+    {
+        $organization = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        $examples = [];
+        foreach (range(1, 12) as $id) {
+            $examples[] = EstimateGenerationLearningExample::query()->create([
+                'organization_id' => $organization->id, 'source_type' => 'user_rejection',
+                'source_entity_type' => 'estimate_item', 'source_entity_id' => $id,
+                'work_name' => 'Отвергнутая позиция '.$id, 'work_unit' => 'count',
+                'norm_code' => '20-99-'.$id, 'is_positive' => false, 'decision_status' => 'rejected',
+                'quality_flags' => ['unit_compatible'], 'source_quality_score' => $id % 2 === 0 ? 1 : 0.85,
+            ]);
+        }
+        $examples[0]->update(['quality_flags' => ['do_not_index']]);
+        $examples[1]->update(['quality_flags' => ['unit_unverified']]);
+        $examples[2]->update(['source_type' => 'ai_generated_estimate']);
+        $examples[3]->update(['organization_id' => $otherOrganization->id]);
+        $examples[4]->delete();
+        $source = app(EstimateGenerationLearningRagSource::class);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $chunks = $source->currentChunks($organization->id, array_column($examples, 'id'));
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+        }
+        self::assertCount(1, $queries);
+        self::assertSame(array_map('strval', array_column(array_slice($examples, 5), 'id')), array_map('strval', array_keys($chunks)));
+        foreach (array_slice($examples, 5) as $example) {
+            $legacy = collect($source->collectEntity($organization->id, 'estimate_generation_learning_example', $example->id))->first();
+            self::assertEquals($legacy, $chunks[(string) $example->id]);
+            self::assertFalse($chunks[(string) $example->id]->metadata['is_positive']);
+        }
+        $indexer = new RagIndexer(new LearningRagEmbeddingProvider, new RagSourceRegistry([]));
+        $last = $examples[11];
+        $current = $chunks[(string) $last->id];
+        $oldMetadata = [...$current->metadata, 'source_quality_score' => 1.0];
+        self::assertSame(json_encode($oldMetadata), json_encode($current->metadata));
+        $indexer->indexChunk(new \App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData(
+            $current->organizationId, $current->projectId, $current->sourceType, $current->entityType, $current->entityId,
+            $current->title, $current->content, $oldMetadata, $current->updatedAt));
+        $indexed = RagSource::query()->where('entity_id', (string) $last->id)->with('chunks')->firstOrFail();
+        self::assertTrue($indexer->matchesLexicalSource($indexed, $current));
+        $checksum = $indexed->checksum;
+        $indexer->indexChunk($current);
+        self::assertSame($checksum, $indexed->fresh()->checksum);
+        self::assertSame(0.85, $chunks[(string) $examples[10]->id]->metadata['source_quality_score']);
+    }
+
     public function test_collects_learning_examples_as_rag_chunks(): void
     {
         $organization = Organization::factory()->create();
