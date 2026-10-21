@@ -543,6 +543,11 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'surface_gluing_operation_comma_list' => ['Поклейка потолков, стен', ['custom-finishing'], ['finishing', 'structures']];
         yield 'surface_gluing_then_independent_wall' => ['Оклейка потолков и устройство стен', ['walls', 'custom-finishing'], ['finishing', 'structures']];
         yield 'surface_gluing_comma_then_independent_wall' => ['Поклейка потолков, устройство стен', ['custom-finishing', 'walls'], ['finishing', 'structures']];
+        yield 'paint_defined_wall_surface' => ['Покраска внутренних стен', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'plaster_defined_external_wall_surface' => ['Штукатурка наружных стен', ['custom-finishing'], ['finishing', 'structures']];
+        yield 'plaster_defined_bearing_wall_surface' => ['Штукатурка несущих стен', ['custom-finishing'], ['finishing', 'structures']];
+        yield 'defined_surface_then_new_wall_operation' => ['Покраска внутренних стен и устройство стен', ['finish_finishing', 'walls'], ['finishing', 'structures']];
+        yield 'defined_surface_then_new_facade_operation' => ['Штукатурка наружных стен, устройство фасада', ['custom-finishing', 'facade'], ['finishing', 'structures']];
     }
 
     #[DataProvider('unsupportedFireSystems')]

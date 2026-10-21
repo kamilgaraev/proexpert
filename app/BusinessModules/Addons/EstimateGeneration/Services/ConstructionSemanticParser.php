@@ -556,7 +556,15 @@ class ConstructionSemanticParser
 
     private function finishingSurfaceGapPattern(): string
     {
-        return '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ов|ам|ям|ами|ями|ах|ях|ка|ки|ку|кой|кою|ке)?\s+';
+        return '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ов|ам|ям|ами|ями|ах|ях|ка|ки|ку|кой|кою|ке)?\s+'
+            .'(?:\p{L}{2,}'.$this->adjectiveEndingsPattern(pluralOnly: true).'\s+)*';
+    }
+
+    private function adjectiveEndingsPattern(bool $pluralOnly = false): string
+    {
+        $plural = 'ые|ие|ых|их|ым|им|ыми|ими';
+
+        return '(?:'.($pluralOnly ? $plural : 'ая|яя|ой|ей|ую|юю|ое|ее|'.$plural.'|ого|его|ому|ему|ом|ем').')';
     }
 
     private function explicitScopeKeywords(string $text): array
@@ -602,12 +610,14 @@ class ConstructionSemanticParser
 
     private function operationObjectPattern(string $keyword): string
     {
-        return implode('\s+', array_map(static function (string $word): string {
+        $adjectiveEndings = $this->adjectiveEndingsPattern();
+
+        return implode('\s+', array_map(static function (string $word) use ($adjectiveEndings): string {
             if (mb_strlen($word) >= 6 && str_ends_with($word, 'ие')) {
                 return preg_quote(mb_substr($word, 0, -2), '~').'(?:ие|ия|ию|ием|ии|ий|иям|иями|иях)(?![\p{L}\p{N}])';
             } elseif (mb_strlen($word) >= 6 && preg_match('/(?:ая|яя|ое|ее|ые|ый|ий|ой)$/u', $word) === 1) {
                 $word = mb_substr($word, 0, -2);
-                return preg_quote($word, '~').'(?:ая|яя|ой|ей|ую|юю|ое|ее|ые|ие|ых|их|ым|им|ыми|ими|ого|его|ому|ему|ом|ем)(?![\p{L}\p{N}])';
+                return preg_quote($word, '~').$adjectiveEndings.'(?![\p{L}\p{N}])';
             } elseif (mb_strlen($word) >= 5 && preg_match('/[ая]$/u', $word) === 1) {
                 $word = mb_substr($word, 0, -1);
             } elseif (mb_strlen($word) >= 4 && str_ends_with($word, 'и')) {
