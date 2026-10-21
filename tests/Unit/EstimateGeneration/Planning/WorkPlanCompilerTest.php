@@ -583,6 +583,15 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'without_walls' => ['Устройство фундамента без стен', ['foundation']];
         yield 'walls_not_required' => ['Устройство фундамента, стены не требуются', ['foundation']];
         yield 'foundation_not_required' => ['Фундамент не требуется, устройство стен', ['walls']];
+        yield 'ambiguous_postfix_list_not_required' => ['Устройство фундамента и стены не требуются', []];
+        yield 'conjunct_foundation_not_required' => ['Фундамент не требуется и устройство стен', ['walls']];
+        yield 'without_compound_scope' => ['Устройство фундамента без стен и перекрытий', ['foundation']];
+        yield 'context_before_prefix' => ['На объекте не требуется устройство стен', []];
+        yield 'context_before_foundation_prefix' => ['Для моста не требуется устройство фундамента', []];
+        yield 'context_before_operation_prefix' => ['Для здания не выполнять монтаж металлочерепицы', []];
+        yield 'postfix_noun_list' => ['Стены и перекрытия не требуются', []];
+        yield 'postfix_operation_list' => ['Устройство стен и перекрытий не требуется', []];
+        yield 'independent_work_before_postfix_list' => ['Устройство фундамента, стены и перекрытия не требуются', ['foundation']];
         yield 'do_not_build_walls' => ['Не выполнять устройство стен, устройство фундамента', ['foundation']];
         yield 'no_wall_required' => ['Не требуется устройство стен, фундамент', ['foundation']];
         yield 'no_work_required' => ['Стены не требуются', []];
