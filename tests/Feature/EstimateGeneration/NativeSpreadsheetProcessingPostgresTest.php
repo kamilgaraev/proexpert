@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNume
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
@@ -78,8 +79,19 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
         return [['application/zip'], ['application/octet-stream']];
     }
 
+    #[DataProvider('legacyUnitStates')]
+    public function test_legacy_native_pending_or_retry_unit_publishes_without_minting_a_literal_witness(string $state): void
+    {
+        $this->processWorkbook(false, true, legacyState: $state);
+    }
+
+    public static function legacyUnitStates(): array
+    {
+        return [['pending'], ['retry']];
+    }
+
     private function processWorkbook(bool $withFormula, bool $equipment = false, bool $literalFormula = false, bool $largeUnitId = false,
-        string $mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'): void
+        string $mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ?string $legacyState = null): void
     {
         Http::fake([]);
         Http::preventStrayRequests();
@@ -169,9 +181,26 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
             if ($largeUnitId) {
                 self::assertGreaterThan(1000000, $unit->id);
             }
+            if ($legacyState !== null) {
+                $locator = $units[0]->locator;
+                unset($locator['artifact_kind'], $locator['artifact_schema_version']);
+                $locator['content_type'] = 'application/vnd.most.spreadsheet-sheet+json';
+                DB::table('estimate_generation_processing_units')->where('id', $unit->id)
+                    ->update(['locator' => json_encode($locator, JSON_THROW_ON_ERROR)]);
+                if ($legacyState === 'retry') {
+                    $now = now()->toDateTimeImmutable();
+                    $claim = $store->claim($unit->id, $version, $now, $now->modify('+5 minutes'), 3);
+                    self::assertSame(DocumentProcessingUnitClaimStatus::Acquired, $claim->status);
+                    self::assertTrue($store->fail($claim, 'legacy_native_retry', hash('sha256', 'legacy_native_retry'), $now, FailureCategory::Recoverable));
+                    self::assertSame('failed', $store->find($unit->id)->status->value);
+                }
+            }
             $outcome = app(ProcessDocumentUnit::class)->handle($unit->id, $version);
             self::assertSame(DocumentProcessingUnitClaimStatus::Acquired, $outcome->status);
             self::assertSame('completed', $store->find($unit->id)->status->value);
+            if ($legacyState !== null) {
+                self::assertSame($legacyState === 'retry' ? 2 : 1, $store->find($unit->id)->attemptCount);
+            }
             $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 100)['snapshot'];
             self::assertCount($withFormula || $literalFormula ? 1 : 2, $snapshot->facts);
             if (! $equipment) {
@@ -223,17 +252,21 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
                     self::assertSame('xlsx:sheet:Оборудование!C2', $source->nativeReference);
                     self::assertSame('drawing_analyzer', $source->producerName);
                     $storedSource = json_decode(DB::table('estimate_generation_evidence')->where('id', (int) substr($source->id, strlen('evidence:')))->value('value'), true, flags: JSON_THROW_ON_ERROR);
-                    $binding = $storedSource['native_literal_source'];
-                    self::assertSame([1, 'native_spreadsheet_literal:v1', (int) $document->id, $unit->id, 'C2', 'equipment_specification'],
-                        [$binding['schema_version'], $binding['producer'], $binding['document_id'], $binding['unit_id'], $binding['cell'], $binding['fact_type']]);
-                    self::assertSame([(int) $organization->id, (int) $project->id, (int) $session->id, $version],
-                        [$binding['organization_id'], $binding['project_id'], $binding['session_id'], $binding['source_version']]);
-                    self::assertSame($units[0]->locator['artifact_sha256'], $binding['artifact_sha256']);
-                    self::assertSame(hash('sha256', json_encode($specification->value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)), $binding['value_hash']);
-                    self::assertSame('material:'.$binding['value_hash'], $storedSource['fact_value']);
-                    self::assertSame('equipment:native.'.$document->id.'.1.'.substr(hash('sha256',
-                        json_encode(['equipment:boiler', []], JSON_THROW_ON_ERROR)), 0, 32), $binding['entity_key']);
-                    $this->assertClosedSqlBinding((int) substr($source->id, strlen('evidence:')), $binding);
+                    if ($legacyState !== null) {
+                        self::assertArrayNotHasKey('native_literal_source', $storedSource);
+                    } else {
+                        $binding = $storedSource['native_literal_source'];
+                        self::assertSame([1, 'native_spreadsheet_literal:v1', (int) $document->id, $unit->id, 'C2', 'equipment_specification'],
+                            [$binding['schema_version'], $binding['producer'], $binding['document_id'], $binding['unit_id'], $binding['cell'], $binding['fact_type']]);
+                        self::assertSame([(int) $organization->id, (int) $project->id, (int) $session->id, $version],
+                            [$binding['organization_id'], $binding['project_id'], $binding['session_id'], $binding['source_version']]);
+                        self::assertSame($units[0]->locator['artifact_sha256'], $binding['artifact_sha256']);
+                        self::assertSame(hash('sha256', json_encode($specification->value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)), $binding['value_hash']);
+                        self::assertSame('material:'.$binding['value_hash'], $storedSource['fact_value']);
+                        self::assertSame('equipment:native.'.$document->id.'.1.'.substr(hash('sha256',
+                            json_encode(['equipment:boiler', []], JSON_THROW_ON_ERROR)), 0, 32), $binding['entity_key']);
+                        $this->assertClosedSqlBinding((int) substr($source->id, strlen('evidence:')), $binding);
+                    }
                     self::assertFalse((new NativeNumericFactProof)->matches($specification, $source));
                     $locator = json_decode(DB::table('estimate_generation_evidence')->where('id', (int) substr($source->id, strlen('evidence:')))->value('locator'), true, flags: JSON_THROW_ON_ERROR);
                     self::assertSame([(int) $document->id, DocumentUnitType::SpreadsheetSheet->value, 1],

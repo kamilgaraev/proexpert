@@ -188,6 +188,43 @@ final class NativeSpreadsheetLiteralSourcesTest extends TestCase
         }
     }
 
+    public function test_legacy_native_artifact_is_processed_without_ocr_or_a_literal_witness(): void
+    {
+        $content = $this->content($this->native());
+        $context = $this->context($content, legacyArtifact: true);
+        self::assertNull(NativeSpreadsheetLiteralSources::fromArtifact($context, $content));
+        $reader = new class($content) implements DocumentUnitContentReader
+        {
+            public function __construct(private string $content) {}
+
+            public function read(DocumentUnitExecutionContext $context): string
+            {
+                return $this->content;
+            }
+        };
+        $ocr = $this->createMock(OcrClientInterface::class);
+        $ocr->expects(self::never())->method('recognize');
+        $output = (new OcrDocumentUnitProcessor($reader, $ocr))->process($context);
+        self::assertNotNull($output->publication);
+        self::assertCount(1, $output->publication->claims);
+        self::assertNull($output->publication->literalSources);
+        self::assertFalse($output->publication->numericSources->certifies($output->publication->claims[0]));
+    }
+
+    #[DataProvider('partialModernMarkers')]
+    public function test_partial_modern_metadata_cannot_downgrade_to_the_legacy_no_witness_path(array $markers): void
+    {
+        $content = $this->content($this->native());
+        $this->expectException(DocumentUnitProcessingException::class);
+        NativeSpreadsheetLiteralSources::fromArtifact($this->context($content, $markers, legacyArtifact: true), $content);
+    }
+
+    public static function partialModernMarkers(): array
+    {
+        return [[['artifact_kind' => 'spreadsheet_sheet']], [['artifact_schema_version' => 1]],
+            [['artifact_kind' => null, 'artifact_schema_version' => null]]];
+    }
+
     private function native(): array
     {
         return ['status' => 'available', 'sheet' => 'Оборудование',
@@ -204,14 +241,19 @@ final class NativeSpreadsheetLiteralSourcesTest extends TestCase
     }
 
     private function context(string $content, array $locator = [], DocumentUnitType $type = DocumentUnitType::SpreadsheetSheet, string $change = '',
-        string $filename = 'source.xlsx'): DocumentUnitExecutionContext
+        string $filename = 'source.xlsx', bool $legacyArtifact = false): DocumentUnitExecutionContext
     {
+        $defaults = ['artifact_path' => 'org-11/source', 'artifact_sha256' => 'sha256:'.hash('sha256', $content),
+            'artifact_bytes' => strlen($content), 'source_version' => 'sha256:'.str_repeat('a', 64), 'source_kind' => 'spreadsheet',
+            'artifact_kind' => 'spreadsheet_sheet', 'artifact_schema_version' => 1];
+        if ($legacyArtifact) {
+            unset($defaults['artifact_kind'], $defaults['artifact_schema_version']);
+            $defaults['content_type'] = 'application/vnd.most.spreadsheet-sheet+json';
+        }
+
         return new DocumentUnitExecutionContext($change === 'unit' ? 2 : 1, $change === 'organization' ? 99 : 11,
             $change === 'project' ? 99 : 12, $change === 'session' ? 99 : 14, $change === 'document' ? 99 : 13, $type, 1,
-            $change === 'version' ? 'sha256:'.str_repeat('b', 64) : 'sha256:'.str_repeat('a', 64), [...[
-                'artifact_path' => 'org-11/source', 'artifact_sha256' => 'sha256:'.hash('sha256', $content),
-                'artifact_bytes' => strlen($content), 'source_version' => 'sha256:'.str_repeat('a', 64), 'source_kind' => 'spreadsheet',
-                'artifact_kind' => 'spreadsheet_sheet', 'artifact_schema_version' => 1,
-            ], ...$locator], 'org-11/source.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', $filename, 'claim', 1, 1, 'processing');
+            $change === 'version' ? 'sha256:'.str_repeat('b', 64) : 'sha256:'.str_repeat('a', 64), [...$defaults, ...$locator],
+            'org-11/source.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', $filename, 'claim', 1, 1, 'processing');
     }
 }

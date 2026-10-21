@@ -24,6 +24,10 @@ final readonly class NativeSpreadsheetLiteralSources
             || ! isset($locator['artifact_sha256'], $locator['artifact_bytes'], $locator['source_version'])) {
             return null;
         }
+        if (($locator['content_type'] ?? null) === 'application/vnd.most.spreadsheet-sheet+json'
+            && ! array_key_exists('artifact_kind', $locator) && ! array_key_exists('artifact_schema_version', $locator)) {
+            return null;
+        }
         $hash = 'sha256:'.hash('sha256', $content);
         if ($context->type !== DocumentUnitType::SpreadsheetSheet
             || min($context->unitId, $context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->index) < 1
