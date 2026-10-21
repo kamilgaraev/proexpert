@@ -19,6 +19,7 @@ final class AssistantToolEligibilityPolicy
         'get_project_material_stock',
         'get_project_attention',
         'get_project_production_schedule_summary',
+        'get_project_journal_entries',
         'analyze_project_schedule_impact', 'get_project_finance_overview',
         'get_project_workforce_summary',
         'get_project_payment_readiness',

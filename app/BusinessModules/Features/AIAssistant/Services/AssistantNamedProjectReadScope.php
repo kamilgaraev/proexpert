@@ -15,7 +15,8 @@ final class AssistantNamedProjectReadScope
         unset($plan['named_project_scope']);
         $query = (string) ($plan['request']['message'] ?? '');
         $intent = AssistantOperationalReaderRegistry::intent($query);
-        if (! isset(AssistantOperationalReaderRegistry::TOOLS[$intent['name'] ?? '']) || AssistantRequestProjectScope::organizationWide($query)) {
+        if (! isset(AssistantOperationalReaderRegistry::TOOLS[$intent['name'] ?? '']) || AssistantRequestProjectScope::organizationWide($query)
+            || self::hasSelectedProjectContinuation($query)) {
             return $plan;
         }
         $name = self::name($plan);
@@ -95,6 +96,9 @@ final class AssistantNamedProjectReadScope
         if (AssistantRequestProjectScope::organizationWide($query)) {
             return null;
         }
+        if (self::hasSelectedProjectContinuation($query)) {
+            return null;
+        }
         $quoted = self::hasQuotedName($query);
         if (! $quoted && self::hasImplicitProjectClause($query)) {
             return null;
@@ -121,6 +125,12 @@ final class AssistantNamedProjectReadScope
         }
 
         return $name === '' || (! $quoted && $name !== null && preg_match('/^(?:есть|нет|ещ[её]|уже|сейчас|остал[а-яё]*|задержива[а-яё]*|просрочены|готовы|назначены|приняты|закрыты|завершены|ждут|имеют|действуют|что|кто|где|когда|как|какие|какой|какая|какое|сколько|нужно|надо|можно|не|и|или|но|а)(?![\pL\pN])/iu', $name) === 1) ? null : $name;
+    }
+
+    private static function hasSelectedProjectContinuation(string $query): bool
+    {
+        return preg_match('/\b(?:(?:текущ|выбран|эт|данн)[а-яё]*|наш(?:его|ему|ем|им)?)\s+(?:проект|объект)[а-яё]*\s+(?:начиная\s+с\s+[0-9]+[.!?]*$|(?:покаж(?:и|ите)|перечисл(?:и|ите)|дай(?:те)?)\b)/iu', $query) === 1
+            && preg_match_all('/\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)\b/iu', self::withoutQuotedNames($query)) === 1;
     }
 
     private static function hasImplicitProjectClause(string $query): bool

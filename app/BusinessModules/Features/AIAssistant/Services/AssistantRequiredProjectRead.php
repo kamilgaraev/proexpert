@@ -65,6 +65,9 @@ final readonly class AssistantRequiredProjectRead
             && ($scope->projectId !== null || AssistantRequestProjectScope::organizationWide($query))) {
             return ['name' => $operational['name'], 'arguments' => ['project_id' => $scope->projectId]];
         }
+        if (($operational['name'] ?? null) === 'get_project_journal_entries' && $scope->projectId !== null) {
+            return ['name' => $operational['name'], 'arguments' => AssistantJournalEntriesIntent::arguments($scope->projectId, $query)];
+        }
         if ($operational !== null && $scope->projectId !== null) { return ['name' => $operational['name'], 'arguments' => $operational['name'] === 'get_project_production_schedule_summary'
             ? AssistantProductionSchedulePeriod::arguments($scope->projectId, $plan) : ['project_id' => $scope->projectId]]; }
         if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)

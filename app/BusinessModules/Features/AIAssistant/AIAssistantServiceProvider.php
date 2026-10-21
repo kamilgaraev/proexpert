@@ -259,6 +259,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'get_project_machinery_summary' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectMachinerySummaryTool::class,
                 'get_project_handover_summary' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectHandoverSummaryTool::class,
                 'get_project_journal_readiness' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectJournalReadinessTool::class,
+                'get_project_journal_entries' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectJournalEntriesTool::class,
                 'get_project_safety_summary' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectSafetySummaryTool::class,
                 'get_project_change_readiness' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectChangeReadinessTool::class,
                 'get_project_design_readiness' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectDesignReadinessTool::class,

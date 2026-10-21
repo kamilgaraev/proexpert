@@ -2168,6 +2168,7 @@ class AIAssistantService
     {
         return in_array($toolName, [
             'get_project_production_schedule_summary',
+            'get_project_journal_entries',
             'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
             'resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
             'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
@@ -2480,6 +2481,7 @@ class AIAssistantService
             $this->progress($progressCode, 'started');
             $pureDatabaseRead = in_array($toolName, [
                 'get_project_production_schedule_summary',
+                'get_project_journal_entries',
                 'describe_custom_report_source',
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
@@ -4434,6 +4436,7 @@ class AIAssistantService
     {
         return match ($toolName) {
             'get_project_production_schedule_summary' => trans_message('ai_assistant_production_schedule.label'),
+            'get_project_journal_entries' => trans_message('ai_assistant_journal_entries.label'),
             'check_published_report_readiness' => trans_message('ai_published_reports.check_label'),
             'generate_published_report' => trans_message('ai_published_reports.generate_label'),
             'describe_published_reports' => trans_message('ai_published_reports.catalog_label'),
