@@ -72,6 +72,11 @@ class NormativeCandidateSelectionService
                     }
 
                     $found = true;
+                    if (($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT
+                        && \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::isRoofWork($workItem)) {
+                        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\CurrentRoofSystemProofGuard::class)->assertCurrent($session, $workItem);
+                        $workItem = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\RoofSystemSpecification::specialize($workItem);
+                    }
                     if (\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander::isOpeningWork($workItem)) {
                         app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\CurrentOpeningSystemProofGuard::class)->assertCurrent($session, $workItem);
                     }

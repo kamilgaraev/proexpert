@@ -25,6 +25,12 @@ final class NormativeCandidateManualSearchService
     public function search(EstimateGenerationSession $session, string $workItemKey, ?string $query, int $limit = 10): array
     {
         [$workItem, $context] = $this->findWorkItemContext($session, $workItemKey);
+        $roof = ($session->draft_payload['generation_contract'] ?? null) === \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT
+            && \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::isRoofWork($workItem);
+        if ($roof) {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\CurrentRoofSystemProofGuard::class)->assertCurrent($session, $workItem);
+            $workItem = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\RoofSystemSpecification::specialize($workItem);
+        }
         $query = trim((string) $query);
         $opening = OpeningWorkItemExpander::isOpeningWork($workItem);
         $system = null;
@@ -38,12 +44,24 @@ final class NormativeCandidateManualSearchService
             unset($workItem['work_intent'], $workItem['specialization_scenario'], $workItem['specialization_evidence'], $workItem['normative_rate_code']);
             unset($workItem['metadata']['specialization_scenario'], $workItem['metadata']['material_assumption'], $workItem['metadata']['material_scenario_work_key']);
         } elseif ($query !== '') {
-            $workItem['normative_search_text'] = $query;
-            $workItem['description'] = $query;
+            $searchText = $roof
+                ? $workItem['normative_search_text'].' '.$query : $query;
+            $workItem['normative_search_text'] = $searchText;
+            $workItem['description'] = $searchText;
         }
 
         $match = $this->matcher->searchWorkItemCandidates($workItem, $context, max(min($limit, 20), 1));
         $candidates = is_array($match['candidates'] ?? null) ? $match['candidates'] : [];
+        if ($roof) {
+            $roofSystem = $workItem['metadata']['roof_system']['system'];
+            $candidates = array_values(array_filter($candidates, static function (array $candidate) use ($roofSystem): bool {
+                $composition = $candidate['work_composition'] ?? [];
+                $composition = is_array($composition) ? array_filter($composition, 'is_string') : (is_string($composition) ? [$composition] : []);
+
+                return \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\RoofSystemSpecification::compatible($roofSystem,
+                    implode(' ', [(string) ($candidate['name'] ?? ''), ...$composition]));
+            }));
+        }
         if ($opening) {
             $candidates = array_values(array_filter($candidates, static function (array $candidate) use ($system): bool {
                 $composition = $candidate['work_composition'] ?? [];

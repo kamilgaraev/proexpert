@@ -37,6 +37,21 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class TechnologyRecommendationServiceTest extends TestCase
 {
+    public function test_concrete_roof_requires_a_known_valid_pitch_and_keeps_the_profile_review_requirement(): void
+    {
+        foreach ([[null, 'conditional'], ['28', 'applicable'], ['unknown', 'unavailable'], ['0', 'unavailable'], ['90', 'unavailable']] as [$slope, $expected]) {
+            $facts = [$this->fact('roof:type', 'roof_type', 'pitched')];
+            if ($slope !== null) {
+                $facts[] = $this->fact('roof:slope', 'roof_slope_degrees', $slope, unit: 'degree');
+            }
+            $recommendation = $this->service()->recommend(new ProjectModelSnapshot([], $facts, [], []),
+                $this->fact('roof:material', 'material', null, 'unresolved', 'unresolved'), new OrganizationPreferenceContext(10, []));
+            $concrete = array_values(array_filter($recommendation->options, static fn ($option): bool => $option->system->id === 'pitched_roof.concrete_tile'))[0];
+            self::assertSame($expected, $concrete->applicabilityStatus);
+            self::assertContains('requires_tile_profile_slope_check', $concrete->system->risks);
+        }
+    }
+
     private \Illuminate\Container\Container $previousContainer;
 
     protected function setUp(): void
@@ -112,14 +127,14 @@ final class TechnologyRecommendationServiceTest extends TestCase
 
         self::assertStringStartsWith('roof_covering_system.', $recommendation->decisionKey);
         self::assertSame('pitched_roof.metal_tile', $recommendation->recommended->system->id);
-        self::assertCount(3, $recommendation->options);
+        self::assertCount(4, $recommendation->options);
         self::assertCount(1, array_filter($recommendation->options, static fn ($option): bool => $option->recommended));
         $systemIds = array_map(
             static fn ($option): string => $option->system->id,
             $recommendation->options,
         );
         sort($systemIds, SORT_STRING);
-        self::assertSame(['pitched_roof.flexible_shingle', 'pitched_roof.metal_tile', 'pitched_roof.standing_seam'], $systemIds);
+        self::assertSame(['pitched_roof.concrete_tile', 'pitched_roof.flexible_shingle', 'pitched_roof.metal_tile', 'pitched_roof.standing_seam'], $systemIds);
         self::assertSame(['other', 'leave_unresolved'], array_column($recommendation->responseOptions, 'value'));
         self::assertFalse($recommendation->autoApply);
         self::assertFalse($recommendation->conditional);
@@ -213,8 +228,8 @@ final class TechnologyRecommendationServiceTest extends TestCase
             ['12', 'degree', 'pitched_roof.standing_seam', 1],
             ['14', 'degree', 'pitched_roof.standing_seam', 0],
             [null, null, null, 0],
-            ['14', null, null, 3],
-            ['14', 'm', null, 3],
+            ['14', null, null, 4],
+            ['14', 'm', null, 4],
         ];
         foreach ($expected as [$slope, $unit, $recommended, $unavailable]) {
             $facts = [$this->fact('fact:roof-type', 'roof_type', 'pitched')];

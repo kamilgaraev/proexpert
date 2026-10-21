@@ -20,6 +20,9 @@ final class GeneratedEstimateItemMetadataFactory
             'material_assumption' => is_array($workItem['metadata']['material_assumption'] ?? null)
                 ? $workItem['metadata']['material_assumption']
                 : null,
+            'roof_system' => is_array($workItem['metadata']['roof_system'] ?? null)
+                ? $workItem['metadata']['roof_system']
+                : null,
             'quantity_evidence' => is_array($workItem['quantity_evidence'] ?? null)
                 ? $workItem['quantity_evidence']
                 : null,

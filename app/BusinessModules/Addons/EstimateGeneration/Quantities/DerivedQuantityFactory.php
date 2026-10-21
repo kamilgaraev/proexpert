@@ -85,10 +85,6 @@ final class DerivedQuantityFactory
         if (count($geometryInputs) > $maxGeometryEntities) {
             return $this->unresolved('geometry_entity_budget_exceeded', 'geometry');
         }
-        if (count($snapshot->evidence) > $maxEvidence) {
-            return $this->unresolved('evidence_budget_exceeded', 'evidence');
-        }
-
         $entities = $this->indexEntities($snapshot->entities);
         $facts = $this->indexFacts($snapshot->facts);
         $conflicted = [];
@@ -395,6 +391,9 @@ final class DerivedQuantityFactory
             }
         }
         $evidenceIds = array_values(array_unique($evidenceIds));
+        if (count($evidenceIds) > $maxEvidence) {
+            return $this->unresolved('evidence_budget_exceeded', 'evidence');
+        }
         sort($evidenceIds, SORT_STRING);
         $snapshotIdentity = is_array($request['snapshot'] ?? null) ? $request['snapshot'] : [];
         foreach ($flatOperands as &$operand) {

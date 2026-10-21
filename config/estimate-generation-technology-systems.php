@@ -19,6 +19,13 @@ $unavailableCost = [
     'reason' => 'requires_quantities_and_regional_prices',
 ];
 $workPlanningBySystem = [
+    'pitched_roof.concrete_tile' => [
+        'install_underlay_membrane' => ['roof_covering_area', 'fsnb.roof.concrete_tile_installation'],
+        'install_counter_batten' => ['batten_length', 'fsnb.roof.timber_batten_installation'],
+        'install_batten' => ['batten_length', 'fsnb.roof.timber_batten_installation'],
+        'install_concrete_roof_tile' => ['roof_covering_area', 'fsnb.roof.concrete_tile_installation'],
+        'install_roof_accessories_and_flashings' => ['roof_covering_area', 'fsnb.roof.concrete_tile_installation'],
+    ],
     'pitched_roof.metal_tile' => [
         'install_underlay_membrane' => ['roof_covering_area', 'fsnb.roof.metal_profile_installation'],
         'install_counter_batten' => ['batten_length', 'fsnb.roof.timber_batten_installation'],
@@ -41,7 +48,7 @@ $workPlanningBySystem = [
 ];
 
 $catalog = [
-    'version' => '2026.08.11-v1',
+    'version' => '2026.10.21-v2',
     'recommendation_required_facts' => ['roof_type', 'roof_slope_degrees', 'roof_geometry'],
     'systems' => [
         [
@@ -149,6 +156,39 @@ $catalog = [
                 ['fact_type' => 'roof_geometry', 'values' => ['simple_gable'], 'score' => 5, 'reason' => 'continuous_panel_layout'],
                 ['fact_type' => 'climate_zone', 'values' => ['wind_4', 'wind_5', 'snow_4'], 'score' => 7, 'reason' => 'enhanced_climate_resistance'],
                 ['fact_type' => 'design_priority', 'values' => ['durability', 'architectural'], 'score' => 8, 'reason' => 'design_priority_compatible'],
+            ],
+            'provenance' => [['source' => 'technology_catalog'], ['catalog_section' => 'pitched_roof_coverings']],
+        ],
+        [
+            'id' => 'pitched_roof.concrete_tile',
+            'name_key' => 'estimate_generation.planning.technology.system.concrete_tile',
+            'applicability' => [['roof_type' => 'pitched'], ['roof_slope_degrees' => 'known']],
+            'required_facts' => ['roof_area', 'roof_slope_degrees', 'roof_geometry'],
+            'materials' => [
+                ['intent' => 'concrete_roof_tile'], ['intent' => 'underlay_membrane'],
+                ['intent' => 'counter_batten'], ['intent' => 'batten'], ['intent' => 'tile_fastener'],
+                ['intent' => 'ridge_eaves_valley_and_abutment_elements'],
+            ],
+            'works' => [
+                ['intent' => 'install_underlay_membrane'], ['intent' => 'install_counter_batten'],
+                ['intent' => 'install_batten'], ['intent' => 'install_concrete_roof_tile'],
+                ['intent' => 'install_roof_accessories_and_flashings'],
+            ],
+            'machinery' => [['intent' => 'lifting_equipment'], ['intent' => 'roof_access_equipment']],
+            'norm_intents' => [
+                ['stable_intent' => 'fsnb.roof.concrete_tile_installation', 'max_candidates' => 5],
+                ['stable_intent' => 'fsnb.roof.timber_batten_installation', 'max_candidates' => 5],
+            ],
+            'quantity_formulas' => [
+                ['id' => 'roof_covering_area', 'expression' => 'roof_slope_area * waste_factor', 'operands' => ['roof_slope_area', 'waste_factor']],
+                ['id' => 'batten_length', 'expression' => 'roof_slope_area / batten_spacing', 'operands' => ['roof_slope_area', 'batten_spacing']],
+            ],
+            'regional_price_availability' => $unavailablePrice,
+            'cost_preview' => $unavailableCost,
+            'risks' => ['requires_tile_profile_slope_check', 'requires_roof_load_check', 'wind_fastening_pattern'],
+            'assumptions' => ['tile_batten_spacing_follows_selected_profile', 'underlay_follows_selected_tile_system'],
+            'score_rules' => [
+                ['fact_type' => 'roof_type', 'values' => ['pitched'], 'score' => 20, 'reason' => 'pitched_roof_compatible'],
             ],
             'provenance' => [['source' => 'technology_catalog'], ['catalog_section' => 'pitched_roof_coverings']],
         ],

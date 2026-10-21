@@ -64,6 +64,8 @@ final readonly class NativeParameterBacklog
                 $token, $sections, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session));
             $backlog = (new OpeningSystemQuestions)->append($backlog, $snapshot, $decisions, $documentVersions,
                 $token, $sections, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session));
+            $backlog = (new RoofSystemQuestions)->append($backlog, $snapshot, $decisions, $documentVersions,
+                $token, $sections, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session));
         }
 
         return $backlog;
@@ -95,7 +97,10 @@ final readonly class NativeParameterBacklog
                         && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'opening_scope', 'native_question']) === [])
                     || (($answer['kind'] ?? null) === 'opening_system' && is_array($row['opening_system'] ?? null)
                         && ($row['opening_system']['entity_fingerprint'] ?? null) === $answer['entity_fingerprint']
-                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'opening_system', 'native_question']) === []))) {
+                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'opening_system', 'native_question']) === [])
+                    || (($answer['kind'] ?? null) === 'roof_system' && is_array($row['roof_system'] ?? null)
+                        && ($row['roof_system']['entity_fingerprint'] ?? null) === $answer['entity_fingerprint']
+                        && array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'roof_system', 'native_question']) === []))) {
                 return;
             }
         }

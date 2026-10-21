@@ -45,6 +45,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
             : \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
         $openingScopes = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         $openingSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions);
+        $roofSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::select($snapshot, $decisions, $documentVersions);
         if ($universal) {
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WallWorkItemExpander)->expand($draft,
                 $snapshot, $wallScopes, $quantities, 1000, $documentVersions);
@@ -87,6 +88,14 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     if (in_array($item['item_type'] ?? 'priced_work', ['operation', 'review_note', 'resource_note', 'quantity_review'], true)) {
                         continue;
                     }
+                    $roofWork = $universal && \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::isRoofWork($item);
+                    $previousRoofSystem = $item['metadata']['roof_system'] ?? null;
+                    if ($roofWork) {
+                        $item = \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::bind($item, $roofSystems);
+                        $item = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\RoofSystemSpecification::specialize($item);
+                    }
+                    $roofSystemChanged = $roofWork && \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['system' => $previousRoofSystem])
+                        !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['system' => $item['metadata']['roof_system'] ?? null]);
                     $quantityKey = $item['metadata']['quantity_key'] ?? $item['quantity_basis_details']['key'] ?? null;
                     $explicitQuantity = $session !== null && isset($sessionInput['quantity_selections'][$item['key']]);
                     if ($explicitQuantity) {
@@ -145,6 +154,16 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     if ($universal && ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($item, $openingSystems)) {
                         $item['pricing_status'] = 'not_calculated';
                         $item['pricing_blocker'] = 'opening_system_required';
+                        $draft['local_estimates'][$estimateIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $item;
+
+                        continue;
+                    }
+                    if ($roofWork && ($roofSystemChanged || ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::permits($item, $roofSystems))) {
+                        $item = $this->withoutPrice($item);
+                        unset($item['normative_match'], $item['resources'], $item['commercial_price_snapshot'],
+                            $item['accepted_evaluation_price_snapshot'], $item['accepted_source_money']);
+                        $item['pricing_status'] = 'not_calculated';
+                        $item['pricing_blocker'] = $roofSystemChanged ? 'roof_system_changed' : 'roof_system_required';
                         $draft['local_estimates'][$estimateIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $item;
 
                         continue;

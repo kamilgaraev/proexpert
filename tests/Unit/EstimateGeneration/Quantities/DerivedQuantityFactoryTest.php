@@ -16,6 +16,34 @@ use PHPUnit\Framework\TestCase;
 final class DerivedQuantityFactoryTest extends TestCase
 {
     #[Test]
+    public function evidence_limit_counts_formula_dependencies_including_scope_without_counting_unrelated_project_sources(): void
+    {
+        [$snapshot, $decisions, $request] = $this->ceilingFixture();
+        $factory = new DerivedQuantityFactory;
+        $baseline = $factory->derive($snapshot, $decisions, $request);
+        self::assertTrue($baseline->isReady());
+        self::assertCount(3, $baseline->quantity->evidenceIds);
+        $entities = $snapshot->entities;
+        $facts = $snapshot->facts;
+        $evidence = $snapshot->evidence;
+        foreach (range(1, 300) as $index) {
+            $entities[] = $this->entity('equipment:'.$index, 'equipment');
+            $facts[] = $this->fact('count:'.$index, 'equipment:'.$index, 'equipment_count', '1', 'pcs', ['evidence:count:'.$index]);
+            $evidence[] = $this->evidence('evidence:count:'.$index, 'native:equipment:'.$index);
+        }
+        $large = new ProjectModelSnapshot($entities, $facts, $evidence, $snapshot->conflicts);
+        $result = $factory->derive($large, $decisions, $request);
+        self::assertTrue($result->isReady(), json_encode($result->unresolvedInputs));
+        self::assertEquals($baseline->quantity, $result->quantity);
+        $request['limits']['max_evidence'] = 2;
+        $blocked = $factory->derive($large, $decisions, $request);
+        self::assertFalse($blocked->isReady());
+        self::assertSame('evidence_budget_exceeded', $blocked->unresolvedInputs[0]['code']);
+        $request['limits']['max_evidence'] = 3;
+        self::assertTrue($factory->derive($large, $decisions, $request)->isReady());
+    }
+
+    #[Test]
     public function preflight_coverage_without_a_fact_preserves_each_relation_and_deduplicates_only_the_same_issue(): void
     {
         $facets = ['code' => 'geometry_coverage_unknown', 'operand' => 'geometry_coverage', 'entity_id' => 'roof:1', 'relation' => 'roof_facets'];

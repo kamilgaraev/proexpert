@@ -170,7 +170,7 @@ final readonly class TechnologySystemCatalog
         foreach ($system['applicability'] as $condition) {
             if (! is_array($condition) || array_is_list($condition) || count($condition) !== 1
                 || array_diff(array_keys($condition), [
-                    'roof_type', 'minimum_slope_degrees', 'maximum_slope_degrees', 'substrate_requirement',
+                    'roof_type', 'roof_slope_degrees', 'minimum_slope_degrees', 'maximum_slope_degrees', 'substrate_requirement',
                     'climate_zone', 'region', 'building_purpose',
                 ]) !== []) {
                 throw new InvalidArgumentException('Technology applicability condition is invalid.');
@@ -180,6 +180,9 @@ final readonly class TechnologySystemCatalog
                 throw new InvalidArgumentException('Technology applicability value is invalid.');
             }
             $kind = array_key_first($condition);
+            if ($kind === 'roof_slope_degrees' && $value !== 'known') {
+                throw new InvalidArgumentException('Technology slope presence condition is invalid.');
+            }
             if (in_array($kind, ['minimum_slope_degrees', 'maximum_slope_degrees'], true)
                 && ! is_numeric($value)) {
                 throw new InvalidArgumentException('Technology slope applicability value is invalid.');
