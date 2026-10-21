@@ -95,6 +95,24 @@ final class AssistantOrganizationRecordVocabulary
         return array_values($subjects);
     }
 
+    public static function matchesReportFieldInflection(string $phrase): bool
+    {
+        if (! app()->bound('translator')) {
+            return preg_match('/^(?:статус(?:а|у)|валют(?:ы|е)|дат(?:ы|е)|сумм(?:ы|е)|номер(?:а|у)|подрядчик(?:а|у)|контрагент(?:а|у))$/iu', trim($phrase)) === 1;
+        }
+        $translated = app('translator')->get('ai_assistant_facts.fields', [], 'ru');
+        $labels = [...array_values(is_array($translated) ? $translated : []), ...array_values(AssistantExtendedDomainRegistry::values('fieldLabels')),
+            'Подрядчик', 'Контрагент'];
+        $normalize = static fn (string $value): string => self::identity(preg_replace('/ии(?=\s|$)/u', 'ия', mb_strtolower(trim($value))) ?? $value);
+        foreach ($labels as $label) {
+            if (is_string($label) && mb_strtolower(trim($phrase)) !== mb_strtolower(trim($label)) && $normalize($phrase) === $normalize($label)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static function phrases(): array
     {
         if (! app()->bound('translator')) {

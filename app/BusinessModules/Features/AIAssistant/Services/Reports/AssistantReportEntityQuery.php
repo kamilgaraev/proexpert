@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantOrganizationRecordVocabulary;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod;
 
 final class AssistantReportEntityQuery
@@ -48,10 +49,9 @@ final class AssistantReportEntityQuery
                 $name = trim((string) ($parts[0] ?? ''));
             } else {
                 $prefix = substr($message, 0, $offset);
-                $groupField = '(?:статус(?:а|у)|валют(?:ы|е)|дат(?:ы|е)|сумм(?:ы|е)|номер(?:а|у))';
                 if ($type === 'project'
                     && preg_match('/(?<![\pL\pN])(?:в\s+разрезе|с\s+детализацией\s+по)\s*$/iu', $prefix) === 1
-                    && preg_match('/^(?:и|или)\s+'.$groupField.'(?:\s*(?:,|и|или)\s*'.$groupField.'){0,4}\s*(?:[.;!?]|$)/iu', $tail) === 1) {
+                    && self::isGroupingTail($tail)) {
                     continue;
                 }
                 if ($type === 'project' && preg_match('/^(?:и|или)\s+/iu', $tail) === 1
@@ -80,5 +80,23 @@ final class AssistantReportEntityQuery
         }
 
         return array_values($names);
+    }
+
+    private static function isGroupingTail(string $tail): bool
+    {
+        if (preg_match('/^(?:и|или)\s+(.+?)(?:[.;!?\r\n]|$)/isu', $tail, $match) !== 1) {
+            return false;
+        }
+        $fields = preg_split('/\s*,\s*|\s+(?:и|или)\s+/iu', trim($match[1])) ?: [];
+        if ($fields === [] || count($fields) > 5) {
+            return false;
+        }
+        foreach ($fields as $field) {
+            if (! AssistantOrganizationRecordVocabulary::matchesReportFieldInflection($field)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

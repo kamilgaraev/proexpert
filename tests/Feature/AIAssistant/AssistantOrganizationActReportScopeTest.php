@@ -553,6 +553,69 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
     }
 
+    public function test_counterparty_grouping_keeps_all_organization_projects_even_when_a_project_is_named_i(): void
+    {
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(
+            array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $actor = Model::withoutEvents(fn () => $fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate'],
+            'project-management' => ['projects.view'],
+            'contract-management' => ['contracts.view', 'contractors.view'],
+        ], ['reports.view', 'finance.view']));
+        $projects = Model::withoutEvents(fn () => Project::factory()->count(3)->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]));
+        foreach ($projects as $project) {
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        }
+        $selected = $projects[2];
+        $selected->updateQuietly(['name' => 'и']);
+        $contractor = Model::withoutEvents(fn () => Contractor::query()->create(['organization_id' => $fixture->organization->id, 'name' => 'Подрядчик сводки']));
+        foreach ([$projects[0], $projects[1]] as $project) {
+            $contract = Model::withoutEvents(fn () => Contract::query()->create(['organization_id' => $fixture->organization->id,
+                'project_id' => $project->id, 'contractor_id' => $contractor->id, 'number' => 'GROUP-'.bin2hex(random_bytes(5)),
+                'date' => '2026-10-01', 'total_amount' => '100.00', 'currency' => 'RUB', 'contract_side_type' => 'contract', 'is_self_execution' => false]));
+            $contract->parties()->delete();
+            foreach (['first' => [$fixture->organization->id, $fixture->organization->name],
+                'second' => [$fixture->foreignOrganization->id, $contractor->name]] as $side => [$linked, $name]) {
+                Model::withoutEvents(static fn () => \App\Models\ContractParty::query()->create([
+                    'contract_id' => $contract->id, 'side' => $side, 'party_key' => $side,
+                    'role' => 'contractor', 'linked_organization_id' => $linked, 'name' => $name, 'snapshot' => [],
+                ]));
+            }
+        }
+        $bytes = null;
+        $files = $this->createMock(FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use (&$bytes): CurrentStoredFile {
+            $bytes = stream_get_contents($stream);
+
+            return new CurrentStoredFile($path, 'etag', strlen($bytes), $hash, $mime);
+        });
+        $this->app->instance(FileService::class, $files);
+        $arguments = ['title' => 'Договоры по проектам и контрагентам', 'format' => 'csv', 'sections' => [[
+            'title' => 'Договоры', 'domain' => 'contracts', 'entity_type' => 'contract', 'project_id' => $selected->id,
+            'columns' => ['project_id', 'counterparty_name'], 'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => $selected->id]],
+            'group_by' => ['project_id', 'counterparty_name'], 'metrics' => [['field' => 'id', 'operation' => 'count', 'label' => 'Количество']],
+            'order_by' => [], 'row_limit' => 100,
+        ]]];
+        $result = $this->dispatch($arguments, 'Все договоры организации в разрезе проекта и подрядчика. Сделай CSV.', $selected, $fixture->organization, $actor);
+        self::assertSame('success', $result['status'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame(2, $result['sections'][0]['source_row_count']);
+        self::assertSame(2, $result['sections'][0]['output_rows']);
+        self::assertStringStartsWith("\xEF\xBB\xBF", $bytes);
+        $stream = fopen('php://temp', 'w+b');
+        fwrite($stream, substr($bytes, 3));
+        rewind($stream);
+        $rows = [];
+        while (($row = fgetcsv($stream, null, ';', '"', '')) !== false) {
+            $rows[] = $row;
+        }
+        fclose($stream);
+        self::assertCount(3, array_shift($rows));
+        self::assertEqualsCanonicalizing([['#'.$projects[0]->id.' — '.$projects[0]->name, $contractor->name, '1'],
+            ['#'.$projects[1]->id.' — '.$projects[1]->name, $contractor->name, '1']], $rows);
+    }
+
     private function act(Project $project, string $status, string $currency, string $amount, string $date): void
     {
         Model::withoutEvents(function () use ($project, $status, $currency, $amount, $date): void {

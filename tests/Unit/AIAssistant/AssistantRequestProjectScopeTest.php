@@ -482,6 +482,10 @@ final class AssistantRequestProjectScopeTest extends TestCase
             'Все акты организации в разрезе проекта и статуса',
             'Все акты организации с детализацией по проекту и статусу',
             'Все акты организации в разрезе проекта и валюты',
+            'Все договоры организации в разрезе проекта и подрядчика',
+            'Все договоры организации с детализацией по проекту и контрагенту',
+            'Все договоры организации в разрезе проекта, подрядчика и даты окончания',
+            'Все договоры организации в разрезе проекта и сотрудника',
             'Все акты организации с детализацией по проекту и дате',
             'Все акты организации с колонками номер, проект и статус'] as $question) {
             self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
@@ -491,6 +495,24 @@ final class AssistantRequestProjectScopeTest extends TestCase
             self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true, $search));
             self::assertSame(['sections' => [['project_id' => null]]], AssistantRequestProjectScope::fromPlan($this->plan($question))
                 ->bindReportScope($question, ['sections' => [['project_id' => 52]]], $search));
+        }
+    }
+
+    public function test_project_grouping_uses_registered_field_labels_without_consuming_literal_names(): void
+    {
+        app('translator')->get('ai_assistant_facts.fields', [], 'ru');
+        app('translator')->addLines(['ai_assistant_facts.fields.scope_sector' => 'Сектор',
+            'ai_assistant_facts.fields.scope_category' => 'Категория'], 'ru');
+        foreach (['сектора', 'категории', 'даты окончания', 'номера договора'] as $field) {
+            $question = 'Все договоры организации в разрезе проекта и '.$field;
+            self::assertNull(AssistantReportEntityQuery::extract($question, 'project'), $field);
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $field);
+        }
+        foreach (['И Контрагента Корпуса Б', 'И Сектора Корпуса Б', 'И Категории Север'] as $name) {
+            self::assertSame($name, AssistantReportEntityQuery::extract('Все договоры организации в разрезе проекта '.$name, 'project', true));
+        }
+        foreach (['И Подрядчика', 'И Контрагенту'] as $name) {
+            self::assertSame($name, AssistantReportEntityQuery::extract('Все договоры организации в разрезе проекта «'.$name.'»', 'project'));
         }
     }
 
