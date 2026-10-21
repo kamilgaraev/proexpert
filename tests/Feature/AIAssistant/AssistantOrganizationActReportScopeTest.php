@@ -501,11 +501,12 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
 
     public static function actConditionQuestions(): array
     {
-        return ['independent' => [false], 'comparison' => [true]];
+        return ['independent' => [false], 'comparison' => [true], 'noun command' => [true, 'найди различия между'],
+            'reconciliation command' => [true, 'проведи сверку между']];
     }
 
     #[DataProvider('actConditionQuestions')]
-    public function test_independent_act_filters_bind_to_each_scope_before_writing_the_workbook(bool $comparison): void
+    public function test_independent_act_filters_bind_to_each_scope_before_writing_the_workbook(bool $comparison, string $directive = ''): void
     {
         Queue::fake();
         config(['cache.default' => 'array']);
@@ -526,6 +527,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $project = $projects->first();
         $question = $comparison ? 'Сделай Excel: сравни все утверждённые акты организации с черновыми актами проекта '.$project->id
             : 'Сделай Excel: все утверждённые акты организации, а также черновики актов проекта '.$project->id;
+        if ($directive !== '') {
+            $question = 'Сделай Excel: '.$directive.' всеми утверждёнными актами организации и черновыми актами проекта '.$project->id;
+        }
         $section = ['title' => 'Организация', 'scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
             'columns' => ['id', 'status'], 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']],
             'group_by' => [], 'metrics' => [], 'order_by' => [], 'row_limit' => 100];

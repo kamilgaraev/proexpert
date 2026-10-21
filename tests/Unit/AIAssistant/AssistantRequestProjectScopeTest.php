@@ -16,6 +16,53 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_recognized_comparison_commands_preserve_explicit_status_conditions(): void
+    {
+        $commands = ['Найди различия между', 'Найдите основные различия между', 'Выяви разницу между',
+            'Определи ключевые различия между', 'Объясни разницу между', 'Укажи существенные различия между',
+            'В чём главные различия между', 'Проведи сверку между', 'Выполни ключевую сверку между',
+            'Провести сверку между', 'Выполнить сверку между', 'Нужна сверка между', 'Требуется сверка между',
+            'Для сверки между', 'Сделать сверку между', 'Сформировать сверку между', 'Подготовить сверку между'];
+        foreach ($commands as $command) {
+            $question = $command.' всеми утверждёнными актами организации и черновыми актами проекта 100';
+            self::assertTrue(AssistantReportComparisonSpecification::requestsComparison($question), $question);
+            $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                    'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]];
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertSame(['sections' => $sections], $scope->bindReportScope($question, ['sections' => $sections]), $question);
+            self::assertCount(2, $scope->searchCoverageRequirements($question)['subjects']);
+            $sections[1]['filters'][0]['value'] = 'approved';
+            try {
+                $scope->bindReportScope($question, ['sections' => $sections]);
+                self::fail('Requested draft condition ignored: '.$question);
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_comparison_commands_inside_confirmed_project_names_remain_literal(): void
+    {
+        foreach (['Найди основные различия', 'Проведи ключевую сверку'] as $name) {
+            $question = 'Сравни все утверждённые акты организации с черновыми актами проекта «'.$name.'»';
+            $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']]],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act',
+                    'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]];
+            $search = static function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            self::assertSame(['sections' => $sections], AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, ['sections' => $sections], $search));
+        }
+        $question = 'Найди различия между всеми утверждёнными актами организации и черновыми актами проекта 100 дороже 1000 рублей';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->searchCoverageRequirements($question);
+    }
+
     public function test_complete_organization_qualifiers_keep_independent_source_bindings(): void
     {
         foreach (['акты всей организации', 'акты всей нашей организации', 'акты в целом по организации',
