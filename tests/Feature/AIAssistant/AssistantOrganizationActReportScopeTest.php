@@ -115,6 +115,9 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'private named exclusion rejects next independent workbook' => [true, true, false, 4, 4, true, '', 'composition_private_exclusion'],
             'whole organization qualifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_whole_organization'],
             'overall organization qualifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_overall_organization'],
+            'separate section modifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_separate'],
+            'also section modifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_also'],
+            'separate section modifier keeps both search scopes' => [false, false, false, 7, 5, false, '', 'search_separate'],
             'quoted project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_named'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
@@ -181,6 +184,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $this->app->instance(\App\Services\Logging\LoggingService::class, $logging);
             $question = match ($variant) {
                 'search_numeric', 'search_unrequested' => 'Сравни все акты организации с проектом '.$second->id,
+                'search_separate' => 'Покажи все акты организации и отдельно акты по проекту '.$second->id,
                 'search_named' => 'Сравни все акты организации с проектом '.$first->name,
                 default => 'Сравни акты выбранного проекта и во всех проектах',
             };
@@ -189,7 +193,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $all = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
             self::assertArrayHasKey('result_window', $all, json_encode($all, JSON_UNESCAPED_UNICODE));
             self::assertSame(7, $all['result_window']['total']);
-            $project = $variant === 'search_numeric' ? $second : $first;
+            $project = in_array($variant, ['search_numeric', 'search_separate'], true) ? $second : $first;
             $searchArguments['project_id'] = $project->id;
             $result = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
             if ($variant === 'search_unrequested') {
@@ -199,7 +203,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                 self::assertSame([], $result['source_refs']);
             } else {
                 self::assertArrayHasKey('result_window', $result, json_encode($result, JSON_UNESCAPED_UNICODE));
-                self::assertSame($variant === 'search_numeric' ? 4 : 3, $result['result_window']['total']);
+                self::assertSame(in_array($variant, ['search_numeric', 'search_separate'], true) ? 4 : 3, $result['result_window']['total']);
                 foreach ($result['source_refs'] as $reference) {
                     self::assertSame($project->id, $reference['project_id']);
                 }
@@ -319,6 +323,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                 'composition_named_exclusion', 'composition_private_exclusion' => 'Сделай Excel: все акты организации без проекта '.($variant === 'composition_named_exclusion' ? $first->name : $private->name).' и договоры проекта '.$first->id,
                 'composition_whole_organization' => 'Сделай Excel: покажи акты всей нашей организации, а также договоры проекта '.$first->id,
                 'composition_overall_organization' => 'Сделай Excel: покажи акты в целом по нашей организации, а также договоры проекта '.$first->id,
+                'composition_separate' => 'Сделай Excel: покажи все акты организации и отдельно договоры по проекту '.$first->id,
+                'composition_also' => 'Сделай Excel: покажи все акты организации и также договоры проекта '.$first->id,
                 'compare_noun_difference', 'compare_subject_noun_difference' => 'Сделай Excel: покажи разницу между всеми актами организации и актами проекта '.$first->id,
                 'compare_noun_distinctions', 'compare_subject_noun_distinctions' => 'Сделай Excel: покажи различия между всеми актами организации и актами проекта '.$first->id,
                 'wrapped_entity_explicit' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам проекта '.$second->id,

@@ -15,6 +15,8 @@ final class AssistantRequestedSourceScopes
 
     public const ADDITIVE_CONNECTOR = '(?:а\s+также|вместе\s+с(?:о)?|а|и)';
 
+    public const SECTION_MODIFIER = '(?:отдельно|также)';
+
     private const ACT_STATUS_PATTERNS = ['approved' => 'утвержд[её]нн[а-яё]*', 'draft' => 'чернов[а-яё]*', 'signed' => 'подписанн[а-яё]*',
         'rejected' => 'отклон[её]нн[а-яё]*', 'annulled' => 'аннулированн[а-яё]*'];
 
@@ -111,7 +113,7 @@ final class AssistantRequestedSourceScopes
                 $text = preg_replace('/(?<![\pL\pN])(?:'.$pattern.')(?![\pL\pN])/iu', ' ', $text) ?? $text;
             }
         }
-        $text = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|а|также|отдельно|лист(?:е|а|ов)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|данные|сведения|отч[её]т|снизу|сверху|пожалуйста|все|всех|всем|всеми|покажи(?:те)?|сделай(?:те)?|сформируй(?:те)?|подготовь(?:те)?|расположи(?:те)?|список|excel|xlsx|csv)(?![\pL\pN])/iu', ' ', $text) ?? $text;
+        $text = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|а|'.self::SECTION_MODIFIER.'|лист(?:е|а|ов)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|данные|сведения|отч[её]т|снизу|сверху|пожалуйста|все|всех|всем|всеми|покажи(?:те)?|сделай(?:те)?|сформируй(?:те)?|подготовь(?:те)?|расположи(?:те)?|список|excel|xlsx|csv)(?![\pL\pN])/iu', ' ', $text) ?? $text;
         if (count($statuses) > 1 || preg_match('/[\pL\pN]/u', $text) === 1) {
             throw new AssistantReportScopeAmbiguous;
         }

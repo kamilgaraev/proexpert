@@ -324,6 +324,7 @@ final readonly class AssistantRequestProjectScope
 
     private static function startsWithProjectOperand(string $text, string $projectPattern): bool
     {
+        $text = preg_replace('/^(?:'.AssistantRequestedSourceScopes::SECTION_MODIFIER.'\s+)+/iu', '', $text) ?? $text;
         $preposition = '(?:(?:по|для|в|во|на|из)\s+)?';
         if (preg_match('/^'.$preposition.'(?:'.$projectPattern.')/iu', $text) === 1) {
             return true;
