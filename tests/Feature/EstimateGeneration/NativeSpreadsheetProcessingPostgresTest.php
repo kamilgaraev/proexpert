@@ -6,6 +6,7 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentFileAdmission;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDetector;
@@ -21,6 +22,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -29,6 +32,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
@@ -63,7 +67,19 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
         $this->processWorkbook(false, true, false, true);
     }
 
-    private function processWorkbook(bool $withFormula, bool $equipment = false, bool $literalFormula = false, bool $largeUnitId = false): void
+    #[DataProvider('acceptedGenericXlsxMimeTypes')]
+    public function test_real_xlsx_with_an_accepted_generic_mime_preserves_literal_attestation(string $mimeType): void
+    {
+        $this->processWorkbook(false, true, mimeType: $mimeType);
+    }
+
+    public static function acceptedGenericXlsxMimeTypes(): array
+    {
+        return [['application/zip'], ['application/octet-stream']];
+    }
+
+    private function processWorkbook(bool $withFormula, bool $equipment = false, bool $literalFormula = false, bool $largeUnitId = false,
+        string $mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'): void
     {
         Http::fake([]);
         Http::preventStrayRequests();
@@ -97,8 +113,9 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
             $version = 'sha256:'.hash_file('sha256', $path);
             $document = EstimateGenerationDocument::query()->create([
                 'organization_id' => $organization->id, 'project_id' => $project->id, 'session_id' => $session->id,
-                'user_id' => $user->id, 'filename' => $equipment ? 'equipment.xlsx' : 'dimensions.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'user_id' => $user->id, 'filename' => $equipment ? 'equipment.xlsx' : 'dimensions.xlsx', 'mime_type' => $mimeType,
                 'storage_path' => 'org-'.$organization->id.'/estimate-generation/native-tests/source.xlsx',
+                'file_size_bytes' => filesize($path),
                 'source_version' => $version, 'checksum_sha256' => substr($version, 7),
             ]);
             $storage = new class($path) implements DocumentSourceManifestStorage, DocumentUnitContentReader
@@ -140,6 +157,7 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
             };
             $this->app->instance(DocumentSourceManifestStorage::class, $storage);
             $this->app->instance(DocumentUnitContentReader::class, $storage);
+            (new DocumentFileAdmission)->stored($document, $this->admissionSettings((int) $organization->id));
             $units = app(DocumentUnitDetector::class)->detect($document, $version);
             self::assertCount(1, $units);
             self::assertSame(DocumentUnitType::SpreadsheetSheet, $units[0]->type);
@@ -277,6 +295,25 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
             $spreadsheet->disconnectWorksheets();
             unlink($path);
         }
+    }
+
+    private function admissionSettings(int $organizationId): EffectiveEstimateGenerationSettings
+    {
+        $snapshot = [
+            'schema_version' => 2,
+            'models' => ['vision' => 'openai/gpt-6-luna', 'classification' => 'openai/gpt-6-luna', 'normative_matching' => 'openai/gpt-6-luna'],
+            'limits' => ['max_files' => 10, 'max_pages_per_file' => 200, 'max_total_pages' => 1000],
+            'timeouts' => ['vision' => 60, 'classification' => 60, 'normative_matching' => 60],
+            'retries' => ['vision' => 1, 'classification' => 1, 'normative_matching' => 1],
+            'confidence' => ['classification' => '0.7000', 'geometry' => '0.7000', 'normative_matching' => '0.7000'],
+            'enabled_formats' => ['xlsx'], 'manual_review' => ['low_confidence' => true],
+            'budgets' => ['daily' => '100.00', 'monthly' => '1000.00', 'currency' => 'RUB'],
+        ];
+
+        return EffectiveEstimateGenerationSettings::fromRecord([
+            'snapshot_id' => 1, 'scope' => 'organization', 'organization_id' => $organizationId, 'version' => 1,
+            'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
+        ], $organizationId);
     }
 
     private function assertClosedSqlBinding(int $evidenceId, array $binding): void

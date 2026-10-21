@@ -21,7 +21,6 @@ final readonly class NativeSpreadsheetLiteralSources
     {
         $locator = $context->locator;
         if (strtolower(pathinfo($context->filename, PATHINFO_EXTENSION)) !== 'xlsx'
-            || $context->mimeType !== 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             || ! isset($locator['artifact_sha256'], $locator['artifact_bytes'], $locator['source_version'])) {
             return null;
         }

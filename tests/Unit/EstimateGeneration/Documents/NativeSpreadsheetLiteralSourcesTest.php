@@ -180,6 +180,14 @@ final class NativeSpreadsheetLiteralSourcesTest extends TestCase
         (new OcrDocumentUnitProcessor($reader, $ocr))->process($this->context($content, [], DocumentUnitType::RasterImage));
     }
 
+    public function test_a_native_looking_artifact_for_a_non_xlsx_filename_does_not_mint_a_witness(): void
+    {
+        $content = $this->content($this->native());
+        foreach (['source.xls', 'source.zip', 'source.pdf'] as $filename) {
+            self::assertNull(NativeSpreadsheetLiteralSources::fromArtifact($this->context($content, filename: $filename), $content));
+        }
+    }
+
     private function native(): array
     {
         return ['status' => 'available', 'sheet' => 'Оборудование',
@@ -195,7 +203,8 @@ final class NativeSpreadsheetLiteralSourcesTest extends TestCase
         return json_encode(['schema_version' => 1, 'source_kind' => 'spreadsheet', 'text' => 'Насос', 'native_structure' => $native], JSON_THROW_ON_ERROR);
     }
 
-    private function context(string $content, array $locator = [], DocumentUnitType $type = DocumentUnitType::SpreadsheetSheet, string $change = ''): DocumentUnitExecutionContext
+    private function context(string $content, array $locator = [], DocumentUnitType $type = DocumentUnitType::SpreadsheetSheet, string $change = '',
+        string $filename = 'source.xlsx'): DocumentUnitExecutionContext
     {
         return new DocumentUnitExecutionContext($change === 'unit' ? 2 : 1, $change === 'organization' ? 99 : 11,
             $change === 'project' ? 99 : 12, $change === 'session' ? 99 : 14, $change === 'document' ? 99 : 13, $type, 1,
@@ -203,6 +212,6 @@ final class NativeSpreadsheetLiteralSourcesTest extends TestCase
                 'artifact_path' => 'org-11/source', 'artifact_sha256' => 'sha256:'.hash('sha256', $content),
                 'artifact_bytes' => strlen($content), 'source_version' => 'sha256:'.str_repeat('a', 64), 'source_kind' => 'spreadsheet',
                 'artifact_kind' => 'spreadsheet_sheet', 'artifact_schema_version' => 1,
-            ], ...$locator], 'org-11/source.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'source.xlsx', 'claim', 1, 1, 'processing');
+            ], ...$locator], 'org-11/source.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', $filename, 'claim', 1, 1, 'processing');
     }
 }
