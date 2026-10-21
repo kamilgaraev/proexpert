@@ -42,7 +42,7 @@ final readonly class AssistantCustomReportReference
         try {
             return $this->policy->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $reference): bool {
                 $scope = $reference['_report_scope'];
-                $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id'], journalReference: true);
+                $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id'], referenceFields: $reference['checked_fields'], journalReference: true);
                 $this->sources->assertFields($reference['checked_fields'], $source['fields']);
                 if ($scope['entity_type'] === 'completed_work') {
                     if (! $this->canReadWorkDependencies($actor, $organizationId, $scope['work_projection_dependencies'] ?? null)) {

@@ -84,6 +84,21 @@ final class AssistantStatusSnapshotDiagnostics
         }
     }
 
+    public static function expectedProjectionQuery(bool $collectProof, int $ordinal, float $elapsedMs, bool $completed): void
+    {
+        if ($ordinal < 1 || $ordinal > 32 || ! is_finite($elapsedMs) || $elapsedMs < 500) { return; }
+        try {
+            Log::channel('api_latency')->info('assistant_rag_expected_projection_query', [
+                'projection_mode' => $collectProof ? 'proof' : 'counts',
+                'query_ordinal' => $ordinal,
+                'query_elapsed_ms' => round($elapsedMs, 2),
+                'query_completed' => $completed,
+                'release_sha' => self::releaseSha(),
+            ]);
+        } catch (Throwable) {
+        }
+    }
+
     private static function releaseSha(): ?string
     {
         $release = config('ai-assistant.status_snapshot_release') ?: getenv('MOST_RELEASE_SHA');

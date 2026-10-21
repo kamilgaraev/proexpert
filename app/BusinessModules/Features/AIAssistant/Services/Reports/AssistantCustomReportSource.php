@@ -22,7 +22,7 @@ final readonly class AssistantCustomReportSource
 {
     public function __construct(private AssistantDomainCatalog $catalog, private AssistantDataAccessPolicy $policy) {}
 
-    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId, ?\DateTimeInterface $asOf = null, bool $requireCompleteScope = false, bool $journalReference = false): array
+    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId, ?\DateTimeInterface $asOf = null, bool $requireCompleteScope = false, ?array $referenceFields = null, bool $journalReference = false): array
     {
         $definition = $this->catalog->definition($domain);
         if ($definition === null || ! in_array($entityType, $definition->entityTypes, true)) {
@@ -154,14 +154,16 @@ final readonly class AssistantCustomReportSource
         }
         if ($entityType === 'contract') {
             $fields['counterparty_name'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.counterparty_name')];
-            try {
-                $customerProjects = $this->resolve($actor, $organizationId, 'projects', 'project', null)['query'];
-            } catch (AccessDeniedHttpException|ValidationException) {
-                $customerProjects = null;
+            if ($referenceFields === null || in_array('counterparty_name', $referenceFields, true)) {
+                try {
+                    $customerProjects = $this->resolve($actor, $organizationId, 'projects', 'project', null)['query'];
+                } catch (AccessDeniedHttpException|ValidationException) {
+                    $customerProjects = null;
+                }
+                $query = (new AssistantContractReportProjection)->apply($query,
+                    $this->policy->entityQuery($actor, $organizationId, 'contractor'),
+                    $this->policy->entityQuery($actor, $organizationId, 'supplier'), $customerProjects, $organizationId);
             }
-            $query = (new AssistantContractReportProjection)->apply($query,
-                $this->policy->entityQuery($actor, $organizationId, 'contractor'),
-                $this->policy->entityQuery($actor, $organizationId, 'supplier'), $customerProjects, $organizationId);
         }
         if ($entityType === 'payment_document') {
             $paymentContracts = $this->paymentContracts($actor, $organizationId);
