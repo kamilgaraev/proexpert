@@ -69,6 +69,7 @@ final readonly class FoundationWorkItemExpander
                         $row['entity_id'] = $id;
                         $row['metadata']['scope_entity_id'] = $id;
                         $row['metadata']['composition_work_key'] = 'foundation.concrete';
+                        $row['metadata']['requirement_key'] = 'structures';
                         $row['metadata']['quantity_key'] = 'foundation.concrete';
                         $quantity = $this->mapper->mapForEntity('foundation.concrete', $quantities, $id);
                         if ($quantity !== null) {
