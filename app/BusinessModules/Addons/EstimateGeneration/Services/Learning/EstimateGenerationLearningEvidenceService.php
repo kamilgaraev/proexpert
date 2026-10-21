@@ -40,24 +40,27 @@ final class EstimateGenerationLearningEvidenceService
             return $summaries;
         }
 
-        $candidateIds = $candidates
-            ->pluck('id')
-            ->filter()
-            ->map(static fn (mixed $id): int => (int) $id)
-            ->values()
-            ->all();
-        $candidateCodes = $candidates
-            ->pluck('code')
-            ->map(fn (mixed $code): string => $this->normalizeCode((string) $code))
-            ->filter()
-            ->values()
-            ->all();
+        (new EloquentCollection($candidates->all()))->loadMissing('collection');
+        $candidatesByVersion = [];
+        foreach ($candidates as $candidate) {
+            $versionId = $candidate->collection?->dataset_version_id;
+            if ($versionId === null) {
+                continue;
+            }
+            $candidatesByVersion[(int) $versionId]['ids'][] = (int) $candidate->id;
+            $code = $this->normalizeCode((string) $candidate->code);
+            if ($code !== '') {
+                $candidatesByVersion[(int) $versionId]['codes'][] = $code;
+            }
+        }
+        if ($candidatesByVersion === []) {
+            return $summaries;
+        }
 
-        $examples = $this->examples($organizationId, $this->nullableInt($context['project_id'] ?? null), $candidateIds, $candidateCodes);
+        $examples = $this->examples($organizationId, $this->nullableInt($context['project_id'] ?? null), $candidatesByVersion);
         if ($examples->isEmpty()) {
             return $summaries;
         }
-        (new EloquentCollection($candidates->all()))->loadMissing('collection');
 
         $classifiedIntent = $this->workIntentClassifier->classify($workItem, $context);
         $intent = [
@@ -109,11 +112,10 @@ final class EstimateGenerationLearningEvidenceService
     }
 
     /**
-     * @param array<int, int> $candidateIds
-     * @param array<int, string> $candidateCodes
+     * @param array<int, array{ids: array<int, int>, codes?: array<int, string>}> $candidatesByVersion
      * @return Collection<int, EstimateGenerationLearningExample>
      */
-    private function examples(int $organizationId, ?int $projectId, array $candidateIds, array $candidateCodes): Collection
+    private function examples(int $organizationId, ?int $projectId, array $candidatesByVersion): Collection
     {
         return EstimateGenerationLearningExample::query()
             ->where('organization_id', $organizationId)
@@ -126,14 +128,17 @@ final class EstimateGenerationLearningEvidenceService
             }, static function (Builder $query): void {
                 $query->whereNull('project_id');
             })
-            ->where(static function (Builder $query) use ($candidateIds, $candidateCodes): void {
-                if ($candidateIds !== []) {
-                    $query->whereIn('estimate_norm_id', $candidateIds);
-                }
-
-                if ($candidateCodes !== []) {
-                    $method = $candidateIds === [] ? 'whereIn' : 'orWhereIn';
-                    $query->{$method}('norm_code', $candidateCodes);
+            ->where(static function (Builder $query) use ($candidatesByVersion): void {
+                foreach ($candidatesByVersion as $versionId => $identities) {
+                    $query->orWhere(static function (Builder $query) use ($versionId, $identities): void {
+                        $query->where('normative_dataset_version_id', $versionId)
+                            ->where(static function (Builder $query) use ($identities): void {
+                                $query->whereIn('estimate_norm_id', $identities['ids']);
+                                if (($identities['codes'] ?? []) !== []) {
+                                    $query->orWhereIn('norm_code', $identities['codes']);
+                                }
+                            });
+                    });
                 }
             })
             ->orderByRaw('CASE WHEN project_id IS NULL THEN 1 ELSE 0 END')

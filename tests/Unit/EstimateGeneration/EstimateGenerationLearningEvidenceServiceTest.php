@@ -324,6 +324,36 @@ final class EstimateGenerationLearningEvidenceServiceTest extends EstimateGenera
     }
 
     #[DataProvider('signedSignals')]
+    public function test_current_signed_signal_is_not_displaced_by_more_than_the_limit_of_newer_stale_examples(bool $positive): void
+    {
+        $organization = Organization::factory()->create();
+        $old = $this->norm('01-01-001-01', 'Бетонирование фундамента', 'м3');
+        $current = $this->norm('01-01-001-01', 'Бетонирование фундамента', 'м3');
+        $example = $this->learningExample($organization->id, [
+            'estimate_norm_id' => $current->id, 'norm_code' => $current->code,
+            'work_name' => 'Бетонирование фундамента', 'is_positive' => $positive,
+            'source_type' => $positive ? 'user_selection' : 'user_rejection',
+            'accepted_at' => now()->subDay(),
+        ]);
+        for ($index = 0; $index < 401; $index++) {
+            $this->learningExample($organization->id, [
+                'source_entity_id' => 2000000 + $index,
+                'estimate_norm_id' => $old->id, 'norm_code' => $old->code,
+                'work_name' => 'Бетонирование фундамента', 'is_positive' => ! $positive,
+                'source_type' => $positive ? 'user_rejection' : 'user_selection',
+            ]);
+        }
+
+        self::assertSame(402, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
+        $summary = $this->summary($current, $organization->id);
+        self::assertSame($positive ? 1 : 0, $summary['learning_positive_count']);
+        self::assertSame($positive ? 0 : 1, $summary['learning_negative_count']);
+        self::assertCount(1, $summary['learning_sources']);
+        self::assertSame($example->id, $summary['learning_sources'][0]['example_id']);
+        $positive ? self::assertGreaterThan(0, $summary['learning_score']) : self::assertLessThan(0, $summary['learning_score']);
+    }
+
+    #[DataProvider('signedSignals')]
     public function test_project_local_signal_requires_its_project_context_and_never_crosses_organizations(bool $positive): void
     {
         $organization = Organization::factory()->create();
