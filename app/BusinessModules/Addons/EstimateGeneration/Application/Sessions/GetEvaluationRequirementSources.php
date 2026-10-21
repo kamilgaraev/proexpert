@@ -53,8 +53,11 @@ final readonly class GetEvaluationRequirementSources
                 || in_array($requirement, ['technology_requirements', 'industry_work_checklist'], true)) {
                 $dispositions[] = 'document_verified';
             }
-            if (in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)) {
+            if (ScopeCompletenessEvaluator::allowsNotApplicable($section, $requirement)) {
                 $dispositions[] = 'not_applicable';
+            }
+            if (ScopeCompletenessEvaluator::allowsEquipmentScopeDecision($section, $requirement)) {
+                $dispositions[] = 'in_scope';
             }
             $snapshot = $this->models->snapshotForPlanning((int) $session->organization_id, $projectId, $sessionId, 10001)['snapshot'];
             if (count($snapshot->facts) > 10000) {
