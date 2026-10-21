@@ -78,10 +78,12 @@ final readonly class EstimateComposerInputFactory
 
         $answerContexts = [];
         $checkedAnswers = [];
+        $hasComposerAnswer = false;
         $eligibleFacts = [];
         $policy = $answerPolicy === [] ? null : ResolveCurrentEstimateClarification::composerPolicy($answerPolicy);
         foreach ($snapshot->facts as $fact) {
             if ($fact->type === 'evaluation_answer' && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'composer_answer') {
+                $hasComposerAnswer = true;
                 if ($answerPolicy !== [] && ($policy === null || $policy['mode'] !== ($evaluationMode ?? 'legacy')
                     || ($policy['mode'] === 'universal' && $policy['selected_sections'] !== $allowedWorkSections))) {
                     throw new InvalidArgumentException('estimate_composer_snapshot_changed');
@@ -94,13 +96,15 @@ final readonly class EstimateComposerInputFactory
             }
             $eligibleFacts[] = $fact;
         }
-        $eligibleIds = array_fill_keys(array_column($eligibleFacts, 'id'), true);
-        foreach ($candidates as $candidate) {
-            if (array_diff($candidate['source_fact_ids'] ?? [], array_keys($eligibleIds)) !== []) {
-                throw new InvalidArgumentException('estimate_composer_candidate_source_invalid');
+        if ($hasComposerAnswer) {
+            $eligibleIds = array_fill_keys(array_column($eligibleFacts, 'id'), true);
+            foreach ($candidates as $candidate) {
+                if (array_diff($candidate['source_fact_ids'] ?? [], array_keys($eligibleIds)) !== []) {
+                    throw new InvalidArgumentException('estimate_composer_candidate_source_invalid');
+                }
             }
+            $decisions = array_values(array_filter($decisions, static fn (Decision $decision): bool => $decision->selectedFactId === null || isset($eligibleIds[$decision->selectedFactId])));
         }
-        $decisions = array_values(array_filter($decisions, static fn (Decision $decision): bool => $decision->selectedFactId === null || isset($eligibleIds[$decision->selectedFactId])));
         $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts): array {
             $entity = $entities[$fact->entityId] ?? null;
             $related = [];
