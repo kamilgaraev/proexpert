@@ -12,6 +12,8 @@ final class ScopeCompletenessEvaluator
 {
     public const VERSION = 'universal-scope:v2';
 
+    private const EQUIPMENT_SCOPE_EXCLUSIONS = ['equipment_purchase', 'delivery', 'commissioning'];
+
     private const REQUIREMENTS = [
         'finishing' => ['preparation', 'finishing'],
         'structures' => ['preparation', 'structures'],
@@ -56,7 +58,7 @@ final class ScopeCompletenessEvaluator
     public static function allowsNotApplicable(string $section, string $requirement): bool
     {
         return in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)
-            || ($section === 'equipment' && in_array($requirement, ['equipment_purchase', 'delivery', 'commissioning'], true));
+            || ($section === 'equipment' && in_array($requirement, self::EQUIPMENT_SCOPE_EXCLUSIONS, true));
     }
 
     public function evaluate(ProjectModelSnapshot $snapshot, string $profile, string $constructionType, array $selectedScope, array $positions, array $decisions = [], array $technologies = []): array
@@ -129,7 +131,8 @@ final class ScopeCompletenessEvaluator
                         (string) ($technologies[$section][$entityId] ?? 'unspecified'));
                     $choice = $byId[$disposition['fact_ids'][0] ?? ''] ?? null;
                     if ($disposition !== null && self::allowsNotApplicable($section, $requirement)
-                        && $choice?->sourceVersion === $entities[$entityId]->sourceVersion && ($choice->value['section'] ?? null) === $section) {
+                        && $choice?->sourceVersion === $entities[$entityId]->sourceVersion
+                        && (! in_array($requirement, self::EQUIPMENT_SCOPE_EXCLUSIONS, true) || ($choice->value['section'] ?? null) === $section)) {
                         $work = $coveredWorks[$section][$entityId][$requirement] ?? null;
                         if (is_string($work)) {
                             $requirements[] = ['section' => $section, 'entity_id' => $entityId, 'requirement' => $requirement,

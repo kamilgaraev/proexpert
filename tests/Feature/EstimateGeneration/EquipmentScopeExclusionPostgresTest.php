@@ -130,16 +130,7 @@ final class EquipmentScopeExclusionPostgresTest extends EstimateGenerationCanoni
 
     public function test_the_existing_v2_public_repair_decision_keeps_its_section_and_remains_valid(): void
     {
-        [$actor, $session] = $this->sessionFixture(['area' => '20', 'profile_id' => 'renovation', 'construction_type' => 'current_repair', 'selected_sections' => ['finishing']]);
-        app(InitialProjectFactsWriter::class)->write($session, $actor);
-        [$snapshot] = $this->model($session);
-        $entityId = $snapshot->entities[0]->id;
-        $draft = ['source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh()),
-            'evaluation_policy' => ['selected_sections' => ['finishing'], 'profile_id' => 'renovation', 'construction_type' => 'current_repair'],
-            'local_estimates' => [['key' => 'finishing', 'sections' => [['work_items' => array_map(fn (string $phase): array => $this->work($entityId, $phase),
-                ['preparation', 'finishing', 'waste_removal', 'existing_structures_protection'])]]]]];
-        $draft['evaluation_result'] = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
-        $session->update(['draft_payload' => (new UniversalReviewSummaryProjector)->project($draft)]);
+        [$actor, $session, $entityId] = $this->repairFixture(['finishing']);
         app(SaveEvaluationRequirementDecision::class)->handle($actor, (int) $session->project_id, (int) $session->id,
             ['entity_id' => $entityId, 'section' => 'finishing', 'requirement' => 'demolition', 'state_version' => 0,
                 'request_id' => (string) Str::uuid(), 'disposition' => 'not_applicable', 'reason' => 'Покрытие сохраняется, демонтаж не требуется.']);
@@ -148,6 +139,61 @@ final class EquipmentScopeExclusionPostgresTest extends EstimateGenerationCanoni
         self::assertSame('finishing', $choice->value['section']);
         self::assertSame('universal-scope:v2', $choice->value['scope_version']);
         self::assertTrue($this->evaluation($session)['coverage']['scope_complete']);
+    }
+
+    #[DataProvider('repairSectionOrders')]
+    public function test_public_entity_level_repair_choice_covers_both_sections_with_the_existing_supersession_chain(array $sections): void
+    {
+        [$actor, $session, $entityId] = $this->repairFixture($sections);
+        $saved = [];
+        foreach ($sections as $section) {
+            $target = ['entity_id' => $entityId, 'section' => $section, 'requirement' => 'demolition', 'state_version' => $session->fresh()->state_version];
+            self::assertSame(['not_applicable'], app(GetEvaluationRequirementSources::class)->handle($actor, (int) $session->project_id, (int) $session->id, $target)['allowed_dispositions']);
+            $saved[$section] = app(SaveEvaluationRequirementDecision::class)->handle($actor, (int) $session->project_id, (int) $session->id,
+                [...$target, 'request_id' => (string) Str::uuid(), 'disposition' => 'not_applicable', 'reason' => 'Существующее покрытие сохраняется в этом разделе, демонтаж не требуется.']);
+        }
+        [$snapshot] = $this->model($session);
+        $choices = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => ($fact->value['disposition'] ?? null) === 'not_applicable'));
+        self::assertCount(1, $choices);
+        $coverage = $this->evaluation($session)['coverage'];
+        self::assertCount(2, array_filter($coverage['not_applicable_requirements'], static fn (array $row): bool => $row['requirement'] === 'demolition'));
+        self::assertNotContains('demolition', array_column($coverage['missing_requirements'], 'requirement'));
+        $edited = app(SaveEvaluationRequirementDecision::class)->handle($actor, (int) $session->project_id, (int) $session->id,
+            ['entity_id' => $entityId, 'section' => $sections[0], 'requirement' => 'demolition', 'state_version' => $session->fresh()->state_version,
+                'request_id' => (string) Str::uuid(), 'disposition' => 'not_applicable', 'reason' => 'Уточнена причина сохранения покрытия только для этого раздела.']);
+        [$current] = $this->model($session);
+        $byId = array_column($current->facts, null, 'id');
+        self::assertArrayHasKey($edited['fact_id'], $byId);
+        self::assertSame($saved[$sections[1]]['fact_id'], $byId[$edited['fact_id']]->supersedesFactId);
+        self::assertSame(3, $byId[$edited['fact_id']]->version);
+        self::assertArrayNotHasKey($saved[$sections[1]]['fact_id'], $byId);
+        self::assertCount(2, array_filter($this->evaluation($session)['coverage']['not_applicable_requirements'], static fn (array $row): bool => $row['requirement'] === 'demolition'));
+    }
+
+    public static function repairSectionOrders(): array
+    {
+        return ['finishing then electricity' => [['finishing', 'electricity']], 'electricity then finishing' => [['electricity', 'finishing']]];
+    }
+
+    private function repairFixture(array $sections): array
+    {
+        [$actor, $session] = $this->sessionFixture(['area' => '20', 'profile_id' => 'renovation', 'construction_type' => 'current_repair', 'selected_sections' => $sections]);
+        app(InitialProjectFactsWriter::class)->write($session, $actor);
+        [$snapshot] = $this->model($session);
+        $entityId = $snapshot->entities[0]->id;
+        $draft = ['source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh()),
+            'evaluation_policy' => ['selected_sections' => $sections, 'profile_id' => 'renovation', 'construction_type' => 'current_repair'],
+            'local_estimates' => array_map(function (string $section) use ($entityId): array {
+                $phases = array_values(array_filter(ScopeCompletenessEvaluator::requirementsFor($section, 'current_repair', 'renovation'),
+                    static fn (string $phase): bool => $phase !== 'demolition' && ! str_contains($phase, 'test_program')));
+
+                return ['key' => $section, 'sections' => [['work_items' => array_map(fn (string $phase): array => [
+                    ...$this->work($entityId, $phase), 'key' => $section.':'.$phase], $phases)]]];
+            }, $sections)];
+        $draft['evaluation_result'] = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
+        $session->update(['draft_payload' => (new UniversalReviewSummaryProjector)->project($draft)]);
+
+        return [$actor, $session, $entityId];
     }
 
     public static function excludedPhases(): array
