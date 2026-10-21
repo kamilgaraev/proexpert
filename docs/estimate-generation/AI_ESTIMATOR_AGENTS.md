@@ -106,6 +106,10 @@ Frontend-область B: отображение quantities/норм/ресур
 
 Эти договорённости утверждены главным координатором для R05/R07/R03. Расширение публичного API, vocabulary, ProjectModel/Decision DTO или новых схем хранения требует нового точечного согласования и одного назначенного автора.
 
+Для первого R07 numeric milestone переиспользовать NativeParameter-вопросы и `SaveManualProjectFacts`, не добавлять equipment question-builder. A владеет короткой orchestration проверки source/count и нормативной ассоциации, server-only metadata в Recorder и повторным authoritative read в EvidenceService; extractor менять только для необходимого честного описания результата. Существующие quantity/native/norm predicates остаются у B. B владеет native-count regression в `NativeNumericFactsPostgresTest`; A пишет отдельный lifecycle test и не меняет этот файл параллельно.
+
+Согласованное направление metadata — `context_payload.knowledge_validation` с schema_version/producer, claim IDs/versions/entity/value/unit, отдельными count_source_check и normative_association_check, current source/evidence fingerprints и checked_at. Producer/outcomes вычисляет сервер, request metadata игнорируется. Детали проверяются реализацией/тестами перед выпуском; это не новый публичный DTO. RAG и stored passed служат поиском кандидата, reuse заново проверяет scoped авторитетные записи. Existing native source binding доказывает привязку числа к источнику; независимость от ответа требует отдельного original document Fact. Ни этот результат, ни permissive optional normative metadata не дают статуса verified installation.
+
 ## Параллельная работа и UI/UX
 
 Первый безопасный параллельный шаг: A исправляет R02, B — R01 в разных implementation файлах. Далее A — R05, B — R03/R10. Перед R06 главный фиксирует identity и план миграции consumers; A и B не коммитят разные версии контракта одновременно. Затем B расширяет приёмку R08, A — R07/R09 по согласованному scope. Каждый независимый task использует собственную ветку/обычный workflow; чужие ветки, worktree, тестовый runtime и изменения не переключать/не очищать. Никаких автоматических merge при незавершённом актуальном Codex Review.
