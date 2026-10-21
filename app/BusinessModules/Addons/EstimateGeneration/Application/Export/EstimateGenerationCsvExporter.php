@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Export;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\Services\Export\CsvExportValue;
 use RuntimeException;
@@ -24,7 +25,8 @@ final class EstimateGenerationCsvExporter
             foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
                 foreach (is_array($localEstimate) ? ($localEstimate['sections'] ?? []) : [] as $section) {
                     foreach (is_array($section) ? ($section['work_items'] ?? []) : [] as $workItem) {
-                        if (! is_array($workItem) || ! $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem)) {
+                        if (! is_array($workItem) || (! ConfirmedEvaluationDraftProjector::isPersistableCommercialItem($workItem)
+                            && ! $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem))) {
                             continue;
                         }
                         $row = CsvExportValue::row([

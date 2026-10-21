@@ -29,13 +29,17 @@ final class EstimateGenerationPackageControllerTest extends LaravelTestCase
     #[Test]
     public function export_preserves_tenant_and_project_isolation_error(): void
     {
-        [$request, $project, $session] = $this->context(8, 5, EstimateGenerationStatus::Applied);
-
-        try {
-            $this->app->make(EstimateGenerationPackageController::class)->export($request, $project, $session);
-            self::fail('Expected authorization error.');
-        } catch (HttpExceptionInterface $exception) {
-            self::assertSame(403, $exception->getStatusCode());
+        foreach ([[8, 5], [7, 9]] as [$organizationId, $projectId]) {
+            foreach (['csv', 'json', 'excel'] as $format) {
+                [$request, $project, $session] = $this->context($organizationId, $projectId, EstimateGenerationStatus::Applied);
+                $request->query->set('format', $format);
+                try {
+                    $this->app->make(EstimateGenerationPackageController::class)->export($request, $project, $session);
+                    self::fail('Expected authorization error.');
+                } catch (HttpExceptionInterface $exception) {
+                    self::assertSame(403, $exception->getStatusCode());
+                }
+            }
         }
     }
 
@@ -71,6 +75,35 @@ final class EstimateGenerationPackageControllerTest extends LaravelTestCase
 
         self::assertIsString($routes);
         self::assertStringContainsString("middleware('authorize:estimate_generation.export,project,project')", $routes);
+    }
+
+    #[Test]
+    public function legacy_json_keeps_the_raw_object_without_reading_universal_confirmation(): void
+    {
+        $reader = new class {
+            public int $calls = 0;
+
+            public function read(): never
+            {
+                $this->calls++;
+                throw new \LogicException('Legacy export must not read a universal confirmation.');
+            }
+        };
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport::class, $reader);
+        [$request, $project, $session] = $this->context(7, 5, EstimateGenerationStatus::EstimateReviewRequired);
+        $raw = ['legacy_field' => 'Сохранённый черновик', 'local_estimates' => [], 'totals' => ['total_cost' => '12.34']];
+        $session->forceFill(['input_payload' => ['evaluation_mode' => 'legacy'], 'draft_payload' => $raw]);
+        $response = $this->app->make(EstimateGenerationPackageController::class)->export($request, $project, $session);
+        self::assertInstanceOf(StreamedResponse::class, $response);
+        ob_start();
+        try {
+            $response->sendContent();
+            $body = (string) ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+        self::assertSame($raw, json_decode($body, true, 64, JSON_THROW_ON_ERROR));
+        self::assertSame(0, $reader->calls);
     }
 
     /** @return array{Request, Project, EstimateGenerationSession} */
