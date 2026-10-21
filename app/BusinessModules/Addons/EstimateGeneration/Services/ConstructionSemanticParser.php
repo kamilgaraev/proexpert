@@ -450,10 +450,11 @@ class ConstructionSemanticParser
             'roof' => ['кровл', 'стропил', 'крыша', 'металлочерепиц', 'плоская кровля'],
             'openings' => ['окна', 'двери', 'стеклопакет', 'проем', 'проём', 'ворот', 'входная группа'],
             'electrical' => ['электрика', 'электромонтаж', 'щит', 'кабель', 'розет', 'светильник', 'свет', 'освещ'],
-            'plumbing' => ['водопровод', 'водоснабжен', 'канализац', 'септик', 'скважин', 'трубы'],
+            'plumbing' => ['водопровод', 'водоснабжен', 'скважин'],
+            'sewerage' => ['канализац', 'септик'],
             'heating' => ['отоплен', 'котел', 'котёл', 'радиатор', 'разводка отопления'],
             'ventilation' => ['вентиляц', 'приточн', 'клапан'],
-            'fire_safety' => ['пожарн', 'сигнализац', 'оповещен', 'оповещён'],
+            'fire_safety' => ['пожарная сигнализац', 'пожарной сигнализац', 'пожарную сигнализац'],
             'stairs' => ['лестниц', 'лестничн'],
             'facade' => ['фасад', 'утеплен', 'утеплён', 'облицовк', 'сэндвич-панел', 'сендвич-панел'],
             'finishing' => ['отделк', 'штукатур', 'окраск', 'облицовка'],
@@ -477,22 +478,19 @@ class ConstructionSemanticParser
                 continue;
             }
 
-            $scopeType = $this->detectScopeType($normalizedLine, $keywords);
-            if ($scopeType === null) {
-                continue;
-            }
+            foreach ($this->detectScopeTypes($normalizedLine, $keywords) as $scopeType) {
+                if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
+                    continue;
+                }
 
-            if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
-                continue;
+                $items[] = [
+                    'title' => $this->normalizeScopeTitle($line, $scopeType),
+                    'scope_type' => $scopeType,
+                    'source_refs' => $this->extractSourceRefs($line),
+                ];
+                $zones[] = $this->extractZoneTitle($line);
+                $constructives[] = $scopeType;
             }
-
-            $items[] = [
-                'title' => $this->normalizeScopeTitle($line, $scopeType),
-                'scope_type' => $scopeType,
-                'source_refs' => $this->extractSourceRefs($line),
-            ];
-            $zones[] = $this->extractZoneTitle($line);
-            $constructives[] = $scopeType;
         }
 
         return [
@@ -516,6 +514,36 @@ class ConstructionSemanticParser
         }
 
         return null;
+    }
+
+    private function detectScopeTypes(string $normalizedLine, array $keywords): array
+    {
+        $matches = [];
+        foreach ($keywords as $scopeType => $patterns) {
+            foreach ($patterns as $pattern) {
+                $length = mb_strlen($pattern);
+                $offset = 0;
+                while (($position = mb_strpos($normalizedLine, $pattern, $offset)) !== false) {
+                    $matches[] = ['scope' => $scopeType, 'start' => $position, 'end' => $position + $length];
+                    $offset = $position + $length;
+                }
+            }
+        }
+        usort($matches, static fn (array $left, array $right): int =>
+            (($right['end'] - $right['start']) <=> ($left['end'] - $left['start'])) ?: ($left['start'] <=> $right['start']));
+        $accepted = [];
+        $scopes = [];
+        foreach ($matches as $match) {
+            foreach ($accepted as $span) {
+                if ($match['start'] < $span['end'] && $span['start'] < $match['end']) {
+                    continue 2;
+                }
+            }
+            $accepted[] = $match;
+            $scopes[$match['scope']] = true;
+        }
+
+        return array_values(array_filter(array_keys($keywords), static fn (string $scope): bool => isset($scopes[$scope])));
     }
 
     protected function isScopeCandidateLine(string $normalizedLine, string $scopeType): bool

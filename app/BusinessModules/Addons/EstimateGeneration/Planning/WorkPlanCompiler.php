@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
@@ -66,8 +67,17 @@ final readonly class WorkPlanCompiler
         foreach ($localEstimates as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $intents = $source?->intentsFor((string) $section['key'], (string) $localEstimate['scope_type']);
+                $workAnalysis = $analysis;
+                if (in_array('custom-finishing', array_column($plan->packages, 'key'), true)
+                    && in_array($localEstimate['key'], ['rough_finishing', 'finish_finishing'], true)
+                    && in_array($localEstimate['key'], array_column($profile->planningSignals['requested_scope_packages'] ?? [], 'key'), true)) {
+                    $workAnalysis['document_context']['scope_inferences'] = array_values(array_filter(
+                        (new EstimatorScopeInferenceService)->inferFromAnalysis($analysis),
+                        static fn (array $inference): bool => $inference['scope_type'] !== 'finishing',
+                    ));
+                }
                 $items = $intents === null
-                    ? $this->workItemPlanner->build($localEstimate, $section, $analysis, $workItemLimit, $allocated['by_package'][$localEstimate['key']] ?? [], $plan)
+                    ? $this->workItemPlanner->build($localEstimate, $section, $workAnalysis, $workItemLimit, $allocated['by_package'][$localEstimate['key']] ?? [], $plan)
                     : array_map(fn (array $intent): array => $this->intentToWorkItem($intent, $localEstimate, $section), $intents);
                 $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
                     $items,

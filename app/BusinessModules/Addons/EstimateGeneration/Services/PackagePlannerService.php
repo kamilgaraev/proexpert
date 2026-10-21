@@ -186,7 +186,7 @@ class PackagePlannerService
             'site' => ['site_preparation', 'site'],
             'fire_safety' => ['fire_safety', 'engineering'],
             'foundation', 'walls', 'slabs', 'roof', 'openings', 'electrical', 'plumbing',
-            'heating', 'ventilation', 'stairs', 'facade' => [$scopeType, $scopeType],
+            'heating', 'ventilation', 'stairs', 'facade', 'sewerage' => [$scopeType, $scopeType],
             default => [null, null],
         };
 
@@ -195,11 +195,20 @@ class PackagePlannerService
 
     private function withRequestedScopePackages(array $packages, ObjectProfileData $profile): array
     {
-        $evidenceScopes = array_column($packages, 'scope_type');
+        $packageKeys = array_column($packages, 'key');
+        $quantityKeys = $profile->planningSignals['quantity_keys'] ?? [];
         foreach ($profile->planningSignals['requested_scope_packages'] ?? [] as $package) {
-            if (! in_array($package['scope_type'], $evidenceScopes, true)) {
-                $packages[] = $package;
+            $key = $package['key'];
+            if (in_array($key, $packageKeys, true) || in_array('custom-'.$key, $packageKeys, true)) {
+                continue;
             }
+            if (in_array('custom-finishing', $packageKeys, true)
+                && (($key === 'rough_finishing' && $this->hasQuantityPrefix($quantityKeys, 'rough.'))
+                    || ($key === 'finish_finishing' && ($this->hasQuantityPrefix($quantityKeys, 'finish.')
+                        || $this->hasAnyQuantityKey($quantityKeys, ['office.ceiling', 'sanitary.tile']))))) {
+                continue;
+            }
+            $packages[] = $package;
         }
 
         return $packages;
