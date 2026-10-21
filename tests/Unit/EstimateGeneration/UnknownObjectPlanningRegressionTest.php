@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\ObjectProfileData;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -131,5 +132,25 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
 
         self::assertSame('mixed_warehouse_office', $profile->objectType);
         self::assertContains('office_partitions', array_column($planner->plan($profile)->packages, 'key'));
+    }
+
+    #[DataProvider('knownTypes')]
+    public function test_known_profiles_keep_their_existing_completeness_without_evaluation_policy(string $type): void
+    {
+        $planner = new PackagePlannerService;
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => $type], []);
+        foreach ([ObjectProfileData::fromArray(['object_type' => $type]), $planner->profileFromAnalysis($analysis)] as $profile) {
+            $requirements = $planner->documentRequirements($profile);
+            self::assertSame('document_backed', $requirements['coverage']);
+            self::assertFalse($requirements['missing_for_full_estimate']);
+            self::assertSame([], $requirements['items']);
+        }
+    }
+
+    public static function knownTypes(): iterable
+    {
+        foreach (['house', 'warehouse', 'industrial', 'mixed_warehouse_office'] as $type) {
+            yield $type => [$type];
+        }
     }
 }
