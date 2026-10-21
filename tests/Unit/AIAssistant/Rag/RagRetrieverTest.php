@@ -155,7 +155,7 @@ class RagRetrieverTest extends TestCase
 
         $this->assertNotEmpty($results);
         $this->assertSame('estimate_reference', $results[0]->sourceType);
-        $this->assertNotContains('estimate', array_map(static fn ($result): string => $result->sourceType, $results));
+        $this->assertContains('estimate', array_map(static fn ($result): string => $result->sourceType, $results));
     }
 
     public function test_search_keeps_project_estimates_for_mixed_estimate_and_reference_query(): void
@@ -430,22 +430,23 @@ class RagRetrieverTest extends TestCase
         self::assertSame(1, $second->queryCalls);
     }
 
-    public function test_reference_only_forbidden_source_does_not_fall_back_to_estimates_but_explicit_types_keep_priority(): void
+    public function test_reference_preference_preserves_acl_and_explicit_source_type_filters(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
-        $this->indexChunk($organization->id, $project->id, 'Current estimate', 'estimate evidence', [1.0, 0.0, 0.0], 'estimate', 'estimate');
+        $this->indexChunk($organization->id, $project->id, 'Current estimate', 'Расценки из справочника: estimate evidence', [1.0, 0.0, 0.0], 'estimate', 'estimate');
         $this->indexChunk($organization->id, null, 'Reference', 'reference evidence', [1.0, 0.0, 0.0], 'estimate_reference', 'estimate_catalog_item');
         EstimatePositionCatalog::query()->where('organization_id', $organization->id)
             ->update(['organization_id' => Organization::factory()->create()->id]);
         $retriever = $this->retriever([1.0, 0.0, 0.0]);
         foreach (['semantic', 'lexical'] as $mode) {
+            $implicit = $retriever->search('Расценки из справочника', $organization->id, $user,
+                ['project_id' => $project->id, 'retrieval_mode' => $mode]);
+            self::assertSame(['estimate'], array_column($implicit, 'sourceType'));
             self::assertSame([], $retriever->search('Расценки из справочника', $organization->id, $user,
-                ['project_id' => $project->id, 'retrieval_mode' => $mode]));
+                ['project_id' => $project->id, 'retrieval_mode' => $mode, 'source_types' => ['estimate_reference']]));
             $explicit = $retriever->search('Расценки из справочника', $organization->id, $user,
                 ['project_id' => $project->id, 'retrieval_mode' => $mode, 'source_types' => ['estimate']]);
-            if ($mode === 'semantic') {
-                self::assertSame(['estimate'], array_column($explicit, 'sourceType'));
-            }
+            self::assertSame(['estimate'], array_column($explicit, 'sourceType'));
         }
     }
 
@@ -481,12 +482,14 @@ class RagRetrieverTest extends TestCase
     public function test_soft_normative_query_keeps_current_learning_candidates_without_an_explicit_source_filter(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
-        $example = $this->learningExample($organization->id, $project->id, 'Норматив оборудования');
+        $example = $this->learningExample($organization->id, $project->id, 'Норматив оборудования: расценка из справочника с приложенным документом');
         $this->indexLearning($example);
-        foreach (['semantic', 'lexical'] as $mode) {
-            $results = $this->retriever([1.0, 0.0, 0.0])->search('Норматив оборудования', $organization->id, $user,
-                ['project_id' => $project->id, 'source_types' => null, 'retrieval_mode' => $mode]);
-            self::assertSame([(string) $example->id], array_column($results, 'entityId'));
+        foreach (['Норматив оборудования', 'Сверь расценку из справочника с приложенным документом'] as $query) {
+            foreach (['semantic', 'lexical'] as $mode) {
+                $results = $this->retriever([1.0, 0.0, 0.0])->search($query, $organization->id, $user,
+                    ['project_id' => $project->id, 'source_types' => null, 'retrieval_mode' => $mode]);
+                self::assertSame([(string) $example->id], array_column($results, 'entityId'));
+            }
         }
     }
 

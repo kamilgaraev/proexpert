@@ -797,7 +797,7 @@ final class AssistantDocumentIngestionTest extends TestCase
 
     public function test_normative_query_keeps_explicit_document_filter_and_lexical_unit_index_is_complete(): void
     {
-        $document = $this->documents->process((int) $this->documents->registerFile($this->file('normative.txt', 'Норматив: безопасная высота ограждения.'))->id);
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('normative.txt', 'Норматив: безопасная высота ограждения. Расценка из справочника приведена в приложенном документе.'))->id);
         $unit = AIAssistantDocumentUnit::query()->where('document_id', $document->id)->firstOrFail();
         $data = \App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource::chunkForUnit($document, $unit);
         $metadata = $data->metadata;
@@ -811,16 +811,18 @@ final class AssistantDocumentIngestionTest extends TestCase
         AssistantDocumentSettings::query()->updateOrCreate(['organization_id' => $this->organization->id], ['last_file_id' => $document->file_id]);
         $coverage = app(AssistantDocumentCoverageService::class)->coverage($this->organization->id, $this->owner, scope: ['source_types' => ['file_document']]);
         self::assertTrue(AssistantDocumentCoverageService::isCompleteForAnswer($coverage));
-        foreach ([['file_document'], null] as $filter) {
-            $result = app(RagRetriever::class)->searchWithDiagnostics('норматив', $this->organization->id, $this->owner,
-                ['source_types' => $filter, 'retrieval_mode' => 'lexical']);
-            self::assertSame('available', $result['diagnostics']['status']);
-            self::assertFalse($result['diagnostics']['semantic_available']);
-            self::assertCount(1, $result['results']);
-            self::assertSame('file_document', $result['results'][0]->sourceType);
-            $references = SearchAssistantDocumentsTool::responseForSearch(app(RagPromptContextBuilder::class)->build('', $result['results']), $result['diagnostics'])['source_refs'];
-            self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
-                ->fresh($this->owner, $this->organization->id, $references));
+        foreach (['норматив', 'Сверь расценку из справочника с приложенным документом'] as $query) {
+            foreach ([['file_document'], null] as $filter) {
+                $result = app(RagRetriever::class)->searchWithDiagnostics($query, $this->organization->id, $this->owner,
+                    ['source_types' => $filter, 'retrieval_mode' => 'lexical']);
+                self::assertSame('available', $result['diagnostics']['status']);
+                self::assertFalse($result['diagnostics']['semantic_available']);
+                self::assertCount(1, $result['results']);
+                self::assertSame('file_document', $result['results'][0]->sourceType);
+                $references = SearchAssistantDocumentsTool::responseForSearch(app(RagPromptContextBuilder::class)->build('', $result['results']), $result['diagnostics'])['source_refs'];
+                self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+                    ->fresh($this->owner, $this->organization->id, $references));
+            }
         }
         $chunk->delete();
         $incomplete = app(AssistantDocumentCoverageService::class)->coverage($this->organization->id, $this->owner, scope: ['source_types' => ['file_document']]);
