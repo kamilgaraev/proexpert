@@ -55,4 +55,19 @@ final class AssistantJournalEntriesIntentTest extends TestCase
             'project_id' => 101, 'journal_name' => 'Договор и бюджет', 'journal_number' => '1', 'offset' => 50,
         ]], AssistantRequiredProjectRead::fromPlan($plan));
     }
+
+    public function test_journal_of_works_wording_preserves_number_and_literal_title(): void
+    {
+        foreach (['журнала работ', 'журнала производства работ'] as $noun) {
+            foreach ([null, 'Договор и бюджет'] as $name) {
+                $journal = 'общего '.$noun.' №1'.($name === null ? '' : ' «'.$name.'»');
+                foreach (['В текущем проекте покажи все записи '.$journal.'.', 'Покажи все записи '.$journal.' в текущем проекте.'] as $query) {
+                    $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 101]]]]];
+                    self::assertSame(['name' => 'get_project_journal_entries', 'arguments' => [
+                        'project_id' => 101, 'journal_name' => $name, 'journal_number' => '1', 'offset' => 0,
+                    ]], AssistantRequiredProjectRead::fromPlan($plan), $query);
+                }
+            }
+        }
+    }
 }

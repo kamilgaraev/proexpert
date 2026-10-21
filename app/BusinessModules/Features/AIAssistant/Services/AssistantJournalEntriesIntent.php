@@ -8,6 +8,8 @@ final class AssistantJournalEntriesIntent
 {
     private const QUOTED = '(?:«([^»]+)»|“([^”]+)”|"([^"]+)")';
 
+    private const JOURNAL = 'журнал(?:а|е|у|ом)?(?:\s+(?:производства\s+)?работ)?';
+
     public static function hasIntent(string $query): bool
     {
         $query = self::semanticQuery($query);
@@ -39,7 +41,7 @@ final class AssistantJournalEntriesIntent
         $query = AssistantNamedProjectReadScope::semanticQuery($query);
         $number = null;
         $name = null;
-        preg_match_all('/журнал(?:а|е|у|ом)?\s*(?:(?:№|номер(?:ом|а)?|#)\s*([\pL\pN._\/-]+))?\s*'.self::QUOTED.'/iu', $query, $names, PREG_SET_ORDER);
+        preg_match_all('/'.self::JOURNAL.'\s*(?:(?:№|номер(?:ом|а)?|#)\s*([\pL\pN._\/-]+))?\s*'.self::QUOTED.'/iu', $query, $names, PREG_SET_ORDER);
         if (count($names) === 1) {
             $number = ($names[0][1] ?? '') !== '' ? $names[0][1] : null;
             foreach (array_slice($names[0], 2) as $value) {
@@ -49,7 +51,7 @@ final class AssistantJournalEntriesIntent
                 }
             }
         } else {
-            preg_match_all('/журнал(?:а|е|у|ом)?\s*(?:№|номер(?:ом|а)?|#)\s*([\pL\pN._\/-]+)/iu', $query, $numbers);
+            preg_match_all('/'.self::JOURNAL.'\s*(?:№|номер(?:ом|а)?|#)\s*([\pL\pN._\/-]+)/iu', $query, $numbers);
             if (count($numbers[1]) === 1 && $names === []) {
                 $number = $numbers[1][0];
             }
@@ -69,6 +71,6 @@ final class AssistantJournalEntriesIntent
     {
         $query = AssistantNamedProjectReadScope::semanticQuery($query);
 
-        return preg_replace('/(журнал(?:а|е|у|ом)?\s*(?:(?:№|номер(?:ом|а)?|#)\s*[\pL\pN._\/-]+)?\s*)'.self::QUOTED.'/iu', '$1', $query) ?? $query;
+        return preg_replace('/('.self::JOURNAL.'\s*(?:(?:№|номер(?:ом|а)?|#)\s*[\pL\pN._\/-]+)?\s*)'.self::QUOTED.'/iu', '$1', $query) ?? $query;
     }
 }
