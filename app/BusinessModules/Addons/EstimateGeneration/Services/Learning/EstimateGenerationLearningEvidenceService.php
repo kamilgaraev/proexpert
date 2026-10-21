@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Learning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
@@ -16,9 +17,11 @@ final class EstimateGenerationLearningEvidenceService
 {
     private const MAX_EXAMPLES = 400;
     private const MAX_SOURCES = 6;
+    private const MAX_KNOWLEDGE_VALIDATION_PAIRS = 8;
 
     public function __construct(
         private readonly WorkIntentClassifier $workIntentClassifier,
+        private readonly EquipmentCountKnowledgeValidationService $equipmentKnowledge,
     ) {}
 
     /**
@@ -71,19 +74,51 @@ final class EstimateGenerationLearningEvidenceService
             'system' => $classifiedIntent->system,
         ];
         $workTokens = $this->tokens($this->workText($workItem, $context));
+        $currentAssociations = [];
+        $currentSources = [];
+        $validationPairs = [];
 
         foreach ($examples as $example) {
             if (!$this->indexable($example)) {
                 continue;
             }
+            $marked = array_key_exists('knowledge_validation', is_array($example->context_payload) ? $example->context_payload : []);
+            if ($marked) {
+                if ($example->estimate_norm_id === null || ! EquipmentCountKnowledgeValidationService::hasPassingValidationMetadata($example)) {
+                    continue;
+                }
+                $knowledge = $example->context_payload['knowledge_validation'];
+                $claimKey = CanonicalPipelineJson::encode([$example->organization_id, $example->project_id,
+                    $example->generation_session_id, data_get($knowledge, 'schema_version'), data_get($knowledge, 'producer'),
+                    data_get($knowledge, 'work_item_key'), data_get($knowledge, 'claim'),
+                    data_get($knowledge, 'count_source_check.outcome'), data_get($knowledge, 'normative_association_check.outcome')]);
+            }
 
             foreach ($this->matchingCandidates($example, $candidates) as $candidate) {
+                if ($marked && (int) $candidate->id !== (int) $example->estimate_norm_id) {
+                    continue;
+                }
                 $evidence = $this->scoreEvidence($example, $candidate, $workItem, $context, $intent, $workTokens);
-
                 if ($evidence === null) {
                     continue;
                 }
-
+                if ($marked) {
+                    $pairKey = CanonicalPipelineJson::encode([$claimKey, (int) $candidate->id]);
+                    if (! isset($validationPairs[$pairKey])) {
+                        if (count($validationPairs) >= self::MAX_KNOWLEDGE_VALIDATION_PAIRS) {
+                            continue;
+                        }
+                        $validationPairs[$pairKey] = true;
+                    }
+                    $currentSources[$claimKey] ??= $this->equipmentKnowledge->permitsSourceReuse($example);
+                    if (! $currentSources[$claimKey]) {
+                        continue;
+                    }
+                    $currentAssociations[(int) $candidate->id] ??= $this->equipmentKnowledge->currentAssociationPasses($workItem, (int) $candidate->id, $context);
+                    if (! $currentAssociations[(int) $candidate->id]) {
+                        continue;
+                    }
+                }
                 $candidateId = (int) $candidate->id;
                 $summaries[$candidateId]['learning_score'] += $evidence['score'];
 
