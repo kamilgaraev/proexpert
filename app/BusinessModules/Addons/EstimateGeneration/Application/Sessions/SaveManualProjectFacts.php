@@ -90,7 +90,7 @@ final readonly class SaveManualProjectFacts
                 if (isset($row['existing_entity_id'])) {
                     $existing = $activeEntities[$row['existing_entity_id']] ?? null;
                     if ($existing === null || ($existing->attributes['semantic_type'] ?? $existing->attributes['properties']['semantic_type'] ?? $existing->type) !== $row['type']
-                        || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']) && ! isset($row['opening_scope']) && ! isset($row['opening_system']))
+                        || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']) && ! isset($row['opening_scope']) && ! isset($row['opening_system']) && ! isset($row['roof_system']))
                         || array_intersect(['name', 'floor', 'zone', 'parent_key'], array_keys($row)) !== []) {
                         throw ValidationException::withMessages(['entities.'.$index.'.existing_entity_id' => trans_message('estimate_generation.geometry_inventory.entity_invalid')]);
                     }
@@ -186,7 +186,17 @@ final readonly class SaveManualProjectFacts
                     $facts[] = $fact;
                     $proofs[$proof->id] = $proof;
                 }
-                if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']) && ! isset($row['opening_scope']) && ! isset($row['opening_system']))) {
+                if (isset($row['roof_system'])) {
+                    if (! config('estimate-generation.universal_enabled', false) || ($payload['evaluation_mode'] ?? null) !== 'universal'
+                        || ! isset($row['existing_entity_id'], $row['native_question']) || count($input['entities']) !== 1
+                        || array_diff(array_keys($row), ['key', 'type', 'existing_entity_id', 'roof_system', 'native_question']) !== []) {
+                        throw ValidationException::withMessages(['entities' => trans_message('estimate_roof.system_invalid')]);
+                    }
+                    [$fact, $proof] = $this->roofSystem($scope, $entity, $row['roof_system'], $inventorySnapshot, $inventoryDocumentVersions, $requestId);
+                    $facts[] = $fact;
+                    $proofs[$proof->id] = $proof;
+                }
+                if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']) && ! isset($row['wall_assembly']) && ! isset($row['opening_scope']) && ! isset($row['opening_system']) && ! isset($row['roof_system']))) {
                     $name = $row['name'] ?? $row['key'];
                     if (! is_string($name) || trim($name) === '' || mb_strlen($name) > 160) {
                         throw ValidationException::withMessages(['entities.'.$index.'.name' => 'Введите название объекта, не более 160 символов.']);
@@ -334,7 +344,7 @@ final readonly class SaveManualProjectFacts
             foreach ($facts as $fact) {
                 $this->models->applyDecision(new Decision('decision:'.hash('sha256', $requestId.'|'.$fact->id), ...[...$scope, $fact->sourceVersion,
                     'fact', $fact->supersedesFactId ?? $fact->id, $fact->id, 'user', (string) $actor->id,
-                    str_starts_with($fact->type, 'geometry_parent_') || in_array($fact->type, ['wall_assembly', 'opening_scope', 'opening_system'], true) ? $fact->value['reason'] : ($descriptionReasons[$fact->id] ?? 'Пользователь подтвердил ручные исходные данные'), $fact->version, $fact->evidenceIds]), $fact);
+                    str_starts_with($fact->type, 'geometry_parent_') || in_array($fact->type, ['wall_assembly', 'opening_scope', 'opening_system', 'roof_system'], true) ? $fact->value['reason'] : ($descriptionReasons[$fact->id] ?? 'Пользователь подтвердил ручные исходные данные'), $fact->version, $fact->evidenceIds]), $fact);
             }
             $preview = $this->quantities->previewInput(...$scope);
             $result = ['request_id' => $requestId, 'state_version' => $expectedVersion + 1, 'fact_ids' => array_column($facts, 'id'),
@@ -350,6 +360,32 @@ final readonly class SaveManualProjectFacts
 
             return $result;
         }, 3);
+    }
+
+    private function roofSystem(array $scope, Entity $roof, array $input, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot,
+        array $documentVersions, string $requestId): array
+    {
+        $current = \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::roofs($snapshot, $documentVersions);
+        $reason = $input['reason'] ?? null;
+        if (array_diff(array_keys($input), ['system', 'entity_fingerprint', 'reason']) !== []
+            || ! isset($current[$roof->id]) || ! in_array($input['system'] ?? null, \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::SYSTEMS, true)
+            || ($input['entity_fingerprint'] ?? null) !== \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::entityFingerprint($current[$roof->id], $documentVersions)
+            || ! is_string($reason) || mb_strlen(trim($reason)) < 10 || strlen($reason) > 1000) {
+            throw ValidationException::withMessages(['entities' => trans_message('estimate_roof.system_invalid')]);
+        }
+        $factId = 'fact:'.hash('sha256', $requestId.'|'.$roof->id.'|roof_system');
+        $value = ['contract' => \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::CONTRACT,
+            'system' => $input['system'], 'entity_fingerprint' => $input['entity_fingerprint'], 'target_source_version' => $roof->sourceVersion,
+            'decision_id' => 'decision:'.hash('sha256', $requestId.'|'.$factId), 'reason' => trim($reason)];
+        $hash = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($value));
+        $node = $this->evidence->insertOrGet(new EvidenceData(...[...$scope, EvidenceType::SourceFact, EvidenceSourceType::UserInput,
+            'input:'.$scope[2], $roof->sourceVersion, ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => 'input_payload.manual_facts'],
+            ['fact_key' => 'evaluation_choice', 'fact_value' => $hash], 0.0, EvidenceProducer::UserInputNormalizer->value,
+            'sha256:'.hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::CONTRACT)]));
+        $proof = new Evidence('evidence:'.$node->id, ...[...$scope, $roof->sourceVersion, 'input:'.$scope[2], 'user_input', null, null,
+            'input_payload.manual_facts', EvidenceProducer::UserInputNormalizer->value, 'input:'.$scope[2], $hash]);
+
+        return [$this->fact($scope, $roof->sourceVersion, $roof, 'roof_system', $value, null, 'user_input', [$proof->id], $requestId), $proof];
     }
 
     private function openingSystem(array $scope, Entity $opening, array $input, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot,

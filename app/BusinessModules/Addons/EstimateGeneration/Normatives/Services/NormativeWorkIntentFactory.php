@@ -20,6 +20,7 @@ final class NormativeWorkIntentFactory
 
     public function intent(array $item, array $context, string $datasetVersion): WorkIntentData
     {
+        $item = RoofSystemSpecification::specialize($item);
         $openingSystemRequired = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningWorkItemExpander::isOpeningWork($item);
         $openingSystem = $item['metadata']['opening_system']['system'] ?? null;
         $openingSystem = is_string($openingSystem) && OpeningSystemSpecification::searchText($openingSystem) !== null ? $openingSystem : null;
@@ -46,7 +47,10 @@ final class NormativeWorkIntentFactory
                 $classified[$key] = $value;
             }
         }
-        $evidence = $this->evidence($context['source_refs'] ?? []);
+        $roofEvidence = \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::isRoofWork($item)
+            ? ($item['metadata']['roof_system']['evidence_ids'] ?? []) : [];
+        $sourceEvidence = $context['source_refs'] ?? [];
+        $evidence = $this->evidence([...(is_array($sourceEvidence) ? $sourceEvidence : []), ...(is_array($roofEvidence) ? $roofEvidence : [])]);
         $objectType = ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? ''));
         $quantityKey = $this->quantityKey($item);
         $specializationEvidence = $this->specializationEvidence(

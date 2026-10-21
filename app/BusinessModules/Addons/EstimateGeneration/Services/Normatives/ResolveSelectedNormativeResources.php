@@ -29,6 +29,7 @@ class ResolveSelectedNormativeResources
 
     public function resolve(array $item, int $normId, array $context): ?array
     {
+        $item = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\RoofSystemSpecification::specialize($item);
         $regional = $context['regional_context'] ?? [];
         $dataset = $regional['normative_dataset_version'] ?? null;
         $code = $this->database->table('estimate_norms')->where('id', $normId)->value('code');

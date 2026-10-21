@@ -34,6 +34,31 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationTechnologySelectionPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_concrete_tile_is_an_explicit_native_roof_system_without_sheet_materials(): void
+    {
+        [$actor, $session, $models] = $this->fixture();
+        Http::preventStrayRequests();
+        Http::fake();
+        $proposal = app(GetEvaluationTechnologies::class)->handle($actor, (int) $session->project_id, (int) $session->id)['recommendations'][0];
+        $options = array_column($proposal['options'], null, 'system_id');
+        self::assertArrayHasKey('pitched_roof.concrete_tile', $options);
+        self::assertSame('applicable', $options['pitched_roof.concrete_tile']['applicability']);
+        $receipt = app(SaveEvaluationTechnologySelection::class)->handle($actor, (int) $session->project_id, (int) $session->id, [
+            'request_id' => (string) Str::uuid(), 'state_version' => 0, 'planning_run_id' => (int) $proposal['planning_run_id'],
+            'decision_key' => $proposal['decision_key'], 'system_id' => 'pitched_roof.concrete_tile',
+            'reason' => 'Цементно-песчаная черепица принята по спецификации кровельного покрытия.',
+        ]);
+        self::assertSame('0', $receipt['cost_units']);
+        $fact = $models->fact((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $receipt['fact_id']);
+        self::assertSame('pitched_roof.concrete_tile', $fact->value['system_id']);
+        $systems = array_column(app(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class)->systems, null, 'id');
+        $materials = array_column($systems['pitched_roof.concrete_tile']->materials, 'intent');
+        self::assertContains('concrete_roof_tile', $materials);
+        self::assertNotContains('metal_tile_sheet', $materials);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
     public function test_dialogue_failure_rolls_back_the_fact_decision_and_session_projection_together(): void
     {
         [$actor, $session, $models] = $this->fixture();

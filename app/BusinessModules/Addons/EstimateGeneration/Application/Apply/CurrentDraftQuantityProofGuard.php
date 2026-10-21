@@ -49,6 +49,7 @@ final readonly class CurrentDraftQuantityProofGuard
             : GeometryRelationOverlay::apply($snapshot, $decisions, $documentVersions);
         $openingScopes = OpeningEstimateScope::select($openingSnapshot, $decisions, $documentVersions);
         $openingSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::select($openingSnapshot, $decisions, $documentVersions);
+        $roofSystems = \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::select($snapshot, $decisions, $documentVersions);
         $ids = [];
         if ($universal) {
             $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)
@@ -103,8 +104,17 @@ final readonly class CurrentDraftQuantityProofGuard
                         }
                     }
                     if (! WallWorkItemExpander::permits($item, $wallScopes, $universal) || ! OpeningWorkItemExpander::permits($item, $openingScopes)
-                        || ($universal && ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($item, $openingSystems))) {
+                        || ($universal && ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::permits($item, $openingSystems))
+                        || ($universal && ! \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::permits($item, $roofSystems))) {
                         $this->reject();
+                    }
+                    if ($universal && \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::isRoofWork($item)) {
+                        foreach ($roofSystems[$targetEntity]['evidence_ids'] as $id) {
+                            if (preg_match('/\Aevidence:([1-9][0-9]*)\z/', $id, $match) !== 1) {
+                                $this->reject();
+                            }
+                            $ids[(int) $match[1]] = (int) $match[1];
+                        }
                     }
                     if (isset($item['metadata']['wall_assembly'])) {
                         foreach ($wallScopes[$targetEntity]['evidence_ids'] ?? [] as $id) {

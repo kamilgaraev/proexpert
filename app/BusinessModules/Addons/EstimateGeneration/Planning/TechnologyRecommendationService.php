@@ -169,13 +169,15 @@ final readonly class TechnologyRecommendationService
             $matched = false;
             foreach ($candidates as $fact) {
                 $evidence[$fact->id] = ['fact_id' => $fact->id, 'type' => $fact->type, 'value' => $fact->value, 'unit' => $fact->unit];
-                if (in_array($key, ['minimum_slope_degrees', 'maximum_slope_degrees'], true)) {
+                if (in_array($key, ['roof_slope_degrees', 'minimum_slope_degrees', 'maximum_slope_degrees'], true)) {
                     if ($fact->unit !== 'degree') {
                         $reasons[] = ['condition' => $key, 'status' => 'invalid_unit', 'fact_id' => $fact->id];
 
                         return ['unavailable', $reasons, array_values($evidence)];
                     }
-                    if (is_numeric($fact->value) && is_numeric($expected)) {
+                    if ($key === 'roof_slope_degrees') {
+                        $matched = is_numeric($fact->value) && (float) $fact->value > 0 && (float) $fact->value < 90;
+                    } elseif (is_numeric($fact->value) && is_numeric($expected)) {
                         $number = (float) $fact->value;
                         $boundary = (float) $expected;
                         $matched = $key === 'minimum_slope_degrees' ? $number >= $boundary : $number <= $boundary;

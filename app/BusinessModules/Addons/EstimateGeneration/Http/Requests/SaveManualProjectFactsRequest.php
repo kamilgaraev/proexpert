@@ -21,7 +21,16 @@ final class SaveManualProjectFactsRequest extends FormRequest
         return [
             'state_version' => ['required', 'integer', 'min:0'], 'request_id' => ['required', 'uuid'],
             'entities' => ['required', 'array', 'min:1', 'max:100'],
-            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice,native_question,wall_assembly,opening_scope,opening_system'],
+            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice,native_question,wall_assembly,opening_scope,opening_system,roof_system'],
+            'entities.*.roof_system' => ['sometimes', 'required', 'array:system,entity_fingerprint,reason'],
+            'entities.*.roof_system.system' => ['required_with:entities.*.roof_system', \Illuminate\Validation\Rule::in(\App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::SYSTEMS)],
+            'entities.*.roof_system.entity_fingerprint' => ['required_with:entities.*.roof_system', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'entities.*.roof_system.reason' => ['required_with:entities.*.roof_system', 'string', 'min:10', 'max:1000',
+                static function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (is_string($value) && strlen($value) > 1000) {
+                        $fail(trans_message('estimate_roof.system_invalid'));
+                    }
+                }],
             'entities.*.opening_system' => ['sometimes', 'required', 'array:system,entity_fingerprint,reason'],
             'entities.*.opening_system.system' => ['required_with:entities.*.opening_system', \Illuminate\Validation\Rule::in(array_keys(\App\BusinessModules\Addons\EstimateGeneration\Quantities\OpeningSystemScope::SYSTEMS))],
             'entities.*.opening_system.entity_fingerprint' => ['required_with:entities.*.opening_system', 'string', 'regex:/\A[a-f0-9]{64}\z/'],

@@ -9,7 +9,7 @@ final class WorkEntityScopePolicy
     public const BINDING_CONTRACT = 'work-entity-binding:v2';
 
     private const TYPES = [
-        'roof.rafters' => 'roof', 'roof.membrane' => 'roof', 'roof.battens' => 'roof',
+        'roof.covering' => 'roof', 'roof.rafters' => 'roof', 'roof.membrane' => 'roof', 'roof.battens' => 'roof',
         'roof.fascia' => 'roof', 'roof.bargeboard' => 'roof', 'site.apron' => 'site',
         'ceiling.brandering' => 'room', 'ceiling.insulation' => 'room', 'ceiling.cornice' => 'room',
         'ceiling.hatch' => 'room', 'sanitary.grab_rails' => 'room',

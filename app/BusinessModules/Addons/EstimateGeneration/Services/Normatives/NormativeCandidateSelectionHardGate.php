@@ -72,6 +72,12 @@ final readonly class NormativeCandidateSelectionHardGate
             ...$this->strings($candidate['work_composition'] ?? []),
         ]));
         $workText = trim((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''));
+        if (\App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::isRoofWork($workItem)
+            && isset($workItem['metadata']['roof_system'])
+            && ! \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\RoofSystemSpecification::compatible(
+                (string) ($workItem['metadata']['roof_system']['system'] ?? ''), $candidateText)) {
+            $reasons[] = 'roof_system_mismatch';
+        }
         $semanticCompatible = $candidateText !== '' && $workText !== '' && $this->semanticCompatibilityService->isCompatible(
             $candidateText,
             $workText,
@@ -82,6 +88,10 @@ final readonly class NormativeCandidateSelectionHardGate
                 'object' => $intent->object,
                 'object_type' => $objectType,
                 'candidate_title' => (string) ($candidate['name'] ?? ''),
+                'specialization_evidence' => \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::isRoofWork($workItem)
+                    && ($workItem['metadata']['roof_system']['contract'] ?? null) === \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoofSystemScope::CONTRACT
+                    && is_array($workItem['specialization_evidence'] ?? null)
+                    ? $workItem['specialization_evidence'] : [],
             ],
             $profile->forbiddenDomainTerms,
         );

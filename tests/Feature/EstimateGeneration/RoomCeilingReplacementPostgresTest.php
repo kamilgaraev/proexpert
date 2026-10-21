@@ -174,6 +174,41 @@ final class RoomCeilingReplacementPostgresTest extends EstimateGenerationCanonic
         $handler->show($actor, $session->project_id, $session->id, 'ceiling:hatch');
     }
 
+    public function test_native_http_replacements_keep_local_formula_proof_limits_in_a_large_project(): void
+    {
+        [$actor, $session, $url] = $this->fixture();
+        $writer = app(SaveManualProjectFacts::class);
+        foreach (array_chunk(range(1, 120), 60) as $chunk) {
+            $entities = array_map(static fn (int $index): array => ['key' => 'independent-equipment-'.$index,
+                'type' => 'equipment', 'name' => 'Independent equipment '.$index,
+                'parameters' => ['equipment_count' => ['value' => '1', 'unit' => 'pcs', 'basis' => 'input']]], $chunk);
+            $writer->handle($actor, $session->project_id, $session->id, $session->fresh()->state_version,
+                (string) Str::uuid(), ['entities' => $entities]);
+        }
+        $session->refresh()->update(['status' => 'estimate_review_required']);
+        $outbound = count(Http::recorded());
+        foreach (['rough', 'brandering', 'insulation', 'finish', 'cornice'] as $key) {
+            $preview = $this->getJson($url.'?parent_work_item_key=ceiling:'.$key)->assertOk()->json('data');
+            self::assertSame($key === 'cornice' ? '50.66' : '34.6044', $preview['replacement_total']);
+            self::assertSame('0', $this->postJson($url, $this->input($preview))->assertOk()->json('data.cost_units'));
+        }
+        $saved = $session->fresh();
+        $rows = RoomCeilingReplacement::rows($saved->draft_payload);
+        self::assertCount(26, $rows);
+        self::assertSame('1', $rows[25]['quantity']);
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $saved->organization_id,
+            (int) $saved->project_id, (int) $saved->id, 10001)['snapshot'];
+        self::assertGreaterThan(256, count($snapshot->evidence));
+        foreach (array_slice($rows, 0, 25) as $row) {
+            self::assertLessThanOrEqual(256, count($row['quantity_evidence']['evidence_ids']));
+            self::assertContains('room_ceiling_scope', array_keys($row['quantity_evidence']['formula_inputs']['operands'][0]['snapshot_identity']));
+        }
+        self::assertSame(500, $saved->input_payload['qa_limit_units']);
+        self::assertSame('5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', $saved->input_payload['qa_run_id']);
+        self::assertSame($outbound, count(Http::recorded()));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $saved->id)->count());
+    }
+
     public function test_stale_or_tampered_preview_changes_nothing(): void
     {
         [$actor, $session, $url] = $this->fixture();

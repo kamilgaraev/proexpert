@@ -12,6 +12,47 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeCandidateManualSearchServiceTest extends TestCase
 {
+    public function test_ordinary_roof_search_preserves_its_existing_material_context(): void
+    {
+        $matcher = new FakeManualSearchMatcher;
+        $service = new NormativeCandidateManualSearchService($matcher, new NormativeCandidatePresenter);
+        $metadata = [
+            'composition_work_key' => 'roof.covering',
+            'specialization_scenario' => 'metal_tile',
+            'material_assumption' => 'Металлочерепица',
+        ];
+        $session = new EstimateGenerationSession([
+            'id' => 17,
+            'input_payload' => [],
+            'draft_payload' => [
+                'local_estimates' => [[
+                    'key' => 'local-roof',
+                    'title' => 'Кровля',
+                    'scope_type' => 'roof',
+                    'sections' => [[
+                        'key' => 'section-roof',
+                        'title' => 'Покрытие',
+                        'work_items' => [[
+                            'key' => 'roof.covering',
+                            'item_type' => 'priced_work',
+                            'name' => 'Устройство кровли из металлочерепицы',
+                            'unit' => 'м2',
+                            'quantity' => 26.0,
+                            'metadata' => $metadata,
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $result = $service->search($session, 'roof.covering', '12-01-023', 7);
+
+        self::assertSame('12-01-023', $matcher->workItem['normative_search_text']);
+        self::assertSame($metadata, $matcher->workItem['metadata']);
+        self::assertSame('roof', $matcher->context['scope_type']);
+        self::assertCount(1, $result['candidates']);
+    }
+
     public function test_searches_same_normative_catalog_as_ai_matching_with_work_item_context(): void
     {
         $matcher = new FakeManualSearchMatcher;
