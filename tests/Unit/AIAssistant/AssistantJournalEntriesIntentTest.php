@@ -70,4 +70,23 @@ final class AssistantJournalEntriesIntentTest extends TestCase
             }
         }
     }
+
+    public function test_date_order_and_quantity_constraints_do_not_read_an_unfiltered_first_page(): void
+    {
+        foreach (['Покажи записи журнала №1 после 5 октября.', 'Покажи последние 10 записей журнала №1.',
+            'Покажи десять записей журнала №1.', 'Покажи записи журнала №1 от новых к старым.',
+            'Покажи записи журнала №1, №2.', 'Покажи записи журнала №1 начиная с 51 начиная с 101.',
+            'Покажи записи журнала №1 по этажам.', 'Покажи записи журнала №1 работников.', 'Покажи записи журнала №1 по обществу.'] as $query) {
+            self::assertNotSame('get_project_journal_entries', AssistantOperationalReaderRegistry::intent($query)['name'] ?? null, $query);
+        }
+    }
+
+    public function test_page_hint_retains_journal_identity_and_explicit_project_for_a_new_request(): void
+    {
+        $labels = require dirname(__DIR__, 3).'/lang/ru/ai_assistant_journal_entries.php';
+        $hint = strtr($labels['more'], [':number' => '1', ':name' => 'Общий журнал', ':project' => 'Проект тестирования', ':next' => '51']);
+        self::assertSame(['project_id' => 101, 'journal_name' => 'Общий журнал', 'journal_number' => '1', 'offset' => 50],
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantJournalEntriesIntent::arguments(101, $hint));
+        self::assertSame('Проект тестирования', AssistantNamedProjectReadScope::name(['request' => ['message' => $hint]]));
+    }
 }

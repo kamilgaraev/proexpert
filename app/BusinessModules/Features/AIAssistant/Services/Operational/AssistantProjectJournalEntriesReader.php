@@ -160,7 +160,8 @@ final readonly class AssistantProjectJournalEntriesReader extends AssistantProje
             }
             $lines[] = '['.trans_message('ai_assistant_journal_entries.open_entry').'](/journals/'.$journal['id'].'/entries/'.$entry['id'].')';
         }
-        $lines[] = $data['has_more'] ? trans_message('ai_assistant_journal_entries.more', ['next' => $data['offset'] + count($data['entries']) + 1])
+        $lines[] = $data['has_more'] ? trans_message('ai_assistant_journal_entries.more', ['next' => $data['offset'] + count($data['entries']) + 1,
+            'number' => self::text($journal['number']), 'name' => self::text($journal['name']), 'project' => self::text($data['project']['name'])])
             : trans_message('ai_assistant_journal_entries.'.($data['entry_total'] === 0 ? 'empty' : ($data['offset'] === 0 ? 'complete' : 'window')),
                 ['total' => $data['entry_total'], 'returned' => count($data['entries']), 'start' => $data['offset'] + 1]);
 

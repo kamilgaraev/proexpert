@@ -101,6 +101,8 @@ final class AssistantJournalEntriesReadTest extends TestCase
         self::assertSame(4000, mb_strlen($result['data']['entries'][0]['description']));
         self::assertTrue($result['data']['entries'][0]['description_truncated']);
         self::assertStringContainsString('Это часть списка', $result['server_formatted_answer']);
+        self::assertStringContainsString('Покажи записи журнала №1 «Общий журнал»', $result['server_formatted_answer']);
+        self::assertStringContainsString('в проекте «'.$project->name.'» начиная с 51.', $result['server_formatted_answer']);
         self::assertStringNotContainsString('Показаны все записи', $result['server_formatted_answer']);
         $last = $reader->read($fixture->owner, (int) $fixture->organization->id, array_replace($args, ['offset' => 50]));
         self::assertCount(1, $last['data']['entries']);

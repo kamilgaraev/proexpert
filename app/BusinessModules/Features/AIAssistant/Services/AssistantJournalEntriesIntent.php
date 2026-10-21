@@ -10,6 +10,10 @@ final class AssistantJournalEntriesIntent
 
     private const JOURNAL = 'журнал(?:а|е|у|ом)?(?:\s+(?:производства\s+)?работ)?';
 
+    private const ADJECTIVE_ENDING = '(?:ый|ий|ого|его|ому|ему|ом|ем|ым|им|ая|ую|ой|ей|ое|ее|ые|ие|ых|их|ыми|ими)';
+
+    private const LIST_WORD = '/^(?:в|во|на|по|с|со|и|а|мне|пожалуйста|можешь|можете|хочу|увидеть|получить|покаж(?:и|ите)|показать|перечисл(?:и|ите)|дай(?:те)?|расскажи|прочитай|список|все|всех|всеми|всю|весь|(?:кажд|общ|текущ|выбранн|данн|доступн|полн|ожидающ)'.self::ADJECTIVE_ENDING.'|запис(?:ь|и|ей|ям|ями|ях)|журнал(?:а|е|у|ом)?|производства|работ(?:а|ы|у|е|ам|ами|ах|ой)?|(?:проект|объект)(?:а|у|ом|е)?|эт(?:от|ого|ому|ом|им|а|у|ой|о|и|их|ими)|наш(?:его|ему|ем|им|а|у|ей|е|и|их|ими)?|дат(?:а|ы|у|е|ам|ами)?|содержани[ея]|содержим(?:ое|ого|ом|ым)|текст(?:ы|а|ов)?|статус(?:ы|а|ов|ом|ами)?|согласования|нуж(?:ны|на|ен|но)|включая)$/iu';
+
     public static function hasIntent(string $query): bool
     {
         $query = self::semanticQuery($query);
@@ -29,11 +33,20 @@ final class AssistantJournalEntriesIntent
             && filter_var($page[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 10000]]) === false) {
             return false;
         }
+        $selector = '(?:№|#|номер(?:ом|а)?)\s*[\pL\pN._\/-]+';
+        $position = 'начиная\s+с\s+[0-9]+';
+        if (! self::hasIntent($query) || preg_match_all('/'.$selector.'/iu', $query) > 1
+            || preg_match_all('/'.$position.'/iu', $query) > 1) {
+            return false;
+        }
+        $words = preg_split('/[^\pL\pN]+/u', preg_replace('/'.$selector.'|'.$position.'/iu', ' ', $query) ?? $query, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        foreach ($words as $word) {
+            if (preg_match(self::LIST_WORD, $word) !== 1) {
+                return false;
+            }
+        }
 
-        return self::hasIntent($query)
-            && preg_match('/\b(?:не|без|котор[а-яё]*|где|если)\b/iu', $query) !== 1
-            && preg_match('/создай|измени|удали|подпиши|согласуй|отправь|добавь|исправь|выгруз|сформир|excel|xlsx|csv|pdf|файл|плат[её]ж|договор|смет|стоим|бюджет|остатк|материал|техник|охран|безопасност|график|сотрудник|персонал|rfi|сдач|комплект|поставк|закуп|при[её]мк|расход|затрат|средств|наряд|автор|кто|объ[её]м|об[ъь][её]м|количеств|погод|бригад|рабочи|примечан|\\bакт(?:ы|ов|а|ам|ами|ах)?\\b/iu', $query) !== 1
-            && preg_match('/только|кроме|исключая|не\s+показывай|за\s+|между|(?:до|по)\s+\d|с\s+\d{1,4}(?!\d)|сегодня|вчера|(?:утвержд[её]нн|согласованн|отклон[её]нн|чернов|подписанн|несогласованн)[а-яё]*\s+запис|статус(?:ом|е)\s+(?:утверж|соглас|отклон|чернов|на\s+соглас|draft|approved|submitted|rejected)|(?<!включая\s)\bожидающ[а-яё]*\s+согласован|журналов|(?:№|#)\s*[^\s]+\s+и\s*(?:№|#)/iu', preg_replace('/начиная\s+с\s+[0-9]+/iu', '', $query) ?? $query) !== 1;
+        return $words !== [] && preg_match('/(?<!включая\s)\bожидающ[а-яё]*\s+согласован/iu', $query) !== 1;
     }
 
     public static function arguments(int $projectId, string $query): array
@@ -71,6 +84,8 @@ final class AssistantJournalEntriesIntent
     {
         $query = AssistantNamedProjectReadScope::semanticQuery($query);
 
-        return preg_replace('/('.self::JOURNAL.'\s*(?:(?:№|номер(?:ом|а)?|#)\s*[\pL\pN._\/-]+)?\s*)'.self::QUOTED.'/iu', '$1', $query) ?? $query;
+        $query = preg_replace('/('.self::JOURNAL.'\s*(?:(?:№|номер(?:ом|а)?|#)\s*[\pL\pN._\/-]+)?\s*)'.self::QUOTED.'/iu', '$1', $query) ?? $query;
+
+        return preg_replace('/\s+/u', ' ', trim($query)) ?? $query;
     }
 }
