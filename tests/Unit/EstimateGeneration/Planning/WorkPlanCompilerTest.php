@@ -494,6 +494,46 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
     }
 
+    #[DataProvider('explicitRequestEvidenceBranches')]
+    public function test_explicit_request_survives_document_and_geometry_only_branches(string $description, string $quantityKey, string $context, string $expectedProfile, array $expectedPackages, string $selected): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse([
+            'description' => $description, 'generation_mode' => 'strict_documents',
+        ], [[
+            'id' => 82, 'filename' => 'project.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'extracted_text' => $context, 'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'quantity_takeoffs' => [[
+                'scope_key' => 'specification_quantity', 'quantity' => 12, 'unit' => 'м2',
+                'source_refs' => [['document_id' => 82]], 'normalized_payload' => ['quantity_key' => $quantityKey],
+            ]],
+        ]]);
+        $planner = new PackagePlannerService;
+        $profile = $planner->profileFromAnalysis($analysis);
+        self::assertSame($expectedProfile, $profile->objectType);
+        self::assertSame($expectedPackages, array_column($planner->plan($profile)->packages, 'key'));
+        self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
+        self::assertTrue($planner->documentRequirements($profile)['missing_for_full_estimate']);
+
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [$selected]];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        $requestedKey = $selected === 'roofing' ? 'roof' : 'heating';
+        self::assertSame([$requestedKey], array_column($payload['local_estimates'], 'key'));
+        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+        self::assertNotEmpty($items);
+        foreach ($items as $item) {
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+            self::assertNull($item['price_source']);
+            self::assertSame([], $item['source_refs']);
+        }
+    }
+
+    public static function explicitRequestEvidenceBranches(): iterable
+    {
+        yield 'document_evidence' => ['Устройство отопления', 'foundation.concrete', 'Ведомость объёмов', 'document_evidence', ['custom-foundation', 'heating'], 'heating'];
+        yield 'floor_plan_geometry' => ['Устройство кровли', 'rough.walls', 'Планировка помещений', 'floor_plan_geometry', ['rough_finishing', 'finish_finishing', 'roof'], 'roofing'];
+    }
+
     public function test_unknown_document_work_retains_source_and_selected_scope(): void
     {
         $source = [['document_id' => 82, 'page_number' => 3]];

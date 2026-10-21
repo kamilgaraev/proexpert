@@ -17,9 +17,9 @@ class PackagePlannerService
         if ($profile->objectType === 'industrial' || ($profile->planningSignals['evaluation_profile'] ?? null) === 'industrial') {
             $packages = $this->industrialPackages();
         } elseif ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
-            $packages = $this->floorPlanEvidencePackages($profile);
+            $packages = $this->withRequestedScopePackages($this->floorPlanEvidencePackages($profile), $profile);
         } elseif ($this->isDocumentEvidenceOnly($profile)) {
-            $packages = $this->documentEvidencePackages($profile);
+            $packages = $this->withRequestedScopePackages($this->documentEvidencePackages($profile), $profile);
         } elseif ($this->isMixedWarehouseOffice($profile)) {
             $packages = $this->mixedWarehouseOfficePackages();
         } elseif ($this->isWarehouse($profile)) {
@@ -33,13 +33,7 @@ class PackagePlannerService
                 $packages,
             );
         } else {
-            $packages = $this->documentEvidencePackages($profile);
-            $documentScopes = array_column($packages, 'scope_type');
-            foreach ($profile->planningSignals['requested_scope_packages'] ?? [] as $package) {
-                if (! in_array($package['scope_type'], $documentScopes, true)) {
-                    $packages[] = $package;
-                }
-            }
+            $packages = $this->withRequestedScopePackages($this->documentEvidencePackages($profile), $profile);
         }
 
         $packages = $this->withReviewPackages($packages, $profile);
@@ -197,6 +191,18 @@ class PackagePlannerService
         };
 
         return $key === null ? null : $this->package($key, (string) ($scope['title'] ?? $key), $packageScope, 1, 20);
+    }
+
+    private function withRequestedScopePackages(array $packages, ObjectProfileData $profile): array
+    {
+        $evidenceScopes = array_column($packages, 'scope_type');
+        foreach ($profile->planningSignals['requested_scope_packages'] ?? [] as $package) {
+            if (! in_array($package['scope_type'], $evidenceScopes, true)) {
+                $packages[] = $package;
+            }
+        }
+
+        return $packages;
     }
 
     private function isMixedWarehouseOffice(ObjectProfileData $profile): bool
