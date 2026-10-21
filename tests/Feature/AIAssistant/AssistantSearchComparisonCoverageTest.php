@@ -317,10 +317,18 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertStringContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
 
-    public function test_signed_zero_results_cover_both_scopes(): void
+    public static function comparisonCommands(): array
+    {
+        return [['Сравни все акты организации с проектом '],
+            ['Покажи разницу между всеми актами организации и актами проекта '],
+            ['Покажи различия между всеми актами организации и актами проекта ']];
+    }
+
+    #[DataProvider('comparisonCommands')]
+    public function test_signed_zero_results_cover_both_scopes(string $prefix): void
     {
         ContractPerformanceAct::query()->where('project_id', $this->project->id)->delete();
-        $response = $this->ask([$this->arguments(null), $this->arguments($this->project->id)]);
+        $response = $this->ask([$this->arguments(null), $this->arguments($this->project->id)], $prefix.$this->project->id);
         self::assertSame([0, 0], array_column(array_column($this->observedResults, 'result_window'), 'total'));
         self::assertStringNotContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
@@ -356,13 +364,14 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertSame([], $response['message']['metadata']['source_refs']);
     }
 
-    public function test_affirmative_comparison_still_rejects_different_subjects_in_each_scope(): void
+    #[DataProvider('comparisonCommands')]
+    public function test_affirmative_comparison_still_rejects_different_subjects_in_each_scope(string $prefix): void
     {
         $contracts = array_replace($this->arguments($this->project->id), [
             'domain' => 'contracts', 'entity_type' => 'contract', 'fields' => ['id', 'number'],
         ]);
         $response = $this->ask([$this->arguments(null), $contracts],
-            'Сравни все акты организации с договорами проекта '.$this->project->id);
+            $prefix.$this->project->id);
         self::assertSame([1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
         self::assertTrue($response['message']['metadata']['needs_clarification']);
         self::assertSame([], $response['message']['metadata']['source_refs']);

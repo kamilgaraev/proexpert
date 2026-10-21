@@ -48,6 +48,12 @@ final class AssistantReportEntityQuery
                 $name = trim((string) ($parts[0] ?? ''));
             } else {
                 $prefix = substr($message, 0, $offset);
+                $groupField = '(?:статус(?:а|у)|валют(?:ы|е)|дат(?:ы|е)|сумм(?:ы|е)|номер(?:а|у))';
+                if ($type === 'project'
+                    && preg_match('/(?<![\pL\pN])(?:в\s+разрезе|с\s+детализацией\s+по)\s*$/iu', $prefix) === 1
+                    && preg_match('/^(?:и|или)\s+'.$groupField.'(?:\s*(?:,|и|или)\s*'.$groupField.'){0,4}\s*(?:[.;!?]|$)/iu', $tail) === 1) {
+                    continue;
+                }
                 if ($type === 'project' && preg_match('/^(?:и|или)\s+/iu', $tail) === 1
                     && ((preg_match('/(?<![\pL\pN])(?:колонк(?:ами|и|ах|ок)|столбц(?:ами|ы|ах|ов)|пол(?:ями|я|ях|ям|ей))\s*:?[^;.!?\r\n]*$/iu', $prefix) === 1
                             && preg_match('/(?<![\pL\pN])(?:по|для|в|во|на|из|с|со)\s*$/iu', $prefix) !== 1)

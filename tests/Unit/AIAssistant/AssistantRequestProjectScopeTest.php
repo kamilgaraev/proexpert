@@ -6,6 +6,7 @@ namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComparisonSpecification;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 use PHPUnit\Framework\TestCase;
 
@@ -297,6 +298,10 @@ final class AssistantRequestProjectScopeTest extends TestCase
             'Сделай все акты организации со столбцами проект и сумма',
             'Все акты организации сгруппируй по полям проект и статус',
             'Все акты организации сгруппируй по проекту и статусу',
+            'Все акты организации в разрезе проекта и статуса',
+            'Все акты организации с детализацией по проекту и статусу',
+            'Все акты организации в разрезе проекта и валюты',
+            'Все акты организации с детализацией по проекту и дате',
             'Все акты организации с колонками номер, проект и статус'] as $question) {
             self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
             $search = static function (): never {
@@ -332,6 +337,50 @@ final class AssistantRequestProjectScopeTest extends TestCase
         $arguments['sections'][1]['order_by'][0]['field'] = 'metric_2';
         $this->expectException(AssistantReportScopeAmbiguous::class);
         AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments);
+    }
+
+    public function test_noun_comparisons_require_pairwise_subjects(): void
+    {
+        foreach (['различия', 'разницу'] as $noun) {
+            $question = 'Покажи '.$noun.' между всеми актами организации и актами проекта 100';
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertSame(['project_ids' => [100], 'pairwise' => true], $scope->searchCoverageRequirements($question));
+            $sections = [['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act'],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'contracts', 'entity_type' => 'contract']];
+            try {
+                $scope->bindReportScope($question, ['sections' => $sections]);
+                self::fail('Different subjects accepted for '.$noun);
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+            $sections[1]['domain'] = 'acts';
+            $sections[1]['entity_type'] = 'performance_act';
+            self::assertSame(['sections' => $sections], $scope->bindReportScope($question, ['sections' => $sections]));
+        }
+    }
+
+    public function test_comparison_nouns_keep_negation_literal_names_and_adjective_boundaries(): void
+    {
+        foreach (['Покажи различные акты организации и договоры проекта 100',
+            'Все акты организации, а также договоры проекта 100 с колонками номер и разница',
+            'Все акты организации, а также договоры проекта 100 с полями номер и различия',
+            'Не показывай основные различия между всеми актами организации и актами проекта 100',
+            'Не нужно показать ключевую разницу между всеми актами организации и актами проекта 100',
+            'Различия не нужны', 'Разница не нужна', 'Без различий', 'Без разницы',
+            'Не показывай разницу', 'Не нужно показывать различия', 'Не нужна разница',
+            'Все акты организации, а также договоры проекта «Различия»',
+            'Все акты организации, а также договоры проекта «Разница»'] as $question) {
+            self::assertFalse(AssistantReportComparisonSpecification::requestsComparison($question), $question);
+        }
+        foreach (['Различия', 'Разница'] as $name) {
+            self::assertFalse(AssistantReportComparisonSpecification::requestsComparison(
+                'Все акты организации, а также договоры проекта '.$name, [$name]));
+        }
+        self::assertTrue(AssistantReportComparisonSpecification::requestsComparison('Не показывай разницу, но сравни все акты организации с проектом 100'));
+        foreach (['Покажи разницу.', 'Найди основные различия.', 'В чём разница?',
+            'Различия между всеми актами организации и актами проекта 100'] as $question) {
+            self::assertTrue(AssistantReportComparisonSpecification::requestsComparison($question), $question);
+        }
     }
 
     public function test_each_comparison_subject_requires_all_compared_projects(): void
@@ -404,6 +453,15 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
         self::assertSame('И Статус', AssistantReportEntityQuery::extract('С полями номер и сумма для проекта И Статус', 'project'));
         self::assertSame('И Статус', AssistantReportEntityQuery::extract('С колонками проект «И Статус»', 'project'));
+        foreach (['Все акты организации в разрезе проекта «И Статуса»' => 'И Статуса',
+            'Все акты организации с детализацией по проекту «И Статусу»' => 'И Статусу',
+            'Все акты организации по проекту И Статуса' => 'И Статуса',
+            'Все акты организации в разрезе проекта И Статуса Корпуса Б' => 'И Статуса Корпуса Б',
+            'Все акты организации в разрезе проекта И Север' => 'И Север',
+            'Все акты организации в разрезе проекта И Статус' => 'И Статус'] as $question => $name) {
+            self::assertSame($name, AssistantReportEntityQuery::extract($question, 'project'), $question);
+            self::assertSame($name, AssistantReportEntityQuery::extract($question, 'project', true), $question);
+        }
     }
 
     public function test_project_and_object_adjectives_do_not_request_all_projects(): void

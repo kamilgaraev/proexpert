@@ -9,7 +9,11 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadS
 
 final class AssistantReportComparisonSpecification
 {
-    public const COMPARISON_WORD = '(?<![\pL\pN])(?:сравн|сопостав|свер)[а-яё]*(?![\pL\pN])';
+    private const COMPARISON_STEM = '(?:сравн|сопостав|свер)[а-яё]*';
+
+    private const COMPARISON_NOUN = '(?:разниц(?:а|ы|е|у|ей|ам|ами|ах)|различи(?:е|я|й|ю|ем|ям|ями|ях))';
+
+    public const COMPARISON_WORD = '(?<![\pL\pN])(?:'.self::COMPARISON_STEM.'|'.self::COMPARISON_NOUN.')(?![\pL\pN])';
 
     public static function requestsComparison(string $question, array $resolvedProjectNames = []): bool
     {
@@ -18,12 +22,16 @@ final class AssistantReportComparisonSpecification
             $question = preg_replace('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])(?:\s*:\s*|\s+)'.preg_quote($resolvedProjectName, '/').'(?![\pL\pN])/iu', ' ', $question) ?? $question;
         }
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
-        $question = preg_replace('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?|без\s+)'.self::COMPARISON_WORD.'/iu', ' ', $question) ?? $question;
+        $definition = '(?:(?:основн|ключев|существенн|главн)[а-яё]*\s+){0,2}';
+        $question = preg_replace('/(?<![\pL\pN])(?:не\s+(?:(?:надо|нуж(?:но|на|ны|ен)|следует|стоит)\s+)?(?:(?:показ[а-яё]*|ищи|искать|най[а-яё]*|выяв[а-яё]*|определ[а-яё]*|объясн[а-яё]*|укаж[а-яё]*)\s+)?|без\s+)'.$definition.self::COMPARISON_WORD.'/iu', ' ', $question) ?? $question;
         $object = '(?:их|это|ничего|(?:(?:эти|этих|полученные|полученных)\s+)?(?:данные|данных|результаты|результатов|отч[её]ты|отч[её]тов|сведения|сведений))';
         $modifier = '(?:между\s+(?:собой|ними)|друг\s+с\s+другом|сейчас|пока|здесь|отдельно|дополнительно)';
         $question = preg_replace('/'.self::COMPARISON_WORD.'(?:\s+'.$object.')?(?:\s+'.$modifier.'){0,2}\s*(?:[—–:-]\s*)?не\s+(?:нуж(?:но|на|ны|ен)|надо|требуется|следует|стоит)(?![\pL\pN])/iu', ' ', $question) ?? $question;
 
-        return preg_match('/'.self::COMPARISON_WORD.'/iu', $question) === 1;
+        $noun = '(?<![\pL\pN])'.self::COMPARISON_NOUN.'(?![\pL\pN])';
+
+        return preg_match('/(?<![\pL\pN])'.self::COMPARISON_STEM.'(?![\pL\pN])/iu', $question) === 1
+            || preg_match('/(?<![\pL\pN])(?:покажи(?:те)?|найди(?:те)?|выяви(?:те)?|определи(?:те)?|объясни(?:те)?|укажи(?:те)?|в\s+ч[её]м)\s+'.$definition.$noun.'|'.$noun.'\s+между(?![\pL\pN])/iu', $question) === 1;
     }
 
     public static function assertCompatible(string $question, array $sections, array $projectIds, array $resolvedProjectNames = []): void

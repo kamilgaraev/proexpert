@@ -90,6 +90,12 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'comparison different metric labels remains valid' => [true, false, false, 7, 5, false, '', 'compare_equivalent'],
             'project column list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_columns'],
             'project grouping list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_grouping'],
+            'project breakdown list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_breakdown'],
+            'project detail list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_detail'],
+            'difference noun preserves comparable workbook sheets' => [true, false, false, 7, 5, false, '', 'compare_noun_difference'],
+            'distinctions noun preserves comparable workbook sheets' => [true, false, false, 7, 5, false, '', 'compare_noun_distinctions'],
+            'difference noun rejects different subjects' => [true, false, false, 7, 5, false, '', 'compare_subject_noun_difference'],
+            'distinctions noun rejects different subjects' => [true, false, false, 7, 5, false, '', 'compare_subject_noun_distinctions'],
             'reconcile explicit project preserves both subjects' => [true, false, false, 7, 5, false, '', 'reconcile_explicit'],
             'reconcile different entities is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_reconcile_entity'],
             'repeated entity preserves both comparison subjects' => [true, false, false, 7, 5, false, '', 'repeated_entity_explicit'],
@@ -290,12 +296,18 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         if (in_array($variant, ['project_adjective', 'object_adjective'], true)) {
             $question = 'Сформируй CSV: сгруппируй акты по всем '.($variant === 'project_adjective' ? 'проектным' : 'объектным').' статусам и валютам.';
         }
-        if (in_array($variant, ['field_columns', 'field_grouping'], true)) {
-            $question = $variant === 'field_columns' ? 'Сделай CSV по всем актам организации с колонками проект и статус'
-                : 'Сделай CSV по всем актам организации; сгруппируй по полям проект и статус.';
+        if (in_array($variant, ['field_columns', 'field_grouping', 'field_breakdown', 'field_detail'], true)) {
+            $question = match ($variant) {
+                'field_columns' => 'Сделай CSV по всем актам организации с колонками проект и статус',
+                'field_breakdown' => 'Сделай CSV по всем актам организации в разрезе проекта и статуса.',
+                'field_detail' => 'Сделай CSV по всем актам организации с детализацией по проекту и статусу.',
+                default => 'Сделай CSV по всем актам организации; сгруппируй по полям проект и статус.',
+            };
         }
         if ($comparison) {
             $question = match ($variant) {
+                'compare_noun_difference', 'compare_subject_noun_difference' => 'Сделай Excel: покажи разницу между всеми актами организации и актами проекта '.$first->id,
+                'compare_noun_distinctions', 'compare_subject_noun_distinctions' => 'Сделай Excel: покажи различия между всеми актами организации и актами проекта '.$first->id,
                 'wrapped_entity_explicit' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам проекта '.$second->id,
                 'wrapped_entity_current' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам выбранного проекта',
                 'composition_negative' => 'Сделай Excel: все акты организации, а также договоры проекта '.$first->id.'. Сравнивать их не нужно',
@@ -332,7 +344,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                 $projectSection['metrics'] = [];
                 $projectSection['order_by'] = [['field' => 'id', 'direction' => 'asc']];
             }
-            if (in_array($variant, ['compare_subject_entity', 'compare_subject_reconcile_entity', 'compare_subject_repeated_entity'], true)) {
+            if (in_array($variant, ['compare_subject_entity', 'compare_subject_reconcile_entity', 'compare_subject_repeated_entity', 'compare_subject_noun_difference', 'compare_subject_noun_distinctions'], true)) {
                 $projectSection['domain'] = 'contracts';
                 $projectSection['entity_type'] = 'contract';
             }
