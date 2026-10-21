@@ -120,9 +120,12 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 ->where('collections.dataset_version_id', $requested->datasetId)
                 ->when($normativeSections !== [], static function ($sectionQuery) use ($normativeSections): void {
                     $sectionQuery->where(static function ($allowedSections) use ($normativeSections): void {
-                        foreach ($normativeSections as $index => $section) {
-                            $method = $index === 0 ? 'where' : 'orWhere';
-                            $allowedSections->{$method}('norms.section_code', 'like', $section.'%');
+                        $allowedSections->whereRaw('FALSE');
+                        foreach ($normativeSections as $section) {
+                            $pattern = NormativeSectionPrefix::postgresPattern($section);
+                            if ($pattern !== null) {
+                                $allowedSections->orWhereRaw('norms.section_code ~ ?', [$pattern]);
+                            }
                         }
                     });
                 })
@@ -1050,9 +1053,12 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             ->where('collections.dataset_version_id', $requested->datasetId)
             ->when($normativeSections !== [], static function ($sectionQuery) use ($normativeSections): void {
                 $sectionQuery->where(static function ($allowedSections) use ($normativeSections): void {
-                    foreach ($normativeSections as $index => $section) {
-                        $method = $index === 0 ? 'where' : 'orWhere';
-                        $allowedSections->{$method}('norms.section_code', 'like', $section.'%');
+                    $allowedSections->whereRaw('FALSE');
+                    foreach ($normativeSections as $section) {
+                        $pattern = NormativeSectionPrefix::postgresPattern($section);
+                        if ($pattern !== null) {
+                            $allowedSections->orWhereRaw('norms.section_code ~ ?', [$pattern]);
+                        }
                     }
                 });
             })

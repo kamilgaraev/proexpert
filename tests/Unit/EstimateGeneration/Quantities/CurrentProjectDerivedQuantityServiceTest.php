@@ -4,16 +4,27 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Quantities;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactReference;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ExtractQuantitiesStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
@@ -21,6 +32,23 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class CurrentProjectDerivedQuantityServiceTest extends TestCase
 {
     private const SOURCE = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    #[Test]
+    public function review_questions_reject_unknown_translation_keys_and_raw_model_messages(): void
+    {
+        $service = new CurrentProjectDerivedQuantityService(new InMemoryProjectModelRepository, new DerivedQuantityFactory);
+        $method = new \ReflectionMethod($service, 'reviewQuestions');
+        foreach ([['opening_exceeds_wall', 'foreign.secret'], ['future_issue', 'estimate_generation.quantity.future_issue'],
+            ['invalid code', 'estimate_generation.quantity.opening_exceeds_wall']] as [$code, $key]) {
+            $readiness = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityReadiness(null, [], [
+                ['code' => $code, 'message_key' => $key, 'operand' => 'openings', 'message' => 'Raw model message'],
+            ]);
+            $questions = $method->invoke($service, $readiness, 'wall:1');
+            self::assertSame('estimate_generation.geometry_coverage_review', $questions[0]['message_key']);
+            self::assertArrayNotHasKey('message', $questions[0]);
+            self::assertSame('wall:1', $questions[0]['entity_id']);
+        }
+    }
 
     #[Test]
     public function input_preview_keeps_both_missing_roof_coverage_relations_without_calculating_an_area(): void
@@ -494,6 +522,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertSame('opening:partial', $withPartialOpening['warnings'][0]['inputs'][0]['entity_id'] ?? null);
         self::assertSame('height', $withPartialOpening['warnings'][0]['inputs'][0]['missing_operand'] ?? null);
         self::assertSame('opening:partial', $withPartialOpening['warnings'][0]['inputs'][0]['source_locator']['native_reference'] ?? null);
+        self::assertSame('estimate_generation.geometry_coverage_review', $withPartialOpening['warnings'][0]['questions'][0]['message_key']);
         self::assertSame([], $repository->currentQuantities);
 
         $heightEvidence = $this->nativeEvidence('evidence:opening-height', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'opening:partial');
@@ -510,6 +539,45 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $historyCount = count($repository->quantities);
         (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
         self::assertCount($historyCount, $repository->quantities);
+
+        $repository->saveSourceModel([], [
+            $this->nativeFact('fact:opening-height:v2', 10, 20, 30, self::SOURCE, $partial->id, 'height', '4', 'm',
+                1.0, 'document', 'confirmed', [$heightEvidence->id], 2, 'fact:opening-height'),
+        ], []);
+        $this->makeStageFiveCurrent($repository);
+        $impossible = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
+        self::assertArrayNotHasKey('net_wall_area', $impossible['quantities']);
+        $warning = $impossible['warnings'][0];
+        self::assertSame('opening_exceeds_wall', $warning['questions'][0]['code']);
+        self::assertSame('estimate_generation.quantity.opening_exceeds_wall', $warning['questions'][0]['message_key']);
+        self::assertSame($wall->id, $warning['entity_id']);
+        self::assertSame($partial->id, $warning['inputs'][0]['entity_id']);
+        self::assertSame('opening:partial', $warning['inputs'][0]['source_locator']['native_reference']);
+        $graph = PipelineDefinitionGraph::standard();
+        $understanding = PipelineStageOutput::create($graph->get(ProcessingStage::UnderstandObject), 'sha256:'.str_repeat('a', 64),
+            ['understand_documents' => 'sha256:'.str_repeat('b', 64)],
+            new PipelineArtifactReference('memory_json_v1', 'pipeline/test/object', 'sha256:'.str_repeat('c', 64), 1));
+        $context = new PipelineContext(30, 10, 20, 0, 'sha256:'.str_repeat('d', 64), 'generating',
+            priorOutputs: new PipelinePriorOutputs([$understanding->stage->value => $understanding], [$understanding->stage->value => ['analysis' => []]]),
+            generationAttemptId: '00000000-0000-4000-8000-000000000001', stage: ProcessingStage::ExtractQuantities,
+            dependencyVersions: ['understand_object' => $understanding->version]);
+        $stage = new ExtractQuantitiesStage(new EstimateGenerationQuantityLearningEvidenceService,
+            new StageResultFactory(new InMemoryPipelineArtifactStore, $graph),
+            new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory));
+        $items = $stage->execute($context)->transientData['stage6_generation_context']['review_items'];
+        self::assertSame('opening_exceeds_wall', $items[0]['code']);
+        self::assertSame('estimate_generation.quantity.opening_exceeds_wall', $items[0]['message_key']);
+        self::assertSame($wall->id, $items[0]['entity_id']);
+        self::assertSame([$warning['inputs'][0]['source_locator']], $items[0]['source_refs']);
+        $translations = require dirname(__DIR__, 4).'/lang/ru/estimate_generation.php';
+        $draft = (new BuildMostEstimateDraft(static fn (string $key): string => $key === 'estimate_generation.quantity.opening_exceeds_wall'
+            ? $translations['quantity']['opening_exceeds_wall'] : $key))->build([
+                'catalog_identity' => ['status' => 'current'], 'technology_identity' => ['status' => 'current'],
+                'rule_identity' => ['status' => 'current'], 'local_estimates' => [], 'stage6_review_items' => $items,
+            ]);
+        self::assertStringContainsString('Ширина или высота проёма', $draft['stage6_review_items'][0]['message']);
+        self::assertSame($items[0]['source_refs'], $draft['stage6_review_items'][0]['source_refs']);
+        self::assertSame('review_required', $draft['stage6_status']);
     }
 
     #[Test]

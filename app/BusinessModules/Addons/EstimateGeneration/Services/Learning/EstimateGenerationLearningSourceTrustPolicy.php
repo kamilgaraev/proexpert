@@ -23,6 +23,7 @@ final class EstimateGenerationLearningSourceTrustPolicy
         'do_not_index',
         'unindexable',
         'low_quality',
+        'unit_unverified',
     ];
 
     public static function isIndexable(EstimateGenerationLearningExample $example): bool

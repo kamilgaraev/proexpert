@@ -60,7 +60,7 @@ final readonly class NormativeIntentCandidateRanker
         $candidateSection = trim((string) ($candidate->section_code ?? ''));
         $sectionMatches = false;
         foreach ($preferredSections as $section) {
-            if (str_starts_with($candidateSection, $section)) {
+            if (NormativeSectionPrefix::matches($candidateSection, $section)) {
                 $sectionMatches = true;
                 break;
             }

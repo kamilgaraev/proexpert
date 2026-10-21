@@ -863,7 +863,8 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->limit(self::CANDIDATE_POOL_LIMIT)', $source);
         self::assertStringContainsString('CAST(norms.work_composition AS TEXT)', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
-        self::assertStringContainsString("\$allowedSections->{\$method}('norms.section_code', 'like', \$section.'%')", $source);
+        self::assertStringNotContainsString("'norms.section_code', 'like', \$section.'%'", $source);
+        self::assertStringContainsString("->orWhereRaw('norms.section_code ~ ?', [\$pattern])", $source);
         self::assertStringContainsString("latestPriceDatasetId('fsbc', true)", $source);
         self::assertStringContainsString("latestPriceDatasetId('fgis_labor_prices', false)", $source);
         self::assertStringContainsString('$fsbcBasePriceDatasetId,', $source);

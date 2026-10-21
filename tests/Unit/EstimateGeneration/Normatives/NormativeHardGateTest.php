@@ -121,6 +121,67 @@ final class NormativeHardGateTest extends TestCase
         self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
     }
 
+    #[DataProvider('sectionComponentBoundaries')]
+    public function test_section_prefix_matches_complete_normalized_components(array $preferred, string $candidateSection, bool $accepted): void
+    {
+        $candidate = $this->candidate(['normativeSection' => $candidateSection, 'code' => $candidateSection.'-001-01']);
+        $intent = $this->sectionIntent($preferred);
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        if ($accepted) {
+            self::assertSame([$candidate], $set->candidates);
+            self::assertSame([], $set->rejected);
+        } else {
+            self::assertSame([], $set->candidates);
+            self::assertSame(['normative_section_mismatch'], $set->rejected[0]->reasonCodes);
+            self::assertSame($candidate, $set->rejected[0]->candidate);
+        }
+        if (count($preferred) === 1) {
+            $singular = $this->sectionIntent([], $preferred[0]);
+            $legacySet = (new NormativeHardGate)->filter($singular, [$candidate]);
+            self::assertSame($set->candidates, $legacySet->candidates);
+            self::assertSame(array_map(static fn ($row): array => $row->reasonCodes, $set->rejected),
+                array_map(static fn ($row): array => $row->reasonCodes, $legacySet->rejected));
+        }
+    }
+
+    public static function sectionComponentBoundaries(): array
+    {
+        return [
+            'raw chapter 1 cannot match 10' => [['1'], '10', false],
+            'raw chapter 1 cannot match child of 10' => [['1'], '10-01', false],
+            'raw chapter 8 cannot match 80' => [['8'], '80', false],
+            'raw subsection 1 cannot match 10' => [['06-1'], '06-10', false],
+            'longer preferred hierarchy cannot match its parent' => [['08-01'], '08', false],
+            'padded equivalent chapter' => [['01'], '1', true],
+            'unpadded equivalent chapter' => [['1'], '01', true],
+            'padded child section' => [['08'], '08-01', true],
+            'dotted child section' => [['08'], '8.1', true],
+            'mixed supported separators' => [['06.1'], '6-01-002', true],
+            'another allowed section matches' => [['1', '08'], '8.1', true],
+            'no allowed component matches' => [['1', '08'], '10-01', false],
+        ];
+    }
+
+    public function test_pinned_selection_preserves_the_correct_section_before_top_two_and_final_gate(): void
+    {
+        $intent = $this->sectionIntent(['1']);
+        $candidates = [];
+        foreach ([10 => '10', 11 => '10', 12 => '10', 99 => '1'] as $id => $section) {
+            $candidates[] = ['candidate_id' => (string) $id, 'normative_id' => $id, 'dataset_id' => 20, 'dataset_version' => 'v1',
+                'dataset_status' => 'published', 'code' => $section.'-01-001-01', 'name' => 'Кладка стен', 'unit' => 'м2',
+                'section' => ['code' => $section, 'name' => 'Раздел '.$section], 'retrieval_metadata' => [], 'work_composition' => []];
+        }
+        $pinned = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory)->forWorkItem($candidates,
+            ['key' => 'work-1', 'name' => 'Кладка стен', 'unit' => 'м2'], ['1'], $intent, ['work-1' => ['10', '11', '12', '99']]);
+        self::assertCount(1, $pinned);
+        self::assertSame('99', $pinned[0]->id);
+        $set = (new NormativeHardGate)->filter($intent, $pinned);
+
+        self::assertSame($pinned, $set->candidates);
+        self::assertSame([], $set->rejected);
+    }
+
     public function test_candidate_must_belong_to_one_of_all_allowed_sections(): void
     {
         $intent = new WorkIntentData(
@@ -419,6 +480,12 @@ final class NormativeHardGateTest extends TestCase
     private function intent(): WorkIntentData
     {
         return new WorkIntentData(1, 2, 3, 'work-1', 'кладка стены', 'м2', 'area', 'кирпич', 'кладка', 'стена', '08', 'жилой', 'v1', 'published', '78', new DateTimeImmutable('2026-01-01'), ['doc:1']);
+    }
+
+    private function sectionIntent(array $sections, string $section = ''): WorkIntentData
+    {
+        return new WorkIntentData(1, 2, 3, 'work-1', 'Кладка стен', 'м2', 'area', '', '', '', $section,
+            'residential', 'v1', 'published', null, new DateTimeImmutable('2026-01-01'), ['doc:1'], $sections);
     }
 
     private function candidate(array $overrides = []): NormativeCandidateData

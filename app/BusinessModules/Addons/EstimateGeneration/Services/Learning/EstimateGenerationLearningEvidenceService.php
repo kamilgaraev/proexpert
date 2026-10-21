@@ -6,18 +6,22 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Learning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 
 final class EstimateGenerationLearningEvidenceService
 {
     private const MAX_EXAMPLES = 400;
     private const MAX_SOURCES = 6;
+    private const MAX_KNOWLEDGE_VALIDATION_PAIRS = 8;
 
     public function __construct(
         private readonly WorkIntentClassifier $workIntentClassifier,
+        private readonly EquipmentCountKnowledgeValidationService $equipmentKnowledge,
     ) {}
 
     /**
@@ -39,20 +43,24 @@ final class EstimateGenerationLearningEvidenceService
             return $summaries;
         }
 
-        $candidateIds = $candidates
-            ->pluck('id')
-            ->filter()
-            ->map(static fn (mixed $id): int => (int) $id)
-            ->values()
-            ->all();
-        $candidateCodes = $candidates
-            ->pluck('code')
-            ->map(fn (mixed $code): string => $this->normalizeCode((string) $code))
-            ->filter()
-            ->values()
-            ->all();
+        (new EloquentCollection($candidates->all()))->loadMissing('collection');
+        $candidatesByVersion = [];
+        foreach ($candidates as $candidate) {
+            $versionId = $candidate->collection?->dataset_version_id;
+            if ($versionId === null) {
+                continue;
+            }
+            $candidatesByVersion[(int) $versionId]['ids'][] = (int) $candidate->id;
+            $code = $this->normalizeCode((string) $candidate->code);
+            if ($code !== '') {
+                $candidatesByVersion[(int) $versionId]['codes'][] = $code;
+            }
+        }
+        if ($candidatesByVersion === []) {
+            return $summaries;
+        }
 
-        $examples = $this->examples($organizationId, $this->nullableInt($context['project_id'] ?? null), $candidateIds, $candidateCodes);
+        $examples = $this->examples($organizationId, $this->nullableInt($context['project_id'] ?? null), $candidatesByVersion);
         if ($examples->isEmpty()) {
             return $summaries;
         }
@@ -66,19 +74,51 @@ final class EstimateGenerationLearningEvidenceService
             'system' => $classifiedIntent->system,
         ];
         $workTokens = $this->tokens($this->workText($workItem, $context));
+        $currentAssociations = [];
+        $currentSources = [];
+        $validationPairs = [];
 
         foreach ($examples as $example) {
             if (!$this->indexable($example)) {
                 continue;
             }
+            $marked = array_key_exists('knowledge_validation', is_array($example->context_payload) ? $example->context_payload : []);
+            if ($marked) {
+                if ($example->estimate_norm_id === null || ! EquipmentCountKnowledgeValidationService::hasPassingValidationMetadata($example)) {
+                    continue;
+                }
+                $knowledge = $example->context_payload['knowledge_validation'];
+                $claimKey = CanonicalPipelineJson::encode([$example->organization_id, $example->project_id,
+                    $example->generation_session_id, data_get($knowledge, 'schema_version'), data_get($knowledge, 'producer'),
+                    data_get($knowledge, 'work_item_key'), data_get($knowledge, 'claim'),
+                    data_get($knowledge, 'count_source_check.outcome'), data_get($knowledge, 'normative_association_check.outcome')]);
+            }
 
             foreach ($this->matchingCandidates($example, $candidates) as $candidate) {
+                if ($marked && (int) $candidate->id !== (int) $example->estimate_norm_id) {
+                    continue;
+                }
                 $evidence = $this->scoreEvidence($example, $candidate, $workItem, $context, $intent, $workTokens);
-
                 if ($evidence === null) {
                     continue;
                 }
-
+                if ($marked) {
+                    $pairKey = CanonicalPipelineJson::encode([$claimKey, (int) $candidate->id]);
+                    if (! isset($validationPairs[$pairKey])) {
+                        if (count($validationPairs) >= self::MAX_KNOWLEDGE_VALIDATION_PAIRS) {
+                            continue;
+                        }
+                        $validationPairs[$pairKey] = true;
+                    }
+                    $currentSources[$claimKey] ??= $this->equipmentKnowledge->permitsSourceReuse($example);
+                    if (! $currentSources[$claimKey]) {
+                        continue;
+                    }
+                    $currentAssociations[(int) $candidate->id] ??= $this->equipmentKnowledge->currentAssociationPasses($workItem, (int) $candidate->id, $context);
+                    if (! $currentAssociations[(int) $candidate->id]) {
+                        continue;
+                    }
+                }
                 $candidateId = (int) $candidate->id;
                 $summaries[$candidateId]['learning_score'] += $evidence['score'];
 
@@ -107,11 +147,10 @@ final class EstimateGenerationLearningEvidenceService
     }
 
     /**
-     * @param array<int, int> $candidateIds
-     * @param array<int, string> $candidateCodes
+     * @param array<int, array{ids: array<int, int>, codes?: array<int, string>}> $candidatesByVersion
      * @return Collection<int, EstimateGenerationLearningExample>
      */
-    private function examples(int $organizationId, ?int $projectId, array $candidateIds, array $candidateCodes): Collection
+    private function examples(int $organizationId, ?int $projectId, array $candidatesByVersion): Collection
     {
         return EstimateGenerationLearningExample::query()
             ->where('organization_id', $organizationId)
@@ -121,15 +160,20 @@ final class EstimateGenerationLearningEvidenceService
                     $query->where('project_id', $projectId)
                         ->orWhereNull('project_id');
                 });
+            }, static function (Builder $query): void {
+                $query->whereNull('project_id');
             })
-            ->where(static function (Builder $query) use ($candidateIds, $candidateCodes): void {
-                if ($candidateIds !== []) {
-                    $query->whereIn('estimate_norm_id', $candidateIds);
-                }
-
-                if ($candidateCodes !== []) {
-                    $method = $candidateIds === [] ? 'whereIn' : 'orWhereIn';
-                    $query->{$method}('norm_code', $candidateCodes);
+            ->where(static function (Builder $query) use ($candidatesByVersion): void {
+                foreach ($candidatesByVersion as $versionId => $identities) {
+                    $query->orWhere(static function (Builder $query) use ($versionId, $identities): void {
+                        $query->where('normative_dataset_version_id', $versionId)
+                            ->where(static function (Builder $query) use ($identities): void {
+                                $query->whereIn('estimate_norm_id', $identities['ids']);
+                                if (($identities['codes'] ?? []) !== []) {
+                                    $query->orWhereIn('norm_code', $identities['codes']);
+                                }
+                            });
+                    });
                 }
             })
             ->orderByRaw('CASE WHEN project_id IS NULL THEN 1 ELSE 0 END')
@@ -172,14 +216,24 @@ final class EstimateGenerationLearningEvidenceService
         array $intent,
         array $workTokens
     ): ?array {
-        $workUnit = (string) ($workItem['unit'] ?? '');
-        $candidateUnit = (string) ($candidate->unit ?? '');
-        if ($workUnit !== '' && $candidateUnit !== '' && !NormativeUnitNormalizer::compatible($workUnit, $candidateUnit)) {
+        $exampleVersion = $example->normative_dataset_version_id;
+        $candidateVersion = $candidate->collection?->dataset_version_id;
+        if ($exampleVersion === null || $candidateVersion === null || (int) $exampleVersion !== (int) $candidateVersion) {
             return null;
         }
 
-        $exampleUnit = (string) ($example->work_unit ?: $example->normative_unit ?: '');
-        if ($workUnit !== '' && $exampleUnit !== '' && !NormativeUnitNormalizer::compatible($workUnit, $exampleUnit)) {
+        $workUnit = (string) ($workItem['unit'] ?? '');
+        $candidateUnit = (string) ($candidate->unit ?? '');
+        $exampleWorkUnit = (string) ($example->work_unit ?? '');
+        $exampleNormativeUnit = (string) ($example->normative_unit ?? '');
+        foreach ([$workUnit, $candidateUnit, $exampleWorkUnit, $exampleNormativeUnit] as $unit) {
+            if (! NormativeUnitNormalizer::parseDetailed($unit)->isKnown()) {
+                return null;
+            }
+        }
+        if (! NormativeUnitNormalizer::compatible($workUnit, $candidateUnit)
+            || ! NormativeUnitNormalizer::compatible($workUnit, $exampleWorkUnit)
+            || ! NormativeUnitNormalizer::compatible($candidateUnit, $exampleNormativeUnit)) {
             return null;
         }
 

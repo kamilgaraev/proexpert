@@ -12,6 +12,8 @@ final class ScopeCompletenessEvaluator
 {
     public const VERSION = 'universal-scope:v2';
 
+    private const EQUIPMENT_SCOPE_EXCLUSIONS = ['equipment_purchase', 'delivery', 'commissioning'];
+
     private const REQUIREMENTS = [
         'finishing' => ['preparation', 'finishing'],
         'structures' => ['preparation', 'structures'],
@@ -51,6 +53,17 @@ final class ScopeCompletenessEvaluator
         }
 
         return array_values(array_unique($requirements));
+    }
+
+    public static function allowsNotApplicable(string $section, string $requirement): bool
+    {
+        return in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)
+            || self::allowsEquipmentScopeDecision($section, $requirement);
+    }
+
+    public static function allowsEquipmentScopeDecision(string $section, string $requirement): bool
+    {
+        return $section === 'equipment' && in_array($requirement, self::EQUIPMENT_SCOPE_EXCLUSIONS, true);
     }
 
     public function evaluate(ProjectModelSnapshot $snapshot, string $profile, string $constructionType, array $selectedScope, array $positions, array $decisions = [], array $technologies = []): array
@@ -121,8 +134,17 @@ final class ScopeCompletenessEvaluator
                 foreach ($required as $requirement) {
                     $disposition = (new RequirementApplicability)->notApplicable($snapshot, $decisions, $entityId, $requirement,
                         (string) ($technologies[$section][$entityId] ?? 'unspecified'));
-                    if ($disposition !== null && in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)) {
-                        $notApplicable[] = ['section' => $section, 'entity_id' => $entityId, 'requirement' => $requirement, ...$disposition];
+                    $choice = $byId[$disposition['fact_ids'][0] ?? ''] ?? null;
+                    if ($disposition !== null && self::allowsNotApplicable($section, $requirement)
+                        && $choice?->sourceVersion === $entities[$entityId]->sourceVersion
+                        && (! in_array($requirement, self::EQUIPMENT_SCOPE_EXCLUSIONS, true) || ($choice->value['section'] ?? null) === $section)) {
+                        $work = $coveredWorks[$section][$entityId][$requirement] ?? null;
+                        if (is_string($work)) {
+                            $requirements[] = ['section' => $section, 'entity_id' => $entityId, 'requirement' => $requirement,
+                                'fact_ids' => $disposition['fact_ids'], 'position_keys' => [$work], 'reason' => 'scope_exclusion_conflict'];
+                        } else {
+                            $notApplicable[] = ['section' => $section, 'entity_id' => $entityId, 'requirement' => $requirement, ...$disposition];
+                        }
 
                         continue;
                     }
