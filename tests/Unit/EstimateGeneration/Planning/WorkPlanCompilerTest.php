@@ -548,6 +548,35 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'plaster_defined_bearing_wall_surface' => ['Штукатурка несущих стен', ['custom-finishing'], ['finishing', 'structures']];
         yield 'defined_surface_then_new_wall_operation' => ['Покраска внутренних стен и устройство стен', ['finish_finishing', 'walls'], ['finishing', 'structures']];
         yield 'defined_surface_then_new_facade_operation' => ['Штукатурка наружных стен, устройство фасада', ['custom-finishing', 'facade'], ['finishing', 'structures']];
+        yield 'paint_singular_defined_wall_surface' => ['Покраска внутренней стены', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'plaster_singular_external_wall_surface' => ['Штукатурка наружной стены', ['custom-finishing'], ['finishing', 'structures']];
+        yield 'paint_singular_bearing_wall_surface' => ['Покраска несущей стены', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'singular_defined_surface_then_new_wall_operation' => ['Покраска внутренней стены и устройство стен', ['finish_finishing', 'walls'], ['finishing', 'structures']];
+        yield 'finishing_does_not_swallow_another_declined_operation' => ['Покраска потолков с устройством стен и фасада', ['finish_finishing', 'walls', 'facade'], ['finishing', 'structures']];
+    }
+
+    #[DataProvider('unknownOptionalSiteRequests')]
+    public function test_unknown_optional_site_request_survives_universal_earthworks_without_source_quantities(string $description, string $package): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['earthworks']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+        self::assertSame($package === 'roads' ? [] : ['networks.external'], array_column(array_column($items, 'metadata'), 'quantity_key'));
+        foreach ($items as $item) {
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+            self::assertNull($item['price_source']);
+        }
+    }
+
+    public static function unknownOptionalSiteRequests(): iterable
+    {
+        yield 'road' => ['Устройство дороги', 'roads'];
+        yield 'external_networks' => ['Наружные инженерные сети', 'external_networks'];
     }
 
     #[DataProvider('unsupportedFireSystems')]
@@ -679,8 +708,8 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'explicit_wall_material_operation' => ['Монтаж газобетона', ['walls']];
         yield 'explicit_panel_operation' => ['Монтаж сэндвич-панелей', ['facade']];
         yield 'explicit_area_operation' => ['Устройство площадки', ['site_preparation']];
-        yield 'explicit_access_operation' => ['Устройство подъезда', ['site_preparation']];
-        yield 'explicit_driveway_operation' => ['Устройство проезда', ['site_preparation']];
+        yield 'explicit_access_operation' => ['Устройство подъезда', ['site_preparation', 'roads']];
+        yield 'explicit_driveway_operation' => ['Устройство проезда', ['site_preparation', 'roads']];
         yield 'separate_roof_and_wall_operations' => ['Монтаж металлочерепицы и устройство стен', ['walls', 'roof']];
         yield 'preparation_belongs_to_stated_roof' => ['Устройство бетонной подготовки кровли', ['roof']];
         yield 'block_material_belongs_to_stated_slab' => ['Монтаж газобетона на перекрытии', ['slabs']];
@@ -748,11 +777,11 @@ final class WorkPlanCompilerTest extends TestCase
             }
             $keys = static fn (string $package): array => array_column(array_column($estimates[$package]['sections'][0]['work_items'], 'metadata'), 'quantity_key');
             self::assertSame(['siteworks.area'], $keys('siteworks'), $type);
-            self::assertContains('networks.external', $keys('external_networks'), $type);
+            self::assertSame(['networks.external'], $keys('external_networks'), $type);
             if ($type === 'warehouse') {
-                self::assertContains('warehouse.roads', $keys('roads'));
+                self::assertSame(['warehouse.roads'], $keys('roads'));
             } else {
-                self::assertNotContains('warehouse.roads', $keys('roads'));
+                self::assertSame([], $keys('roads'));
             }
         }
     }

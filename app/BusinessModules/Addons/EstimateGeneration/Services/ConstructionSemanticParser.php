@@ -557,14 +557,12 @@ class ConstructionSemanticParser
     private function finishingSurfaceGapPattern(): string
     {
         return '(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ов|ам|ям|ами|ями|ах|ях|ка|ки|ку|кой|кою|ке)?\s+'
-            .'(?:\p{L}{2,}'.$this->adjectiveEndingsPattern(pluralOnly: true).'\s+)*';
+            .'(?:(?!'.$this->explicitOperationPattern().'(?=\s))\p{L}{2,}'.$this->adjectiveEndingsPattern().'\s+)*';
     }
 
-    private function adjectiveEndingsPattern(bool $pluralOnly = false): string
+    private function adjectiveEndingsPattern(): string
     {
-        $plural = 'ые|ие|ых|их|ым|им|ыми|ими';
-
-        return '(?:'.($pluralOnly ? $plural : 'ая|яя|ой|ей|ую|юю|ое|ее|'.$plural.'|ого|его|ому|ему|ом|ем').')';
+        return '(?:ая|яя|ой|ей|ую|юю|ое|ее|ые|ие|ых|их|ым|им|ыми|ими|ого|его|ому|ему|ом|ем)';
     }
 
     private function explicitScopeKeywords(string $text): array

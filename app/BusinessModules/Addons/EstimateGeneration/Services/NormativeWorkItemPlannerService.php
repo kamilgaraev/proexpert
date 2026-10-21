@@ -1373,9 +1373,10 @@ final class NormativeWorkItemPlannerService
             'siteworks' => [
                 $this->definition('Благоустройство территории', 'site', 'благоустройство территории', 'siteworks.area'),
             ],
-            'external_networks', 'roads' => [
+            'external_networks' => [
                 $this->definition('Наружные сети', 'site', 'устройство наружных инженерных сетей', 'networks.external'),
-                $this->definition('Благоустройство территории', 'site', 'благоустройство территории', 'siteworks.area'),
+            ],
+            'roads' => [
                 $this->definition('Дороги и площадки', 'site', 'устройство дорог и площадок', 'warehouse.roads'),
             ],
             default => [],
