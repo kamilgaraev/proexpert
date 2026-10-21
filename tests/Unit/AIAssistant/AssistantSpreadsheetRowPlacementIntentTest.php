@@ -89,7 +89,23 @@ final class AssistantSpreadsheetRowPlacementIntentTest extends TestCase
             ['Сделай XLSX по заявкам: статус. Включи их во все листы.', 'xlsx'],
             ['Собери Excel со статусом заявок. Включи их в каждый из листов.', 'xlsx'],
             ['Собери Excel со статусом заявок. Включи её на всех листах.', 'xlsx'],
+            ['Сделай Excel по заявкам. Если заявка подходит, добавь её на оба листа.', 'xlsx'],
+            ['Сделай XLSX по заявкам: статус. Добавьте их на обоих листах.', 'xlsx'],
+            ['Сделай Excel по заявкам и затем добавить их в каждый из листов.', 'xlsx'],
         ];
+    }
+
+    public function test_adding_business_records_remains_a_confirmed_creation(): void
+    {
+        foreach (['Сделай Excel по заявкам. Добавь заявку на материалы.',
+            'Сделай Excel по заявкам. Добавь её на оба листа. Создай новую заявку.',
+            'Если заявка подходит, добавь её на оба листа.'] as $query) {
+            self::assertSame('create', AssistantMutationIntent::compoundType($query));
+            self::assertTrue(AssistantMutationIntent::containsRequest($query));
+            $understanding = (new AssistantRequestUnderstandingResolver)->resolve($query);
+            self::assertSame('create', $understanding->primaryIntent);
+            self::assertSame('requires_confirmation', $understanding->actionPolicy);
+        }
     }
 
     #[DataProvider('businessMutationRequests')]
