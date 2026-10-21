@@ -116,6 +116,9 @@ final readonly class AssistantCustomReportSource
         if ($members !== null) {
             $fields = array_replace($fields, $members->fields());
         }
+        if ($entityType === 'time_entry' && isset($fields['hours_worked'])) {
+            $query = (new AssistantTimeEntryReportProjection)->apply($query, array_keys($columnTypes));
+        }
         if ($entityType === 'completed_work') {
             $fields['name'] = ['type' => 'string', 'label' => trans_message('ai_assistant_facts.fields.name')];
             $fields['unit'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.work_unit')];
