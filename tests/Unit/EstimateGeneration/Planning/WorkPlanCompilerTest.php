@@ -520,6 +520,14 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'separate_finishing_phases' => ['Черновая отделка и чистовая отделка', ['rough_finishing', 'finish_finishing'], ['finishing']];
         yield 'specific_overlapping_phrase' => ['Штукатурка стен', ['rough_finishing'], ['finishing', 'structures']];
         yield 'specific_phrase_and_independent_wall' => ['Черновая отделка и стены', ['rough_finishing', 'walls'], ['finishing', 'structures']];
+        yield 'paint_wall_surface' => ['Покраска стен', ['finish_finishing'], ['finishing', 'structures']];
+        yield 'plaster_facade_surface' => ['Штукатурка фасада', ['custom-finishing'], ['finishing', 'structures']];
+        yield 'paint_then_independent_wall' => ['Покраска стен и устройство стен', ['finish_finishing', 'walls'], ['finishing', 'structures']];
+        yield 'plaster_then_independent_facade' => ['Штукатурка фасада и устройство фасада', ['facade', 'custom-finishing'], ['finishing', 'structures']];
+        yield 'independent_wall_then_paint' => ['Устройство стен; покраска стен', ['walls', 'finish_finishing'], ['finishing', 'structures']];
+        yield 'independent_facade_then_plaster' => ['Устройство фасада; штукатурка фасада', ['facade', 'custom-finishing'], ['finishing', 'structures']];
+        yield 'window_genitive' => ['Устройство окон', ['openings'], ['structures']];
+        yield 'door_genitive' => ['Установка дверей', ['openings'], ['structures']];
     }
 
     #[DataProvider('unsupportedFireSystems')]

@@ -510,7 +510,7 @@ class ConstructionSemanticParser
         }
         $scopes = [];
         foreach (preg_split('~[,;.\r\n]+|\s+и\s+~u', $line) ?: [] as $clause) {
-            foreach ($this->detectScopeTypes($clause, $this->explicitScopeKeywords($clause)) as $scope) {
+            foreach ($this->detectScopeTypes($clause, $this->explicitScopeKeywords($clause), bindFinishingSurfaces: true) as $scope) {
                 $scopes[$scope] = true;
             }
         }
@@ -531,6 +531,8 @@ class ConstructionSemanticParser
         $keywords['siteworks'] = array_values(array_intersect($keywords['site'], ['благоустрой']));
         $keywords['site'] = array_values(array_diff($keywords['site'], $keywords['earthworks'], $keywords['siteworks']));
         $keywords['site'] = [...$keywords['site'], 'наружная площадка', 'подъезд для грузового транспорта', 'разгрузочная зона'];
+        preg_match_all('~(?<![\p{L}\p{N}])(?:ок(?:на|но|он|ну|ном|не|нам|нами|нах)|двер(?:ь|и|ей|ью|ям|ями|ях))(?![\p{L}\p{N}])~u', $text, $openings);
+        $keywords['openings'] = [...$keywords['openings'], ...$openings[0]];
         $descriptors = ['наружн', 'приточн', 'утеплен', 'утеплён', 'кладоч', 'свет', 'облицовк', 'облицовка', 'клапан', 'разгруз'];
         foreach (preg_split('~[,;.\r\n]+|\s+и\s+~u', $text) ?: [] as $clause) {
             $heads = $this->detectScopeTypes($clause, $keywords);
@@ -593,7 +595,7 @@ class ConstructionSemanticParser
         return null;
     }
 
-    private function detectScopeTypes(string $normalizedLine, array $keywords): array
+    private function detectScopeTypes(string $normalizedLine, array $keywords, bool $bindFinishingSurfaces = false): array
     {
         $matches = [];
         $excluded = $this->explicitScopeExclusionSpans($normalizedLine);
@@ -612,6 +614,24 @@ class ConstructionSemanticParser
                         }
                     }
                     $matches[] = ['scope' => $scopeType, 'start' => $position, 'end' => $offset];
+                }
+            }
+        }
+        if ($bindFinishingSurfaces) {
+            $surfaceMatches = $matches;
+            $finishingScopes = ['rough_finishing', 'finish_finishing', 'finishing'];
+            foreach ($surfaceMatches as $operation) {
+                if (! in_array($operation['scope'], $finishingScopes, true)) {
+                    continue;
+                }
+                foreach ($surfaceMatches as $surface) {
+                    if ($surface['start'] <= $operation['end'] || in_array($surface['scope'], $finishingScopes, true)) {
+                        continue;
+                    }
+                    $gap = mb_substr($normalizedLine, $operation['end'], $surface['start'] - $operation['end']);
+                    if (preg_match('~^(?:а|я|ы|и|у|ю|е|ей|ой|ою|ом|ов|ам|ям|ами|ями|ах|ях|ка|ки|ку|кой|кою|ке)?\s+$~u', $gap) === 1) {
+                        $matches[] = [...$operation, 'end' => $surface['end']];
+                    }
                 }
             }
         }
