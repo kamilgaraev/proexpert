@@ -120,7 +120,7 @@ final readonly class SaveEvaluationRequirementDecision
                         'document_entity_id' => $documentFact->entityId, 'document_fact_version' => $documentFact->version,
                         'document_value_hash' => DocumentRequirementAcceptance::valueHash($documentFact), 'document_applicability_confirmed' => true];
                 }
-            } elseif ($value['disposition'] !== 'not_applicable' || ! in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)) {
+            } elseif ($value['disposition'] !== 'not_applicable' || ! ScopeCompletenessEvaluator::allowsNotApplicable($section, $requirement)) {
                 throw ValidationException::withMessages(['disposition' => 'Для этого требования нельзя подтвердить неприменимость.']);
             }
             $previous = null;

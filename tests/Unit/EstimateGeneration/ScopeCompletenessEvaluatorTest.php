@@ -104,7 +104,7 @@ final class ScopeCompletenessEvaluatorTest extends TestCase
         $evidence = new Evidence('evidence:1', 1, 2, 3, $version, 'manual:1', 'user_input', nativeReference: 'input:demolition');
         $decision = new Decision('decision:1', 1, 2, 3, $version, 'fact', 'fact:1', 'fact:1', 'user', '42', 'Покрытие сохранено, демонтаж не требуется', 1, [$evidence->id]);
         $fact = new Fact('fact:1', 1, 2, 3, $version, $entity->id, 'evaluation_requirement.demolition',
-            ['disposition' => 'not_applicable', 'scope_version' => ScopeCompletenessEvaluator::VERSION, 'technology_key' => 'paint:v1',
+            ['disposition' => 'not_applicable', 'scope_version' => ScopeCompletenessEvaluator::VERSION, 'technology_key' => 'paint:v1', 'section' => 'finishing',
                 'decision_id' => $decision->id, 'reason' => $decision->reason], null, 0, 'user_input', 'confirmed', [$evidence->id]);
         $evidence = $this->choiceEvidence($evidence->id, $version, $fact->value);
         $snapshot = new ProjectModelSnapshot([$entity], [$fact], [$evidence], []);
