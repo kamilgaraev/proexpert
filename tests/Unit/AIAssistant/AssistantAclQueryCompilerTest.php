@@ -47,6 +47,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
     {
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
         $modules->shouldNotReceive('getEffectiveModules');
@@ -63,6 +64,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
     {
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $module = new class implements \Stringable {
             public function __toString(): string
@@ -86,6 +88,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $allowedOrder = true;
         $allowedFinance = false;
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(static function (\App\Models\User $actor, string $permission) use (&$allowedOrder, &$allowedFinance): bool {
             return $permission === 'contracts.view' || ($permission === 'procurement.purchase_orders.view' && $allowedOrder)
                 || ($permission === 'finance.view' && $allowedFinance);
@@ -120,6 +123,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $calls = 0;
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(static function (\App\Models\User $actor, string $candidate) use ($permission, &$allowed, &$calls): bool {
             if ($candidate !== $permission) { return false; }
             $calls++;
