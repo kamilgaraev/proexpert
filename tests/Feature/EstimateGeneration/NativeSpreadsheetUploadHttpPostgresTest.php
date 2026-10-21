@@ -113,8 +113,14 @@ final class NativeSpreadsheetUploadHttpPostgresTest extends EstimateGenerationCa
         $processedState = $session->fresh()->state_version;
         $this->post($this->url($project, $session), ['state_version' => 0, 'request_id' => $requestId, 'files' => [$file]], $headers)
             ->assertOk();
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
+        Queue::assertPushed(ProcessEstimateGenerationUnitJob::class, 1);
         $this->app->call([$manifestJob, 'handle']);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
+        Queue::assertPushed(ProcessEstimateGenerationUnitJob::class, 1);
         $this->app->call([$unitJob, 'handle']);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
+        Queue::assertPushed(ProcessEstimateGenerationUnitJob::class, 1);
         self::assertSame($before, $this->publicationCounts($session));
         self::assertSame(1, $session->documents()->count());
         self::assertSame($processedState, $session->fresh()->state_version);
