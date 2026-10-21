@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectMod
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\Models\Organization;
 use App\Models\Project;
@@ -42,7 +43,17 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
         $this->processWorkbook(true);
     }
 
-    private function processWorkbook(bool $withFormula): void
+    public function test_real_xlsx_publishes_a_scoped_native_equipment_count_with_exact_quantity_operands(): void
+    {
+        $this->processWorkbook(false, true);
+    }
+
+    public function test_real_xlsx_equipment_count_formula_cannot_become_a_native_measured_count(): void
+    {
+        $this->processWorkbook(true, true);
+    }
+
+    private function processWorkbook(bool $withFormula, bool $equipment = false): void
     {
         Http::fake([]);
         Http::preventStrayRequests();
@@ -51,7 +62,11 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
         $ocr->shouldNotReceive('recognize');
         $this->app->instance(OcrClientInterface::class, $ocr);
         $spreadsheet = new Spreadsheet;
-        $spreadsheet->getActiveSheet()->setTitle('Размеры')->fromArray([
+        $spreadsheet->getActiveSheet()->setTitle($equipment ? 'Оборудование' : 'Размеры')->fromArray($equipment ? [
+            ['entity_key', 'parameter', 'value', 'unit'],
+            ['equipment:boiler', 'equipment_specification', 'Электрический котёл отопления массой до 30 кг.', ''],
+            ['equipment:boiler', 'equipment_count', $withFormula ? '=1+2' : 3, 'шт'],
+        ] : [
             ['entity_key', 'parameter', 'value', 'unit', 'floor'],
             ['room:office', 'length', $withFormula ? '=2+3' : 5, 'м', '1'],
             ['room:office', 'width', 10, 'м', '1'],
@@ -72,7 +87,7 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
             $version = 'sha256:'.hash_file('sha256', $path);
             $document = EstimateGenerationDocument::query()->create([
                 'organization_id' => $organization->id, 'project_id' => $project->id, 'session_id' => $session->id,
-                'user_id' => $user->id, 'filename' => 'dimensions.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'user_id' => $user->id, 'filename' => $equipment ? 'equipment.xlsx' : 'dimensions.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 'storage_path' => 'org-'.$organization->id.'/estimate-generation/native-tests/source.xlsx',
                 'source_version' => $version, 'checksum_sha256' => substr($version, 7),
             ]);
@@ -125,9 +140,14 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
             self::assertSame('completed', $store->find($unit->id)->status->value);
             $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 100)['snapshot'];
             self::assertCount($withFormula ? 1 : 2, $snapshot->facts);
-            self::assertCount(1, $snapshot->entities);
+            if (! $equipment) {
+                self::assertCount(1, $snapshot->entities);
+            }
             foreach ($snapshot->facts as $fact) {
                 self::assertSame('document', $fact->origin);
+                if ($equipment) {
+                    continue;
+                }
                 self::assertSame('м', $fact->unit);
                 $evidence = array_values(array_filter($snapshot->evidence, static fn ($item): bool => in_array($item->id, $fact->evidenceIds, true)))[0];
                 self::assertStringStartsWith('xlsx:sheet:Размеры!C', $evidence->nativeReference);
@@ -139,7 +159,41 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
                 }
             }
             $projection = app(CurrentProjectDerivedQuantityService::class)->previewInput((int) $organization->id, (int) $project->id, (int) $session->id);
-            if ($withFormula) {
+            if ($equipment) {
+                $counts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'equipment_count'));
+                self::assertCount($withFormula ? 0 : 1, $counts);
+                if ($withFormula) {
+                    self::assertSame('candidate', DB::table('estimate_generation_project_model_assertions')
+                        ->where('session_id', $session->id)->where('assertion_type', 'equipment_count')->value('fact_status'));
+                    self::assertSame([], array_values(array_filter($projection['quantities'],
+                        static fn ($quantity): bool => $quantity->formulaKey === 'equipment_count')));
+                } else {
+                    $count = $counts[0];
+                    self::assertSame([(int) $organization->id, (int) $project->id, (int) $session->id, $version],
+                        [$count->organizationId, $count->projectId, $count->sessionId, $count->sourceVersion]);
+                    self::assertSame('confirmed', $count->status);
+                    self::assertSame('3', $count->value);
+                    self::assertSame('шт', $count->unit);
+                    $proofs = array_values(array_filter($snapshot->evidence,
+                        static fn ($evidence): bool => in_array($evidence->id, $count->evidenceIds, true)));
+                    self::assertCount(1, $proofs);
+                    self::assertSame('xlsx:sheet:Оборудование!C3', $proofs[0]->nativeReference);
+                    self::assertNotEmpty($proofs[0]->fingerprint);
+                    self::assertTrue((new NativeNumericFactProof)->matches($count, $proofs[0]));
+                    $quantity = (new WorkItemQuantityMapper)->mapForEntity('equipment.install', $projection['quantities'], $count->entityId);
+                    self::assertNotNull($quantity);
+                    self::assertSame('3', $quantity->amount);
+                    self::assertSame('count', $quantity->unit);
+                    self::assertSame('equipment_count', $quantity->formulaKey);
+                    self::assertSame($count->entityId, $quantity->formulaInputs['entity_id']);
+                    self::assertCount(1, $quantity->formulaInputs['operands']);
+                    $operand = $quantity->formulaInputs['operands'][0];
+                    self::assertSame($count->id, $operand['fact_id']);
+                    self::assertSame($version, $operand['source_version']);
+                    self::assertSame($count->evidenceIds, $operand['evidence_ids']);
+                    self::assertTrue($operand['current']);
+                }
+            } elseif ($withFormula) {
                 self::assertSame('candidate', DB::table('estimate_generation_project_model_assertions')
                     ->where('session_id', $session->id)->where('assertion_type', 'length')->value('fact_status'));
                 self::assertArrayNotHasKey('floor_area', $projection['quantities']);
