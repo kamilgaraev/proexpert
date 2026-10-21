@@ -25,6 +25,31 @@ final class AssistantSpreadsheetRowPlacementIntentTest extends TestCase
         self::assertSame('future_status', AssistantStructuredFactLabels::display('site_request', 'status', 'future_status'));
     }
 
+    #[DataProvider('siteRequestTypes')]
+    public function test_site_request_type_labels_follow_native_legacy_normalization(string $stored, string $label): void
+    {
+        self::assertSame($label, AssistantStructuredFactLabels::display('site_request', 'request_type', $stored));
+    }
+
+    public static function siteRequestTypes(): array
+    {
+        return [
+            ['material_request', 'Заявка на материалы'],
+            ['personnel_request', 'Заявка на персонал'],
+            ['equipment_request', 'Заявка на технику'],
+            ['info_request', 'Запрос информации'],
+            ['issue_report', 'Сообщение о проблеме'],
+            ['other', 'Другое'],
+            ['material', 'Заявка на материалы'],
+            ['personnel', 'Заявка на персонал'],
+            ['equipment', 'Заявка на технику'],
+            ['info', 'Запрос информации'],
+            ['issue', 'Сообщение о проблеме'],
+            ['future_type', 'future_type'],
+            ['', ''],
+        ];
+    }
+
     public function test_two_sheet_material_request_report_keeps_file_intent_and_organization_scope(): void
     {
         $query = 'Собери Excel для контроля заявок на материалы по всей организации. На первом листе — незакрытые заявки со сроком раньше сегодняшнего дня; на втором — незакрытые заявки без ответственного, в том числе без срока. Нужны идентификатор заявки, название, проект, статус, приоритет, требуемая дата и ответственный. Черновики, закрытые и отменённые заявки исключи, заявки на технику и персонал тоже. Если заявка подходит под оба условия, включи её на оба листа.';

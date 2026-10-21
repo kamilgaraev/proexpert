@@ -55,7 +55,7 @@ final class AssistantStructuredFactLabels
             'quality_defect.severity' => QualityDefectSeverityEnum::tryFrom($value)?->label(),
             'site_request.status' => SiteRequestStatusEnum::tryFrom($value)?->label(),
             'site_request.priority' => SiteRequestPriorityEnum::tryFrom($value)?->label(),
-            'site_request.request_type' => SiteRequestTypeEnum::tryFrom($value)?->label(),
+            'site_request.request_type' => self::siteRequestTypeLabel($value),
             'executive_document.status' => ExecutiveDocumentStatusEnum::tryFrom($value)?->label(),
             'executive_document.document_type' => ExecutiveDocumentTypeEnum::tryFrom($value)?->label(),
             default => null,
@@ -86,5 +86,13 @@ final class AssistantStructuredFactLabels
         }
 
         return $value;
+    }
+
+    private static function siteRequestTypeLabel(string $value): ?string
+    {
+        $type = SiteRequestTypeEnum::fromStoredValue($value);
+
+        return $type !== SiteRequestTypeEnum::OTHER || $value === SiteRequestTypeEnum::OTHER->value
+            ? $type->label() : null;
     }
 }

@@ -140,6 +140,37 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         self::assertStringNotContainsString('SECRET', json_encode($report['sections'], JSON_THROW_ON_ERROR));
     }
 
+    public function test_workbook_labels_raw_legacy_types_and_preserves_unknown_codes(): void
+    {
+        $expected = [];
+        foreach (['material', 'personnel', 'equipment', 'info', 'issue', 'other', 'future_type'] as $stored) {
+            $request = $this->request($this->firstProject);
+            DB::table('site_requests')->where('id', $request->id)->update(['request_type' => $stored]);
+            $request->refresh();
+            self::assertSame($stored, $request->getRawOriginal('request_type'));
+            $expected[] = [$request->id, $stored === 'future_type' ? $stored : $request->request_type->label()];
+        }
+        $section = $this->section('Типы заявок', []);
+        $section['columns'] = ['id', 'request_type'];
+        $report = app(AssistantCustomReportBuilder::class)->build(['title' => 'Типы заявок', 'format' => 'xlsx',
+            'sections' => [$section]], $this->actor, $this->fixture->organization->id);
+        self::assertSame($expected, $report['sections'][0]['rows']);
+        $stream = (new AssistantCustomReportRenderer)->render($report);
+        try {
+            $book = IOFactory::load(stream_get_meta_data($stream)['uri']);
+            try {
+                foreach ($expected as $offset => [$id, $label]) {
+                    self::assertSame((string) $id, (string) $book->getSheet(0)->getCell('A'.($offset + 6))->getValue());
+                    self::assertSame($label, $book->getSheet(0)->getCell('B'.($offset + 6))->getValue());
+                }
+            } finally {
+                $book->disconnectWorksheets();
+            }
+        } finally {
+            fclose($stream);
+        }
+    }
+
     public function test_exact_live_question_reaches_report_generation_and_returns_a_real_two_sheet_file(): void
     {
         config(['ai-assistant.enabled' => true, 'ai-assistant-credits.enforce' => true,
