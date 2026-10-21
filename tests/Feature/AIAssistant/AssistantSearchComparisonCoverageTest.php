@@ -129,7 +129,8 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
     public static function negativeProjectSearches(): array
     {
         return array_map(static fn (string $clause): array => [$clause], ['но не по проекту {id}', 'не в проекте {id}',
-            'без проекта {id}', 'кроме проекта {id}', 'не включая проект {id}', 'не по проекту «СевГУ»', 'не по выбранному проекту']);
+            'без проекта {id}', 'кроме проекта {id}', 'не включая проект {id}', 'не по проекту «СевГУ»', 'не по выбранному проекту',
+            'проект {id} не включай', 'выбранный проект исключить']);
     }
 
     #[DataProvider('negativeProjectSearches')]

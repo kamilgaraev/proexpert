@@ -11,6 +11,60 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_postpositive_project_exclusions_keep_organization_scope_and_report_constraints(): void
+    {
+        foreach (['проект 100 не включай', 'проект 100 не включать', 'проект 100 не учитывайте',
+            'проект 100 не учитывать', 'проект 100 исключить', 'проект 100 исключи из отчёта',
+            'проект 100, пожалуйста, не включай', 'выбранный проект не включай',
+            'проект «СевГУ» не включай', 'проект СевГУ не учитывать'] as $clause) {
+            $question = 'Покажи все акты организации, '.$clause;
+            $id = str_contains($clause, 'выбранный') ? 52 : 100;
+            $search = static function (array $arguments): array {
+                self::assertSame(['query' => 'СевГУ', 'name_match' => 'exact', 'limit' => 2], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertFalse($scope->requested);
+            $arguments = ['sections' => [['project_id' => 52, 'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => $id]]]]];
+            $expected = $arguments;
+            $expected['sections'][0]['project_id'] = null;
+            self::assertSame($expected, $scope->bindReportScope($question, $arguments, $search), $question);
+            try {
+                $scope->bindReportScope($question, ['sections' => [['project_id' => 52, 'filters' => []]]], $search);
+                self::fail('Postpositive project exclusion omitted from report filters');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_postpositive_project_exclusions_require_clarification_before_search(): void
+    {
+        foreach (['проект 100 не включай', 'выбранный проект исключить', 'проект «СевГУ» не учитывать'] as $clause) {
+            $search = static function (): never {
+                self::fail('Excluded project reached a positive search');
+            };
+            try {
+                AssistantRequestProjectScope::bindSearchScope('Покажи все акты организации, '.$clause, ['project_id' => 52], 52, true, $search);
+                self::fail('Search without exclusion support accepted a postpositive exclusion');
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_postpositive_exclusion_commands_preserve_literal_names_and_other_objects(): void
+    {
+        foreach (['Все акты организации по проекту «СевГУ не включай»',
+            'Все акты организации по проекту «Проект 100 исключить»',
+            'Все акты организации по проекту 100, не включай черновики',
+            'Все акты организации по проекту 100 — не учитывай черновики'] as $question) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+        }
+    }
+
     public function test_comparison_relations_allow_a_repeated_registered_entity_before_the_project(): void
     {
         foreach (['Сравни все акты организации с актами проекта 100',

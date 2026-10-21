@@ -235,7 +235,7 @@ final readonly class AssistantRequestProjectScope
 
     private static function withoutNegativeCurrentProject(string $question): string
     {
-        $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
+        $question = AssistantNamedProjectReadScope::withoutQuotedNames(self::withoutExcludedProjects($question));
         $negative = '(?<![\pL\pN])(?:не\s+включая\s+|не\s+(?:(?:огранич[а-яё]*|только)\s+(?:[\pL-]+\s+){0,3})?|без\s+(?:ограничени[а-яё]*\s+(?:[\pL-]+\s+){0,3})?|(?:кроме|исключая|за\s+исключением)\s+)';
 
         return preg_replace('/'.$negative.'(?:(?:в|во|на|по|для|из|с|со)\s+)?'.self::CURRENT_PROJECT.'/iu', ' ', $question) ?? $question;
@@ -427,9 +427,13 @@ final readonly class AssistantRequestProjectScope
         $noun = '(?<![\pL\pN])(?:проект|объект)[а-яё]*(?![\pL\pN])';
         $stop = '(?:\s+(?:с|со|против|относительно)\s+(?:'.self::CURRENT_PROJECT.'|'.$noun.')|[,;.!?\r\n]|$)';
         $name = '(?:(?!'.$stop.')[^,;.!?\r\n])+';
-        $excluded = '(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.'|'.$noun.'\s*:?\s*(?:'.self::QUOTED_NAME.')|'.$noun.'(?:\s+'.$name.')?)';
+        $operand = '(?:'.self::CURRENT_PROJECT.'|'.self::NUMERIC_PROJECTS.'|'.$noun.'\s*:?\s*(?:'.self::QUOTED_NAME.')|'.$noun.'\s+'.$name.')';
+        $excluded = '(?:'.$operand.'|'.$noun.')';
+        $directive = '(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?(?:включ(?:ать|ай(?:те)?|и(?:те)?)|учитыва(?:ть|й(?:те)?|ем)|уч(?:ти(?:те)?|есть))|исключ(?:ить|и(?:те)?|ай(?:те)?))(?![\pL\pN])';
+        $ending = '(?=\s*(?:$|[,;.!?\r\n]|(?:в|из|для)\s+(?:отч[её]т[а-яё]*|сводк[а-яё]*|выборк[а-яё]*|CSV|XLSX|Excel)(?![\pL\pN])))';
+        $postfix = '\s*(?:[,—–:-]\s*)?(?:пожалуйста\s*,?\s*)?'.$directive.$ending;
 
-        return '/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|'.$negative.'(?<excluded_project>'.$excluded.')/iu';
+        return '/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|'.$negative.'(?<excluded_project>'.$excluded.')|(?<postfix_excluded_project>'.$operand.')'.$postfix.'/iu';
     }
 
     private function organizationProjectConstraints(string $question, ?callable $search): array
@@ -447,7 +451,7 @@ final readonly class AssistantRequestProjectScope
         }, $question) ?? $question;
         preg_match_all(self::excludedProjectPattern(), $question, $excluded, PREG_SET_ORDER);
         foreach ($excluded as $match) {
-            $project = trim($match['excluded_project']);
+            $project = trim(($match['excluded_project'] ?? '') !== '' ? $match['excluded_project'] : ($match['postfix_excluded_project'] ?? ''));
             if (preg_match('/^'.$noun.'$/iu', $project) === 1) {
                 if (preg_match('/^без\s+/iu', $match[0]) !== 1) {
                     throw new AssistantReportScopeAmbiguous;

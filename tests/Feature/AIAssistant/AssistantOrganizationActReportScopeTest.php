@@ -42,6 +42,10 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'organization not in selected project' => [true, true, false, 4, 4, true, 'Не в выбранном проекте.'],
             'organization without selected project' => [true, true, false, 4, 4, true, 'Без выбранного проекта.'],
             'organization except current project' => [true, true, false, 4, 4, true, 'За исключением текущего проекта.'],
+            'organization excludes postfix project ID' => [true, true, false, 4, 4, true, '', 'postfix_id'],
+            'organization excludes postfix current project' => [true, true, false, 4, 4, true, '', 'postfix_current'],
+            'organization excludes postfix exact project name' => [true, true, false, 4, 4, true, '', 'postfix_name'],
+            'organization excludes postfix project directive' => [true, true, false, 4, 4, true, '', 'postfix_exclude'],
             'nominative organization' => [true, true, false, 7, 5, false, '', 'nominative'],
             'organization wording restricted by project ID' => [true, true, false, 4, 4, false, '', 'restricted_id'],
             'organization wording restricted by project name' => [true, true, false, 4, 4, false, '', 'restricted_name'],
@@ -241,6 +245,13 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($variant === 'not_including') {
             $question = 'Сформируй CSV по всем актам организации, не включая проект '.$first->id;
+        }
+        if (str_starts_with($variant, 'postfix_')) {
+            $project = match ($variant) {
+                'postfix_current' => 'выбранный проект', 'postfix_name' => 'проект «'.$first->name.'»',
+                default => 'проект '.$first->id,
+            };
+            $question = 'Сформируй CSV по всем актам организации. '.$project.' '.($variant === 'postfix_exclude' ? 'исключить из отчёта' : 'не включай');
         }
         if ($variant === 'without_drafts') {
             $question = 'Сформируй CSV. Не включай черновики в отчет по всем актам организации, группируй по статусам и валютам.';
