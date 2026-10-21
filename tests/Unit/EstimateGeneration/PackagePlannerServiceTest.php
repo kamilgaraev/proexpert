@@ -165,7 +165,7 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertContains('office_partitions', $keys);
     }
 
-    public function test_profile_from_analysis_keeps_explicit_residential_type_over_storage_wording(): void
+    public function test_profile_from_analysis_requires_clarification_for_conflicting_explicit_types(): void
     {
         $analysis = [
             'object' => [
@@ -183,9 +183,10 @@ class PackagePlannerServiceTest extends TestCase
         $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
 
-        $this->assertSame('house', $profile->objectType);
-        $this->assertContains('foundation', $keys);
-        $this->assertContains('lighting', $keys);
+        $this->assertSame('custom', $profile->objectType);
+        $this->assertSame('document_limited', $this->planner()->documentRequirements($profile)['coverage']);
+        $this->assertNotContains('foundation', $keys);
+        $this->assertNotContains('lighting', $keys);
         $this->assertNotContains('industrial_floor', $keys);
     }
 

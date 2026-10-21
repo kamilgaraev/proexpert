@@ -92,8 +92,8 @@ class PackagePlannerService
         $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
-        $objectType = mb_strtolower((string) ($object['object_type'] ?? ''));
-        $buildingType = mb_strtolower((string) ($object['building_type'] ?? ''));
+        $objectType = mb_strtolower(trim((string) ($object['object_type'] ?? '')));
+        $buildingType = mb_strtolower(trim((string) ($object['building_type'] ?? '')));
         $type = $objectType !== '' && $objectType !== 'custom' ? $objectType : ($buildingType !== '' ? $buildingType : 'custom');
         $zones = is_array($object['zones'] ?? null) ? $object['zones'] : [];
         $zoneText = implode(' ', array_map(
@@ -125,8 +125,9 @@ class PackagePlannerService
             || $this->containsWarehouseObjectSignal($type)
             || ObjectTypeSignalClassifier::isIndustrial($type);
 
-        if (ObjectTypeSignalClassifier::isResidential($buildingType)
-            || ObjectTypeSignalClassifier::isResidential($type)
+        if ($hasExplicitObjectType && $hasExplicitBuildingType && ! ObjectTypeSignalClassifier::compatible($objectType, $buildingType)) {
+            $type = 'custom';
+        } elseif (ObjectTypeSignalClassifier::isResidential($type)
             || (! $hasExplicitObjectType && ! $hasExplicitBuildingType
                 && ObjectTypeSignalClassifier::isResidential((string) ($object['manual_description'] ?? $object['description'] ?? '')))) {
             $type = 'house';

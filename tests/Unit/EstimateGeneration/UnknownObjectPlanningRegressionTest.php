@@ -153,4 +153,58 @@ final class UnknownObjectPlanningRegressionTest extends TestCase
             yield $type => [$type];
         }
     }
+
+    #[DataProvider('explicitIdentityInputs')]
+    public function test_explicit_identity_precedes_incidental_residential_context(array $input, string $expected): void
+    {
+        $planner = new PackagePlannerService;
+        $analysis = (new ConstructionSemanticParser)->parse($input, []);
+        $profile = $planner->profileFromAnalysis($analysis);
+        foreach (['object_type', 'building_type'] as $key) {
+            if (array_key_exists($key, $input)) { self::assertSame($input[$key], $analysis['object'][$key]); }
+        }
+        self::assertSame($expected, $profile->objectType);
+        if (! in_array($expected, ['house', 'warehouse', 'industrial'], true)) {
+            self::assertSame([], $planner->plan($profile)->packages);
+            self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
+            self::assertTrue($planner->documentRequirements($profile)['missing_for_full_estimate']);
+        } else {
+            self::assertNotEmpty($planner->plan($profile)->packages);
+        }
+    }
+
+    public static function explicitIdentityInputs(): iterable
+    {
+        foreach (['bridge', 'hospital', 'warehouse', 'industrial', 'orbital_lab_42'] as $type) {
+            yield 'object_type_'.$type => [['object_type' => $type, 'description' => 'Рядом находится жилой дом'], $type];
+        }
+        yield 'building_type_bridge' => [['building_type' => 'bridge', 'description' => 'Рядом находится жилой дом'], 'bridge'];
+        yield 'conflicting_residential_object' => [['object_type' => 'house', 'building_type' => 'bridge'], 'custom'];
+        yield 'conflicting_residential_building' => [['object_type' => 'bridge', 'building_type' => 'house'], 'custom'];
+        yield 'conflicting_known_nonresidential' => [['object_type' => 'warehouse', 'building_type' => 'industrial'], 'custom'];
+        yield 'compatible_residential_aliases' => [['object_type' => 'house', 'building_type' => 'residential'], 'house'];
+        yield 'known_residential_object' => [['object_type' => 'residential'], 'house'];
+        yield 'known_residential_building' => [['building_type' => 'house'], 'house'];
+        yield 'blank_legacy' => [[], 'custom'];
+        yield 'blank_legacy_fields' => [['object_type' => '', 'building_type' => '', 'description' => 'Жилой дом'], 'house'];
+        yield 'neutral_custom_with_named_unknown' => [['object_type' => 'bridge', 'building_type' => 'custom', 'description' => 'Рядом находится жилой дом'], 'bridge'];
+        yield 'primary_legacy_residential' => [['description' => 'Жилой дом'], 'house'];
+    }
+
+    public function test_conflicting_types_keep_explicit_and_document_work_without_defaults(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse([
+            'object_type' => 'warehouse', 'building_type' => 'industrial', 'description' => 'Устройство стен',
+        ], [[
+            'id' => 82, 'filename' => 'foundation.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'quantity_takeoffs' => [['quantity' => 12, 'unit' => 'м3', 'source_refs' => [['document_id' => 82]],
+                'normalized_payload' => ['quantity_key' => 'foundation.concrete']]],
+        ]]);
+        $planner = new PackagePlannerService;
+        $profile = $planner->profileFromAnalysis($analysis);
+        self::assertSame('custom', $profile->objectType);
+        self::assertSame(['custom-foundation', 'walls'], array_column($planner->plan($profile)->packages, 'key'));
+        self::assertSame('document_limited', $planner->documentRequirements($profile)['coverage']);
+    }
 }

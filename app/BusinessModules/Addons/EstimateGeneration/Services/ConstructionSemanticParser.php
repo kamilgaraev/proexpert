@@ -49,7 +49,10 @@ class ConstructionSemanticParser
         $combinedText = trim($description."\n".($documentContext['context_text'] ?? ''));
         $objectDescription = trim($description."\n".($documentContext['context_text'] ?? ''));
         $explicitBuildingType = isset($input['building_type']) ? (string) $input['building_type'] : null;
-        $buildingType = (string) ($explicitBuildingType ?? $this->detectBuildingType($description) ?? 'custom');
+        $explicitObjectType = trim((string) ($input['object_type'] ?? ''));
+        $buildingType = (string) ($explicitBuildingType
+            ?? ($explicitObjectType !== '' && mb_strtolower($explicitObjectType) !== 'custom' ? $explicitObjectType : null)
+            ?? $this->detectBuildingType($description) ?? 'custom');
         $objectType = (string) (
             $input['object_type']
             ?? $this->objectTypeFromExplicitBuildingType($explicitBuildingType)
@@ -58,6 +61,9 @@ class ConstructionSemanticParser
             ?? $this->detectObjectType($description, $documentContext)
             ?? $buildingType
         );
+        $conflictingExplicitTypes = $explicitObjectType !== '' && mb_strtolower($explicitObjectType) !== 'custom'
+            && $explicitBuildingType !== null && trim($explicitBuildingType) !== '' && mb_strtolower(trim($explicitBuildingType)) !== 'custom'
+            && ! ObjectTypeSignalClassifier::compatible($explicitObjectType, $explicitBuildingType);
         $sourceRefs = $this->extractSourceRefs($combinedText);
         $manualScopes = $this->extractScopes($description, true, manualExplicit: true);
         $explicitScopes = $this->mergeScopes(
@@ -70,7 +76,7 @@ class ConstructionSemanticParser
             )
         );
 
-        $scopes = $explicitScopes['items'] !== []
+        $scopes = $explicitScopes['items'] !== [] || $conflictingExplicitTypes
             ? $explicitScopes
             : $this->inferDefaultScopes($buildingType, $sourceRefs, $objectDescription !== '' ? $objectDescription : $description);
         $regionalContext = is_array($input['regional_context'] ?? null) ? $input['regional_context'] : [];
