@@ -234,8 +234,24 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         $pin = app(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver::class)
             ->resolve($catalog['context'], [['work_item_key' => $item['key'], 'search_text' => $item['normative_search_text'], 'unit' => 'm2', 'code' => '11-01-011-01']]);
         self::assertSame('pinned', $pin['status'], json_encode($pin, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        $resolver = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources::class);
+        $resolutionContext = ['regional_context' => $catalog['context'], 'object_type' => 'residential',
+            'organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'session_id' => (int) $session->id];
+        $missingContext = $resolutionContext;
+        $missingContext['regional_context'] = array_intersect_key($catalog['context'], array_flip([
+            'normative_dataset_version', 'business_date', 'year', 'quarter',
+        ]));
+        self::assertNull($resolver->resolve($item, $catalog['norm_id'], $missingContext));
+        self::assertSame(['item' => null, 'blocking_issues' => ['normative_resource_context_not_pinned']],
+            $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $missingContext));
+        $validItem = $resolver->resolve($item, $catalog['norm_id'], $resolutionContext);
+        self::assertNotNull($validItem);
+        self::assertSame(['item' => $validItem, 'blocking_issues' => []],
+            $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $resolutionContext));
         DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update(['object_type' => 'office']);
         try {
+            self::assertSame(['item' => null, 'blocking_issues' => ['object_type_mismatch']],
+                $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $resolutionContext));
             self::assertNull(app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources::class)
                 ->resolve($item, $catalog['norm_id'], ['regional_context' => $catalog['context'], 'object_type' => 'residential',
                     'organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'session_id' => (int) $session->id]));

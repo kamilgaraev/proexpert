@@ -108,7 +108,8 @@ class NormativeCandidateSelectionService
                     }
 
                     if (($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT) {
-                        $selected = $this->pinnedResources->resolve($workItem, $normId, $context);
+                        $resolution = $this->pinnedResources->resolveWithDiagnostics($workItem, $normId, $context);
+                        $selected = $resolution['item'];
                         if ($selected === null) {
                             throw $this->validationException([
                                 'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
