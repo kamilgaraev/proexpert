@@ -22,7 +22,7 @@ final readonly class AssistantCustomReportSource
 {
     public function __construct(private AssistantDomainCatalog $catalog, private AssistantDataAccessPolicy $policy) {}
 
-    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId, ?\DateTimeInterface $asOf = null, bool $requireCompleteScope = false, ?array $referenceFields = null): array
+    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId, ?\DateTimeInterface $asOf = null, bool $requireCompleteScope = false, ?array $referenceFields = null, bool $journalReference = false): array
     {
         $definition = $this->catalog->definition($domain);
         if ($definition === null || ! in_array($entityType, $definition->entityTypes, true)) {
@@ -49,7 +49,9 @@ final readonly class AssistantCustomReportSource
         }
         $members = $domain === 'people' && $entityType === 'user' ? app(AssistantOrganizationMemberReportProjection::class) : null;
         $query = $members?->query($actor, $organizationId, $this->policy)
-            ?? $this->policy->entityQuery($actor, $organizationId, $entityType);
+            ?? ($journalReference && $entityType === 'construction_journal' && $projectId !== null
+                ? $this->policy->constructionJournalReferenceQuery($actor, $organizationId, $projectId)
+                : $this->policy->entityQuery($actor, $organizationId, $entityType));
         if (! $query instanceof Builder) {
             throw new AccessDeniedHttpException;
         }
