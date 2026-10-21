@@ -135,6 +135,10 @@ final class EstimateGenerationPackageController extends Controller
             if (! $status->allowsExport()) {
                 abort(422, trans_message('estimate_generation.export_not_ready'));
             }
+            if (($session->input_payload['evaluation_mode'] ?? null) === 'universal') {
+                $session = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport::class)
+                    ->read($request->user(), (int) $project->id, (int) $session->id);
+            }
             $draft = $session->draft_payload ?? [];
             $format = (string) $request->query('format', 'excel');
             if ($format === 'csv') {
@@ -146,10 +150,6 @@ final class EstimateGenerationPackageController extends Controller
                 return response()->streamDownload(static function () use ($draft): void {
                     echo json_encode($draft, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 }, 'estimate-generation-draft-'.$session->id.'.json', ['Content-Type' => 'application/json; charset=UTF-8']);
-            }
-            if (($session->input_payload['evaluation_mode'] ?? null) === 'universal') {
-                $session = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport::class)
-                    ->read($request->user(), (int) $project->id, (int) $session->id);
             }
             $result = $this->exporter->export($session->loadMissing(['project.organization', 'organization']));
             $filename = $result['filename'];

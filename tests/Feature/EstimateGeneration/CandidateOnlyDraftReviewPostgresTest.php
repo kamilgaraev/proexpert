@@ -29,6 +29,84 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_confirmed_mixed_work_rows_export_and_apply_the_same_net_amounts(): void
+    {
+        Queue::fake();
+        Http::preventStrayRequests();
+        config(['cache.default' => 'array', 'estimate-generation.universal_enabled' => true]);
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->createQuietly();
+        $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+        $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $permissions = Mockery::mock(AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $permissions);
+        $unit = \App\Models\MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => 'Квадратный метр', 'short_name' => 'м²', 'type' => 'area']);
+        foreach ([['Кубический метр', 'м³', 'volume'], ['Час', 'ч', 'time']] as [$name, $shortName, $type]) {
+            \App\Models\MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => $name, 'short_name' => $shortName, 'type' => $type]);
+        }
+        $commercial = \App\Models\EstimatePositionCatalog::query()->create(['organization_id' => $organization->id,
+            'name' => 'Коммерческое покрытие пола', 'code' => 'P-'.Str::random(6), 'item_type' => 'work', 'measurement_unit_id' => $unit->id,
+            'unit_price' => '50', 'is_active' => true, 'created_by_user_id' => $actor->id,
+            'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01', 'price_region' => 'Тестовый регион',
+                'vat_mode' => 'not_applicable', 'delivery_included' => true]]);
+        $catalog = $this->catalog(true, 2026);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
+            'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0, 'input_payload' => ['evaluation_mode' => 'universal',
+                'price_policy' => 'mixed', 'selected_sections' => ['finishing'], 'regional_context' => $catalog['context']]]);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveSessionPricingSource::class)->handle($actor,
+            (int) $project->id, (int) $session->id, ['request_id' => (string) Str::uuid(), 'state_version' => 0,
+                'estimate_regional_price_version_id' => $catalog['context']['estimate_regional_price_version_id'],
+                'conditions' => ['as_of_date' => '2026-10-01', 'vat_mode' => 'excluded', 'vat_rate' => '20',
+                    'delivery' => 'outside_scope', 'basis' => 'Прямые затраты выбранного состава; доставка вне состава.']]);
+        $saved = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts::class)->handle($actor,
+            (int) $project->id, (int) $session->id, 1, (string) Str::uuid(), ['entities' => [['key' => 'room', 'type' => 'room', 'parameters' => [
+                'length' => ['value' => '2', 'unit' => 'm', 'basis' => 'measurement'], 'width' => ['value' => '3', 'unit' => 'm', 'basis' => 'measurement'],
+            ]]]]);
+        $basis = $saved['quantities']['floor_area'];
+        $items = [];
+        foreach (['rough.floor' => 'Устройство цементной стяжки пола толщиной 20 мм', 'finish.floor' => 'Коммерческое покрытие пола'] as $key => $name) {
+            $items[] = ['key' => $key, 'name' => $name, 'item_type' => 'priced_work', 'unit' => 'm2', 'quantity' => '6',
+                'labor_hours' => '0', 'machinery_hours' => '0',
+                'quantity_status' => 'supported', 'quantity_evidence' => $basis, 'quantity_basis_details' => $basis,
+                'metadata' => ['composition_work_key' => $key, 'quantity_key' => $key, 'scope_entity_id' => $basis['formula_inputs']['entity_id']],
+                ...($key === 'rough.floor' ? ['normative_search_text' => 'Устройство цементной стяжки пола толщиной 20 мм', 'normative_rate_code' => '11-01-011-01',
+                    'normative_match' => ['norm_id' => $catalog['norm_id']]] : [])];
+        }
+        $draft = ['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+            'source_input_version' => 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh()),
+            'regional_context' => $catalog['context'], 'object_profile' => ['object_type' => 'residential'],
+            'evaluation_policy' => ['selected_sections' => ['finishing'], 'price_policy' => 'mixed'],
+            'local_estimates' => [['key' => 'finish_finishing', 'title' => 'Отделка', 'sections' => [['key' => 'floors', 'title' => 'Полы', 'work_items' => $items]]]]];
+        $session->refresh()->update(['status' => 'estimate_review_required', 'draft_payload' => (new BuildMostEstimateDraft)->seal(
+            (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft))]);
+        app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $organization->id, (int) $project->id, $actor, 2, 'rough.floor', $catalog['norm_id'], false);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection::class)->handle($actor,
+            (int) $project->id, (int) $session->id, ['request_id' => (string) Str::uuid(), 'state_version' => 3,
+                'selected_sections' => ['finishing'], 'profile_id' => 'construction', 'construction_type' => 'new_construction', 'price_policy' => 'mixed']);
+        $price = app(\App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader::class)->read((int) $organization->id, 'catalog:'.$commercial->id);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationPriceSelection::class)->handle($actor,
+            (int) $project->id, (int) $session->id, ['request_id' => (string) Str::uuid(), 'state_version' => 4,
+                'work_item_key' => 'finish.floor', 'source_reference' => $price['source_reference'], 'source_hash' => $price['source_hash']]);
+        $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, (int) $project->id, (int) $session->id, 5, (string) Str::uuid());
+        self::assertTrue($revision['result']['can_confirm_for_apply'], json_encode($revision['result']['missing_requirements'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $confirmation = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmEvaluationScenario::class)->handle($actor,
+            (int) $project->id, (int) $session->id, ['request_id' => (string) Str::uuid(), 'state_version' => 6,
+                'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'], 'scenario_id' => 'base', 'assumptions_accepted' => true]);
+        $this->assertControllerRowExports($actor, $session, ['rough.floor' => '190.80', 'finish.floor' => '300.00']);
+        $export = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport::class)->read($actor, (int) $project->id, (int) $session->id);
+        self::assertSame(['priced_work', 'confirmed_commercial_work'], array_column($export->draft_payload['local_estimates'][0]['sections'][0]['work_items'], 'item_type'));
+        $session->refresh();
+        $published = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate::class)->handle(
+            new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand((int) $session->id,
+                (int) $organization->id, (int) $project->id, $confirmation['state_version'], idempotencyKey: (string) Str::uuid(),
+                artifactHash: $session->draft_payload['artifact_hash'], actor: $actor));
+        $estimate = \App\Models\Estimate::query()->findOrFail($published->estimateId);
+        self::assertSame(['190.80', '300.00'], $estimate->items()->whereNull('parent_work_id')->orderBy('id')->pluck('total_amount')->all());
+        self::assertSame('490.80', $estimate->total_amount);
+        self::assertSame('528.96', $estimate->total_amount_with_vat);
+    }
+
     public function test_section_components_filter_distractors_before_the_sql_pool_limit_and_final_ranking(): void
     {
         $catalog = $this->catalog();
@@ -232,6 +310,7 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
             ->read($actor, (int) $project->id, (int) $session->id);
         $file = app(\App\Integrations\EstimateGeneration\EstimateGenerationExcelExportService::class)->export($exportSession);
         $this->assertNativeResourceXlsx($file['content'], [$item['key'], $finish['key']]);
+        $this->assertControllerRowExports($actor, $session, [$item['key'] => '190.80', $finish['key'] => '1440.00']);
         self::assertSame($beforeExport, $session->fresh()->getRawOriginal());
         $factsBeforeRead = app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 10001)['token'];
         $probeItems = array_column(array_intersect_key((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope)
@@ -419,6 +498,75 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         Http::assertNothingSent();
     }
 
+    private function assertControllerRowExports(User $actor, EstimateGenerationSession $session, array $expected): void
+    {
+        $before = $session->fresh()->getRawOriginal();
+        $project = Project::query()->findOrFail($session->project_id);
+        $responses = [];
+        foreach (['json', 'csv', 'excel'] as $format) {
+            $request = \Illuminate\Http\Request::create('/export', 'GET', ['format' => $format]);
+            $request->setUserResolver(static fn (): User => $actor);
+            $response = app(\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController::class)
+                ->export($request, $project, $session->fresh());
+            self::assertSame(200, $response->getStatusCode());
+            if ($response instanceof \Symfony\Component\HttpFoundation\StreamedResponse) {
+                ob_start();
+                try {
+                    $response->sendContent();
+                    $responses[$format] = (string) ob_get_contents();
+                } finally {
+                    ob_end_clean();
+                }
+            } else {
+                $responses[$format] = $response->getContent();
+            }
+        }
+        $json = json_decode($responses['json'], true, 64, JSON_THROW_ON_ERROR);
+        $items = $json['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertSame($expected, array_column($items, 'total_cost', 'key'));
+        $csv = fopen('php://temp', 'r+');
+        try {
+            fwrite($csv, $responses['csv']);
+            rewind($csv);
+            self::assertCount(7, fgetcsv($csv, escape: ''));
+            $amounts = [];
+            while (($row = fgetcsv($csv, escape: '')) !== false) {
+                self::assertCount(7, $row);
+                $amounts[$row[2]] = $row[5];
+            }
+            self::assertSame(array_combine(array_column($items, 'name'), array_values($expected)), $amounts);
+        } finally {
+            fclose($csv);
+        }
+        $path = tempnam(sys_get_temp_dir(), 'most-confirmed-row-exports-');
+        self::assertNotFalse($path);
+        $book = null;
+        try {
+            file_put_contents($path, $responses['excel']);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('_METADATA_');
+            $metadata = json_decode((string) $sheet->getCell('A1')->getValue(), true, 64, JSON_THROW_ON_ERROR);
+            if (($metadata['encoding'] ?? null) === 'utf8-json-chunks') {
+                $content = '';
+                for ($row = 2; $row <= $metadata['chunk_count'] + 1; $row++) {
+                    $content .= (string) $sheet->getCell('A'.$row)->getValue();
+                }
+                $metadata = json_decode($content, true, 64, JSON_THROW_ON_ERROR);
+            }
+            $amounts = [];
+            foreach ($metadata['items'] as $item) {
+                if ($item['parent_work_id'] === null) {
+                    $amounts[$item['metadata']['work_item_key']] = (string) \Brick\Math\BigDecimal::of((string) $item['total_amount'])->toScale(2);
+                }
+            }
+            self::assertSame($expected, $amounts);
+        } finally {
+            $book?->disconnectWorksheets();
+            unlink($path);
+        }
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+    }
+
     private function assertNativeResourceXlsx(string $content, array $workKeys): void
     {
         $path = tempnam(sys_get_temp_dir(), 'most-confirmed-native-resources-');
@@ -593,7 +741,7 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         return ['explicit_business_date' => [false], 'price_period_date' => [true]];
     }
 
-    private function catalog(bool $abstract = false): array
+    private function catalog(bool $abstract = false, int $year = 2088): array
     {
         $now = now();
         $key = strtolower((string) Str::ulid());
@@ -606,8 +754,8 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         DB::table('estimate_norm_resources')->insert(['estimate_norm_id' => $norm, 'resource_code' => $key, 'resource_name' => 'Труд рабочих', 'unit' => 'h', 'quantity' => '1.000000', 'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now]);
         $region = DB::table('estimate_regions')->insertGetId(['code' => 'T-'.$key, 'name' => 'Тестовый регион', 'fgiscs_subject_id' => random_int(100000, 999999), 'created_at' => $now, 'updated_at' => $now]);
         $zone = DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $region, 'name' => 'Тестовая зона', 'fgiscs_price_zone_id' => random_int(1000000, 1999999), 'created_at' => $now, 'updated_at' => $now]);
-        $period = DB::table('estimate_price_periods')->where('year', 2088)->where('quarter', 4)->value('id')
-            ?? DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999), 'name' => $key, 'year' => 2088, 'quarter' => 4, 'created_at' => $now, 'updated_at' => $now]);
+        $period = DB::table('estimate_price_periods')->where('year', $year)->where('quarter', 4)->value('id')
+            ?? DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999), 'name' => $key, 'year' => $year, 'quarter' => 4, 'created_at' => $now, 'updated_at' => $now]);
         $version = DB::table('estimate_regional_price_versions')->insertGetId(['source' => 'fgiscs', 'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period, 'version_key' => $key, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
         DB::table('estimate_resource_prices')->insert(['dataset_version_id' => $prices, 'regional_price_version_id' => $version, 'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period, 'resource_code' => $key, 'resource_name' => 'Труд рабочих', 'unit' => 'h', 'base_price' => '30.0000', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
         if ($abstract) {
@@ -638,7 +786,7 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         DB::table('estimate_regional_price_versions')->where('id', $version)->update(['status' => 'active']);
 
         return ['norm_id' => $norm, 'finish_norm_id' => $finishNorm ?? null, 'child_code' => '04.3.01.09-0054', 'context' => ['region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period,
-            ...($abstract ? ['business_date' => '2088-10-01', 'year' => 2088, 'quarter' => 4, 'version_key' => $key] : []),
+            ...($abstract ? ['business_date' => sprintf('%04d-10-01', $year), 'year' => $year, 'quarter' => 4, 'version_key' => $key] : []),
             'estimate_regional_price_version_id' => $version, 'normative_dataset_version' => $key]];
     }
 }

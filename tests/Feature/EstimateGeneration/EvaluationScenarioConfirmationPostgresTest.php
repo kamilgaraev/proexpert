@@ -36,6 +36,156 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationScenarioConfirmationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[\PHPUnit\Framework\Attributes\DataProvider('exportPermissions')]
+    public function test_confirmed_export_requires_export_permission_without_view(array $permissions, bool $allowed): void
+    {
+        [$actor, $session, , $input] = $this->fixture();
+        Queue::fake();
+        app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $before = $session->fresh()->getRawOriginal();
+        $requested = [];
+        $authorization = \Mockery::mock(AuthorizationService::class);
+        $authorization->allows('canCurrent')->andReturnUsing(static function (User $user, string $permission, array $context) use ($permissions, &$requested): bool {
+            $requested[] = $permission;
+
+            return in_array($permission, $permissions, true);
+        });
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $results = [];
+        try {
+            $projection = app(ReadConfirmedEvaluationExport::class)->read($actor, (int) $session->project_id, (int) $session->id);
+            $results['reader'] = 200;
+            self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::CONTRACT, $projection->draft_payload['generation_contract']);
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            $results['reader'] = 403;
+        }
+        foreach (['csv', 'json', 'excel'] as $format) {
+            try {
+                $results[$format] = $this->exportResponse($actor, $session, $format)->getStatusCode();
+            } catch (\Illuminate\Auth\Access\AuthorizationException) {
+                $results[$format] = 403;
+            }
+        }
+        self::assertSame(array_fill_keys(['reader', 'csv', 'json', 'excel'], $allowed ? 200 : 403), $results);
+        self::assertSame(array_fill(0, 4, 'estimate_generation.export'), $requested);
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+    }
+
+    public static function exportPermissions(): array
+    {
+        return [
+            'export without view' => [['estimate_generation.export'], true],
+            'view without export' => [['estimate_generation.view'], false],
+            'neither permission' => [[], false],
+        ];
+    }
+
+    public function test_csv_json_and_xlsx_export_the_confirmed_non_base_catalog_scenario_with_separate_net_totals(): void
+    {
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        [$actor, $session, , $input] = $this->fixture('included', '120', reserve: ['quoted_amount' => '120', 'vat_mode' => 'included']);
+        Queue::fake();
+        $input['scenario_id'] = 'maximum';
+        $confirmed = app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $before = $session->fresh()->getRawOriginal();
+        $json = $this->exportResponse($actor, $session, 'json');
+        self::assertInstanceOf(\Symfony\Component\HttpFoundation\StreamedResponse::class, $json);
+        $projection = json_decode($this->streamedBody($json), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::CONTRACT, $projection['generation_contract']);
+        self::assertSame('maximum', $projection['confirmed_evaluation']['scenario_id']);
+        $items = $projection['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertSame(['preparation' => '1', 'finishing' => '30'], array_column($items, 'quantity', 'key'));
+        self::assertSame(['100.00', '3000.00'], array_column($items, 'total_cost'));
+        self::assertSame('100.00', $projection['contingency_amount']);
+        self::assertSame('3840.00', $projection['accepted_payable_total']);
+        $csv = $this->exportResponse($actor, $session, 'csv');
+        self::assertInstanceOf(\Symfony\Component\HttpFoundation\StreamedResponse::class, $csv);
+        $rows = $this->csvRows($this->streamedBody($csv));
+        self::assertCount(3, $rows);
+        foreach ($rows as $row) {
+            self::assertCount(7, $row);
+        }
+        self::assertSame(['preparation', 'finishing'], array_column(array_slice($rows, 1), 2));
+        self::assertSame(['1', '30'], array_column(array_slice($rows, 1), 4));
+        self::assertSame(['100.00', '3000.00'], array_column(array_slice($rows, 1), 5));
+        $xlsx = $this->exportResponse($actor, $session, 'excel');
+        self::assertSame(200, $xlsx->getStatusCode());
+        $this->assertConfirmedXlsx($xlsx->getContent(), '3200.00', '3840.00', '100.00');
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        $session->refresh();
+        $published = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate::class)->handle(
+            new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand((int) $session->id,
+                (int) $session->organization_id, (int) $session->project_id, $confirmed['state_version'],
+                idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor));
+        $estimate = \App\Models\Estimate::query()->findOrFail($published->estimateId);
+        self::assertSame(['100.00', '3000.00'], $estimate->items()->whereNull('parent_work_id')->orderBy('id')->pluck('total_amount')->all());
+        self::assertSame('3200.00', $estimate->total_amount);
+        self::assertSame('3840.00', $estimate->total_amount_with_vat);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_csv_and_json_controller_reject_unconfirmed_stale_and_foreign_scopes(): void
+    {
+        [$actor, $session, $catalog, $input] = $this->fixture();
+        foreach (['csv', 'json'] as $format) {
+            self::assertSame(422, $this->exportResponse($actor, $session, $format)->getStatusCode());
+        }
+        $foreign = User::factory()->create(['current_organization_id' => Organization::factory()->create()->id]);
+        foreach (['csv', 'json'] as $format) {
+            try {
+                $this->exportResponse($foreign, $session, $format);
+                self::fail('Cross-organization export must be rejected.');
+            } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+                self::assertSame(403, $exception->getStatusCode());
+            }
+        }
+        app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $before = $session->fresh()->getRawOriginal();
+        $catalog->update(['unit_price' => '101']);
+        foreach (['csv', 'json'] as $format) {
+            self::assertSame(422, $this->exportResponse($actor, $session, $format)->getStatusCode());
+        }
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+    }
+
+    private function exportResponse(User $actor, EstimateGenerationSession $session, string $format): \Symfony\Component\HttpFoundation\Response
+    {
+        $request = \Illuminate\Http\Request::create('/export', 'GET', ['format' => $format]);
+        $request->setUserResolver(static fn (): User => $actor);
+
+        return app(\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController::class)
+            ->export($request, Project::query()->findOrFail($session->project_id), $session->fresh());
+    }
+
+    private function streamedBody(\Symfony\Component\HttpFoundation\StreamedResponse $response): string
+    {
+        ob_start();
+        try {
+            $response->sendContent();
+
+            return (string) ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+    }
+
+    private function csvRows(string $content): array
+    {
+        $handle = fopen('php://temp', 'r+');
+        try {
+            fwrite($handle, $content);
+            rewind($handle);
+            $rows = [];
+            while (($row = fgetcsv($handle, escape: '')) !== false) {
+                $rows[] = $row;
+            }
+
+            return $rows;
+        } finally {
+            fclose($handle);
+        }
+    }
+
     public function test_parameter_cases_recalculate_confirm_and_become_stale_after_operand_change_without_ai(): void
     {
         \Illuminate\Support\Facades\Http::fake([]);

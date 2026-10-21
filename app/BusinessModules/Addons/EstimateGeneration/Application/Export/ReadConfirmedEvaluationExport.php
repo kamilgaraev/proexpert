@@ -28,7 +28,7 @@ final readonly class ReadConfirmedEvaluationExport
                 $query->where('organization_id', $actor->current_organization_id);
             }
             $session = $query->lockForUpdate()->firstOrFail();
-            $this->authorization->authorize($actor, $session, 'estimate_generation.view');
+            $this->authorization->authorize($actor, $session, 'estimate_generation.export');
             $draft = $session->draft_payload ?? [];
             if (! config('estimate-generation.universal_enabled', false) || ! $session->status->allowsExport()
                 || ($session->input_payload['evaluation_mode'] ?? null) !== 'universal'
