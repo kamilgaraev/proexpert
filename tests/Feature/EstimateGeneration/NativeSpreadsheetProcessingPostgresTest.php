@@ -160,6 +160,30 @@ final class NativeSpreadsheetProcessingPostgresTest extends EstimateGenerationCa
             }
             $projection = app(CurrentProjectDerivedQuantityService::class)->previewInput((int) $organization->id, (int) $project->id, (int) $session->id);
             if ($equipment) {
+                $specifications = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'equipment_specification'));
+                self::assertCount(1, $specifications);
+                $specification = $specifications[0];
+                self::assertSame('Электрический котёл отопления массой до 30 кг.', $specification->value);
+                self::assertNull($specification->unit);
+                self::assertSame([(int) $organization->id, (int) $project->id, (int) $session->id, $version],
+                    [$specification->organizationId, $specification->projectId, $specification->sessionId, $specification->sourceVersion]);
+                self::assertSame('document', $specification->origin);
+                self::assertSame('confirmed', $specification->status);
+                self::assertSame([], $specification->nativeNumericProofs);
+                $entities = array_values(array_filter($snapshot->entities, static fn ($entity): bool => $entity->id === $specification->entityId));
+                self::assertCount(1, $entities);
+                self::assertSame('equipment:boiler', $entities[0]->attributes['properties']['source_entity_key']);
+                $sources = array_values(array_filter($snapshot->evidence, static fn ($evidence): bool => in_array($evidence->id, $specification->evidenceIds, true)));
+                self::assertCount(1, $sources);
+                $source = $sources[0];
+                self::assertSame($version, $source->sourceVersion);
+                self::assertSame('document:'.$document->id, $source->sourceReference);
+                self::assertSame('xlsx:sheet:Оборудование!C2', $source->nativeReference);
+                self::assertSame('drawing_analyzer', $source->producerName);
+                self::assertFalse((new NativeNumericFactProof)->matches($specification, $source));
+                $locator = json_decode(DB::table('estimate_generation_evidence')->where('id', (int) substr($source->id, strlen('evidence:')))->value('locator'), true, flags: JSON_THROW_ON_ERROR);
+                self::assertSame([(int) $document->id, DocumentUnitType::SpreadsheetSheet->value, 1],
+                    [$locator['document_id'], $locator['unit_type'], $locator['unit_index']]);
                 $counts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'equipment_count'));
                 self::assertCount($withFormula ? 0 : 1, $counts);
                 if ($withFormula) {
