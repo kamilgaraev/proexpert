@@ -555,6 +555,8 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'paint_singular_bearing_wall_surface' => ['Покраска несущей стены', ['finish_finishing'], ['finishing', 'structures']];
         yield 'singular_defined_surface_then_new_wall_operation' => ['Покраска внутренней стены и устройство стен', ['finish_finishing', 'walls'], ['finishing', 'structures']];
         yield 'finishing_does_not_swallow_another_declined_operation' => ['Покраска потолков с устройством стен и фасада', ['finish_finishing', 'walls', 'facade'], ['finishing', 'structures']];
+        yield 'finishing_list_does_not_swallow_foundation' => ['Покраска потолков, фундамент', ['finish_finishing', 'foundation'], ['finishing', 'structures']];
+        yield 'finishing_list_does_not_swallow_slabs' => ['Покраска потолков, перекрытия', ['finish_finishing', 'slabs'], ['finishing', 'structures']];
     }
 
     #[DataProvider('unknownOptionalSiteRequests')]
@@ -579,6 +581,65 @@ final class WorkPlanCompilerTest extends TestCase
     {
         yield 'road' => ['Устройство дороги', 'roads'];
         yield 'external_networks' => ['Наружные инженерные сети', 'external_networks'];
+    }
+
+    #[DataProvider('excludedOptionalSiteRequests')]
+    public function test_excluded_manual_site_request_does_not_return_through_optional_flags(string $description): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([], $analysis['detected_structure']['explicit_work_scopes']);
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertSame($description, $analysis['object']['manual_description']);
+    }
+
+    public static function excludedOptionalSiteRequests(): iterable
+    {
+        yield 'roads' => ['Без дорог'];
+        yield 'networks' => ['Наружные сети не требуются'];
+        yield 'siteworks' => ['Без благоустройства'];
+    }
+
+    #[DataProvider('independentOptionalSiteRequests')]
+    public function test_optional_site_exclusion_keeps_an_independent_positive_clause(string $description, string $package): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['earthworks']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
+        self::assertSame($description, $analysis['object']['manual_description']);
+    }
+
+    public static function independentOptionalSiteRequests(): iterable
+    {
+        yield 'network_after_road_exclusion' => ['Без дорог; наружные инженерные сети', 'external_networks'];
+        yield 'road_after_siteworks_exclusion' => ['Без благоустройства; устройство дороги', 'roads'];
+        yield 'siteworks_after_network_exclusion' => ['Наружные сети не требуются; благоустройство территории', 'siteworks'];
+        yield 'independent_operation_same_sentence' => ['Без дорог и устройство наружных сетей', 'external_networks'];
+    }
+
+    #[DataProvider('constructiveRequestsWithExcludedSiteWorks')]
+    public function test_manual_zone_mirror_does_not_revive_excluded_site_flags(string $description): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'earthworks']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame(['walls'], array_column($analysis['detected_structure']['explicit_work_scopes'], 'scope_type'));
+        self::assertSame(['walls'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame(['walls'], array_column($payload['local_estimates'], 'key'));
+        self::assertSame($description, $analysis['object']['manual_description']);
+    }
+
+    public static function constructiveRequestsWithExcludedSiteWorks(): iterable
+    {
+        yield 'wall_without_roads' => ['Устройство стен без дорог'];
+        yield 'wall_after_road_exclusion' => ['Без дорог и устройство стен'];
+        yield 'wall_without_siteworks' => ['Устройство стен без благоустройства'];
+        yield 'wall_after_network_exclusion' => ['Наружные сети не требуются и устройство стен'];
     }
 
     #[DataProvider('unsupportedFireSystems')]
@@ -826,6 +887,8 @@ final class WorkPlanCompilerTest extends TestCase
     {
         yield 'networks' => ['Наружные инженерные сети', 'networks.external', 'external_networks', true];
         yield 'roads' => ['Устройство дороги', 'warehouse.roads', 'roads', false];
+        yield 'document_network_rows_with_excluded_manual_request' => ['Наружные сети не требуются', 'networks.external', 'external_networks', true];
+        yield 'document_road_scope_with_excluded_manual_request' => ['Без дорог', 'warehouse.roads', 'roads', false];
     }
 
     public function test_site_preparation_does_not_hide_independent_landscaping_request_or_document_key(): void

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
-use App\BusinessModules\Addons\EstimateGeneration\Planning\EvaluationSectionMap;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 
 class ConstructionSemanticParser
@@ -512,9 +511,7 @@ class ConstructionSemanticParser
 
     private function manualScopeTypes(string $line): array
     {
-        foreach ($this->explicitScopeExclusionSpans($line) as $span) {
-            $line = mb_substr($line, 0, $span['start']).str_repeat(' ', $span['end'] - $span['start']).mb_substr($line, $span['end']);
-        }
+        $line = $this->positiveWorkText($line);
         $scopes = [];
         $finishingContext = null;
         foreach (preg_split('~,+~u', $line) ?: [] as $group) {
@@ -524,8 +521,7 @@ class ConstructionSemanticParser
                 $clauseScopes = $this->detectScopeTypes($clause, $keywords, bindFinishingSurfaces: true);
                 $finishingScopes = array_values(array_intersect($clauseScopes, ['rough_finishing', 'finish_finishing', 'finishing']));
                 $newOperation = preg_match('~(?<![\p{L}\p{N}])'.$this->explicitOperationPattern(independent: true).'\s+~u', $clause) === 1;
-                $surfaceOnly = array_filter($clauseScopes, static fn (string $scope): bool =>
-                    ! in_array(EvaluationSectionMap::forPackage($scope), ['structures', 'roofing'], true)) === [];
+                $surfaceOnly = $clauseScopes !== [] && array_diff($clauseScopes, ['walls', 'facade', 'roof']) === [];
                 if ($finishingContext !== null && ! $newOperation && $surfaceOnly) {
                     $clauseScopes = $finishingContext;
                 } else {
@@ -545,6 +541,18 @@ class ConstructionSemanticParser
         }
 
         return array_keys($scopes);
+    }
+
+    public function positiveWorkText(string $text): string
+    {
+        $lines = preg_split('/\r\n|\r|\n/u', mb_strtolower($text)) ?: [];
+        foreach ($lines as &$line) {
+            foreach ($this->explicitScopeExclusionSpans($line) as $span) {
+                $line = mb_substr($line, 0, $span['start']).str_repeat(' ', $span['end'] - $span['start']).mb_substr($line, $span['end']);
+            }
+        }
+
+        return implode("\n", $lines);
     }
 
     private function hasFinishingSurfaceArgument(string $clause, array $keywords): bool

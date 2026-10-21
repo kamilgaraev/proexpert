@@ -111,7 +111,12 @@ class PackagePlannerService
             || $this->containsIndustrialObjectSignal($description);
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
-        $planningSignals = $this->planningSignalsFromAnalysis($analysis, $description);
+        $parser = new ConstructionSemanticParser;
+        $planningDescription = implode("\n", [
+            $parser->positiveWorkText((string) ($object['manual_description'] ?? $object['description'] ?? '')),
+            (string) ($documentContext['context_text'] ?? ''), $zoneText,
+        ]);
+        $planningSignals = $this->planningSignalsFromAnalysis($analysis, $planningDescription);
         $planningSignals['evaluation_profile'] = $analysis['evaluation_policy']['profile_id'] ?? null;
         $roofType = (new RoofTypeResolver)->resolve($analysis);
         if ($roofType !== null) {
@@ -562,11 +567,15 @@ class PackagePlannerService
         $detectedStructure = is_array($analysis['detected_structure'] ?? null) ? $analysis['detected_structure'] : [];
         $quantityKeys = $this->quantityKeysFromAnalysis($analysis);
         $fragments = [$description];
+        $manualScopes = is_array($detectedStructure['explicit_work_scopes'] ?? null) ? $detectedStructure['explicit_work_scopes'] : [];
+        $manualTitles = array_column($manualScopes, 'title');
+        $parser = new ConstructionSemanticParser;
 
         foreach (['zones', 'constructives'] as $key) {
             foreach (($detectedStructure[$key] ?? []) as $value) {
                 if (is_string($value) && trim($value) !== '') {
-                    $fragments[] = $value;
+                    $fragments[] = $key === 'zones' && in_array($value, $manualTitles, true)
+                        ? $parser->positiveWorkText($value) : $value;
                 }
             }
         }
@@ -578,7 +587,8 @@ class PackagePlannerService
 
             foreach (['title', 'scope_type'] as $field) {
                 if (is_string($scope[$field] ?? null) && trim($scope[$field]) !== '') {
-                    $fragments[] = $scope[$field];
+                    $fragments[] = $field === 'title' && in_array($scope, $manualScopes, true)
+                        ? $parser->positiveWorkText($scope[$field]) : $scope[$field];
                 }
             }
         }
