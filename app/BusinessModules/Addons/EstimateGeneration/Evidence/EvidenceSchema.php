@@ -42,7 +42,7 @@ final class EvidenceSchema
             throw new InvalidArgumentException('Evaluation choices require explicit user input.');
         }
         [$schema, $required] = match ($type) {
-            EvidenceType::SourceFact => [['fact_key' => 'attribute', 'fact_value' => 'normalized_scalar', 'unit' => 'unit'], ['fact_key', 'fact_value']],
+            EvidenceType::SourceFact => [['fact_key' => 'attribute', 'fact_value' => 'normalized_scalar', 'unit' => 'unit', 'native_literal_source' => 'native_literal_source'], ['fact_key', 'fact_value']],
             EvidenceType::Extracted => [['field_key' => 'attribute', 'field_value' => 'normalized_scalar', 'unit' => 'unit'], ['field_key', 'field_value']],
             EvidenceType::Measured => [['quantity' => 'measured_quantity', 'unit' => 'unit', 'method' => 'method'], ['quantity', 'unit']],
             EvidenceType::Inferred => [['result_code' => 'domain_code', 'confidence_band' => 'confidence_band'], ['result_code']],
@@ -65,6 +65,10 @@ final class EvidenceSchema
             $schema['field_value'] = 'signed_source_decimal';
         }
         self::assertClosed($value, $schema, 'value');
+        if (array_key_exists('native_literal_source', $value)
+            && (($value['fact_value'] ?? null) !== 'material:'.$value['native_literal_source']['value_hash'] || array_key_exists('unit', $value))) {
+            throw new InvalidArgumentException('Native literal evidence value binding is invalid.');
+        }
         foreach ($required as $key) {
             if (! array_key_exists($key, $value)) {
                 throw new InvalidArgumentException('Evidence value field is missing.');
@@ -119,6 +123,7 @@ final class EvidenceSchema
             'signed_source_decimal' => CanonicalSourceDecimal::isValid($value),
             'bbox' => self::validBbox($value),
             'fact_source' => FactSourceLocator::valid($value),
+            'native_literal_source' => self::validNativeLiteralSource($value),
             default => false,
         };
         if (! $valid) {
@@ -130,6 +135,33 @@ final class EvidenceSchema
     {
         return is_string($value) && $value !== '' && strlen($value) <= $max
             && mb_check_encoding($value, 'UTF-8') && preg_match($pattern, $value) === 1;
+    }
+
+    private static function validNativeLiteralSource(mixed $value): bool
+    {
+        $fields = ['schema_version', 'producer', 'artifact_sha256', 'document_id', 'unit_id', 'cell',
+            'entity_key', 'fact_type', 'value_hash', 'organization_id', 'project_id', 'session_id', 'source_version'];
+        if (! is_array($value) || count($value) !== count($fields) || array_diff(array_keys($value), $fields) !== []
+            || ($value['schema_version'] ?? null) !== 1 || ($value['producer'] ?? null) !== 'native_spreadsheet_literal:v1'
+            || ! is_string($value['cell'] ?? null) || preg_match('/\A[A-Z]{1,3}[1-9][0-9]{0,6}\z/', $value['cell']) !== 1
+            || ! is_string($value['artifact_sha256'] ?? null) || preg_match('/\Asha256:[a-f0-9]{64}\z/', $value['artifact_sha256']) !== 1
+            || ! is_string($value['source_version'] ?? null) || preg_match('/\Asha256:[a-f0-9]{64}\z/', $value['source_version']) !== 1
+            || ! self::boundedString($value['entity_key'] ?? null, 120, '/\A[a-zA-Z0-9][a-zA-Z0-9._:-]*\z/')
+            || ! self::boundedString($value['fact_type'] ?? null, 120, '/\A[a-z][a-z0-9_]*\z/')) {
+            return false;
+        }
+        try {
+            foreach (['document_id', 'unit_id', 'organization_id', 'project_id', 'session_id'] as $field) {
+                if (! is_int($value[$field]) || $value[$field] < 1) {
+                    return false;
+                }
+            }
+            self::assertValue('sha256', $value['value_hash']);
+        } catch (InvalidArgumentException) {
+            return false;
+        }
+
+        return true;
     }
 
     private static function validBbox(mixed $value): bool

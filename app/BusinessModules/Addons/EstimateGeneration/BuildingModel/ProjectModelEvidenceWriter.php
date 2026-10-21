@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumbe
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeSpreadsheetLiteralSources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PhysicalMeasurementPublicationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\VerifiedNativeNumericSources;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
@@ -53,7 +54,7 @@ final readonly class ProjectModelEvidenceWriter
     }
 
     /** @param list<ObservationClaim> $claims @param list<ArbitrationDecision> $decisions */
-    public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber, ?VerifiedNativeNumericSources $numericSources = null): void
+    public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber, ?VerifiedNativeNumericSources $numericSources = null, ?NativeSpreadsheetLiteralSources $literalSources = null): void
     {
         if ($claims === [] || $decisions === []) {
             throw new InvalidArgumentException('Arbitration projection cannot be empty.');
@@ -83,7 +84,7 @@ final readonly class ProjectModelEvidenceWriter
         }
         $nativeRoomIdentities = $this->nativeRoomIdentities($byId, $decisions, $documentId, $pageNumber, $numericSources);
         $roomLocations = $this->roomLocations($byId, $decisions, $documentId, $pageNumber);
-        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources, $nativeRoomIdentities, $roomLocations): void {
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources, $literalSources, $nativeRoomIdentities, $roomLocations): void {
             $entities = [];
             $facts = [];
             $factsByClaimId = [];
@@ -136,6 +137,8 @@ final readonly class ProjectModelEvidenceWriter
                         [
                             'fact_key' => $this->evidenceFactKey($supportingClaim),
                             'fact_value' => $this->evidenceScalar($supportingClaim),
+                            ...(($literalBinding = $literalSources?->binding($supportingClaim, $documentId, $pageNumber)) === null
+                                ? [] : ['native_literal_source' => $literalBinding]),
                         ],
                         $supportingClaim->explicitEvidence
                             ? $supportingClaim->confidence
