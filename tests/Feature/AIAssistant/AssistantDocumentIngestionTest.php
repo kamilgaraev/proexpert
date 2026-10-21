@@ -78,6 +78,7 @@ final class AssistantDocumentIngestionTest extends TestCase
         $authorization->shouldReceive('can')->andReturnUsing(fn (): bool => $this->allowed);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->allowed && ! in_array($permission, $this->deniedPermissions, true));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturnUsing(static fn (int $organizationId, OrganizationEntitlementService $source): array => $source->getEffectiveModuleSlugs($organizationId));
         $projects = Mockery::mock(UserProjectAccessService::class);
         $projects->shouldReceive('queryAccessibleProjects')->andReturnUsing(fn () => Project::query()->where('organization_id', $this->organization->id)->whereNotIn('id', $this->deniedProjects));
         $projects->shouldReceive('canAccessProject')->andReturn(true);
