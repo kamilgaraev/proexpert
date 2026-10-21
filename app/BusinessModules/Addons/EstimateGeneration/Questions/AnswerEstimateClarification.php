@@ -5,16 +5,19 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Questions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 use function trans_message;
@@ -30,6 +33,7 @@ final class AnswerEstimateClarification
         private readonly ApplyProjectModelDecision $decisions,
         private readonly PlanningReanalysisTrigger $reanalysis,
         ?Closure $translate = null,
+        private readonly ?UserEvaluationChoiceWriter $choices = null,
     ) {
         $this->translate = $translate ?? static fn (string $key): string => trans_message($key);
     }
@@ -71,13 +75,44 @@ final class AnswerEstimateClarification
 
             return $this->replayResult($decision, $selected);
         }
+        if (str_starts_with($questionKey, 'composer_source_')) {
+            $answer = DB::transaction(function () use ($actor, $session, $context, $questionKey, $response, $other, $decisionId): EstimateClarificationAnswer {
+                $locked = EstimateGenerationSession::query()->where('organization_id', $context->organizationId)
+                    ->where('project_id', $context->projectId)->whereKey($session->getKey())->lockForUpdate()->first();
+                if ($locked === null) {
+                    throw new InvalidArgumentException('estimate_generation.question_stale');
+                }
+                $existing = $this->models->decisions($context->organizationId, $context->projectId, (int) $locked->getKey(), [$decisionId]);
+                if ($existing !== []) {
+                    [$decision, $selected] = $this->replay($existing[0], $context, $questionKey, $response, $other);
+
+                    return $this->replayResult($decision, $selected);
+                }
+                if ($locked->status !== EstimateGenerationStatus::InputReviewRequired) {
+                    throw new InvalidArgumentException('estimate_generation.question_stale');
+                }
+                $current = $this->source->findCurrent($context->organizationId, $context->projectId, (int) $session->getKey(), $questionKey);
+                if ($current?->composerContext === null || ! hash_equals($context->expectedSourceVersion, $current->sourceVersion)
+                    || ! hash_equals($context->expectedValueFingerprint, $current->answerFingerprint)) {
+                    throw new InvalidArgumentException('estimate_generation.question_stale');
+                }
+                [$normalized, $label, $normalizedOther] = $this->answer($current->question, $response, $other);
+                $decision = ($this->choices ?? app(UserEvaluationChoiceWriter::class))->writeComposerAnswer(
+                    $actor, $locked, $current, $normalized, $normalizedOther, $context->idempotencyKey, $decisionId);
+
+                return $this->result($current, $decision, $normalized, $label, $normalizedOther);
+            });
+            $this->reanalysis->trigger((int) $session->getKey(), $context);
+
+            return $answer;
+        }
         $current = $this->source->findCurrent(
             $context->organizationId,
             $context->projectId,
             (int) $session->getKey(),
             $questionKey,
         );
-        if (! $current instanceof CurrentEstimateClarification) {
+        if (! $current instanceof CurrentEstimateClarification || $current->targetFactId === null || $current->composerContext !== null) {
             throw new InvalidArgumentException('estimate_generation.question_not_found');
         }
         if (($context->expectedSourceVersion !== null

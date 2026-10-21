@@ -113,7 +113,11 @@ final readonly class EstimatorKnownContextSnapshot
             : $this->composer->capture($organizationId, $projectId, $sessionId, $currentCandidates, $quantities, [],
                 allowedWorkSections: ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
                     ? ($session->input_payload['selected_sections'] ?? []) : [],
-                evaluationMode: $session->input_payload['evaluation_mode'] ?? 'legacy');
+                evaluationMode: $session->input_payload['evaluation_mode'] ?? 'legacy',
+                answerPolicy: ['evaluation_mode' => $session->input_payload['evaluation_mode'] ?? 'legacy',
+                    'profile_id' => $session->input_payload['profile_id'] ?? 'construction',
+                    'selected_sections' => $session->input_payload['selected_sections'] ?? [],
+                    'description' => trim((string) ($session->input_payload['description'] ?? ''))]);
         $auditInput = $staleDraft || $workCount === 0 ? null : $this->audit->capture($organizationId, $projectId, $sessionId, $draft,
             draftView: $wirePolicy['audit_draft_view'] ?? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftView::LEGACY);
         $links = $questions = [];
