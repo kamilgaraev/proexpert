@@ -7,10 +7,36 @@ namespace Tests\Unit\EstimateGeneration\Normatives;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialSignedNormCompatibility;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class NormativeIntentCandidateRankerTest extends TestCase
 {
+    #[DataProvider('componentPrefixes')]
+    public function test_foreign_component_distractors_cannot_displace_the_target_before_top_two(array $preferred, string $target, string $foreign): void
+    {
+        $candidates = [];
+        foreach ([1, 2, 3] as $id) {
+            $candidates[] = $this->candidate($id, $foreign.'-001-0'.$id, 'Устройство покрытий', 'm2', $foreign);
+        }
+        $candidates[] = $this->candidate(99, $target.'-001-01', 'Устройство покрытий', 'm2', $target);
+        $selected = (new NormativeIntentCandidateRanker)->select($candidates, [[
+            'search_text' => 'Устройство покрытий', 'unit' => 'm2', 'normative_sections' => $preferred,
+        ]]);
+        self::assertSame([99], array_column($selected ?? [], 'id'));
+    }
+
+    public static function componentPrefixes(): array
+    {
+        return [
+            [['1'], '1', '10'],
+            [['01'], '1', '10'],
+            [['08'], '8.1', '80'],
+            [['06-1'], '6.01', '06-10'],
+            [['01', '08'], '8-01', '10'],
+        ];
+    }
+
     public function test_residential_sewerage_prefers_internal_pipeline_norm(): void
     {
         $candidates = [
