@@ -16,6 +16,8 @@ final readonly class AssistantRequestProjectScope
 
     private const ORGANIZATION_QUALIFIER = '(?:всей\s+(?:нашей\s+)?|в\s+целом\s+по\s+(?:нашей\s+)?)';
 
+    private const CONDITION_STARTER = '(?:дороже|дешевле|больше|меньше|выше|ниже|свыше|равно)';
+
     private const NUMERIC_PROJECTS = '(?<![\pL\pN])(?:проект|объект)[а-яё]*\s*(?:№|#|id)?\s*([1-9]\d*(?:\s*(?:,|и|или)\s*(?:(?:проект|объект)[а-яё]*\s*)?(?:№|#|id)?\s*[1-9]\d*)*)(?![\pL\pN])';
 
     public function __construct(public bool $requested, public ?int $projectId, private ?int $contextProjectId = null) {}
@@ -72,7 +74,7 @@ final readonly class AssistantRequestProjectScope
         $question = preg_replace('/'.self::CURRENT_PROJECT.'(*SKIP)(*F)|(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+))'.$recordScope.'\s+(?:нашей\s+)?организации(?![\pL\pN])/iu', '$1текущий', $question) ?? $question;
         $command = '(?:(?:не|пожалуйста)\s+){0,2}(?:(?:сформируй|сгенерируй|создай|сделай|собери|подготовь|составь|сохрани|экспортируй|выгрузи|выведи|построй|объедини|сведи|подведи|покажи|показывай|посмотри|найди|посчитай|подсчитай|рассчитай|вычисли|сгруппируй|группируй|отсортируй|сортируй|сравни|сопоставь|сверь|проверь|проанализируй|оцени|объясни|расскажи|перечисли|дай|добавь|учти|учитывай|включи|включай|исключи|исключай)(?:те)?|ограничивайся|ограничивайтесь)';
         $postDefinition = '(?:(?:не|частично|полностью|еще|ещё|пока)\s+){0,3}[а-яё][а-яё-]*(?:ые|ие)';
-        $continuation = '(?=\s*(?:$|[,.;:!?]|(?:в|во|на|по|за|с|со|против|относительно|без|для|из|от|до|после|перед|при|к|ко|о|об|и|или|а|но|вместе|кроме|исключая|включая|только|также|пожалуйста|сегодня|вчера|позавчера|завтра|сейчас|сверху|снизу|нужна|нужно|нужны|нужен|CSV|XLSX|PDF|Excel|отч[её]т|реестр|сводка|таблица|'.$command.'|'.$postDefinition.')(?![\pL\pN])))';
+        $continuation = '(?=\s*(?:$|[,.;:!?]|(?:в|во|на|по|за|с|со|против|относительно|без|для|из|от|до|после|перед|при|к|ко|о|об|и|или|а|но|вместе|кроме|исключая|включая|только|также|пожалуйста|сегодня|вчера|позавчера|завтра|сейчас|сверху|снизу|нужна|нужно|нужны|нужен|CSV|XLSX|PDF|Excel|отч[её]т|реестр|сводка|таблица|'.self::CONDITION_STARTER.'|'.$command.'|'.$postDefinition.')(?![\pL\pN])))';
         $organization = '(?:'.self::ORGANIZATION_QUALIFIER.'организаци(?:и|ей)|(?:'.$recordScope.'|'.$collective.')\s+(?:нашей\s+)?организации)(?![\pL\pN])'.$continuation;
         $scope = '(?:'.$projects.'|'.$organization.')';
 
@@ -121,6 +123,9 @@ final readonly class AssistantRequestProjectScope
             return $arguments;
         }
         $organizationWide = ! $this->requested && self::organizationWide($question);
+        if (! $organizationWide) {
+            $this->assertResolvedComparisonScope($sourceQuestion, $search);
+        }
         $restricted = ! $this->requested && self::hasOrganizationProjectRestriction($question);
         $projectId = $restricted ? $this->restrictedProjectId($question, $search) : $this->projectId;
         if (! $organizationWide && ((! $this->requested && ! $restricted) || $projectId === null)) {
@@ -220,6 +225,8 @@ final readonly class AssistantRequestProjectScope
     public function searchCoverageRequirements(string $question, ?callable $search = null): ?array
     {
         if ($this->requested || ! self::organizationWide($question) || ! self::hasExplicitProjectSections($question)) {
+            $this->assertResolvedComparisonScope($question, $search);
+
             return null;
         }
         $resolvedProjectNames = [];
@@ -232,19 +239,33 @@ final readonly class AssistantRequestProjectScope
         return ['project_ids' => $projectIds, 'pairwise' => $pairwise, ...($subjects === [] ? [] : ['subjects' => $subjects])];
     }
 
+    private function assertResolvedComparisonScope(string $question, ?callable $search): void
+    {
+        $organization = '/(?<![\pL\pN])организаци[а-яё]*(?![\pL\pN])/iu';
+        if (self::hasOrganizationProjectRestriction($question)
+            || ! AssistantReportComparisonSpecification::requestsComparison($question)
+            || preg_match($organization, AssistantNamedProjectReadScope::withoutQuotedNames($question)) !== 1) {
+            return;
+        }
+        $names = [];
+        $bindings = [];
+        $this->reportProjectIds($question, $search, $names, $bindings);
+        if (! AssistantReportComparisonSpecification::requestsComparison($question, $names)) {
+            return;
+        }
+        $question = self::replaceBoundProjectOperands($question, $bindings);
+        if (preg_match($organization, AssistantNamedProjectReadScope::withoutQuotedNames($question)) === 1) {
+            throw new AssistantReportScopeAmbiguous;
+        }
+    }
+
     private function requestedSourceScopes(string $question, array $projectIds, array $projectBindings, bool $comparison = false): array
     {
         if (str_contains($question, AssistantRequestedSourceScopes::PREFIX)) {
             throw new AssistantReportScopeAmbiguous;
         }
         $question = self::withoutExcludedProjects($question);
-        usort($projectBindings, static fn (array $first, array $second): int => strlen($second['name']) <=> strlen($first['name']));
-        foreach ($projectBindings as $binding) {
-            $name = preg_quote($binding['name'], '/');
-            $operand = $binding['quoted'] ? '[«“„"]\s*'.$name.'\s*[»”“"]' : $name;
-            $question = preg_replace('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])\s*:?\s*(?:'.$operand.')(?![\pL\pN])/iu',
-                ' '.AssistantRequestedSourceScopes::MARKER.'project_'.$binding['project_id'].'__ ', $question) ?? $question;
-        }
+        $question = self::replaceBoundProjectOperands($question, $projectBindings);
         $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $question = preg_replace_callback('/'.self::NUMERIC_PROJECTS.'/iu', static function (array $match): string {
             preg_match_all('/[1-9]\d*/', $match[1], $numbers);
@@ -262,6 +283,19 @@ final readonly class AssistantRequestProjectScope
         $question = preg_replace('/(?<![\pL\pN])(?:'.self::ORGANIZATION_QUALIFIER.'|(?:нашей\s+)?)организаци[а-яё]*(?![\pL\pN])/iu', AssistantRequestedSourceScopes::MARKER.'organization__', $question) ?? $question;
 
         return AssistantRequestedSourceScopes::compile($question, $projectIds, $comparison);
+    }
+
+    private static function replaceBoundProjectOperands(string $question, array $projectBindings): string
+    {
+        usort($projectBindings, static fn (array $first, array $second): int => strlen($second['name']) <=> strlen($first['name']));
+        foreach ($projectBindings as $binding) {
+            $name = preg_quote($binding['name'], '/');
+            $operand = $binding['quoted'] ? '[«“„"]\s*'.$name.'\s*[»”“"]' : $name;
+            $question = preg_replace('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])\s*:?\s*(?:'.$operand.')(?![\pL\pN])/iu',
+                ' '.AssistantRequestedSourceScopes::MARKER.'project_'.$binding['project_id'].'__ ', $question) ?? $question;
+        }
+
+        return $question;
     }
 
     private static function recordNouns(): string
@@ -340,7 +374,7 @@ final readonly class AssistantRequestProjectScope
                 || AssistantOrganizationRecordVocabulary::matchesEntityPhrase($phrase)) {
                 return true;
             }
-            if (preg_match('/^(?:данн(?:ые|ых|ым|ыми)|сведени(?:я|й|ям|ями)|информаци(?:я|и|ю|ей)|показател(?:и|ей|ям|ями)|результат(?:ы|ов|ам|ами)|отч[её]т(?:ы|ов|ам|ами)|сводк(?:а|и|у|ой|ами)|реестр(?:ы|ов|ам|ами)|спис(?:ок|ка|ки|ков|кам|ками))\s+(?:по|о|об|про)\s+(.+)$/iu', $phrase, $wrapper) !== 1) {
+            if (preg_match('/^'.AssistantRequestedSourceScopes::SOURCE_WRAPPER.'\s+(?:по|о|об|про)\s+(.+)$/iu', $phrase, $wrapper) !== 1) {
                 return false;
             }
             $phrase = $wrapper[1];

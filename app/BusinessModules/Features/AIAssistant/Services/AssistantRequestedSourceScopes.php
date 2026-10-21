@@ -17,13 +17,16 @@ final class AssistantRequestedSourceScopes
 
     public const SECTION_MODIFIER = '(?:отдельно|также)';
 
+    public const SOURCE_WRAPPER = '(?:данн(?:ые|ых|ым|ыми)|сведени(?:я|й|ям|ями)|информаци(?:я|и|ю|ей)|показател(?:и|ей|ям|ями)|результат(?:ы|ов|ам|ами)|отч[её]т(?:а|у|ом|е|ы|ов|ам|ами|ах)?|сводк(?:а|и|у|ой|ами)|реестр(?:а|у|ом|е|ы|ов|ам|ами|ах)?|спис(?:ок|ка|ки|ков|кам|ками))';
+
     private const ACT_STATUS_PATTERNS = ['approved' => 'утвержд[её]нн[а-яё]*', 'draft' => 'чернов[а-яё]*', 'signed' => 'подписанн[а-яё]*',
         'rejected' => 'отклон[её]нн[а-яё]*', 'annulled' => 'аннулированн[а-яё]*'];
 
     public static function compile(string $question, array $projectIds, bool $comparison = false): array
     {
-        if ($comparison && ! self::containsStatusCondition($question)) {
-            return [];
+        if ($comparison) {
+            $question = preg_replace('/(?<![\pL\pN])(?:из|на)\s+(?:двух|тр[её]х|четыр[её]х|пяти|[2-5])\s+лист(?:ах|а|ов)(?![\pL\pN])/iu', ' ', $question) ?? $question;
+            $question = self::withoutGroupingSuffix($question);
         }
         $requiredSides = array_fill_keys(['organization', ...array_map(static fn (int $id): string => 'project:'.$id, $projectIds)], true);
         $mentions = AssistantOrganizationRecordVocabulary::subjectMentions($question);
@@ -33,9 +36,6 @@ final class AssistantRequestedSourceScopes
         }
         $question = AssistantReportComparisonSpecification::withoutNegatedComparison($question);
         if ($comparison) {
-            if (! self::containsStatusCondition($question)) {
-                return [];
-            }
             $question = AssistantReportComparisonSpecification::withoutComparisonDirective($question);
         }
         $relations = $comparison ? '|с|со|против|относительно' : '';
@@ -44,6 +44,9 @@ final class AssistantRequestedSourceScopes
         $coveredSides = [];
         $pending = [];
         $previous = [];
+        $organizationEntries = [];
+        $discoveredEntries = [];
+        $pendingSides = [];
         $marker = '/'.self::MARKER.'(organization|project_([1-9]\d*))__/u';
         foreach ($parts as $part) {
             preg_match_all($marker, $part, $matches, PREG_SET_ORDER);
@@ -66,7 +69,8 @@ final class AssistantRequestedSourceScopes
             }
             $entries = [...$pending, ...$entries];
             if ($entries === []) {
-                $entries = $previous;
+                $projectOnly = $comparison && array_filter($matches, static fn (array $match): bool => $match[1] === 'organization') === [];
+                $entries = $projectOnly && $organizationEntries !== [] ? array_values($organizationEntries) : $previous;
                 if ($filters !== [] && count($entries) !== 1) {
                     throw new AssistantReportScopeAmbiguous;
                 }
@@ -76,7 +80,7 @@ final class AssistantRequestedSourceScopes
             } elseif ($subjects === [] && $filters !== []) {
                 throw new AssistantReportScopeAmbiguous;
             }
-            if ($entries === []) {
+            if ($entries === [] && ! $comparison) {
                 throw new AssistantReportScopeAmbiguous;
             }
             foreach ($entries as $entry) {
@@ -90,8 +94,15 @@ final class AssistantRequestedSourceScopes
                     throw new AssistantReportScopeAmbiguous;
                 }
                 $coveredSides[$side] = true;
+                if ($entries === []) {
+                    $pendingSides[$side] = true;
+                }
                 foreach ($entries as $entry) {
                     $requirements[self::key($side, $entry['subject'], $entry['filters'])] = true;
+                    $discoveredEntries[self::key('inferred', $entry['subject'], $entry['filters'])] = $entry;
+                    if ($comparison && $side === 'organization') {
+                        $organizationEntries[self::key($side, $entry['subject'], $entry['filters'])] = $entry;
+                    }
                 }
             }
             $pending = [];
@@ -100,8 +111,34 @@ final class AssistantRequestedSourceScopes
         if ($pending !== [] || array_diff_key($requiredSides, $coveredSides) !== []) {
             throw new AssistantReportScopeAmbiguous;
         }
+        if ($pendingSides !== [] && $mentions !== []) {
+            $templates = $organizationEntries !== [] ? array_values($organizationEntries) : array_values($discoveredEntries);
+            if ($templates === [] || ($organizationEntries === [] && count($templates) !== 1)) {
+                throw new AssistantReportScopeAmbiguous;
+            }
+            foreach (array_keys($pendingSides) as $side) {
+                foreach ($templates as $entry) {
+                    $requirements[self::key($side, $entry['subject'], $entry['filters'])] = true;
+                }
+            }
+        }
 
         return $requirements;
+    }
+
+    private static function withoutGroupingSuffix(string $question): string
+    {
+        preg_match_all('/(?<![\pL\pN])(?:с\s+группировкой\s+по|в\s+разрезе|с\s+детализацией\s+по|по)\s+/iu', $question, $prefixes, PREG_OFFSET_CAPTURE);
+        foreach (array_reverse($prefixes[0]) as [$prefix, $offset]) {
+            $tail = preg_replace('/[\s.!?]+$/u', '', substr($question, $offset + strlen($prefix))) ?? '';
+            $fields = preg_split('/\s*,\s*|\s+(?:и|или)\s+/iu', trim($tail)) ?: [];
+            if ($fields !== [] && count($fields) <= 5
+                && array_filter($fields, static fn (string $field): bool => ! AssistantOrganizationRecordVocabulary::matchesReportFieldInflection($field)) === []) {
+                return rtrim(substr($question, 0, $offset));
+            }
+        }
+
+        return $question;
     }
 
     private static function requestedFilters(string $text): array
@@ -113,17 +150,12 @@ final class AssistantRequestedSourceScopes
                 $text = preg_replace('/(?<![\pL\pN])(?:'.$pattern.')(?![\pL\pN])/iu', ' ', $text) ?? $text;
             }
         }
-        $text = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|а|'.self::SECTION_MODIFIER.'|лист(?:е|а|ов)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|данные|сведения|отч[её]т|снизу|сверху|пожалуйста|все|всех|всем|всеми|покажи(?:те)?|сделай(?:те)?|сформируй(?:те)?|подготовь(?:те)?|расположи(?:те)?|список|excel|xlsx|csv)(?![\pL\pN])/iu', ' ', $text) ?? $text;
+        $text = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|о|об|про|а|наш(?:и|ими|им|их)|'.self::SECTION_MODIFIER.'|'.self::SOURCE_WRAPPER.'|лист(?:е|а|ов)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|снизу|сверху|отдельности|пожалуйста|все|всех|всем|всеми|покажи(?:те)?|сделай(?:те)?|сформируй(?:те)?|подготовь(?:те)?|расположи(?:те)?|excel|xlsx|csv)(?![\pL\pN])/iu', ' ', $text) ?? $text;
         if (count($statuses) > 1 || preg_match('/[\pL\pN]/u', $text) === 1) {
             throw new AssistantReportScopeAmbiguous;
         }
 
         return $statuses === [] ? [] : [['field' => 'status', 'operator' => 'eq', 'value' => $statuses[0]]];
-    }
-
-    private static function containsStatusCondition(string $question): bool
-    {
-        return preg_match('/(?<![\pL\pN])(?:'.implode('|', self::ACT_STATUS_PATTERNS).')(?![\pL\pN])/iu', $question) === 1;
     }
 
     public static function key(string $side, array $subject, array $filters = []): string

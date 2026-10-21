@@ -206,6 +206,27 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertStringContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
     }
 
+    public static function unsupportedComparisonPeriods(): array
+    {
+        return ['explicit organization breadth' => [true], 'unquantified organization' => [false]];
+    }
+
+    #[DataProvider('unsupportedComparisonPeriods')]
+    public function test_complete_unfiltered_searches_cannot_publish_a_comparison_for_different_periods(bool $quantified): void
+    {
+        $question = 'Сравни '.($quantified ? 'все ' : '').'акты организации за 2025 год с актами проекта '.$this->project->id.' за 2026 год';
+        $response = $this->ask([$this->arguments(null), $this->arguments($this->project->id)], $question);
+        self::assertCount(2, $this->observedResults);
+        self::assertSame([1, 1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+        self::assertSame([false, false], array_column(array_column($this->observedResults, 'result_window'), 'has_more'));
+        $metadata = $response['message']['metadata'];
+        self::assertTrue($metadata['needs_clarification'], json_encode($metadata, JSON_UNESCAPED_UNICODE));
+        self::assertSame([], $metadata['source_refs']);
+        self::assertSame('partial', $metadata['validation_status']);
+        self::assertTrue($metadata['degraded_mode']);
+        self::assertStringContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+    }
+
     public function test_non_comparison_without_searches_does_not_require_scope_clarification(): void
     {
         $response = $this->ask([], 'Какие у тебя возможности?');

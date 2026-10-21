@@ -73,7 +73,12 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'project section with excluding upper id bound' => [true, true, false, 7, 5, false, '', 'project_range_lte'],
             'organization without metadata and unrequested project' => [true, false, false, 7, 5, false, '', 'org_non_ui'],
             'organization without metadata and unrequested project filter' => [false, false, false, 7, 5, false, '', 'org_non_ui_filter'],
-            'named comparison with final period' => [true, true, true, 5, 3, false, '', 'named_period'],
+            'named comparison with unsupported final period clarifies' => [true, true, true, 5, 3, false, '', 'named_period'],
+            'comparison with different requested years clarifies' => [true, false, false, 7, 5, false, '', 'unbound_period'],
+            'comparison without all qualifier and different years clarifies' => [true, false, false, 7, 5, false, '', 'unbound_plain_period'],
+            'comparison with different requested amounts clarifies' => [true, false, false, 7, 5, false, '', 'unbound_amount'],
+            'comparison with different requested currencies clarifies' => [true, false, false, 7, 5, false, '', 'unbound_currency'],
+            'comparison cannot invent equal conditions' => [true, false, false, 7, 5, false, '', 'unbound_invented'],
             'named comparison with final grouping' => [true, true, false, 7, 5, false, '', 'named_grouping'],
             'project exclusion and another compared project' => [true, true, false, 4, 4, true, '', 'explicit_exclusion'],
             'negated draft filter keeps organization scope' => [true, true, false, 5, 4, false, '', 'without_drafts'],
@@ -165,7 +170,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         $files = $this->createMock(FileService::class);
         $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte',
             'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied', 'multiple_named_private'], true)
-            || str_starts_with($variant, 'compare_subject_') || in_array($variant, ['composition_swapped', 'composition_private_exclusion'], true);
+            || $variant === 'named_period' || str_starts_with($variant, 'unbound_') || str_starts_with($variant, 'compare_subject_') || in_array($variant, ['composition_swapped', 'composition_private_exclusion'], true);
         $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
             $csv = stream_get_contents($stream);
             self::assertSame(hash('sha256', $csv), $hash);
@@ -248,7 +253,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
         $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
-            || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || str_starts_with($variant, 'project_first_') || str_starts_with($variant, 'relation_') || str_starts_with($variant, 'wrapped_entity_') || str_starts_with($variant, 'composition_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
+            || str_starts_with($variant, 'unbound_') || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || str_starts_with($variant, 'project_first_') || str_starts_with($variant, 'relation_') || str_starts_with($variant, 'wrapped_entity_') || str_starts_with($variant, 'composition_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
         $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity', 'preposition_entity_explicit', 'compare_subject_organization_only', 'project_first_explicit', 'relation_against_explicit', 'relation_relative_explicit', 'wrapped_entity_explicit'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
@@ -341,6 +346,11 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
                 'explicit', 'missing_org', 'org_project_filter', 'project_range_gt', 'project_range_lte' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
                 'missing_project' => 'Сделай Excel: сравни все акты организации с проектами '.$first->id.' и '.$second->id,
                 'named' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$first->name,
+                'unbound_period' => 'Сделай Excel: сравни все акты организации за 2025 год с актами проекта '.$first->id.' за 2026 год',
+                'unbound_plain_period' => 'Сделай Excel: сравни акты организации за 2025 год с актами проекта '.$first->id.' за 2026 год',
+                'unbound_amount' => 'Сделай Excel: сравни все акты организации дороже 1000 рублей с актами проекта '.$first->id.' дешевле 2000 рублей',
+                'unbound_currency' => 'Сделай Excel: сравни все акты организации в рублях с актами проекта '.$first->id.' в долларах',
+                'unbound_invented' => 'Сделай Excel: сравни все акты организации с актами проекта '.$first->id,
                 'named_period' => 'Сделай Excel из двух листов: сравни все акты организации без отклонённых с проектом '.$first->name.' за октябрь 2026 года',
                 'named_grouping' => 'Сделай Excel из двух листов: сравни все акты организации с проектом '.$first->name.' по статусам и валютам',
                 'explicit_exclusion' => 'Сделай Excel из двух листов: сравни все акты организации без проекта '.$first->id.' с проектом '.$second->id,
@@ -355,6 +365,16 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $projectSection['project_id'] = $secondProject ? $second->id : $first->id;
             $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']],
                 ...($filtered ? array_slice($filters, $nestedProject ? 1 : 0) : [])];
+            if (str_starts_with($variant, 'unbound_')) {
+                $conditions = match ($variant) {
+                    'unbound_period', 'unbound_plain_period' => [['field' => 'date', 'operator' => 'gte', 'value' => '2025-01-01'], ['field' => 'date', 'operator' => 'lte', 'value' => '2025-12-31']],
+                    'unbound_amount' => [['field' => 'total_amount', 'operator' => 'gt', 'value' => 1000]],
+                    'unbound_currency' => [['field' => 'currency', 'operator' => 'eq', 'value' => 'RUB']],
+                    default => [['field' => 'status', 'operator' => 'neq', 'value' => 'rejected']],
+                };
+                $organizationSection['filters'] = $conditions;
+                $projectSection['filters'] = $conditions;
+            }
             if (str_starts_with($variant, 'composition_')) {
                 $projectSection['domain'] = 'contracts';
                 $projectSection['entity_type'] = 'contract';
