@@ -46,6 +46,18 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
         if (($input['draft']['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT) {
             return $this->validateUniversal($context, $input['draft']);
         }
+        if (self::isLegacySourceInfoRequest($input['draft'])) {
+            $draft = $input['draft'];
+            unset($draft['independent_audit']);
+            $draft['local_estimates'] = [];
+            $draft['source_info_only'] = true;
+            $draft['evaluation_result'] = null;
+            $draft['is_complete'] = false;
+            $draft['stage6_status'] = 'source_info_required';
+            $draft = $this->artifacts->seal($this->universalReviews->project($draft));
+
+            return $this->results->make($context, $this->stage(), ['draft' => $draft, 'requires_review' => true]);
+        }
         $draft = $this->validation->validate($input['draft']);
         $draft = $this->readiness->project($draft);
         if (BuildMostEstimateDraft::isCandidateOnly($draft)) {
@@ -72,6 +84,37 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
             'draft' => $draft,
             'requires_review' => $blockingCodes !== [] || $requiresAuditReview,
         ]);
+    }
+
+    public static function isLegacySourceInfoRequest(array $draft): bool
+    {
+        if (($draft['generation_contract'] ?? null) !== BuildMostEstimateDraft::CONTRACT
+            || ($draft['stage6_candidate_rows'] ?? []) !== [] || ! is_array($draft['local_estimates'] ?? null)) {
+            return false;
+        }
+        foreach ($draft['local_estimates'] as $estimate) {
+            if (! is_array($estimate) || ! is_array($estimate['sections'] ?? null)) {
+                return false;
+            }
+            foreach ($estimate['sections'] as $section) {
+                if (! is_array($section) || ($section['work_items'] ?? null) !== []) {
+                    return false;
+                }
+            }
+        }
+        foreach (is_array($draft['estimate_composition']['request_info'] ?? null) ? $draft['estimate_composition']['request_info'] : [] as $request) {
+            if (is_array($request) && is_string($request['reason'] ?? null)
+                && is_int($request['index'] ?? null) && array_key_exists('work_name', $request)
+                && ($request['work_name'] === null || (is_string($request['work_name']) && mb_strlen($request['work_name']) <= 300))
+                && is_array($request['source_fact_ids'] ?? null) && array_is_list($request['source_fact_ids'])
+                && str_starts_with($request['reason'], 'estimate_composer_')
+                && ! in_array($request['reason'], ['estimate_composer_work_section_not_selected', 'estimate_composer_physical_duplicate_covered'], true)
+                && in_array($request['next_action'] ?? null, ['provide_work_scope', 'confirm_work_source'], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function validateUniversal(PipelineContext $context, array $draft): PipelineStageResult

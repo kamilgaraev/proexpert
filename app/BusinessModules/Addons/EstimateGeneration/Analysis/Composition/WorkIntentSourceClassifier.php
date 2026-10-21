@@ -100,6 +100,8 @@ final class WorkIntentSourceClassifier
                 if (($fact['context_kind'] ?? null) === 'initial_description'
                     && is_array($fact['declared_work_sections'] ?? null)) {
                     $domains = $fact['declared_work_sections'];
+                } elseif ($this->isSemanticRequest($fact)) {
+                    $domains = $fact['semantic_work_sections'];
                 }
             }
             if (! in_array($section, $domains, true)) {
@@ -133,6 +135,15 @@ final class WorkIntentSourceClassifier
         }
 
         return ['entity_id' => $entities[0], 'work_section' => $section, 'basis_fact_ids' => array_keys($relevant)];
+    }
+
+    private function isSemanticRequest(array $fact): bool
+    {
+        return ($fact['context_kind'] ?? null) === 'initial_description'
+            && ($fact['semantic_work_sections'] ?? null) === EstimateComposerInput::WORK_SECTIONS
+            && ($fact['type'] ?? null) === 'evaluation_answer' && ($fact['origin'] ?? null) === 'user_input'
+            && ($fact['status'] ?? null) === 'confirmed' && ($fact['value']['kind'] ?? null) === 'initial_description'
+            && ($fact['value']['numeric_parameters_confirmed'] ?? null) === false;
     }
 
     private function domains(string $type, string $entityType): array

@@ -21,6 +21,49 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimatorKnownContextSnapshotTest extends TestCase
 {
+    public function test_legacy_quote_measures_the_generation_semantic_policy_and_invalidates_old_policy_identity(): void
+    {
+        $previous = Container::getInstance();
+        $container = new Container;
+        $container->instance('config', new Repository([]));
+        Container::setInstance($container);
+        try {
+            $models = new InMemoryProjectModelRepository;
+            $source = 'sha256:'.str_repeat('a', 64);
+            $models->saveSourceModel([new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('description:1', 10, 20, 30, $source, 'quantity', 'description')],
+                [new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:description', 10, 20, 30, $source, 'description:1', 'evaluation_answer',
+                    ['kind' => 'initial_description', 'description' => 'Монтаж стендов', 'numeric_parameters_confirmed' => false],
+                    null, 0.0, 'user_input', 'confirmed', ['evidence:description'])],
+                [new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence('evidence:description', 10, 20, 30, $source, 'input:30', 'user_input',
+                    nativeReference: 'input_payload.description', producerName: 'user_input_normalizer')]);
+            $session = new EstimateGenerationSession;
+            $session->setRawAttributes(['id' => 30, 'organization_id' => 10, 'project_id' => 20,
+                'input_payload' => '{"evaluation_mode":"legacy"}', 'draft_payload' => '{}']);
+            $factory = new EstimateComposerInputFactory($models, 2000);
+            $parts = new EstimatorKnownContextParts;
+            $capture = new EstimatorKnownContextSnapshot($models, $factory,
+                new EstimateAuditInputFactory($models, $this->createMock(EvidenceRepository::class), 2000), new ProjectSynthesisInputFactory($models),
+                new EstimateCompositionProjector, new TargetedConflictResolver(static fn (string $key): string => $key),
+                ProjectUnderstandingBudget::defaults(), $parts, $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway::class));
+            $wire = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::capture();
+            $quote = $capture->capture($session, false, $wire);
+            $semantic = $factory->capture(10, 20, 30, [], [], [], evaluationMode: 'legacy');
+            $measured = $parts->measure($semantic, null, null, [], [], $wire);
+            $token = $models->snapshotForUnderstanding(10, 20, 30, 2001)['token'];
+            $expected = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
+                'model_snapshot' => $token, 'parts' => $measured['fingerprint'], 'saved_draft' => [],
+            ]));
+            self::assertSame($expected, $quote['fingerprint']);
+            self::assertSame(1, $quote['part_limits']['composer']);
+            self::assertSame(0, $quote['part_limits']['audit']);
+            $old = $parts->measure($factory->capture(10, 20, 30, [], [], []), null, null, [], [], $wire);
+            self::assertNotSame($old['fingerprint'], $measured['fingerprint']);
+            self::assertSame(['evaluation_mode' => 'legacy'], $session->input_payload);
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     public function test_post_audit_views_are_not_reaudited_but_remain_bound_by_the_complete_saved_draft_hash(): void
     {
         $previous = Container::getInstance();

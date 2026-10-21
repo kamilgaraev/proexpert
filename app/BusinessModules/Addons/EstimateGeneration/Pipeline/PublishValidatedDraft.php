@@ -66,6 +66,41 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             || ! hash_equals($claim->context->baseInputVersion, $draft['source_input_version'])) {
             throw new StaleEstimateGenerationState($claim->context->sessionId, $claim->context->stateVersion);
         }
+        if (array_key_exists('source_info_only', $draft)) {
+            $artifacts = new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+            if (($session->input_payload['evaluation_mode'] ?? 'legacy') !== 'legacy'
+                || $draft['source_info_only'] !== true || ($draft['is_complete'] ?? null) !== false
+                || ($draft['stage6_status'] ?? null) !== 'source_info_required'
+                || ! array_key_exists('evaluation_result', $draft) || $draft['evaluation_result'] !== null
+                || ($draft['local_estimates'] ?? null) !== []
+                || ($draft['scope_identity']['organization_id'] ?? null) !== $claim->context->organizationId
+                || ($draft['scope_identity']['project_id'] ?? null) !== $claim->context->projectId
+                || ($draft['scope_identity']['session_id'] ?? null) !== $claim->context->sessionId
+                || $data['requires_review'] !== true || ! \App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage::isLegacySourceInfoRequest($draft)
+                || ! $artifacts->verifyArtifact($draft)
+                || ! \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot::isFresh($draft, $draft['quality_summary']['review_items'] ?? [])) {
+                throw new \DomainException('legacy_source_info_publication_incomplete');
+            }
+            $actor = \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor::resolve($session->input_payload ?? [], (int) $session->user_id);
+            if ($actor === null) {
+                throw new \DomainException('legacy_source_info_publication_incomplete');
+            }
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class)
+                ->authorize($actor, $session, 'estimate_generation.generate');
+            $receipt = $claim->context->creditOperationId === null ? null
+                : app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                    ->publish($session, $claim->context->creditOperationId, $draft, null);
+            $published = $this->advance->generationNeedsInput($session, [
+                'draft_payload' => $draft, 'processing_stage' => 'input_review_required', 'processing_progress' => 100,
+                'last_error' => null, 'analysis_payload' => [...($session->analysis_payload ?? []),
+                    ...($receipt === null ? [] : ['credit_operation_receipt' => $receipt])],
+            ]);
+            if ($claim->context->creditOperationId === null) {
+                $this->quota->releaseTechnicalFailure((string) $published->organization_id, (string) $published->id);
+            }
+
+            return;
+        }
         $inspection = $this->readiness->inspect($draft);
         $requiresReview = $inspection->blockingIssues !== [];
         if ($requiresReview !== $data['requires_review']) {
