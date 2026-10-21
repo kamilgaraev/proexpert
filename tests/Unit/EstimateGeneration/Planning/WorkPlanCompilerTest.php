@@ -409,6 +409,65 @@ final class WorkPlanCompilerTest extends TestCase
         );
     }
 
+    #[DataProvider('unknownSelectedSections')]
+    public function test_unknown_selected_scope_does_not_create_house_work_or_claim_completeness(array $selected): void
+    {
+        $analysis = ['object' => ['building_type' => 'bridge', 'description' => 'Мост через реку'],
+            'evaluation_policy' => ['mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => $selected],
+            'assumptions' => ['Нужно обследование'], 'missing_inputs' => ['Спецификация опор']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+
+        self::assertSame('bridge', $payload['object_profile']['object_type']);
+        self::assertSame([], $payload['package_plan']['packages']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+        self::assertSame($analysis['assumptions'], $payload['package_plan']['assumptions']);
+        self::assertSame($analysis['missing_inputs'], $payload['object_profile']['missing_inputs']);
+        self::assertSame($analysis['evaluation_policy'], $payload['evaluation_policy']);
+    }
+
+    public static function unknownSelectedSections(): iterable
+    {
+        yield 'structures' => [['structures']];
+        yield 'equipment' => [['equipment']];
+    }
+
+    public function test_unknown_document_work_retains_source_and_selected_scope(): void
+    {
+        $source = [['document_id' => 82, 'page_number' => 3]];
+        $analysis = ['object' => ['building_type' => 'bridge'],
+            'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['structures']],
+            'document_context' => ['scope_inferences' => [[
+                'scope_type' => 'foundation', 'inference_type' => 'specification_takeoff',
+                'title' => 'Бетонирование опор моста', 'source_refs' => $source, 'review_required' => false,
+                'normalized_payload' => ['quantity_key' => 'foundation.concrete', 'quantity_value' => 12, 'unit' => 'м3'],
+            ]], 'quantity_takeoffs' => [[
+                'quantity_key' => 'foundation.concrete', 'quantity' => 12, 'unit' => 'м3', 'source_refs' => $source,
+                'normalized_payload' => ['quantity_key' => 'foundation.concrete'],
+            ]]]];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+
+        self::assertSame(['custom-foundation'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame(['custom-foundation'], array_column($payload['local_estimates'], 'key'));
+        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+        self::assertNotEmpty($items);
+        foreach ($items as $item) {
+            self::assertNotEmpty($item['source_refs']);
+            self::assertSame(82, $item['source_refs'][0]['document_id']);
+            self::assertSame(0, $item['total_cost']);
+            self::assertNull($item['price_source']);
+        }
+        self::assertSame(['12'], array_values(array_unique(array_column($items, 'quantity'))));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+
+        $analysis['evaluation_policy']['selected_sections'] = ['equipment'];
+        $outside = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([], $outside['package_plan']['packages']);
+        self::assertSame([], $outside['local_estimates']);
+        self::assertTrue($outside['document_requirements']['missing_for_full_estimate']);
+    }
+
     public function test_selected_scope_filters_both_declared_packages_and_compiled_positions(): void
     {
         $analysis = $this->analysis();
@@ -526,16 +585,15 @@ final class WorkPlanCompilerTest extends TestCase
     }
 
     #[DataProvider('residentialEquipmentSignals')]
-    public function test_selected_equipment_uses_the_server_normalized_residential_profile(array $signals): void
+    public function test_selected_equipment_does_not_expand_an_incidental_residential_element(array $signals): void
     {
         $analysis = array_replace_recursive(['object' => ['object_type' => 'custom'],
             'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['equipment']],
             'object_profile' => ['object_type' => 'industrial']], $signals);
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
-        self::assertSame('house', $payload['object_profile']['object_type']);
-        self::assertSame(['equipment'], array_column($payload['local_estimates'], 'key'));
-        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
-        self::assertSame(['equipment.purchase', 'equipment.delivery', 'equipment.install'], array_column(array_column($items, 'metadata'), 'composition_work_key'));
+        self::assertSame('custom', $payload['object_profile']['object_type']);
+        self::assertSame([], $payload['local_estimates']);
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
     }
 
     public static function residentialEquipmentSignals(): array
@@ -543,6 +601,17 @@ final class WorkPlanCompilerTest extends TestCase
         return [[['document_context' => ['context_text' => 'Жилой дом.']]],
             [['object' => ['zones' => [['label' => 'Жилой дом']]]]],
             [['object' => ['zones' => [['scope_key' => 'house']]]]]];
+    }
+
+    public function test_primary_residential_description_still_enables_the_known_profile(): void
+    {
+        $payload = $this->compiler()->compile([
+            'object' => ['object_type' => 'custom', 'description' => 'Индивидуальный жилой дом'],
+            'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['equipment']],
+        ], deferNormativePin: true);
+
+        self::assertSame('house', $payload['object_profile']['object_type']);
+        self::assertSame(['equipment'], array_column($payload['local_estimates'], 'key'));
     }
 
     public function test_selected_residential_equipment_does_not_import_other_engineering_inferences(): void
@@ -746,6 +815,8 @@ final class WorkPlanCompilerTest extends TestCase
         $analysis['document_context'] = [];
         $analysis['evaluation_policy'] = ['mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'construction', 'selected_sections' => ['structures']];
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame(['foundation'], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
         $items = [];
         foreach ($payload['local_estimates'] as $estimate) {
             foreach ($estimate['sections'] as $section) {
@@ -764,8 +835,11 @@ final class WorkPlanCompilerTest extends TestCase
     private function analysis(): array
     {
         return [
-            'object' => ['description' => 'Монолитный фундамент', 'area' => 100],
-            'detected_structure' => ['scopes' => [['scope_type' => 'foundation', 'title' => 'Фундамент', 'source_refs' => []]]],
+            'object' => ['object_type' => 'house', 'description' => 'Монолитный фундамент', 'area' => 100],
+            'detected_structure' => [
+                'scopes' => [['scope_type' => 'foundation', 'title' => 'Фундамент', 'source_refs' => []]],
+                'explicit_work_scopes' => [['scope_type' => 'foundation', 'title' => 'Фундамент', 'source_refs' => []]],
+            ],
             'document_context' => ['quantity_model' => ['quantities' => ['concrete_volume' => ['value' => 12.5, 'unit' => 'm3', 'source' => 'document', 'source_refs' => []]]]],
             'regional_context' => [],
             'planning_signals' => ['generation_mode' => 'strict'],

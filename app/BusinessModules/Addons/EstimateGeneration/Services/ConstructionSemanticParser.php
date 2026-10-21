@@ -48,16 +48,19 @@ class ConstructionSemanticParser
         $combinedText = trim($description."\n".($documentContext['context_text'] ?? ''));
         $objectDescription = trim($description."\n".($documentContext['context_text'] ?? ''));
         $explicitBuildingType = isset($input['building_type']) ? (string) $input['building_type'] : null;
-        $buildingType = (string) ($explicitBuildingType ?? $this->detectBuildingType($combinedText) ?? 'custom');
+        $buildingType = (string) ($explicitBuildingType ?? $this->detectBuildingType($description) ?? 'custom');
         $objectType = (string) (
             $input['object_type']
             ?? $this->objectTypeFromExplicitBuildingType($explicitBuildingType)
+            ?? ($explicitBuildingType !== null && trim($explicitBuildingType) !== '' && mb_strtolower(trim($explicitBuildingType)) !== 'custom'
+                ? $explicitBuildingType : null)
             ?? $this->detectObjectType($description, $documentContext)
             ?? $buildingType
         );
         $sourceRefs = $this->extractSourceRefs($combinedText);
+        $manualScopes = $this->extractScopes($description, true);
         $explicitScopes = $this->mergeScopes(
-            $this->extractScopes($description, true),
+            $manualScopes,
             ...array_map(
                 fn (array $document): array => DocumentEvidencePolicy::canUseScopeEvidence($document)
                     ? $document['scopes']
@@ -106,6 +109,7 @@ class ConstructionSemanticParser
                 'zones' => $this->normalizeDetectedZones($scopes['zones']),
                 'constructives' => array_values(array_unique($scopes['constructives'])),
                 'scopes' => $scopes['items'],
+                'explicit_work_scopes' => $manualScopes['items'],
             ],
         ];
 

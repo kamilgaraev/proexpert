@@ -24,15 +24,18 @@ class PackagePlannerService
             $packages = $this->mixedWarehouseOfficePackages();
         } elseif ($this->isWarehouse($profile)) {
             $packages = $this->warehousePackages();
-        } else {
+        } elseif ($this->isHouse($profile)) {
             $packages = $this->housePackages();
-            if ($this->isHouse($profile)) {
-                $packages = array_map(
-                    static fn (array $package): array => $package['key'] === 'preconstruction'
-                        ? [...$package, 'coverage_required' => false, 'coverage_warning' => 'document_scope_required']
-                        : [...$package, 'coverage_required' => true],
-                    $packages,
-                );
+            $packages = array_map(
+                static fn (array $package): array => $package['key'] === 'preconstruction'
+                    ? [...$package, 'coverage_required' => false, 'coverage_warning' => 'document_scope_required']
+                    : [...$package, 'coverage_required' => true],
+                $packages,
+            );
+        } else {
+            $packages = $this->documentEvidencePackages($profile);
+            if ($packages === []) {
+                $packages = $profile->planningSignals['requested_scope_packages'] ?? [];
             }
         }
 
@@ -53,17 +56,25 @@ class PackagePlannerService
         $mode = $this->generationMode($profile);
         $isPlanOnlyGeometry = $this->isPlanOnlyGeometry($profile);
         $isHouse = $this->isHouse($profile);
-        $missingForFullEstimate = $isHouse && $isPlanOnlyGeometry;
+        $unknownProfile = ! $isHouse && ! $this->isWarehouse($profile)
+            && ! $this->isMixedWarehouseOffice($profile)
+            && ($profile->planningSignals['evaluation_profile'] ?? null) !== 'industrial';
+        $missingForFullEstimate = $unknownProfile || ($isHouse && $isPlanOnlyGeometry);
 
         return [
             'mode' => $mode->value,
             'coverage' => match (true) {
+                $unknownProfile => 'document_limited',
                 $mode === EstimateGenerationMode::AiAssisted && $missingForFullEstimate => 'assumption_expanded',
                 $mode === EstimateGenerationMode::StrictDocuments && $missingForFullEstimate => 'document_limited',
                 default => 'document_backed',
             },
             'missing_for_full_estimate' => $missingForFullEstimate,
-            'items' => $missingForFullEstimate ? $this->fullHouseRequiredDocuments() : [],
+            'items' => $unknownProfile ? [[
+                'key' => 'project_scope',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_project_scope'),
+                'required_for' => ['all'],
+            ]] : ($missingForFullEstimate ? $this->fullHouseRequiredDocuments() : []),
         ];
     }
 
@@ -77,7 +88,7 @@ class PackagePlannerService
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $objectType = mb_strtolower((string) ($object['object_type'] ?? ''));
         $buildingType = mb_strtolower((string) ($object['building_type'] ?? ''));
-        $type = $objectType !== '' ? $objectType : ($buildingType !== '' ? $buildingType : 'custom');
+        $type = $objectType !== '' && $objectType !== 'custom' ? $objectType : ($buildingType !== '' ? $buildingType : 'custom');
         $zones = is_array($object['zones'] ?? null) ? $object['zones'] : [];
         $zoneText = implode(' ', array_map(
             static fn (array $zone): string => (string) ($zone['label'] ?? $zone['scope_key'] ?? ''),
@@ -104,21 +115,42 @@ class PackagePlannerService
 
         $hasExplicitObjectType = $objectType !== '' && $objectType !== 'custom';
         $hasExplicitBuildingType = $buildingType !== '' && $buildingType !== 'custom';
+        $allowsContextClassification = (! $hasExplicitObjectType && ! $hasExplicitBuildingType)
+            || $this->containsWarehouseObjectSignal($type)
+            || ObjectTypeSignalClassifier::isIndustrial($type);
 
         if (ObjectTypeSignalClassifier::isResidential($buildingType)
             || ObjectTypeSignalClassifier::isResidential($type)
-            || ObjectTypeSignalClassifier::isResidential($description)) {
+            || (! $hasExplicitObjectType && ! $hasExplicitBuildingType
+                && ObjectTypeSignalClassifier::isResidential((string) ($object['manual_description'] ?? $object['description'] ?? '')))) {
             $type = 'house';
-        } elseif (str_contains($type, 'mixed_warehouse_office') || (($hasWarehouse || $hasIndustrial) && $hasOffice)) {
+        } elseif (str_contains($type, 'mixed_warehouse_office') || ($allowsContextClassification && ($hasWarehouse || $hasIndustrial) && $hasOffice)) {
             $type = 'mixed_warehouse_office';
-        } elseif ($hasWarehouse || str_contains($type, 'warehouse')) {
+        } elseif (str_contains($type, 'warehouse') || ($allowsContextClassification && $hasWarehouse)) {
             $type = 'warehouse';
-        } elseif ($hasIndustrial || str_contains($type, 'industrial')) {
+        } elseif (ObjectTypeSignalClassifier::isIndustrial($type) || ($allowsContextClassification && $hasIndustrial)) {
             $type = 'industrial';
-        } elseif (($planningSignals['plan_only_geometry'] ?? false) === true) {
+        } elseif (! $hasExplicitObjectType && ! $hasExplicitBuildingType && ($planningSignals['plan_only_geometry'] ?? false) === true) {
             $type = 'floor_plan_geometry';
         } elseif (! $hasExplicitObjectType && ! $hasExplicitBuildingType && $this->hasDocumentQuantityEvidence($planningSignals)) {
             $type = 'document_evidence';
+        }
+
+        if ($type === 'custom' && trim((string) ($object['description'] ?? '')) !== '') {
+            $requestedPackages = [];
+            foreach ($analysis['detected_structure']['explicit_work_scopes'] ?? [] as $scope) {
+                if (! is_array($scope)) {
+                    continue;
+                }
+                $package = $this->documentEvidencePackageForQuantityKey((string) ($scope['scope_type'] ?? '').'.');
+                if ($package !== null) {
+                    $package['key'] = preg_replace('/^custom-/', '', $package['key']) ?? $package['key'];
+                    $requestedPackages[$package['key']] = $package;
+                }
+            }
+            if ($requestedPackages !== []) {
+                $planningSignals['requested_scope_packages'] = array_values($requestedPackages);
+            }
         }
 
         return new ObjectProfileData(
