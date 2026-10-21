@@ -12,18 +12,7 @@ final class AssistantOrganizationRecordVocabulary
         if ($prefixes[0] === [] || ! app()->bound('translator')) {
             return $question;
         }
-        $catalog = app()->bound(AssistantDomainCatalog::class)
-            ? app(AssistantDomainCatalog::class) : new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
-        $translated = app('translator')->get('ai_assistant_facts.entities', [], 'ru');
-        $labels = array_replace(is_array($translated) ? $translated : [], AssistantExtendedDomainRegistry::values('entityLabels'));
-        $phrases = [];
-        foreach ($catalog->all() as $definition) {
-            foreach ($definition->entityTypes as $type) {
-                if (is_string($labels[$type] ?? null)) {
-                    $phrases[self::identity($labels[$type])] = true;
-                }
-            }
-        }
+        $phrases = self::phrases();
         foreach (array_reverse($prefixes[0]) as [$prefix, $offset]) {
             $before = substr($question, 0, $offset);
             $projectName = preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)$/iu', $before) === 1
@@ -50,6 +39,34 @@ final class AssistantOrganizationRecordVocabulary
         }
 
         return $question;
+    }
+
+    public static function matchesEntityPhrase(string $phrase): bool
+    {
+        return preg_match('/^[\pL\pN_-]+(?:\s+[\pL\pN_-]+){0,15}$/u', $phrase) === 1
+            && preg_match('/(?<![\pL\pN])(?:не|без|кроме|исключая)(?![\pL\pN])/iu', $phrase) !== 1
+            && self::matches($phrase, self::phrases());
+    }
+
+    private static function phrases(): array
+    {
+        if (! app()->bound('translator')) {
+            return [];
+        }
+        $catalog = app()->bound(AssistantDomainCatalog::class)
+            ? app(AssistantDomainCatalog::class) : new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
+        $translated = app('translator')->get('ai_assistant_facts.entities', [], 'ru');
+        $labels = array_replace(is_array($translated) ? $translated : [], AssistantExtendedDomainRegistry::values('entityLabels'));
+        $phrases = [];
+        foreach ($catalog->all() as $definition) {
+            foreach ($definition->entityTypes as $type) {
+                if (is_string($labels[$type] ?? null)) {
+                    $phrases[self::identity($labels[$type])] = true;
+                }
+            }
+        }
+
+        return $phrases;
     }
 
     private static function matches(string $phrase, array $phrases): bool

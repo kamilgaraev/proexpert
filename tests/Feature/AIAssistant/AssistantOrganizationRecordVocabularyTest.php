@@ -6,11 +6,28 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantOrganizationRecordVocabulary;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use Tests\TestCase;
 
 final class AssistantOrganizationRecordVocabularyTest extends TestCase
 {
+    public function test_registered_entity_phrases_can_precede_explicit_project_comparison_operands(): void
+    {
+        foreach (['актами', 'утверждёнными актами', 'строками нарядов', 'событиями закупки'] as $phrase) {
+            self::assertTrue(AssistantOrganizationRecordVocabulary::matchesEntityPhrase($phrase), $phrase);
+            foreach (['проекта 100' => 100, 'выбранного проекта' => 52] as $project => $id) {
+                $question = 'Сравни все акты организации с '.$phrase.' '.$project;
+                self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+                self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+                self::assertSame(['project_id' => $id], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => $id], 52, true));
+            }
+        }
+        foreach (['не актами', 'без актов', '«актами»', 'актами, договорами', 'неизвестными сущностями', 'актами проекта'] as $phrase) {
+            self::assertFalse(AssistantOrganizationRecordVocabulary::matchesEntityPhrase($phrase), $phrase);
+        }
+    }
+
     public function test_registered_child_entity_names_request_the_whole_organization(): void
     {
         foreach (['Все строки нарядов организации', 'Все события закупки организации',

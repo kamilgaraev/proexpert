@@ -85,6 +85,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             'project grouping list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_grouping'],
             'reconcile explicit project preserves both subjects' => [true, false, false, 7, 5, false, '', 'reconcile_explicit'],
             'reconcile different entities is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_reconcile_entity'],
+            'repeated entity preserves both comparison subjects' => [true, false, false, 7, 5, false, '', 'repeated_entity_explicit'],
+            'repeated entity different subjects is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_repeated_entity'],
             'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
             'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
             'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
@@ -210,8 +212,8 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
         }
         $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
-            || str_starts_with($variant, 'compare_') || $variant === 'reconcile_explicit';
-        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity'], true);
+            || str_starts_with($variant, 'compare_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit'], true);
+        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity'], true);
         if ($variant === 'org_non_ui') {
             $arguments['sections'][0]['project_id'] = $second->id;
         }
@@ -261,6 +263,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
         }
         if ($comparison) {
             $question = match ($variant) {
+                'repeated_entity_explicit', 'compare_subject_repeated_entity' => 'Сравни все акты организации с актами проекта '.$second->id.'. Сделай Excel из двух листов.',
                 'reconcile_explicit', 'compare_subject_reconcile_entity' => 'Сверь все акты организации с проектом '.$second->id.'. Сделай Excel из двух листов.',
                 'explicit', 'missing_org', 'org_project_filter', 'project_range_gt', 'project_range_lte' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
                 'missing_project' => 'Сделай Excel: сравни все акты организации с проектами '.$first->id.' и '.$second->id,
@@ -279,7 +282,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $projectSection['project_id'] = $secondProject ? $second->id : $first->id;
             $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']],
                 ...($filtered ? array_slice($filters, $nestedProject ? 1 : 0) : [])];
-            if (in_array($variant, ['compare_subject_entity', 'compare_subject_reconcile_entity'], true)) {
+            if (in_array($variant, ['compare_subject_entity', 'compare_subject_reconcile_entity', 'compare_subject_repeated_entity'], true)) {
                 $projectSection['domain'] = 'contracts';
                 $projectSection['entity_type'] = 'contract';
             }

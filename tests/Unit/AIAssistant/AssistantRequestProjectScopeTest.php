@@ -11,6 +11,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_comparison_relations_allow_a_repeated_registered_entity_before_the_project(): void
+    {
+        foreach (['Сравни все акты организации с актами проекта 100',
+            'Сверь все акты организации с актами выбранного проекта',
+            'Сопоставь акты выбранного проекта со всеми актами организации',
+            'Сравни все акты организации и акты проекта 100',
+            'Сверь акты проекта 100 и все акты организации'] as $question) {
+            $id = str_contains($question, '100') ? 100 : 52;
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+            self::assertSame(['project_id' => $id], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => $id], 52, true));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => $id]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+        }
+    }
+
+    public function test_comparison_entity_operands_do_not_accept_unknown_negative_or_quoted_phrases(): void
+    {
+        foreach (['не актами', 'без актов', 'неизвестными сущностями', '«актами»'] as $entity) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide('Сравни все акты организации с '.$entity.' проекта 100'));
+        }
+        self::assertFalse(AssistantRequestProjectScope::organizationWide('Сведения проекта «Сравни все акты организации с актами проекта 100»'));
+    }
+
     public function test_reconciliation_verbs_preserve_organization_and_project_comparison(): void
     {
         foreach (['Сверь все акты организации с проектом 100', 'Сверьте все акты организации с проектом 100',
