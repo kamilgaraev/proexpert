@@ -184,6 +184,23 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_comparison_relations_can_continue_a_complete_organization_clause(): void
+    {
+        foreach (['с', 'со', 'против', 'относительно'] as $relation) {
+            foreach (['все акты организации', 'все акты нашей организации', 'всей организации'] as $organization) {
+                $question = 'Сравни '.$organization.' '.$relation.' '.(in_array($relation, ['с', 'со'], true) ? 'проектом' : 'проекта').' 100';
+                self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+                self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => null], 52, true));
+                self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 100], 52, true));
+                $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null], ['scope' => 'project', 'project_id' => 100]]];
+                self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments));
+            }
+        }
+        foreach (['противень', 'относительная'] as $word) {
+            self::assertFalse(AssistantRequestProjectScope::organizationWide('Сравни все акты организации '.$word.' проекта 100'));
+        }
+    }
+
     public function test_project_list_first_comparison_requires_each_project_and_organization(): void
     {
         $question = 'Все акты проектов 100 и 102 сравни со всеми актами организации';

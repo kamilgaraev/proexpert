@@ -234,6 +234,23 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertSame([1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
     }
 
+    public static function additionalComparisonRelations(): array
+    {
+        return [['против'], ['относительно']];
+    }
+
+    #[DataProvider('additionalComparisonRelations')]
+    public function test_additional_relations_cannot_publish_project_only_results(string $relation): void
+    {
+        $response = $this->ask([$this->arguments($this->project->id)],
+            'Сравни все акты организации '.$relation.' проекта '.$this->project->id);
+        $metadata = $response['message']['metadata'];
+        self::assertTrue($metadata['needs_clarification']);
+        self::assertSame([], $metadata['source_refs']);
+        self::assertSame('partial', $metadata['validation_status']);
+        self::assertSame([1], array_column(array_column($this->observedResults, 'result_window'), 'total'));
+    }
+
     public static function incompleteCases(): array
     {
         return array_map(static fn (string $case): array => [$case], ['duplicate_project', 'organization_only',
@@ -271,6 +288,8 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
     public static function currentScopeComparisons(): array
     {
         return [['Сравни все акты организации с выбранным проектом'],
+            ['Сравни все акты организации против выбранного проекта'],
+            ['Сравни все акты организации относительно выбранного проекта'],
             ['Все акты выбранного проекта сравни со всеми актами организации'],
             ['Все акты выбранного проекта сверь со всеми актами организации'],
             ['Сравни выбранный проект со всеми актами организации'],
