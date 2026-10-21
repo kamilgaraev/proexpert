@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeC
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlannerResponseData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
@@ -433,10 +434,71 @@ final class WorkPlanCompilerTest extends TestCase
         yield 'equipment' => [['equipment']];
     }
 
+    #[DataProvider('requestedUnknownScopes')]
+    public function test_named_unknown_preserves_each_supported_explicit_work_scope(string $description, string $scope, string $package): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => $description], []);
+        $planner = new PackagePlannerService;
+        $profile = $planner->profileFromAnalysis($analysis);
+        self::assertSame([$scope], array_column($analysis['detected_structure']['explicit_work_scopes'], 'scope_type'));
+        self::assertSame('bridge', $profile->objectType);
+        self::assertSame([$package], array_column($planner->plan($profile)->packages, 'key'));
+
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        self::assertSame([$package], array_column($payload['package_plan']['packages'], 'key'));
+        self::assertSame([$package], array_column($payload['local_estimates'], 'key'));
+        self::assertSame('document_limited', $payload['document_requirements']['coverage']);
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+        foreach ($payload['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                self::assertSame([], $section['work_items']);
+            }
+        }
+    }
+
+    public static function requestedUnknownScopes(): iterable
+    {
+        yield 'rough_finishing' => ['Черновая отделка', 'rough_finishing', 'rough_finishing'];
+        yield 'finish_finishing' => ['Чистовая отделка', 'finish_finishing', 'finish_finishing'];
+        yield 'foundation' => ['Устройство фундамента', 'foundation', 'foundation'];
+        yield 'walls' => ['Устройство стен', 'walls', 'walls'];
+        yield 'slabs' => ['Устройство перекрытий', 'slabs', 'slabs'];
+        yield 'roof' => ['Устройство кровли', 'roof', 'roof'];
+        yield 'openings' => ['Окна и двери', 'openings', 'openings'];
+        yield 'electrical' => ['Электромонтаж', 'electrical', 'electrical'];
+        yield 'plumbing' => ['Водоснабжение', 'plumbing', 'plumbing'];
+        yield 'heating' => ['Отопление', 'heating', 'heating'];
+        yield 'ventilation' => ['Вентиляция', 'ventilation', 'ventilation'];
+        yield 'fire_safety' => ['Пожарная сигнализация', 'fire_safety', 'fire_safety'];
+        yield 'stairs' => ['Устройство лестницы', 'stairs', 'stairs'];
+        yield 'facade' => ['Устройство фасада', 'facade', 'facade'];
+        yield 'finishing' => ['Штукатурные работы', 'finishing', 'custom-finishing'];
+        yield 'site' => ['Земляные работы', 'site', 'site_preparation'];
+    }
+
+    public function test_named_unknown_explicit_foundation_remains_a_limited_outline_in_selected_structures(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse(['building_type' => 'bridge', 'description' => 'Устройство фундамента'], []);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+
+        self::assertSame('bridge', $payload['object_profile']['object_type']);
+        self::assertSame(['foundation'], array_column($payload['local_estimates'], 'key'));
+        $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+        self::assertNotEmpty($items);
+        foreach ($items as $item) {
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+            self::assertNull($item['price_source']);
+        }
+        self::assertTrue($payload['document_requirements']['missing_for_full_estimate']);
+    }
+
     public function test_unknown_document_work_retains_source_and_selected_scope(): void
     {
         $source = [['document_id' => 82, 'page_number' => 3]];
-        $analysis = ['object' => ['building_type' => 'bridge'],
+        $analysis = ['object' => ['building_type' => 'bridge', 'description' => 'Устройство фундамента'],
+            'detected_structure' => ['explicit_work_scopes' => [['scope_type' => 'foundation', 'title' => 'Фундамент']]],
             'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['structures']],
             'document_context' => ['scope_inferences' => [[
                 'scope_type' => 'foundation', 'inference_type' => 'specification_takeoff',

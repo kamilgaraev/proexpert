@@ -34,8 +34,11 @@ class PackagePlannerService
             );
         } else {
             $packages = $this->documentEvidencePackages($profile);
-            if ($packages === []) {
-                $packages = $profile->planningSignals['requested_scope_packages'] ?? [];
+            $documentScopes = array_column($packages, 'scope_type');
+            foreach ($profile->planningSignals['requested_scope_packages'] ?? [] as $package) {
+                if (! in_array($package['scope_type'], $documentScopes, true)) {
+                    $packages[] = $package;
+                }
             }
         }
 
@@ -136,15 +139,14 @@ class PackagePlannerService
             $type = 'document_evidence';
         }
 
-        if ($type === 'custom' && trim((string) ($object['description'] ?? '')) !== '') {
+        if (trim((string) ($object['manual_description'] ?? $object['description'] ?? '')) !== '') {
             $requestedPackages = [];
             foreach ($analysis['detected_structure']['explicit_work_scopes'] ?? [] as $scope) {
                 if (! is_array($scope)) {
                     continue;
                 }
-                $package = $this->documentEvidencePackageForQuantityKey((string) ($scope['scope_type'] ?? '').'.');
+                $package = $this->requestedScopePackage($scope);
                 if ($package !== null) {
-                    $package['key'] = preg_replace('/^custom-/', '', $package['key']) ?? $package['key'];
                     $requestedPackages[$package['key']] = $package;
                 }
             }
@@ -179,6 +181,22 @@ class PackagePlannerService
             || str_contains($type, 'склад')
             || str_contains($type, 'industrial')
             || str_contains($type, 'производ');
+    }
+
+    private function requestedScopePackage(array $scope): ?array
+    {
+        $scopeType = (string) ($scope['scope_type'] ?? '');
+        [$key, $packageScope] = match ($scopeType) {
+            'rough_finishing', 'finish_finishing' => [$scopeType, 'finishing'],
+            'finishing' => ['custom-finishing', 'finishing'],
+            'site' => ['site_preparation', 'site'],
+            'fire_safety' => ['fire_safety', 'engineering'],
+            'foundation', 'walls', 'slabs', 'roof', 'openings', 'electrical', 'plumbing',
+            'heating', 'ventilation', 'stairs', 'facade' => [$scopeType, $scopeType],
+            default => [null, null],
+        };
+
+        return $key === null ? null : $this->package($key, (string) ($scope['title'] ?? $key), $packageScope, 1, 20);
     }
 
     private function isMixedWarehouseOffice(ObjectProfileData $profile): bool
