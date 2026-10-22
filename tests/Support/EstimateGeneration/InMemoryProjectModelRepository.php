@@ -494,8 +494,11 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
         return new ProjectModelSnapshot($entities, $facts, $evidence, $conflicts);
     }
 
-    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false): array
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false, bool $includeTokenState = false): array
     {
+        if ($includeTokenState) {
+            throw new \LogicException('Physical token state requires the PostgreSQL repository.');
+        }
         $snapshot = $this->snapshot($organizationId, $projectId, $sessionId, $factLimit);
 
         return [
@@ -751,9 +754,9 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
         return $matches === [] ? null : end($matches);
     }
 
-    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeTokenState = false): array
     {
-        return $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit);
+        return $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit, includeTokenState: $includeTokenState);
     }
 
     public function replaceTechnologyRecommendations(

@@ -305,6 +305,129 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         Queue::assertNothingPushed();
     }
 
+    public function test_final_snapshot_drift_rejects_with_a_translated_error_and_rolls_back_materialization(): void
+    {
+        [$actor, $session, , $input] = $this->fixture();
+        $models = app(ProjectModelRepository::class);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $before = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $beforeSession = $session->getRawOriginal();
+        $tables = ['estimate_generation_project_model_assertions', 'estimate_generation_project_model_corrections', 'estimate_generation_evaluation_revisions'];
+        $counts = [];
+        foreach ($tables as $table) {
+            $counts[$table] = DB::table($table)->where('session_id', $session->id)->count();
+        }
+        $drifted = false;
+        $writtenFacts = [];
+        $proxy = \Mockery::mock(ProjectModelRepository::class);
+        $proxy->allows('decisionsForSelectedFacts')->andReturnUsing(static fn (...$arguments): array => $models->decisionsForSelectedFacts(...$arguments));
+        $proxy->allows('snapshotForPlanning')->andReturnUsing(static function (...$arguments) use ($models, &$drifted, &$writtenFacts): array {
+            $result = $models->snapshotForPlanning(...$arguments);
+            if (($arguments[4] ?? false) === false) {
+                $result['token'] = hash('sha256', 'simulated-final-source-drift|'.$result['token']);
+                $writtenFacts = array_values(array_filter($result['snapshot']->facts, static fn ($fact): bool => str_starts_with($fact->type, 'work_quantity_')));
+                $drifted = true;
+            }
+
+            return $result;
+        });
+        try {
+            $this->app->makeWith(ConfirmEvaluationScenario::class, ['models' => $proxy])->handle($actor, $scope[1], $scope[2], $input);
+            self::fail('Final snapshot drift cannot commit the new quantity ledger.');
+        } catch (ValidationException $exception) {
+            self::assertSame(['scenario' => [trans_message('estimate_generation.stage6_snapshot_stale')]], $exception->errors());
+        }
+        self::assertTrue($drifted);
+        self::assertCount(2, $writtenFacts);
+        self::assertSame($beforeSession, $session->fresh()->getRawOriginal());
+        self::assertSame($before['token'], $models->snapshotForPlanning(...[...$scope, 10001])['token']);
+        foreach ($counts as $table => $count) {
+            self::assertSame($count, DB::table($table)->where('session_id', $session->id)->count());
+        }
+        self::assertSame(0, \App\Models\Estimate::query()->where('project_id', $session->project_id)->count());
+    }
+
+    public function test_materialization_transfer_preserves_exact_raw_state_and_rejects_unexplained_context(): void
+    {
+        [$actor, $session, , $input] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $capture = static function () use ($models, $scope, $session): array {
+            $state = $models->snapshotForPlanning(...[...$scope, 10001, true]);
+
+            return [...$state, 'decisions' => $models->decisionsForSelectedFacts(...[...$scope, array_column($state['snapshot']->facts, 'id')]),
+                'selections' => $session->input_payload['quantity_selections'] ?? [], 'input_payload' => $session->input_payload];
+        };
+        $before = $capture();
+        $default = $models->snapshotForPlanning(...[...$scope, 10001]);
+        self::assertSame(['snapshot', 'token'], array_keys($default));
+        self::assertSame($default['token'], $before['token']);
+        self::assertSame($before['token'], \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingInputFingerprint::fromExactState($before['token_state']));
+        $selector = new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEvaluationScenario;
+        $selected = $selector->select($session->draft_payload['evaluation_result'], 'base');
+        self::assertTrue(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\MaterializeSelectedEvaluationQuantities::class)
+            ->materialize($actor, $session, $selected, (string) Str::uuid(), $input['revision_id']));
+        $after = $capture();
+        $evaluation = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2], $session->state_version, (string) Str::uuid());
+        $materialized = $selector->select($evaluation['result'], 'base');
+        $predicate = new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationScenarioSourceBinding;
+        self::assertTrue($predicate->materializationMatches($before, $after, $selected, $materialized, (string) $actor->id, $input['revision_id']));
+        $mutations = [];
+        $changed = $after;
+        $changed['input_payload']['price_policy'] = 'normative';
+        $mutations['price policy'] = $changed;
+        $changed = $after;
+        $changed['token_state']['role_runs'][] = ['role' => 'geometry_expert', 'subject_version' => 'sha256:'.str_repeat('a', 64), 'input_fingerprint' => str_repeat('b', 64)];
+        $mutations['completed role tuple'] = $changed;
+        $oldIds = array_column($before['token_state']['facts'], 'id');
+        foreach ($after['token_state']['facts'] as $index => $fact) {
+            if (in_array($fact['id'], $oldIds, true)) {
+                $changed = $after;
+                $changed['token_state']['facts'][$index]['projection_version']++;
+                $mutations['unchanged fact projection version'] = $changed;
+                break;
+            }
+        }
+        foreach ($after['token_state']['bindings'] as $index => $binding) {
+            if (in_array($binding['fact_id'], $oldIds, true)) {
+                $changed = $after;
+                $changed['token_state']['bindings'][$index]['evidence_invalidation_version']++;
+                $mutations['unchanged evidence binding version'] = $changed;
+                break;
+            }
+        }
+        foreach ($after['token_state']['facts'] as $index => $fact) {
+            if (! in_array($fact['id'], $oldIds, true)) {
+                $changed = $after;
+                $changed['token_state']['facts'][$index]['projection_version']++;
+                $mutations['new fact projection must match its actual written version'] = $changed;
+                foreach ($after['token_state']['bindings'] as $bindingIndex => $binding) {
+                    if ($binding['fact_id'] === $fact['id']) {
+                        $changed = $after;
+                        unset($changed['token_state']['bindings'][$bindingIndex]);
+                        $mutations['new source must retain its actual evidence binding'] = $changed;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        self::assertCount(6, $mutations);
+        foreach ($mutations as $name => $changed) {
+            self::assertFalse($predicate->materializationMatches($before, $changed, $selected, $materialized, (string) $actor->id, $input['revision_id']), $name);
+        }
+        $oldRole = $before;
+        $newRole = $after;
+        $oldRole['token_state']['role_runs'] = $mutations['completed role tuple']['token_state']['role_runs'];
+        $newRole['token_state']['role_runs'] = $oldRole['token_state']['role_runs'];
+        $newRole['token_state']['role_runs'][0]['subject_version'] = 'sha256:'.str_repeat('c', 64);
+        self::assertFalse($predicate->materializationMatches($oldRole, $newRole, $selected, $materialized, (string) $actor->id, $input['revision_id']));
+        self::assertFalse($predicate->materializationMatches($before, $after, $selected, $materialized, (string) ($actor->id + 1), $input['revision_id']));
+        $changed = $materialized;
+        $changed['scenario']['positions'][0]['price_snapshot']['source_hash'] = str_repeat('d', 64);
+        self::assertFalse($predicate->materializationMatches($before, $after, $selected, $changed, (string) $actor->id, $input['revision_id']));
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('materializerChanges')]
     public function test_materializer_does_not_reuse_changed_or_unproven_quantity_bindings(string $change): void
     {
