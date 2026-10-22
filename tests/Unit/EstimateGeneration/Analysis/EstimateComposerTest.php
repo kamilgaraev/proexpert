@@ -655,6 +655,43 @@ final class EstimateComposerTest extends TestCase
         self::assertSame($input->candidates[0]['candidate_id'], $intents[0]['candidate_id']);
     }
 
+    public function test_composer_answer_numbers_and_model_prices_cannot_replace_an_eligible_server_quantity(): void
+    {
+        $original = $this->declaredDescriptionInput('Монтаж стендов', ['equipment']);
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), [...$original->facts, [
+            'id' => 'fact:answer', 'entity_id' => 'entity:answer', 'entity_type' => 'quantity', 'type' => 'evaluation_answer',
+            'value' => ['kind' => 'composer_answer', 'answer' => 'Монтаж 3 стендов по 999 рублей, применить норму 123.',
+                'question_key' => 'composer_source_'.str_repeat('b', 40), 'numeric_parameters_confirmed' => false],
+            'unit' => null, 'origin' => 'user_assumption', 'status' => 'confirmed', 'evidence_ids' => ['evidence:answer'],
+            'context_kind' => 'composer_answer', 'context_entity_id' => 'entity:description', 'answer_work_sections' => ['equipment'],
+        ]], [], [], [], [], RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']);
+        $model = new RecordedEstimateComposerModel(['work_intents' => [[
+            'kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.stands', 'name' => 'Монтаж стендов',
+            'work_section' => 'equipment', 'unit' => 'count', 'derived_quantity_id' => null, 'source_fact_ids' => ['fact:answer'],
+            'technology_package_candidate' => null, 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+            'quantity' => '3', 'unit_price' => '999', 'total_cost' => '2997', 'norm_id' => 123,
+        ]]]);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertSame([], $outcome['quarantined']);
+        self::assertCount(1, $outcome['intents']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+        $locals = $this->projectSemanticResult($outcome, $input);
+        $item = $locals[0]['sections'][0]['work_items'][0];
+        self::assertSame('Монтаж стендов', $item['name']);
+        self::assertNull($item['quantity']);
+        self::assertNull($item['unit']);
+        self::assertNull($item['total_cost']);
+        self::assertArrayNotHasKey('unit_price', $item);
+        self::assertArrayNotHasKey('norm_id', $item);
+        self::assertArrayNotHasKey('quantity_evidence', $item);
+        self::assertSame([], $item['materials']);
+        self::assertSame([], $item['labor']);
+        self::assertTrue($item['skip_normative_matching']);
+        self::assertSame('quantity_unknown', $item['pricing_blocker']);
+    }
+
     public function test_input_fingerprint_fences_exact_snapshot_decisions_quantities_candidates_and_missing_documents(): void
     {
         $base = $this->input();
@@ -1078,9 +1115,15 @@ final class EstimateComposerTest extends TestCase
     }
 
     #[DataProvider('composerPromptPolicies')]
-    public function test_actual_composer_wire_instructions_distinguish_semantic_vocabulary_from_selected_scope(bool $legacy): void
+    public function test_actual_composer_wire_instructions_distinguish_semantic_vocabulary_from_selected_scope(bool $legacy, bool $answered = false): void
     {
         $input = $this->declaredDescriptionInput('Монтаж стендов', $legacy ? [] : ['equipment'], $legacy ? 'legacy' : 'universal');
+        if ($answered) {
+            $input = new EstimateComposerInput($input->organizationId, $input->projectId, $input->sessionId, $input->snapshotToken,
+                $input->facts, $input->derivedQuantities, $input->decisions, $input->candidates, $input->missingDocuments,
+                $legacy ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::ANSWER_PROMPT_CONTRACT,
+                allowedWorkSections: $input->allowedWorkSections);
+        }
         $messages = [];
         $wire = $this->createMock(RerankWireClient::class);
         $wire->method('provider')->willReturn('timeweb');
@@ -1111,17 +1154,26 @@ final class EstimateComposerTest extends TestCase
         $payload = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project'];
         self::assertSame($input->canonicalPayload(), $payload);
         self::assertStringContainsString('Не вычисляй и не возвращай цены', $messages[0]['content']);
+        if ($answered) {
+            self::assertStringContainsString('context_kind=composer_answer', $messages[0]['content']);
+            self::assertStringContainsString('Это user_assumption, не независимое подтверждение', $messages[0]['content']);
+            self::assertStringContainsString('answer_work_sections', $messages[0]['content']);
+        } else {
+            self::assertStringNotContainsString('context_kind=composer_answer', $messages[0]['content']);
+        }
         if ($legacy) {
             self::assertStringContainsString('semantic_work_sections', $messages[0]['content']);
             self::assertStringContainsString('канонический словарь', $messages[0]['content']);
             self::assertStringContainsString('не выбранный пользователем состав', $messages[0]['content']);
             self::assertStringNotContainsString('оно допускает предварительный состав только в declared_work_sections', $messages[0]['content']);
-            self::assertSame('estimate-composer:legacy:v1', $input->contractVersion);
+            self::assertSame($answered ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::LEGACY_PROMPT_CONTRACT, $input->contractVersion);
             self::assertArrayNotHasKey('declared_work_sections', $payload['facts'][0]);
         } else {
-            self::assertSame('f3624d41635d297be7a1eb5445115e2ad67dbdac0685a27b0d2400d610e9432a', hash('sha256', $messages[0]['content']));
+            if (! $answered) {
+                self::assertSame('f3624d41635d297be7a1eb5445115e2ad67dbdac0685a27b0d2400d610e9432a', hash('sha256', $messages[0]['content']));
+            }
             self::assertStringContainsString('только в declared_work_sections', $messages[0]['content']);
-            self::assertSame('estimate-composer:v4', $input->contractVersion);
+            self::assertSame($answered ? RunEstimateComposer::ANSWER_PROMPT_CONTRACT : RunEstimateComposer::PROMPT_CONTRACT, $input->contractVersion);
             self::assertSame(['equipment'], $payload['facts'][0]['declared_work_sections']);
         }
         self::assertSame($legacy ? ['estimate-composer:v4', $input->contractVersion, $input->contractVersion]
@@ -1132,6 +1184,8 @@ final class EstimateComposerTest extends TestCase
     {
         yield 'legacy semantic vocabulary' => [true];
         yield 'universal selected scope' => [false];
+        yield 'legacy separate answer context' => [true, true];
+        yield 'universal separate answer context' => [false, true];
     }
 
     private function input(

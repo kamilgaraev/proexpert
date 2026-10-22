@@ -222,7 +222,8 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
 
     private function prompt(EstimateComposerInput $input): string
     {
-        $legacy = $input->contractVersion === RunEstimateComposer::LEGACY_PROMPT_CONTRACT;
+        $legacy = in_array($input->contractVersion, [RunEstimateComposer::LEGACY_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
+        $answered = in_array($input->contractVersion, [RunEstimateComposer::ANSWER_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
 
         return 'Ты составитель строительной сметы. Детерминированные кандидаты уже принадлежат серверу; возвращай kind=existing только когда нужно добавить к выбранному кандидату смысловые допущения, исключения или рекомендации. '
             .'Если подтверждённый факт модели требует отсутствующей в кандидатах работы, добавь bounded намерение kind=supplementary с work_key, русским name и при наличии точного объёма derived_quantity_id. Сервер создаст candidate_id. '
@@ -233,6 +234,9 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
             .($legacy
                 ? 'context_kind=initial_description с semantic_work_sections обозначает проверенный сервером источник пользовательского запроса в режиме legacy. Определи смысл запрошенных работ и их work_section в пределах semantic_work_sections и allowed_work_sections: это канонический словарь допустимых разделов, не выбранный пользователем состав. Не добавляй работы только из-за наличия раздела в словаре. Описание допускает лишь предварительный состав и не подтверждает размеры, объёмы или технологию. '
                 : 'context_kind=initial_description обозначает введённое пользователем описание; оно допускает предварительный состав только в declared_work_sections и не подтверждает размеры или объёмы. ')
+            .($answered
+                ? 'context_kind=composer_answer содержит отдельное пользовательское уточнение к исходному запросу. Используй его смысл только в answer_work_sections и для context_entity_id, ссылаясь на id самого ответа. Это user_assumption, не независимое подтверждение технологии, количества, единицы, нормы или цены. Отсутствующий ответ и неизвестные данные не дополняй догадками. '
+                : '')
             .'Если подходящего основания состава нет, не создавай работу: сервер сохранит запрос исходных данных отдельно от сметных позиций. '
             .'Числовое основание работы берётся только из переданной серверной производной величины с entity_id и operand_fact_ids. '
             .'Для supplementary можно указать entity_id из переданного контекста; он должен совпадать с сущностью выбранной величины. '

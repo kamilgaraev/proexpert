@@ -1,0 +1,236 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration\Questions;
+
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectUnderstandingQuestionProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+
+final class ComposerClarificationTest extends TestCase
+{
+    #[DataProvider('modes')]
+    public function test_current_sealed_requests_produce_one_aggregate_other_question_without_a_target_fact(string $mode): void
+    {
+        [$draft, $input, $snapshot] = $this->fixture($mode);
+        $question = $this->resolver()->resolveComposer($draft, $input, $snapshot, str_repeat('a', 64), [10, 20, 30]);
+
+        self::assertNotNull($question);
+        self::assertNull($question->targetFactId);
+        self::assertStringStartsWith('composer_source_', $question->question->code);
+        self::assertSame(['other', 'leave_unresolved'], array_column($question->question->choices, 'kind'));
+        self::assertSame(2, $question->question->sourceLocator['request_count']);
+        self::assertSame([0, 1], $question->question->sourceLocator['request_indices']);
+        self::assertSame(['fact:description', 'fact:specification'], $question->question->sourceLocator['source_fact_ids']);
+        self::assertSame('composer_request_info', $question->question->sourceLocator['kind']);
+        self::assertStringNotContainsString('estimate_composer_', $question->question->subject.$question->question->reason);
+        self::assertArrayNotHasKey('dependencies', $question->question->sourceLocator);
+        self::assertCount(2, $question->composerContext['dependencies']);
+        self::assertSame($question->sourceVersion, 'sha256:'.$draft['artifact_hash']);
+    }
+
+    public static function modes(): array
+    {
+        return [['legacy'], ['universal']];
+    }
+
+    public function test_old_tampered_foreign_and_non_actionable_artifacts_do_not_issue_a_question(): void
+    {
+        [$draft, $input, $snapshot] = $this->fixture('universal');
+        self::assertNull($this->resolver()->resolveComposer($draft, $input, $snapshot, str_repeat('b', 64), [10, 20, 30]));
+        self::assertNull($this->resolver()->resolveComposer([...$draft, 'title' => 'Подменено'], $input, $snapshot, str_repeat('a', 64), [10, 20, 30]));
+        self::assertNull($this->resolver()->resolveComposer($draft, $input, $snapshot, str_repeat('a', 64), [11, 20, 30]));
+        $ignored = $draft;
+        $ignored['estimate_composition']['request_info'] = [['index' => 0, 'reason' => 'estimate_composer_work_section_not_selected',
+            'work_name' => 'Монтаж оборудования', 'next_action' => 'confirm_work_source', 'source_fact_ids' => ['fact:description']]];
+        self::assertNull($this->resolver()->resolveComposer((new BuildMostEstimateDraft)->seal($ignored), $input, $snapshot, str_repeat('a', 64), [10, 20, 30]));
+        $changed = [...$input, 'selected_sections' => ['finishing']];
+        self::assertNull($this->resolver()->resolveComposer($draft, $changed, $snapshot, str_repeat('a', 64), [10, 20, 30]));
+    }
+
+    public function test_a_document_or_forged_description_cannot_replace_the_genuine_user_request(): void
+    {
+        [$draft, $input, $snapshot] = $this->fixture('legacy');
+        $original = $snapshot->facts[0];
+        foreach (['document', 'user_assumption'] as $origin) {
+            $forged = new Fact($original->id, 10, 20, 30, $original->sourceVersion, $original->entityId, $original->type,
+                $original->value, null, 0.0, $origin, 'confirmed', $original->evidenceIds);
+            self::assertNull($this->resolver()->resolveComposer($draft, $input,
+                new ProjectModelSnapshot($snapshot->entities, [$forged, $snapshot->facts[1]], $snapshot->evidence, []), str_repeat('a', 64), [10, 20, 30]));
+        }
+        $withoutProof = new ProjectModelSnapshot($snapshot->entities, $snapshot->facts, [$snapshot->evidence[1]], []);
+        self::assertNull($this->resolver()->resolveComposer($draft, $input, $withoutProof, str_repeat('a', 64), [10, 20, 30]));
+    }
+
+    #[DataProvider('modes')]
+    public function test_answer_reuse_rechecks_exact_dependencies_without_requiring_the_pre_answer_snapshot(string $mode): void
+    {
+        [$input, $snapshot, $answer, $decision] = $this->answered($mode);
+        $context = ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, [$decision], $input);
+        self::assertNotNull($context);
+        self::assertSame('entity:request', $context['entity_id']);
+        $independent = new Fact('fact:independent', 10, 20, 30, 'sha256:'.str_repeat('f', 64), 'entity:request',
+            'evaluation_answer', ['note' => 'Независимое уточнение'], null, 0.0, 'user_assumption', 'confirmed', []);
+        self::assertSame($context, ResolveCurrentEstimateClarification::composerAnswerContext($answer,
+            new ProjectModelSnapshot($snapshot->entities, [...$snapshot->facts, $independent], $snapshot->evidence, []), [$decision], $input));
+        $source = $snapshot->facts[1];
+        $replacement = new Fact($source->id, 10, 20, 30, $source->sourceVersion, $source->entityId, $source->type,
+            'Изменённая спецификация', null, 0.0, 'document', 'confirmed', $source->evidenceIds, 2);
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer,
+            new ProjectModelSnapshot($snapshot->entities, [$snapshot->facts[0], $replacement, $answer], $snapshot->evidence, []), [$decision], $input));
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, [], $input));
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, [$decision], [...$input, 'description' => 'Другой запрос']));
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer,
+            new ProjectModelSnapshot($snapshot->entities, [$snapshot->facts[0], $answer], $snapshot->evidence, []), [$decision], $input));
+        $proofs = $snapshot->evidence;
+        $proofs[2] = new Evidence('evidence:answer', 10, 20, 30, $answer->sourceVersion, 'input:30', 'user_input', null, null,
+            'input_payload.evaluation_choices', 'user_input_normalizer', 'input:30', $proofs[2]->choiceHash);
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer,
+            new ProjectModelSnapshot($snapshot->entities, $snapshot->facts, $proofs, []), [$decision], $input));
+    }
+
+    private function answered(string $mode): array
+    {
+        [$draft, $input, $snapshot] = $this->fixture($mode);
+        $current = $this->resolver()->resolveComposer($draft, $input, $snapshot, str_repeat('a', 64), [10, 20, 30]);
+        $value = ['kind' => 'composer_answer', 'numeric_parameters_confirmed' => false, 'response' => 'other',
+            'other' => 'Требуется только монтаж стендов по отдельной спецификации.', 'question_key' => $current->question->code,
+            'question_fingerprint' => $current->answerFingerprint, 'source_locator' => $current->question->sourceLocator,
+            'composer_context' => $current->composerContext, 'decision_id' => 'decision:answer', 'reason' => $current->question->subject];
+        $answer = new Fact('fact:answer', 10, 20, 30, $current->sourceVersion, 'entity:answer', 'evaluation_answer', $value, null,
+            0.0, 'user_assumption', 'confirmed', ['evidence:answer']);
+        $proof = new Evidence('evidence:answer', 10, 20, 30, $answer->sourceVersion, 'input:30', 'user_input', null, null,
+            'input_payload.composer_answer', 'user_input_normalizer', 'input:30', hash('sha256', CanonicalPipelineJson::encode($value)));
+        $decision = new Decision('decision:answer', 10, 20, 30, $answer->sourceVersion, 'fact', $answer->id, $answer->id,
+            'user', '40', $current->question->subject, 1, $answer->evidenceIds);
+        $snapshot = new ProjectModelSnapshot([...$snapshot->entities, new Entity('entity:answer', 10, 20, 30, $answer->sourceVersion,
+            'quantity', 'answer', ['semantic_type' => 'quantity'])], [...$snapshot->facts, $answer], [...$snapshot->evidence, $proof], []);
+
+        return [$input, $snapshot, $answer, $decision];
+    }
+
+    public function test_answer_context_cannot_launder_an_invalidated_source_through_a_previous_answer(): void
+    {
+        [$input, $snapshot, $first, $firstDecision] = $this->answered('legacy');
+        [$draft] = $this->fixture('legacy');
+        $draft['estimate_composition']['request_info'][0]['source_fact_ids'] = [$first->id];
+        $current = $this->resolver()->resolveComposer((new BuildMostEstimateDraft)->seal($draft), $input, $snapshot, str_repeat('a', 64), [10, 20, 30]);
+        self::assertNotNull($current);
+        $value = [...$first->value, 'question_key' => $current->question->code, 'question_fingerprint' => $current->answerFingerprint,
+            'source_locator' => $current->question->sourceLocator, 'composer_context' => $current->composerContext, 'decision_id' => 'decision:second'];
+        $second = new Fact('fact:second', 10, 20, 30, $current->sourceVersion, 'entity:second', 'evaluation_answer', $value, null,
+            0.0, 'user_assumption', 'confirmed', ['evidence:second']);
+        $proof = new Evidence('evidence:second', 10, 20, 30, $second->sourceVersion, 'input:30', 'user_input', null, null,
+            'input_payload.composer_answer', 'user_input_normalizer', 'input:30', hash('sha256', CanonicalPipelineJson::encode($value)));
+        $decision = new Decision('decision:second', 10, 20, 30, $second->sourceVersion, 'fact', $second->id, $second->id,
+            'user', '40', $current->question->subject, 1, $second->evidenceIds);
+        $entities = [...$snapshot->entities, new Entity('entity:second', 10, 20, 30, $second->sourceVersion,
+            'quantity', 'second', ['semantic_type' => 'quantity'])];
+        $facts = [...$snapshot->facts, $second];
+        $evidence = [...$snapshot->evidence, $proof];
+        self::assertNotNull(ResolveCurrentEstimateClarification::composerAnswerContext($second,
+            new ProjectModelSnapshot($entities, $facts, $evidence, []), [$firstDecision, $decision], $input));
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($second,
+            new ProjectModelSnapshot($entities, [$facts[0], $facts[1], $second], $evidence, []), [$firstDecision, $decision], $input));
+        $visiting = [$first->id => null];
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($second,
+            new ProjectModelSnapshot($entities, $facts, $evidence, []), [$firstDecision, $decision], $input, $visiting));
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($second,
+            new ProjectModelSnapshot($entities, $facts, $evidence, []), [$decision], $input));
+        $source = $facts[1];
+        $facts[1] = new Fact($source->id, 10, 20, 30, $source->sourceVersion, $source->entityId, $source->type,
+            'Изменённая спецификация', null, 0.0, 'document', 'confirmed', $source->evidenceIds, 2);
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($first,
+            new ProjectModelSnapshot($entities, $facts, $evidence, []), [$firstDecision, $decision], $input));
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($second,
+            new ProjectModelSnapshot($entities, $facts, $evidence, []), [$firstDecision, $decision], $input));
+    }
+
+    public function test_answer_history_rechecks_at_most_two_hundred_distinct_answers_without_dropping_the_capture_guard(): void
+    {
+        [$input, $snapshot, $answer, $decision] = $this->answered('legacy');
+        $decisions = [$decision];
+        [$draft] = $this->fixture('legacy');
+        $within = null;
+        for ($index = 2; $index <= 201; $index++) {
+            $draft['estimate_composition']['request_info'] = [['index' => 0, 'reason' => 'estimate_composer_work_scope_unresolved',
+                'work_name' => null, 'next_action' => 'provide_work_scope', 'source_fact_ids' => [$answer->id]]];
+            $current = $this->resolver()->resolveComposer((new BuildMostEstimateDraft)->seal($draft), $input, $snapshot, str_repeat('a', 64), [10, 20, 30]);
+            self::assertNotNull($current);
+            $value = [...$answer->value, 'question_key' => $current->question->code, 'question_fingerprint' => $current->answerFingerprint,
+                'source_locator' => $current->question->sourceLocator, 'composer_context' => $current->composerContext, 'decision_id' => 'decision:chain:'.$index];
+            $answer = new Fact('fact:chain:'.$index, 10, 20, 30, $current->sourceVersion, 'entity:chain:'.$index,
+                'evaluation_answer', $value, null, 0.0, 'user_assumption', 'confirmed', ['evidence:chain:'.$index]);
+            $proof = new Evidence('evidence:chain:'.$index, 10, 20, 30, $answer->sourceVersion, 'input:30', 'user_input', null, null,
+                'input_payload.composer_answer', 'user_input_normalizer', 'input:30', hash('sha256', CanonicalPipelineJson::encode($value)));
+            $decisions[] = new Decision('decision:chain:'.$index, 10, 20, 30, $answer->sourceVersion, 'fact', $answer->id, $answer->id,
+                'user', '40', $current->question->subject, 1, $answer->evidenceIds);
+            $snapshot = new ProjectModelSnapshot([...$snapshot->entities, new Entity($answer->entityId, 10, 20, 30, $answer->sourceVersion,
+                'quantity', 'chain:'.$index, ['semantic_type' => 'quantity'])], [...$snapshot->facts, $answer], [...$snapshot->evidence, $proof], []);
+            if ($index === 200) {
+                $within = $answer;
+            }
+        }
+        self::assertNotNull(ResolveCurrentEstimateClarification::composerAnswerContext($within, $snapshot, $decisions, $input));
+        self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, $decisions, $input));
+    }
+
+    private function resolver(): ResolveCurrentEstimateClarification
+    {
+        $translate = static fn (string $key): string => match ($key) {
+            'estimate_generation.composer_clarification.subject' => 'Какие работы требуется включить в смету?',
+            'estimate_generation.composer_clarification.reason' => 'По текущим данным состав работ определить не удалось.',
+            'estimate_generation.composer_clarification.impact' => 'Ответ уточнит предварительный состав; объёмы и цены требуют отдельного основания.',
+            'estimate_generation.composer_clarification.recommendation' => 'Опишите состав и назначение работ одним ответом до 500 символов. Документы можно приложить отдельно.',
+            'estimate_generation.composer_clarification.summary' => 'Всего запросов исходных данных: :count.',
+            'estimate_generation.ai_questions.other' => 'Другое',
+            'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+            default => $key,
+        };
+
+        return new ResolveCurrentEstimateClarification(new ProjectUnderstandingQuestionProjector($translate), $translate);
+    }
+
+    private function fixture(string $mode): array
+    {
+        $version = 'sha256:'.str_repeat('d', 64);
+        $value = ['kind' => 'initial_description', 'description' => 'Монтаж неизвестной установки и покрытия', 'numeric_parameters_confirmed' => false];
+        $description = new Fact('fact:description', 10, 20, 30, $version, 'entity:request', 'evaluation_answer', $value, null,
+            0.0, 'user_input', 'confirmed', ['evidence:description']);
+        $proof = new Evidence('evidence:description', 10, 20, 30, $version, 'input:30', 'user_input', null, null,
+            'input_payload.description', 'user_input_normalizer', 'input:30', hash('sha256', CanonicalPipelineJson::encode($value)));
+        $specification = new Fact('fact:specification', 10, 20, 30, $version, 'entity:equipment', 'equipment_specification',
+            'Установка из спецификации', null, 0.0, 'document', 'confirmed', ['evidence:specification']);
+        $document = new Evidence('evidence:specification', 10, 20, 30, $version, 'document:40', 'document', null, null,
+            'xlsx:sheet:Оборудование!C2', 'drawing_analyzer', 'document:40', fingerprint: str_repeat('e', 64));
+        $entities = [new Entity('entity:request', 10, 20, 30, $version, 'quantity', 'request', ['semantic_type' => 'quantity']),
+            new Entity('entity:equipment', 10, 20, 30, $version, 'equipment', 'equipment', ['semantic_type' => 'equipment'])];
+        $input = ['evaluation_mode' => $mode, 'profile_id' => 'construction',
+            'selected_sections' => $mode === 'universal' ? ['equipment'] : [], 'description' => $value['description']];
+        $draft = (new BuildMostEstimateDraft)->seal([
+            'source_info_only' => true, 'is_complete' => false, 'evaluation_result' => null, 'local_estimates' => [], 'stage6_candidate_rows' => [],
+            'generation_contract' => $mode === 'universal' ? UniversalDraftProjector::CONTRACT : BuildMostEstimateDraft::CONTRACT,
+            'scope_identity' => ['organization_id' => 10, 'project_id' => 20, 'session_id' => 30],
+            'evaluation_policy' => ['mode' => $mode, 'profile_id' => 'construction', 'selected_sections' => $input['selected_sections']],
+            'estimate_composition' => ['schema_version' => 1, 'snapshot_token' => str_repeat('a', 64), 'input_fingerprint' => str_repeat('b', 64),
+                'request_info' => [
+                    ['index' => 1, 'reason' => 'estimate_composer_work_definition_unverified', 'work_name' => 'Монтаж неизвестной установки',
+                        'next_action' => 'confirm_work_source', 'source_fact_ids' => ['fact:specification', 'fact:description']],
+                    ['index' => 0, 'reason' => 'estimate_composer_work_scope_unresolved', 'work_name' => null,
+                        'next_action' => 'provide_work_scope', 'source_fact_ids' => []],
+                ]],
+        ]);
+
+        return [$draft, $input, new ProjectModelSnapshot($entities, [$description, $specification], [$proof, $document], [])];
+    }
+}
