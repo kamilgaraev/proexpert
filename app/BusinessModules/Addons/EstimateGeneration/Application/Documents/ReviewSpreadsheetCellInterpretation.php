@@ -126,7 +126,7 @@ final readonly class ReviewSpreadsheetCellInterpretation
             }
 
             return $this->publisher->transaction((int) $session->organization_id, $sessionId,
-                function () use ($actor, $session, $projectId, $sessionId, $documentId, $input, $selected, $row, $rowId, $payload, $receipts, $fingerprint): array {
+                function () use ($actor, $session, $projectId, $sessionId, $documentId, $input, $selected, $row, $rowId, $payload, $receipts, $fingerprint, $previous): array {
                     $scope = [(int) $session->organization_id, $projectId, $sessionId];
                     $entityKey = 'equipment:review.'.hash('sha256', $rowId.'|'.$selected['proposal']['identity_cell_id']);
                     $choice = $this->choices->write($actor, $session, 'document-cell-review:'.$rowId, 'evaluation_answer',
@@ -139,6 +139,23 @@ final readonly class ReviewSpreadsheetCellInterpretation
                     $review = $this->models->fact(...[...$scope, $choice['fact_id']]);
                     if ($review === null) {
                         throw new \LogicException('document_cell_review_fact_missing');
+                    }
+                    if ($input['decision'] !== 'revoke' && ($previous['decision'] ?? null) === 'accept') {
+                        $originals = array_values(array_filter($this->learning->cellReviewProposalsForOperation($session, $previous['operation_id']),
+                            static fn (array $original): bool => $original['run_id'] === $previous['run_id']
+                                && $original['proposal_hash'] === $previous['proposal_hash'] && $original['proposal']['row_id'] === $rowId
+                                && CanonicalPipelineJson::encode($original['binding']) === CanonicalPipelineJson::encode($previous['binding'])));
+                        if (count($originals) !== 1) {
+                            $this->invalid();
+                        }
+                        $original = $originals[0];
+                        $oldCells = array_column($original['binding']['cells'], null, 'cell_id');
+                        if (! isset($oldCells[$original['proposal']['identity_cell_id']], $oldCells[$original['proposal']['value_cell_id']])) {
+                            $this->invalid();
+                        }
+                        $this->publisher->revokeReviewedLiteral($row['context'],
+                            'equipment:review.'.hash('sha256', $rowId.'|'.$original['proposal']['identity_cell_id']),
+                            $oldCells[$original['proposal']['value_cell_id']]['raw_value']);
                     }
                     if ($input['decision'] === 'accept') {
                         $cells = array_column($row['cells'], null, 'cell_id');

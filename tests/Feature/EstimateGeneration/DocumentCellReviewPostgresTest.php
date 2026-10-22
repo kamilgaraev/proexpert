@@ -106,9 +106,11 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame([], array_values(array_filter($capture->facts, static fn ($fact): bool => $fact['origin'] === 'document')));
     }
 
-    public function test_review_rollback_and_revoke_preserve_adjacent_views_native_facts_and_derived_projection(): void
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    public function test_review_rollback_and_revoke_preserve_adjacent_views_native_facts_and_derived_projection(bool $replaceMapping): void
     {
-        [$session, $actor, $document, $unit] = $this->ordinaryWorkbook(neighbors: true);
+        [$session, $actor, $document, $unit] = $this->ordinaryWorkbook(neighbors: true, alternate: $replaceMapping);
         app(InitialProjectFactsWriter::class)->write($session, $actor);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $models = app(ProjectModelRepository::class);
@@ -143,6 +145,20 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
             'confidence' => 0, 'source_refs' => [], 'normalized_payload' => ['projection' => 'requested_area_takeoff:v1'],
         ]);
         $this->composeCells($session, $actor, publish: true);
+        $oldProjection = null;
+        if ($replaceMapping) {
+            $session = $session->fresh();
+            $reviewer = app(ReviewSpreadsheetCellInterpretation::class);
+            $first = $reviewer->rows($actor, $session, (int) $document->id)[0];
+            $reviewer->handle($actor, $scope[1], $scope[2], (int) $document->id, $this->reviewRequest($session, $first));
+            $oldProjection = DB::table('estimate_generation_document_facts')->where('session_id', $scope[2])
+                ->where('normalized_payload->decision_reason_code', 'human_reviewed_literal')->sole();
+            config(['estimate-generation.universal_enabled' => true]);
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection::class)
+                ->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->fresh()->state_version,
+                    'selected_sections' => ['equipment'], 'profile_id' => 'renovation', 'construction_type' => 'current_repair', 'price_policy' => 'mixed']);
+            $this->composeCells($session->fresh(), $actor, publish: true, valueCellAddress: 'E2', identityCellAddress: 'F2');
+        }
         $session = $session->fresh();
         $reviews = app(ReviewSpreadsheetCellInterpretation::class);
         $rows = $reviews->rows($actor, $session, (int) $document->id);
@@ -174,17 +190,32 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
             self::assertSame($records, DB::table($table)->where('session_id', $scope[2])->orderBy($keys[$table])->get()->map(fn ($row) => (array) $row)->all(), $table);
         }
         self::assertSame((int) $session->state_version, (int) $session->fresh()->state_version);
-        self::assertSame(0, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
+        self::assertSame($replaceMapping ? 1 : 0, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
         $reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $request);
         $session = $session->fresh();
+        self::assertSame(CanonicalPipelineJson::encode($session->input_payload['document_cell_review_receipts'][$request['request_id']]['result']),
+            CanonicalPipelineJson::encode($reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $request)));
+        if ($replaceMapping) {
+            $own = DB::table('estimate_generation_document_facts')->where('session_id', $scope[2])
+                ->where('normalized_payload->decision_reason_code', 'human_reviewed_literal')->get();
+            self::assertCount(1, $own);
+            self::assertSame('Дополнительное исполнение.', $own[0]->value_text);
+            self::assertNotSame($oldProjection->scope_key, $own[0]->scope_key);
+            self::assertFalse(DB::table('estimate_generation_document_facts')->where('id', $oldProjection->id)->exists());
+        }
         $reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $this->reviewRequest($session, $rows[0], 'revoke'));
         foreach ($before as $table => $records) {
+            if ($replaceMapping && $table === 'estimate_generation_document_facts') {
+                $records = array_values(array_filter($records, static fn (array $record): bool => $record['id'] !== $oldProjection->id));
+            }
             $preserved = DB::table($table)->where('session_id', $scope[2])->whereIn($keys[$table], array_column($records, $keys[$table]))->orderBy($keys[$table])->get()->map(fn ($row) => (array) $row)->all();
             self::assertSame($records, $preserved, $table);
         }
         $currentFacts = array_column($models->snapshotForPlanning(...[...$scope, 100])['snapshot']->facts, null, 'id');
         self::assertSame(get_object_vars($native), get_object_vars($currentFacts[$native->id]));
         self::assertSame([], app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->fresh()->input_payload])->sourceClaimReferences);
+        self::assertSame(0, DB::table('estimate_generation_document_facts')->where('session_id', $scope[2])
+            ->where('normalized_payload->decision_reason_code', 'human_reviewed_literal')->count());
     }
 
     public function test_public_review_reason_uses_the_same_unicode_byte_limit_as_the_existing_choice_contract(): void
@@ -493,7 +524,9 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         Http::assertNothingSent();
     }
 
-    public function test_changed_scope_does_not_hide_fresh_proposals_behind_a_stale_accepted_binding(): void
+    #[\PHPUnit\Framework\Attributes\TestWith(['accept'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['reject'])]
+    public function test_changed_scope_does_not_hide_fresh_proposals_behind_a_stale_accepted_binding(string $replacementDecision): void
     {
         [$session, $actor, $document] = $this->ordinaryWorkbook();
         app(InitialProjectFactsWriter::class)->write($session, $actor);
@@ -524,13 +557,26 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         self::assertNotSame($original['proposal_hash'], $current[0]['proposal_hash']);
         self::assertSame('pending', $current[0]['status']);
         self::assertSame(['accept', 'reject'], $current[0]['actions']);
-        $input = $this->reviewRequest($session, $current[0]);
+        $input = $this->reviewRequest($session, $current[0], $replacementDecision);
         $accepted = $this->postReview($actor, $session, $document, $input);
         self::assertSame(200, $accepted->getStatusCode());
         self::assertSame(CanonicalPipelineJson::encode($accepted->getData(true)),
             CanonicalPipelineJson::encode($this->postReview($actor, $session, $document, $input)->getData(true)));
         $session = $session->fresh();
         $next = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->input_payload]);
+        if ($replacementDecision === 'reject') {
+            self::assertSame([], $next->sourceClaimReferences);
+            self::assertNotContains($oldFact->id, array_column($next->facts, 'id'));
+            self::assertSame(0, DB::table('estimate_generation_document_facts')->where('session_id', $scope[2])
+                ->where('normalized_payload->decision_reason_code', 'human_reviewed_literal')->count());
+            self::assertNotEmpty($next->nativeCellContext);
+            self::assertEquals($oldFact, app(ProjectModelRepository::class)->fact(...[...$scope, $oldFact->id]));
+            self::assertEquals($oldReview, app(ProjectModelRepository::class)->fact(...[...$scope, $oldReview->id]));
+            self::assertEquals($oldDecisions, app(ProjectModelRepository::class)->decisions(...[...$scope, [$oldReview->value['decision_id']]]));
+            self::assertSame(1, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
+            self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            return;
+        }
         self::assertCount(1, $next->sourceClaimReferences);
         self::assertSame($accepted->getData(true)['data']['decision_id'], $next->sourceClaimReferences[0]['source_review_decision_id']);
         self::assertNotContains($oldFact->id, $next->sourceClaimReferences[0]['document_fact_ids']);
