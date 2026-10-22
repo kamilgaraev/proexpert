@@ -108,14 +108,18 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
             $sheet->setCellValue("A{$row}", $m->material->name);
             $sheet->setCellValue("E{$row}", $m->material->measurementUnit->name ?? '');
 
-            $supplierQty = (float) ($m->metadata['supplier_quantity'] ?? $m->quantity);
+            $supplierQty = $m->metadata['supplier_quantity'] ?? null;
+            $supplierQty = is_numeric($supplierQty) ? (float) $supplierQty : null;
+            if ($supplierQty !== null && (! is_finite($supplierQty) || $supplierQty < 0)) {
+                $supplierQty = null;
+            }
             $actualQty = (float) $m->quantity;
-            $diff = $actualQty - $supplierQty;
+            $diff = $supplierQty === null ? null : $actualQty - $supplierQty;
 
             $sheet->setCellValue("F{$row}", $supplierQty);
             $sheet->setCellValue("G{$row}", $actualQty);
-            $sheet->setCellValue("H{$row}", $diff < 0 ? abs($diff) : '');
-            $sheet->setCellValue("I{$row}", $diff > 0 ? $diff : '');
+            $sheet->setCellValue("H{$row}", $diff !== null && $diff < 0 ? abs($diff) : '');
+            $sheet->setCellValue("I{$row}", $diff !== null && $diff > 0 ? $diff : '');
         }
 
         $this->applyTableStyle($sheet, "A17:I{$row}");
