@@ -19,6 +19,7 @@ final readonly class EstimateComposerInputFactory
         private ProjectModelRepository $models,
         private int $maxFacts,
         private ?EstimateGenerationLearningEvidenceService $learning = null,
+        private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource $cellSources = null,
     ) {
         if ($maxFacts < 1 || $maxFacts > 10000) {
             throw new InvalidArgumentException('estimate_composer_fact_limit_invalid');
@@ -82,9 +83,16 @@ final readonly class EstimateComposerInputFactory
         $answerContexts = [];
         $checkedAnswers = [];
         $hasComposerAnswer = false;
+        $reviewContexts = [];
         $eligibleFacts = [];
         $policy = $answerPolicy === [] ? null : ResolveCurrentEstimateClarification::composerPolicy($answerPolicy);
         foreach ($snapshot->facts as $fact) {
+            if (isset($entities[$fact->entityId]?->attributes['properties']['document_cell_review_anchor'])) {
+                $reviewContexts[$fact->id] = $this->learning?->cellReviewContext([$organizationId, $projectId, $sessionId], $snapshot, $decisions, $fact);
+                if ($reviewContexts[$fact->id] === null) {
+                    continue;
+                }
+            }
             if ($fact->type === 'evaluation_answer' && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'composer_answer') {
                 $hasComposerAnswer = true;
                 if ($answerPolicy !== [] && ($policy === null || $policy['mode'] !== ($evaluationMode ?? 'legacy')
@@ -99,7 +107,7 @@ final readonly class EstimateComposerInputFactory
             }
             $eligibleFacts[] = $fact;
         }
-        if ($hasComposerAnswer) {
+        if ($hasComposerAnswer || $reviewContexts !== []) {
             $eligibleIds = array_fill_keys(array_column($eligibleFacts, 'id'), true);
             foreach ($candidates as $candidate) {
                 if (array_diff($candidate['source_fact_ids'] ?? [], array_keys($eligibleIds)) !== []) {
@@ -110,7 +118,7 @@ final readonly class EstimateComposerInputFactory
         }
         $eligibleById = $answerContexts === [] ? [] : array_column($eligibleFacts, null, 'id');
         $snapshotById = $answerContexts === [] ? [] : array_column($snapshot->facts, null, 'id');
-        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts, $eligibleById, $snapshotById): array {
+        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts, $eligibleById, $snapshotById, $reviewContexts): array {
             $entity = $entities[$fact->entityId] ?? null;
             $related = [];
             foreach (['room_id', 'wall_id', 'roof_id'] as $relation) {
@@ -121,6 +129,14 @@ final readonly class EstimateComposerInputFactory
             }
 
             $context = [];
+            if (isset($reviewContexts[$fact->id])) {
+                $context['source_review_decision_id'] = $reviewContexts[$fact->id]['candidate']['source_review_decision_id'];
+            }
+            if ($fact->type === 'evaluation_answer' && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'document_cell_review') {
+                return [...$this->fact($fact), 'value' => ['kind' => 'document_cell_review', 'decision' => $fact->value['decision'],
+                    'source_review_decision_id' => $fact->value['decision_id'], 'numeric_parameters_confirmed' => false],
+                    'entity_type' => $entity?->type, 'related_entity_ids' => []];
+            }
             if (isset($answerContexts[$fact->id])) {
                 return [...$this->fact($fact), 'value' => ['kind' => 'composer_answer', 'answer' => $fact->value['other'],
                     'question_key' => $fact->value['question_key'], 'numeric_parameters_confirmed' => false,
@@ -183,6 +199,27 @@ final readonly class EstimateComposerInputFactory
             $references = array_values(array_filter(array_slice($references, 0, EstimateComposerInput::MAX_SOURCE_CLAIMS),
                 static fn (mixed $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $facts, $input->claimAnswerFactIds)));
             $input = $input->withSourceClaimReferences($references);
+        }
+        if ($reviewContexts !== [] && $this->learning !== null) {
+            $references = $this->learning->cellReviewReferences([$organizationId, $projectId, $sessionId], $snapshot, $decisions, $reviewContexts);
+            $references = array_values(array_filter($references,
+                static fn (mixed $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $facts, $input->claimAnswerFactIds)));
+            $input = $input->withSourceClaimReferences(array_slice([...$input->sourceClaimReferences, ...$references], 0, EstimateComposerInput::MAX_SOURCE_CLAIMS));
+        }
+
+        if ($this->cellSources !== null && in_array('equipment', $input->allowedWorkSections, true)) {
+            $byId = $reviewContexts === [] ? [] : array_column($snapshot->facts, null, 'id');
+            $reviewedRows = [];
+            foreach ($reviewContexts as $reviewContext) {
+                $review = $reviewContext === null ? null : ($byId[$reviewContext['identity']['review']['fact_id']] ?? null);
+                if (is_string($review?->value['proposal']['row_id'] ?? null)) {
+                    $reviewedRows[] = $review->value['proposal']['row_id'];
+                }
+            }
+            $rows = $this->cellSources->capture($organizationId, $projectId, $sessionId, $reviewedRows);
+            if ($rows !== []) {
+                $input = $input->withNativeCellContext(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::wire($rows));
+            }
         }
 
         return $input;

@@ -53,6 +53,32 @@ final readonly class NativeSpreadsheetLiteralSources
 
     public function bind(DocumentUnitExecutionContext $context, array $native, array $claims): self
     {
+        return $this->bindLiterals($context, $native, $claims);
+    }
+
+    public function bindReviewed(DocumentUnitExecutionContext $context, array $native, array $claims,
+        \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $review): self
+    {
+        if ([$review->organizationId, $review->projectId, $review->sessionId] !== [$context->organizationId, $context->projectId, $context->sessionId]
+            || $review->type !== 'evaluation_answer' || $review->origin !== 'user_input' || $review->status !== 'confirmed'
+            || $review->evidenceIds === [] || ($review->value['kind'] ?? null) !== 'document_cell_review'
+            || ($review->value['decision'] ?? null) !== 'accept'
+            || ($review->value['identity_confirmation'] ?? null) !== 'new_document_local_equipment'
+            || count($claims) !== 1 || ($review->value['entity_key'] ?? null) !== $claims[0]->entityKey
+            || $claims[0]->factType !== 'equipment_specification'
+            || ($review->value['binding']['document_id'] ?? null) !== $context->documentId
+            || ($review->value['binding']['unit_id'] ?? null) !== $context->unitId
+            || ($review->value['binding']['source_version'] ?? null) !== $context->sourceVersion
+            || ($review->value['binding']['artifact_sha256'] ?? null) !== $this->artifactHash) {
+            throw new DocumentUnitProcessingException('document_cell_review_literal_invalid');
+        }
+
+        return $this->bindLiterals($context, $native, $claims, $review);
+    }
+
+    private function bindLiterals(DocumentUnitExecutionContext $context, array $native, array $claims,
+        ?\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $review = null): self
+    {
         if ([$context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->index, $context->sourceVersion]
             !== [$this->context->organizationId, $this->context->projectId, $this->context->sessionId, $this->context->documentId, $this->context->unitId, $this->context->index, $this->context->sourceVersion]
             || CanonicalPipelineJson::encode($native) !== CanonicalPipelineJson::encode($this->native)) {
@@ -77,7 +103,7 @@ final readonly class NativeSpreadsheetLiteralSources
                 || ! is_array($cell) || ($cell['formula'] ?? null) !== null
                 || ! is_string($cell['raw_value'] ?? null) || trim($cell['raw_value']) === ''
                 || $cell['raw_value'] !== ($claim->value['data'] ?? null)
-                || FactVocabulary::documentObservation($claim->factType, (string) ($claim->locator['source_entity_key'] ?? ''), $claim->value, null) === null) {
+                || FactVocabulary::documentObservation($claim->factType, $review === null ? (string) ($claim->locator['source_entity_key'] ?? '') : $claim->entityKey, $claim->value, null) === null) {
                 continue;
             }
             $bindings[self::fingerprint($claim)] = [
