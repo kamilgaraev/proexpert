@@ -297,7 +297,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
             $this->assertNull($projectScope);
         }
         $service = (new ReflectionClass(DiscoveryContextAssistantService::class))->newInstanceWithoutConstructor();
-        foreach (['toolRegistry' => $registry, 'permissionChecker' => $permissions, 'activeActor' => $actor, 'dataAccess' => $policy, 'contextBuilder' => $context, 'conversationManager' => $conversations, 'memoryService' => null, 'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
+        foreach (['toolRegistry' => $registry, 'permissionChecker' => $permissions, 'activeActor' => $actor, 'dataAccess' => $policy, 'contextBuilder' => $context, 'conversationManager' => $conversations, 'memoryService' => null, 'scopedContext' => null, 'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
             (new ReflectionProperty(AIAssistantService::class, $property))->setValue($service, $value);
         }
         return $service;

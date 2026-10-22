@@ -20,6 +20,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateS
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateResolver;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
@@ -179,6 +180,7 @@ class AIAssistantService
         private readonly ?AssistantLegacyLiveEvidenceAdapter $legacyLiveEvidence = null,
         private readonly ?AssistantDocumentCoverageService $documentCoverageService = null,
         private readonly OrdinaryAssistantEgress $ordinaryEgress = new OrdinaryAssistantEgress(),
+        private readonly ?OrdinaryAssistantScopedContext $scopedContext = null,
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -207,6 +209,7 @@ class AIAssistantService
         array $requestPayload = [],
         ?string $surface = null
     ): array {
+        $this->scopedContext?->enter($user, $organizationId, $query, $requestPayload, $conversationId);
         $this->activeActor = $user;
         $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
         $this->activeToolResults = [];
@@ -230,6 +233,7 @@ class AIAssistantService
                 $this->activeCustomReportSources = [];
                 $this->activeSearchScopeAttempts = [];
                 $this->documentContextBlocked = false;
+                $this->scopedContext?->clear();
             }
         }
 
@@ -237,6 +241,7 @@ class AIAssistantService
         $started = $this->requestLifecycle->start($this->resolveOrganization($organizationId), $user, $conversationId, $payload, $surface);
         if (is_array($started['response'])) {
             $this->activeActor = null;
+            $this->scopedContext?->clear();
             return $started['response'];
         }
         $this->activeRequest = $started['request'];
@@ -259,6 +264,7 @@ class AIAssistantService
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
             $this->documentContextBlocked = false;
+            $this->scopedContext?->clear();
         }
     }
 
@@ -290,6 +296,7 @@ class AIAssistantService
         $this->currentAttachmentIds = $payload['attachment_ids'] ?? [];
         $this->currentImageParts = [];
         try {
+            $this->scopedContext?->enter($user, (int) $request->organization_id, $query, $payload, $conversationId);
             if ($this->currentAttachmentIds !== []) {
                 $validated = $this->measurePhase('attachment_prepare', fn (): array => app(AssistantChatAttachmentService::class)->prepareRequest($payload, $user, (int) $request->organization_id));
                 if (!hash_equals($request->request_hash, app(\App\Services\Credits\AICreditService::class)->canonicalAssistantRequest($validated))) {
@@ -315,6 +322,7 @@ class AIAssistantService
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
             $this->documentContextBlocked = false;
+            $this->scopedContext?->clear();
         }
     }
 
@@ -469,9 +477,14 @@ class AIAssistantService
             return $this->measurePhase('greeting', fn (): array => $this->answerStandaloneGreeting($query, $organizationId, $user, $conversation, $requestPayload));
         }
         $navigationRequestContext = $requestPayload['context'] ?? [];
-        $continuationContext = $conversation->context ?? [];
+        $restricted = $this->scopedContext?->isGuarded() ?? false;
+        if ($restricted) {
+            $requestPayload['context'] = ['entity_refs' => [['type' => 'project', 'id' => $this->scopedContext->projectId()]]];
+            $requestPayload['allow_actions'] = false;
+        }
+        $continuationContext = $restricted ? [] : ($conversation->context ?? []);
         $previousImageDiscussion = (bool) ($continuationContext['last_image_discussion'] ?? false);
-        if (! array_key_exists('last_image_discussion', $continuationContext) && $this->currentAttachmentIds === []
+        if (! $restricted && ! array_key_exists('last_image_discussion', $continuationContext) && $this->currentAttachmentIds === []
             && AssistantImageDiscussionPolicy::isDiscussion($query, false, true)) {
             foreach ($this->conversationManager->getHistory($conversation, 10, $user)->reverse() as $previousMessage) {
                 if ($previousMessage->role !== 'user') {
@@ -495,7 +508,7 @@ class AIAssistantService
             $requestPayload['desired_mode'] = $imageDiscussion ? 'analyze' : null;
             $requestPayload['allow_actions'] = false;
         }
-        if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
+        if (! $restricted && ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
             $this->documentContextBlocked = ! $this->documentCorpusIsComplete($organizationId, $user);
             if ($this->documentContextBlocked) {
                 $continuationContext = $this->suppressDocumentContinuationContext($continuationContext);
@@ -513,7 +526,7 @@ class AIAssistantService
         }
         $requestPayload = $this->measurePhase('request_context', fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId));
         $this->activeEstimateSelection = null;
-        $selection = $conversation->context['selected_estimate'] ?? null;
+        $selection = $restricted ? null : ($conversation->context['selected_estimate'] ?? null);
         if (! $imageDiscussion && ! $conversationNumberRequest && is_array($selection) && is_int($selection['estimate_id'] ?? null) && $this->dataAccess !== null
             && $this->dataAccess->withCurrentChecks($user, $organizationId,
                 fn (): bool => $this->dataAccess->canReadEntityContent($user, $organizationId, 'estimate', $selection['estimate_id']), true)) {
@@ -539,7 +552,7 @@ class AIAssistantService
             $taskPlan['production_period_override'] = $periodClarification + ['message_sha256' => hash('sha256', $routingQuery)];
             $taskPlan['request']['production_period_override'] = $taskPlan['production_period_override'];
         }
-        if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && ! ($taskPlan['section_navigation'] ?? false)) {
+        if (! $restricted && ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && ! ($taskPlan['section_navigation'] ?? false)) {
             if ($canonicalPeriodResume && AssistantNamedProjectReadScope::name($taskPlan) === null
                 && ! \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::hasAmbiguousName($routingQuery, 'project', preservePrepositions: true)) {
                 unset($taskPlan['named_project_scope']);
@@ -549,6 +562,7 @@ class AIAssistantService
             }
         }
         $taskPlan['image_discussion'] = $imageDiscussion;
+        if ($restricted) { unset($taskPlan['named_project_scope']); }
         $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
         $businessDomain = $this->businessDataDomain($taskPlan);
         if ($businessDomain !== null && $this->dataAccess !== null && !$this->dataAccess->canReadDomain($user, $organizationId, $businessDomain)) {
@@ -617,7 +631,7 @@ class AIAssistantService
             return $this->agentAskResult($conversation, $message, $answer, $payload, $organizationId, $user);
         }
 
-        if (($taskPlan['section_navigation'] ?? false) && $this->activeEstimateSelection === null
+        if (! $restricted && ($taskPlan['section_navigation'] ?? false) && $this->activeEstimateSelection === null
             && empty($conversationContext['selected_estimate']) && empty($conversationContext['selected_estimate_id'])
             && is_array($navigationRequestContext) && AssistantRequestUnderstandingResolver::hasOnlyBackgroundProjectReferences($navigationRequestContext)
             && empty($navigationRequestContext['entity_references']) && empty($navigationRequestContext['filters'])
@@ -626,7 +640,7 @@ class AIAssistantService
             return $this->answerSectionNavigation($query, $organizationId, $user, $conversation, $requestPayload);
         }
 
-        $agentResult = ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
+        $agentResult = ! $restricted && ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
         if ($agentResult !== null) {
             return $agentResult;
         }
@@ -650,7 +664,7 @@ class AIAssistantService
             if (! empty($tools)) {
                 $options['tools'] = $tools;
             }
-            if (($requiredToolChoice = AssistantRequiredProjectRead::toolChoice($taskPlan, $tools)) !== null) {
+            if (! $restricted && ($requiredToolChoice = AssistantRequiredProjectRead::toolChoice($taskPlan, $tools)) !== null) {
                 $options['tool_choice'] = $requiredToolChoice;
             }
 
@@ -1012,6 +1026,7 @@ class AIAssistantService
             if (is_array($financialCheck) && is_string($financialCheck['text'] ?? null)) {
                 $assistantContent = $financialCheck['text'];
             }
+            $scopedModelContent = $assistantContent;
             $rejectedFinancialPlan = $rawPresentationPlan !== null && AssistantPresentationPlanner::hasFinancialSelection($rawPresentationPlan)
                 && (!in_array($financialCheck['validation_status'] ?? null, ['verified', 'partial'], true)
                     || ($financialCheck['source_refs'] ?? []) === []
@@ -1113,7 +1128,16 @@ class AIAssistantService
                 }
             }
 
-            foreach ($rawPresentationPlan !== null || $rejectedFinancialPlan ? [] : array_reverse($verificationToolResults) as $toolResult) {
+            if ($this->scopedContext?->isGuarded() ?? false) {
+                $approvedReferences = $this->scopedContext->validateResults($verificationToolResults);
+                if ($approvedReferences !== [] && ! ($financialCheck['replaced'] ?? false) && $rawPresentationPlan === null
+                    && ! $rejectedFinancialPlan && ! $terminalToolResponse && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
+                    $assistantContent = $scopedModelContent;
+                    $structuredCheck = ['text' => $assistantContent, 'replaced' => false, 'validation_status' => 'partial',
+                        'needs_clarification' => false, 'source_refs' => $approvedReferences];
+                }
+            }
+            foreach (($this->scopedContext?->isGuarded() ?? false) || $rawPresentationPlan !== null || $rejectedFinancialPlan ? [] : array_reverse($verificationToolResults) as $toolResult) {
                 $reader = AssistantRequiredProjectRead::decisionReader((string) ($toolResult['_tool_name'] ?? ''), $query);
                 if ($reader !== null && $proposedActions === []) {
                     $verifiedDecision = $this->readPhase(fn (): ?array => app($reader)->verifiedAnswer($toolResult, $user, $organizationId), $user, $organizationId);
@@ -1852,6 +1876,9 @@ class AIAssistantService
 
     protected function toolResultForProvider(string $toolName, array|string $result): array|string
     {
+        if (($this->scopedContext?->isGuarded() ?? false) && is_array($result)) {
+            return $this->scopedContext->providerToolResult($result);
+        }
         return is_array($result)
             ? AssistantToolResultProjection::forProvider($toolName, $result)
             : $result;
@@ -1953,6 +1980,9 @@ class AIAssistantService
 
     private function decorateMetadata(array $payload, User $actor): array
     {
+        if ($this->scopedContext?->isGuarded() ?? false) {
+            $this->scopedContext->assertPublication($payload['source_refs'] ?? []);
+        }
         if ($this->requestOutcome !== null) {
             $payload['outcome'] = $this->requestOutcome;
             $payload['access_denied'] = $this->requestOutcome === 'access_denied';
@@ -2039,6 +2069,9 @@ class AIAssistantService
     private function savePendingSummary(User $actor): void
     {
         $pending = $this->pendingSummary;
+        if ($this->scopedContext?->isGuarded() ?? false) {
+            $this->scopedContext->assertPublication($pending['source_refs'] ?? []);
+        }
         if ($pending === null || !($pending['conversation'] ?? null) instanceof Conversation) {
             return;
         }
@@ -2596,6 +2629,7 @@ class AIAssistantService
                 'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_project_export_history', 'get_project_report_delivery_summary', 'get_project_camera_roster', 'get_organization_access_review_summary', 'get_organization_one_c_exchange_summary', 'get_contract_supplementary_readiness', 'get_organization_notifications', 'get_organization_activity_summary', 'get_organization_supplier_roster', 'get_organization_project_roster', 'get_project_site_request_queue', 'get_project_material_request_queue', 'get_project_tender_decisions', 'get_project_daily_staff', 'get_organization_user_counts', 'get_assignable_user_roles', 'get_own_admin_permissions', 'get_organization_business_profile', 'get_own_report_workspace', 'get_own_organization_roles', 'get_organization_verification', 'get_own_report_subscriptions', 'get_report_subscription_catalog', 'get_organization_contacts', 'get_own_notification_preferences', 'get_organization_credit_balance', 'get_rag_index_status', 'get_organization_calculation_health', 'get_organization_quality_defect_control', 'get_organization_handover_control', 'get_organization_advance_settings', 'get_organization_active_packages', 'get_organization_effective_modules', 'get_own_project_access', 'get_organization_purchase_orders', 'get_catalog_lookup', 'get_project_deliveries', 'get_project_staff_roster', 'get_project_act_readiness', 'get_bim_model_elements',
                 'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             ], true);
+            $this->scopedContext?->assertTool($toolName, $args, $user, $organizationId);
             $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool
                 ? $tool->executeForSelection($args, $user, $organization, $this->activeEstimateSelection)
                 : $tool->execute($args, $user, $organization);
@@ -2608,6 +2642,9 @@ class AIAssistantService
                 ? $this->readPhase($read, $user, $organizationId) : $read());
             $toolFailureStage = 'evidence_processing';
             $this->executionCheckpoint();
+            if ($this->scopedContext?->isGuarded() ?? false) {
+                $toolResult = $this->scopedContext->projectToolResult($toolName, $args, $toolResult);
+            }
             if (is_array($toolResult) && in_array($toolResult['status'] ?? null, ['access_denied', 'forbidden'], true)) {
                 $this->recordRequestOutcome('access_denied');
             } elseif (is_array($toolResult) && in_array($toolName, ['get_published_report_financial_evidence', 'get_live_project_financial_evidence'], true)
@@ -2618,7 +2655,7 @@ class AIAssistantService
                 $this->recordRequestOutcome('service_error');
             }
             $liveReads = [];
-            if (is_array($toolResult) && $this->legacyLiveEvidence !== null) {
+            if (! ($this->scopedContext?->isGuarded() ?? false) && is_array($toolResult) && $this->legacyLiveEvidence !== null) {
                 $toolFailureStage = 'legacy_enrichment';
                 $liveReads = $this->legacyLiveEvidence->read($toolName, $toolResult, $user, $organizationId);
                 if ($liveReads !== []) {
@@ -2677,7 +2714,7 @@ class AIAssistantService
                 ? array_intersect_key($toolResult, array_flip(['status', 'message', 'format', 'filename', 'generated_at', 'sections', 'validation_errors']))
                 : $toolResult;
         } catch (Throwable $exception) {
-            if ($exception instanceof AssistantRequestCancelled || $exception instanceof AssistantRequestDeadlineExceeded
+            if ($exception instanceof AssistantEgressDenied || $exception instanceof AssistantRequestCancelled || $exception instanceof AssistantRequestDeadlineExceeded
                 || $exception instanceof AssistantReadPermitTimeoutException) {
                 throw $exception;
             }
@@ -2798,21 +2835,37 @@ class AIAssistantService
     protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
     {
         $this->executionCheckpoint();
+        if ($this->scopedContext?->isGuarded() ?? false) { $options['tool_choice'] = 'auto'; }
         [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->measurePhase('provider_prepare', fn (): array => $this->prepareProviderPayload($messages, $options, $organizationId, $user));
+        $legacy = $this->scopedContext?->isLegacy() ?? false;
+        $selectedProvider = $legacy && $this->ordinaryEgress->transport()->isBound($this->llmProvider)
+            ? app(LLMProviderInterface::class) : $this->llmProvider;
+        $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
+        $defaultTimeout = $provider === 'timeweb' ? 25.0 : 45.0;
+        $configuredTimeout = config('ai-assistant.llm.'.$provider.'.timeout', $defaultTimeout);
+        $providerTimeout = is_numeric($configuredTimeout) && (float) $configuredTimeout > 0 && is_finite((float) $configuredTimeout)
+            ? (float) $configuredTimeout : $defaultTimeout;
+        if (isset($preparedOptions['timeout']) && is_numeric($preparedOptions['timeout'])
+            && (float) $preparedOptions['timeout'] > 0 && is_finite((float) $preparedOptions['timeout'])) {
+            $providerTimeout = (float) $preparedOptions['timeout'];
+        }
         if (app()->bound(AssistantRequestExecutionContext::class)) {
             $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
             $profileTimeout = $provider === 'timeweb' ? config('ai-assistant.llm.timeweb.profiles.assistant.timeout') : null;
             $configuredTimeout = $preparedOptions['timeout'] ?? $profileTimeout ?? config('ai-assistant.llm.'.$provider.'.timeout', 45);
             $preparedOptions['timeout'] = app(AssistantRequestExecutionContext::class)->remainingSeconds(max(1, (int) $configuredTimeout));
+            $providerTimeout = (float) $preparedOptions['timeout'];
         }
 
-        if (! is_callable([$this->llmProvider, 'responses'])) {
+        if (! is_callable([$selectedProvider, 'responses'])) {
             throw new RuntimeException('assistant_native_responses_unavailable');
         }
 
-        $egressRequest = $this->ordinaryEgress->prepare($preparedMessages, $preparedOptions, $organizationId, $user, $this->llmProvider->getModel());
-        $this->ordinaryEgress->transport()->arm($this->llmProvider, $egressRequest,
-            fn () => $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $this->llmProvider->getModel()));
+        $egressRequest = $legacy ? null : $this->ordinaryEgress->prepare($preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel());
+        if ($egressRequest !== null) {
+            $this->ordinaryEgress->transport()->arm($selectedProvider, $egressRequest,
+                fn () => $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel()), $providerTimeout);
+        }
         $attempt = 1;
         $response = null;
         $providerStarted = false;
@@ -2821,12 +2874,14 @@ class AIAssistantService
                 ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
                 : 1;
             $this->executionCheckpoint();
-            $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $this->llmProvider->getModel());
+            if ($egressRequest !== null) {
+                $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel());
+            }
             $providerStarted = true;
             $providerCallStarted = hrtime(true);
             $providerCallFailure = null;
             try {
-                $response = $this->llmProvider->responses($preparedMessages, $preparedOptions);
+                $response = $selectedProvider->responses($preparedMessages, $preparedOptions);
             } catch (Throwable $exception) {
                 $providerCallFailure = $exception;
                 throw $exception;
@@ -2834,7 +2889,7 @@ class AIAssistantService
                 try {
                     $providerCallDuration = round((hrtime(true) - $providerCallStarted) / 1_000_000, 2);
                     $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
-                    $model = $this->llmProvider->getModel();
+                    $model = $selectedProvider->getModel();
                     $logger = Log::getFacadeRoot();
                     if (! $logger instanceof LogManager || is_string(config('logging.default'))) {
                         Log::info('ai.assistant.provider_call_completed', [
@@ -2862,6 +2917,7 @@ class AIAssistantService
             if (($response['response_status'] ?? null) === 'incomplete' || ($response['finish_reason'] ?? null) === 'length') {
                 throw new AssistantResponseIncomplete($response);
             }
+            if (! $legacy) { $this->scopedContext?->rememberResponse($response); }
             $this->recordProviderUsageDuringCleanup($response, $organizationId, $user, $preparedOptions, $budgetDegraded, true, (int) $attempt);
 
             return [
@@ -2870,7 +2926,7 @@ class AIAssistantService
                 'fallback_reason' => null,
             ];
         } catch (Throwable $exception) {
-            if ($providerStarted && (! $exception instanceof AssistantEgressDenied || $this->ordinaryEgress->transport()->dispatched())) {
+            if ($providerStarted && (! $exception instanceof AssistantEgressDenied || $legacy || $this->ordinaryEgress->transport()->dispatched())) {
                 $failedUsage = $this->providerUsageFromFailure($exception, $response);
                 try {
                     $this->recordProviderUsageDuringCleanup($failedUsage, $organizationId, $user, $preparedOptions, true, false, (int) $attempt);
@@ -2883,7 +2939,7 @@ class AIAssistantService
             $this->executionCheckpoint();
             throw $exception;
         } finally {
-            $this->ordinaryEgress->transport()->clear();
+            if ($egressRequest !== null) { $this->ordinaryEgress->transport()->clear(); }
         }
     }
 
@@ -3523,6 +3579,7 @@ class AIAssistantService
         array $taskPlan,
         array $requestPayload
     ): array {
+        if ($this->scopedContext?->isGuarded() ?? false) { return ['prompt' => '', 'metadata' => ['used' => false, 'sources' => []]]; }
         if ($this->isStandaloneGreeting($query, $requestPayload)) {
             return $this->ragPromptContextBuilder->build($query, []);
         }
@@ -3797,6 +3854,9 @@ class AIAssistantService
 
     protected function buildMessages(Conversation $conversation, array $context, array $taskPlan, string $ragPrompt = '', ?string $currentQuery = null): array
     {
+        if ($this->scopedContext?->isGuarded() ?? false) {
+            return $this->scopedContext->initialMessages($this->contextBuilder->buildSystemPrompt(), (string) $currentQuery);
+        }
         $currentQuery ??= (string) ($taskPlan['request']['message'] ?? '');
         $conversationNumberRequest = $this->isConversationNumberRequest($taskPlan, $currentQuery);
         $messages = [[
@@ -4140,16 +4200,29 @@ class AIAssistantService
 
         $this->executionCheckpoint();
 
+        if ($this->scopedContext?->isGuarded() ?? false) {
+            $metadata['tools'] = $this->scopedContext->filterToolDefinitions($metadata['tools']);
+            $metadata['capability_hints'] = [];
+        }
         return $metadata;
     }
 
     protected function resolveToolDefinitions(array $taskPlan): array
     {
-        if ($this->isConversationNumberRequest($taskPlan)) {
+        $guarded = $this->scopedContext?->isGuarded() ?? false;
+        if (! $guarded && $this->isConversationNumberRequest($taskPlan)) {
             return [];
         }
         $metadataFrameActive = $this->preparationMetadataFrameActive;
-        $toolNames = $this->resolveRelevantToolNames($taskPlan);
+        if ($guarded) {
+            if ($this->activeActor === null) { return []; }
+            $admittedToolNames = $this->scopedContext->allowedToolNames();
+            $toolNames = array_values(array_filter($this->toolRegistry->getToolNames(),
+                fn (string $name): bool => in_array($name, $admittedToolNames, true)
+                    && $this->toolEligibilityPolicy->isReadOnlyTool($name)));
+        } else {
+            $toolNames = $this->resolveRelevantToolNames($taskPlan);
+        }
         if ($this->documentContextBlocked) {
             $toolNames = array_values(array_filter($toolNames,
                 static fn (string $toolName): bool => $toolName !== 'generate_rag_pdf_report'));

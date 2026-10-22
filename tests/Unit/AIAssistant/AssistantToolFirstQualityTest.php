@@ -56,6 +56,8 @@ use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\AssistantEgressFixtureRuntime;
+use Tests\Support\AssistantBusinessEgressFixtureRuntime;
 
 final class AssistantToolFirstQualityTest extends TestCase
 {
@@ -73,6 +75,7 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->previousContainer = Container::getInstance();
         $application = new Application(dirname(__DIR__, 3));
         $application->instance('config', new Repository(['app' => ['locale' => 'ru', 'fallback_locale' => 'ru'],
+            'logging' => ['default' => 'null', 'channels' => ['null' => ['driver' => 'monolog', 'handler' => \Monolog\Handler\NullHandler::class]]],
             'ai-assistant-credits' => require dirname(__DIR__, 3).'/config/ai-assistant-credits.php']));
         $application->instance('translator', new Translator(new FileLoader(new Filesystem, dirname(__DIR__, 3).'/lang'), 'ru'));
         Facade::setFacadeApplication($application);
@@ -1370,7 +1373,7 @@ final class AssistantToolFirstQualityTest extends TestCase
             $service = $this->service(['get_material_stock' => $stock], [
                 ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]],
                 ['content' => 'Проверка остатков выполнена.'],
-            ], navigationPermissions: [[]], intentRecognizer: new IntentRecognizer);
+            ], navigationPermissions: [[]], intentRecognizer: new IntentRecognizer, typedResponseFixture: true);
             $callCount = count($this->providerCalls);
             $service->verifiedStock = ['text' => trans_message('ai_assistant.material_stock_empty'), 'validation_status' => 'verified',
                 'source_refs' => [], 'replaced' => true, 'needs_clarification' => false];
@@ -1641,8 +1644,9 @@ final class AssistantToolFirstQualityTest extends TestCase
 
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
         ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null,
-        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true, array $toolSchemas = []): ToolFirstStubService
+        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true, array $toolSchemas = [], bool $typedResponseFixture = false): ToolFirstStubService
     {
+        $typedBatchFixture = $typedResponseFixture || array_filter($responses, static fn (array $response): bool => count($response['tool_calls'] ?? []) > 1) !== [];
         $registry = new AIToolRegistry;
         foreach ($toolResults as $name => $result) {
             $tool = $this->createMock(AIToolInterface::class);
@@ -1675,7 +1679,7 @@ final class AssistantToolFirstQualityTest extends TestCase
                     $callId = $call['id'] ?? 'native_call_'.count($this->providerCalls).'_'.$index;
                     if (isset($issuedNativeCalls[$callId])) { $callId .= '_'.count($this->providerCalls).'_'.$index; }
                     $issuedNativeCalls[$callId] = true;
-                    $calls[] = ['type' => 'function_call', 'id' => 'native_item_'.count($this->providerCalls).'_'.$index,
+                    $calls[] = ['type' => 'function_call', 'id' => 'native_item_'.count($this->providerCalls).'_'.$index, 'status' => 'completed',
                         'call_id' => $callId,
                         'name' => $call['function']['name'], 'arguments' => $call['function']['arguments']];
                 }
@@ -1724,13 +1728,18 @@ final class AssistantToolFirstQualityTest extends TestCase
             });
             $orchestrator = new AssistantTaskOrchestrator(new AssistantCapabilityRegistry, $accessResolver);
         }
-        $service = new ToolFirstStubService($provider, $manager, $context, $intentRecognizer ?? $this->createMock(IntentRecognizer::class), $usage,
+        $egressFixture = ! $nativeFixture ? null : ($typedBatchFixture
+            ? new AssistantBusinessEgressFixtureRuntime(15, 7, $provider)
+            : new AssistantEgressFixtureRuntime(15, 7, $provider, $this->createMock(LoggingService::class)));
+        $service = new ToolFirstStubService($egressFixture?->provider ?? $provider, $manager, $context, $intentRecognizer ?? $this->createMock(IntentRecognizer::class), $usage,
             $this->createMock(LoggingService::class), $registry, $permissions, $accessResolver, $orchestrator,
             new AssistantAgentStateStore, new AssistantAgentPlanner(new AssistantCapabilityCatalog, new AssistantPeriodResolver),
             new AssistantAgentExecutor($registry, $permissions, new AssistantArtifactNormalizer), new AssistantResponseVerifier,
             tokenBudget: new TokenBudgetService(new TokenCounter(new class {
                 public function encode(string $text): array { return array_fill(0, (int) ceil(mb_strlen($text) / 4), 1); }
-            })), financialAnswers: $financialAnswers, financialClaims: new AssistantFinancialClaimVerifier, dataAccess: $navigationPolicy);
+            })), financialAnswers: $financialAnswers, financialClaims: new AssistantFinancialClaimVerifier, dataAccess: $navigationPolicy,
+            ordinaryEgress: $egressFixture?->egress);
+        $service->egressFixture = $egressFixture;
         $service->conversation = $conversation;
         return $service;
     }
@@ -1748,6 +1757,7 @@ interface ToolFirstNativeProviderFixture extends LLMProviderInterface
 
 final class ToolFirstStubService extends AIAssistantService
 {
+    public AssistantEgressFixtureRuntime|AssistantBusinessEgressFixtureRuntime|null $egressFixture = null;
     public Conversation $conversation;
 
     public ?array $verifiedStock = null;
@@ -1803,7 +1813,9 @@ final class ToolFirstStubService extends AIAssistantService
         if ($this->preparationFailure !== null && array_filter($messages, static fn (array $message): bool => ($message['type'] ?? null) === 'function_call_output') !== []) {
             throw $this->preparationFailure;
         }
-        return parent::prepareProviderPayload($messages, $options, $organizationId, $user);
+        $prepared = parent::prepareProviderPayload($messages, $options, $organizationId, $user);
+        $this->egressFixture?->approvePrepared($prepared[0], $prepared[1], $organizationId, $user);
+        return $prepared;
     }
 
     protected function toolResultForProvider(string $toolName, array|string $result): array|string

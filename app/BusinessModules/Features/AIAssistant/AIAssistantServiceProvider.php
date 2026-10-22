@@ -45,6 +45,7 @@ use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\Assistan
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
@@ -209,7 +210,8 @@ class AIAssistantServiceProvider extends ServiceProvider
             };
         });
 
-        $this->app->scoped(OrdinaryAssistantEgress::class);
+        $this->app->scoped(OrdinaryAssistantScopedContext::class);
+        $this->app->scoped(OrdinaryAssistantEgress::class, fn ($app) => new OrdinaryAssistantEgress($app->make(OrdinaryAssistantScopedContext::class)));
         $this->app->when(AIAssistantService::class)
             ->needs(LLMProviderInterface::class)
             ->give(fn ($app) => $app->make(OrdinaryAssistantProviderFactory::class)->make());

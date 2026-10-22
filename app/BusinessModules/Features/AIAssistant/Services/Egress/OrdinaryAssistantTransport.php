@@ -28,6 +28,8 @@ final class OrdinaryAssistantTransport
 
     private bool $clientCreated = false;
 
+    private ?float $timeout = null;
+
     public function client(?callable $handler = null): ClientInterface
     {
         if ($this->clientCreated) {
@@ -36,7 +38,7 @@ final class OrdinaryAssistantTransport
         $this->clientCreated = true;
         $handler ??= Utils::chooseHandler();
         $guarded = function (RequestInterface $wire, array $options) use ($handler): PromiseInterface {
-            if ($this->request === null || $this->checkpoint === null || $this->consumed) {
+            if ($this->request === null || $this->checkpoint === null || $this->timeout === null || $this->consumed) {
                 throw new AssistantEgressDenied('access_denied');
             }
             ($this->checkpoint)();
@@ -47,16 +49,17 @@ final class OrdinaryAssistantTransport
                 throw new AssistantEgressDenied('scope_mismatch');
             }
             $this->consumed = true;
+            $options['timeout'] = $this->timeout;
+            $options['connect_timeout'] = min(5.0, $this->timeout);
             if (app()->bound(AssistantRequestExecutionContext::class)) {
                 $options = array_replace($options, AssistantHttpRequestOptions::forContext(
-                    max(0.1, (float) ($options['timeout'] ?? 25)), app(AssistantRequestExecutionContext::class)));
+                    $this->timeout, app(AssistantRequestExecutionContext::class)));
             }
 
             return $handler($wire, $options);
         };
 
-        return new Client(['handler' => HandlerStack::create($guarded), 'allow_redirects' => false,
-            'timeout' => 25, 'connect_timeout' => 5]);
+        return new Client(['handler' => HandlerStack::create($guarded), 'allow_redirects' => false]);
     }
 
     public function bind(LLMProviderInterface $provider): void
@@ -67,14 +70,23 @@ final class OrdinaryAssistantTransport
         $this->provider = $provider;
     }
 
-    public function arm(LLMProviderInterface $provider, OrdinaryAssistantEgressRequest $request, Closure $checkpoint): void
+    public function isBound(LLMProviderInterface $provider): bool
+    {
+        return $provider === $this->provider;
+    }
+
+    public function arm(LLMProviderInterface $provider, OrdinaryAssistantEgressRequest $request, Closure $checkpoint, float $timeout): void
     {
         if ($provider !== $this->provider || $this->request !== null) {
             throw new AssistantEgressDenied('scope_mismatch');
         }
+        if (! is_finite($timeout) || $timeout <= 0) {
+            throw new AssistantEgressDenied('unsupported_purpose');
+        }
         $this->request = $request;
         $this->checkpoint = $checkpoint;
         $this->consumed = false;
+        $this->timeout = $timeout;
     }
 
     public function clear(): void
@@ -82,6 +94,7 @@ final class OrdinaryAssistantTransport
         $this->request = null;
         $this->checkpoint = null;
         $this->consumed = false;
+        $this->timeout = null;
     }
 
     public function dispatched(): bool

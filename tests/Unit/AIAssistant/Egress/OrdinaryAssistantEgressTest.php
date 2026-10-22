@@ -16,6 +16,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Services\ContextBuilder;
@@ -24,6 +25,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEg
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgressRequest;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory;
 use App\BusinessModules\Features\AIAssistant\Services\IntentRecognizer;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Models\User;
@@ -234,7 +236,7 @@ final class OrdinaryAssistantEgressTest extends TestCase
         $snapshot = $service->snapshot([['role' => 'user', 'content' => 'Синтетический вопрос']], [], self::actor());
 
         $this->expectException(AssistantEgressDenied::class);
-        $egress->transport()->arm(new TimewebProvider($this->createMock(LoggingService::class)), $snapshot, static fn () => null);
+        $egress->transport()->arm(new TimewebProvider($this->createMock(LoggingService::class)), $snapshot, static fn () => null, 10);
     }
 
     public function test_the_guard_cannot_be_used_unarmed_after_an_approved_attempt(): void
@@ -290,6 +292,57 @@ final class OrdinaryAssistantEgressTest extends TestCase
             self::assertSame($authority->approvedScope['endpoint'], (string) $history[0]['request']->getUri());
             self::assertFalse($egress->transport()->__debugInfo()['armed']);
         }
+    }
+
+    public static function providerTimeouts(): array
+    {
+        return [['timeweb', 45.0, null, 45.0], ['timeweb', 45.0, 10.0, 10.0],
+            ['openai', 45.0, null, 45.0], ['openai', 45.0, 10.0, 10.0]];
+    }
+
+    #[DataProvider('providerTimeouts')]
+    public function test_real_transport_preserves_provider_and_per_attempt_timeouts(string $provider, float $configured, ?float $requested, float $expected): void
+    {
+        $history = [];
+        $authority = new AssistantEgressFixtureAuthority;
+        $service = $this->service($history, new OrdinaryAssistantEgress($authority), provider: $provider);
+        config(['ai-assistant.llm.'.$provider.'.timeout' => $configured]);
+        $input = [['role' => 'user', 'content' => 'Синтетический вопрос']];
+        $options = $requested === null ? [] : ['timeout' => $requested];
+        $authority->approve($service->snapshot($input, $options, self::actor()));
+        $service->dispatch($input, $options, self::actor());
+        self::assertCount(1, $history);
+        self::assertSame($expected, $history[0]['options']['timeout']);
+        self::assertSame(5.0, $history[0]['options']['connect_timeout']);
+        self::assertFalse($history[0]['options']['allow_redirects']);
+    }
+
+    public function test_real_transport_clamps_timeout_to_the_remaining_execution_deadline(): void
+    {
+        $history = [];
+        $authority = new AssistantEgressFixtureAuthority;
+        $egress = new OrdinaryAssistantEgress($authority);
+        $service = $this->service($history, $egress);
+        $input = [['role' => 'user', 'content' => 'Синтетический вопрос']];
+        $authority->approve($service->snapshot($input, ['timeout' => 45], self::actor()));
+        [$messages, $options] = $service->prepared($input, ['timeout' => 45], self::actor());
+        $request = $egress->prepare($messages, $options, 15, self::actor(), $service->provider()->getModel());
+        $context = (new \ReflectionClass(AssistantRequestExecutionContext::class))->newInstanceWithoutConstructor();
+        (new ReflectionProperty(AssistantRequestExecutionContext::class, 'deadlineNanoseconds'))->setValue($context, hrtime(true) + 3_000_000_000);
+        (new ReflectionProperty(AssistantRequestExecutionContext::class, 'lifecycleCheckpointInProgress'))->setValue($context, true);
+        app()->instance(AssistantRequestExecutionContext::class, $context);
+        $egress->transport()->arm($service->provider(), $request,
+            fn () => $egress->assertCurrent($request, $messages, $options, 15, self::actor(), $service->provider()->getModel()), 45);
+        try {
+            $service->provider()->responses($messages, $options);
+        } finally {
+            $egress->transport()->clear();
+        }
+        self::assertCount(1, $history);
+        self::assertGreaterThan(0, $history[0]['options']['timeout']);
+        self::assertLessThanOrEqual(3, $history[0]['options']['timeout']);
+        self::assertSame($history[0]['options']['timeout'], $history[0]['options']['connect_timeout']);
+        self::assertIsCallable($history[0]['options']['progress']);
     }
 
     public static function changedBindings(): array
@@ -371,12 +424,14 @@ final class OrdinaryAssistantEgressTest extends TestCase
         return $actor;
     }
 
-    private function service(array &$history, ?OrdinaryAssistantEgress $egress = null, ?AssistantRequestLifecycle $lifecycle = null, array $responses = []): OrdinaryEgressServiceHarness
+    private function service(array &$history, ?OrdinaryAssistantEgress $egress = null, ?AssistantRequestLifecycle $lifecycle = null, array $responses = [], string $provider = 'timeweb'): OrdinaryEgressServiceHarness
     {
         config(['ai-assistant.llm.provider' => 'timeweb', 'ai-assistant.llm.timeweb.api_key' => 'offline-only-key',
             'ai-assistant.llm.timeweb.base_uri' => 'https://offline.invalid/v1', 'ai-assistant.llm.timeweb.model' => 'openai/gpt-6-luna']);
+        config(['ai-assistant.llm.provider' => $provider, 'ai-assistant.llm.openai.api_key' => 'offline-only-key',
+            'ai-assistant.llm.openai.base_uri' => 'https://offline.invalid/v1', 'ai-assistant.llm.openai.model' => 'gpt-6-luna']);
         $wire = new Response(200, ['Content-Type' => 'application/json'], json_encode([
-            'id' => 'resp_offline', 'object' => 'response', 'created_at' => 1791540000, 'status' => 'completed', 'model' => 'openai/gpt-6-luna',
+            'id' => 'resp_offline', 'object' => 'response', 'created_at' => 1791540000, 'status' => 'completed', 'model' => $provider === 'timeweb' ? 'openai/gpt-6-luna' : 'gpt-6-luna',
             'output' => [['type' => 'message', 'id' => 'msg_offline', 'status' => 'completed', 'role' => 'assistant',
                 'content' => [['type' => 'output_text', 'text' => 'Синтетический ответ.', 'annotations' => []]]]],
             'max_output_tokens' => 2048, 'parallel_tool_calls' => false, 'previous_response_id' => null,
@@ -419,7 +474,7 @@ final class OrdinaryEgressServiceHarness extends AIAssistantService
 {
     public int $usageRecords = 0;
 
-    public function provider(): TimewebProvider
+    public function provider(): LLMProviderInterface
     {
         return $this->llmProvider;
     }
@@ -438,7 +493,7 @@ final class OrdinaryEgressServiceHarness extends AIAssistantService
     {
         [$messages, $prepared] = $this->prepared($input, $options, $actor);
 
-        return OrdinaryAssistantEgressRequest::capture($messages, $prepared, 15, $actor, 'openai/gpt-6-luna');
+        return OrdinaryAssistantEgressRequest::capture($messages, $prepared, 15, $actor, $this->llmProvider->getModel());
     }
 
     protected function recordAssistantProviderUsage(array $response, int $organizationId, User $user, array $options, bool $degradedMode, bool $successful = true, ?int $attempt = null): void
