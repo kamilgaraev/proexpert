@@ -21,6 +21,7 @@ class EstimateGenerationLearningExample extends Model
         'source_type',
         'source_entity_type',
         'source_entity_id',
+        'source_claim_key',
         'estimate_id',
         'estimate_item_id',
         'generation_session_id',
