@@ -310,7 +310,7 @@ B code checkpoint `d110052426d894e6edbc4f62f81c1a441a16c92c`, одна integrati
 
 ### Production universal QA91: фактическая граница, 22.10.2026
 
-Один независимый QA; actor39/org38/project105/session91. Исходные89/90 сохранены. Перед запуском publicbackendbcc/admin304/readytrue; active package155/full_suite/account и500units/90RUB run подтверждены. Локальные доказательства: `C:/Users/kamilgaraev/Documents/Codex/most-ai-estimator-implementation-20261021/production-qa-20261022-paid-recheck/universal-bccfa808/phase-final-compact-report.txt`; SELECT receipt — в том же task-root `qa-blockers-20261022/qa-first-generation91-ledger.json`. В Git нет credentials.
+Один независимый QA; actor39/org38/project105/session91. Исходные89/90 сохранены. Перед запуском publicbackendbcc/admin304/readytrue; active package155/full_suite/account и500units/90RUB run подтверждены. Переносимая санитизированная сводка UI и scoped SELECT с точными operation/reservation IDs, расходами и границами проверки доступна участникам репозитория в [PR1609, разделе Production QA91](https://github.com/kamilgaraev/proexpert/pull/1609). Локальные отчёты и screenshots не являются общедоступными доказательствами; credentials и локальные пути в сводку не включены.
 
 | Путь | Факт / граница | Следующее действие |
 | --- | --- | --- |
