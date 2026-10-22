@@ -9,6 +9,7 @@ use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\ConnectionEstablished;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\Events\StatementPrepared;
 use Illuminate\Database\QueryException;
 use Illuminate\Events\Dispatcher;
 use PDO;
@@ -43,7 +44,8 @@ final class SqlConnectionStateTest extends TestCase
             'write_ready_after' => true,
             'read_ready_after' => false,
             'manager_connection_event_during_run' => false,
-        ], $this->observations[0]);
+        ], array_diff_key($this->observations[0], ['event_intervals' => true]));
+        self::assertTrue($this->observations[0]['event_intervals']['observed']);
         $connection->select('select 1', [], false);
         self::assertTrue($this->observations[1]['write_ready_before']);
         self::assertFalse($this->observations[1]['write_lazy_before']);
@@ -95,6 +97,7 @@ final class SqlConnectionStateTest extends TestCase
         self::assertTrue($this->observations[0]['manager_connection_event_during_run']);
         self::assertTrue($this->observations[0]['write_ready_before']);
         self::assertTrue($this->observations[0]['write_ready_after']);
+        self::assertSame(['observed' => false], $this->observations[0]['event_intervals']);
     }
 
     public function test_nested_success_then_failed_identical_query_cannot_be_attributed_to_outer_run(): void
@@ -162,6 +165,125 @@ final class SqlConnectionStateTest extends TestCase
         self::assertNull($reference->get());
     }
 
+    public function test_intervals_include_lazy_resolution_before_prepared_and_execution_after_it(): void
+    {
+        $observer = new SqlConnectionState;
+        $pdo = new ConnectionStateTestPdo(static function (): void { usleep(8000); });
+        $connection = $this->connection($observer, static function () use ($pdo): PDO {
+            usleep(8000);
+            return $pdo;
+        });
+        $connection->select('select 1', [], false);
+        $intervals = $this->observations[0]['event_intervals'];
+        self::assertTrue($intervals['observed']);
+        self::assertGreaterThanOrEqual(7, $intervals['before_to_prepared_ms']);
+        self::assertGreaterThanOrEqual(7, $intervals['prepared_to_query_event_ms']);
+        self::assertSame(['observed', 'before_to_prepared_ms', 'prepared_to_query_event_ms'], array_keys($intervals));
+    }
+
+    public function test_retry_before_first_prepared_event_is_an_interval_not_a_no_retry_claim(): void
+    {
+        $observer = new SqlConnectionState;
+        $attempts = 0;
+        $connection = $this->connection($observer, static function () use (&$attempts): PDO {
+            $attempts++;
+            throw new PDOException('server has gone away');
+        });
+        $connection->setReconnector(static function (Connection $current) use (&$attempts): void {
+            $attempts++;
+            $current->setPdo(new ConnectionStateTestPdo);
+        });
+        $connection->select('select 1', [], false);
+        self::assertSame(2, $attempts);
+        self::assertTrue($this->observations[0]['event_intervals']['observed']);
+        self::assertFalse($this->observations[0]['manager_connection_event_during_run']);
+        self::assertArrayNotHasKey('retry', $this->observations[0]['event_intervals']);
+    }
+
+    public function test_replacing_ready_handle_before_or_after_prepared_invalidates_only_intervals(): void
+    {
+        foreach (['before', 'after'] as $phase) {
+            $observer = new SqlConnectionState;
+            $connection = null;
+            $first = new ConnectionStateTestPdo($phase === 'after' ? static function () use (&$connection): void {
+                $connection->setPdo(new ConnectionStateTestPdo);
+            } : null);
+            $connection = $this->connection($observer, $first);
+            if ($phase === 'before') {
+                $connection->beforeExecuting(static function (string $sql, array $bindings, Connection $current): void {
+                    $current->setPdo(new ConnectionStateTestPdo);
+                });
+            }
+            $connection->select('select 1', [], false);
+            $observed = $this->observations[array_key_last($this->observations)];
+            self::assertTrue($observed['observed']);
+            self::assertTrue($observed['write_ready_before']);
+            self::assertTrue($observed['write_ready_after']);
+            self::assertSame(['observed' => false], $observed['event_intervals']);
+        }
+    }
+
+    public function test_lost_ready_read_handle_is_not_mistaken_for_an_original_null_handle(): void
+    {
+        foreach (['before', 'after'] as $phase) {
+            $observer = new SqlConnectionState;
+            $connection = null;
+            $write = new ConnectionStateTestPdo($phase === 'after' ? static function () use (&$connection): void {
+                $connection->setReadPdo(null);
+            } : null);
+            $connection = $this->connection($observer, $write, new ConnectionStateTestPdo);
+            if ($phase === 'before') {
+                $connection->beforeExecuting(static function (string $sql, array $bindings, Connection $current): void {
+                    $current->setReadPdo(null);
+                });
+            }
+            $connection->select('select 1', [], false);
+            $observation = $this->observations[array_key_last($this->observations)];
+            self::assertTrue($observation['observed']);
+            self::assertTrue($observation['read_ready_before']);
+            self::assertFalse($observation['read_ready_after']);
+            self::assertSame(['observed' => false], $observation['event_intervals']);
+        }
+    }
+
+    public function test_absent_prepared_event_and_synthetic_query_mismatch_are_not_zero_intervals(): void
+    {
+        $observer = new SqlConnectionState;
+        $connection = $this->connection($observer, new ConnectionStateTestPdo);
+        $connection->getEventDispatcher()->forget(StatementPrepared::class);
+        $connection->select('select 1', [], false);
+        self::assertTrue($this->observations[0]['observed']);
+        self::assertSame(['observed' => false], $this->observations[0]['event_intervals']);
+        $connection->beforeExecuting(static function (string $sql, array $bindings, Connection $current): void {
+            $current->getEventDispatcher()->dispatch(new QueryExecuted('select mismatch', [], 1, $current));
+        });
+        $connection->select('select 2', [], false);
+        self::assertSame(['observed' => false], $this->observations[1]);
+        self::assertSame(['observed' => false], $this->observations[2]);
+    }
+
+    public function test_custom_query_path_preserves_old_booleans_but_disables_intervals(): void
+    {
+        $observer = new SqlConnectionState;
+        $connection = new class(new ConnectionStateTestPdo) extends Connection
+        {
+            public function select($query, $bindings = [], $useReadPdo = true)
+            {
+                return parent::select($query, $bindings, $useReadPdo);
+            }
+        };
+        $events = new Dispatcher;
+        $connection->setEventDispatcher($events);
+        $events->listen(StatementPrepared::class, static fn (StatementPrepared $event) => $observer->prepared($event->connection));
+        $events->listen(QueryExecuted::class, function (QueryExecuted $event) use ($observer): void {
+            $this->observations[] = $observer->finish($event);
+        });
+        $observer->watch($connection);
+        $connection->select('select 1', [], false);
+        self::assertTrue($this->observations[0]['observed']);
+        self::assertSame(['observed' => false], $this->observations[0]['event_intervals']);
+    }
+
     public function test_custom_raw_getter_is_never_called_by_instrumentation(): void
     {
         $observer = new SqlConnectionState;
@@ -188,6 +310,7 @@ final class SqlConnectionStateTest extends TestCase
         $events = new Dispatcher;
         $connection->setEventDispatcher($events);
         $events->listen(ConnectionEstablished::class, static fn (ConnectionEstablished $event) => $observer->established($event->connection));
+        $events->listen(StatementPrepared::class, static fn (StatementPrepared $event) => $observer->prepared($event->connection));
         $events->listen(QueryExecuted::class, function (QueryExecuted $event) use ($observer): void {
             $this->observations[] = $observer->finish($event);
         });
