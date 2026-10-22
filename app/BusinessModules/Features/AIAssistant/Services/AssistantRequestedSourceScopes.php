@@ -150,7 +150,7 @@ final class AssistantRequestedSourceScopes
                 $text = preg_replace('/(?<![\pL\pN])(?:'.$pattern.')(?![\pL\pN])/iu', ' ', $text) ?? $text;
             }
         }
-        $text = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|о|об|про|а|наш(?:и|ими|им|их)|'.self::SECTION_MODIFIER.'|'.self::SOURCE_WRAPPER.'|лист(?:е|а|ов)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|снизу|сверху|отдельности|пожалуйста|все|всех|всем|всеми|покажи(?:те)?|сделай(?:те)?|сформируй(?:те)?|подготовь(?:те)?|расположи(?:те)?|excel|xlsx|csv)(?![\pL\pN])/iu', ' ', $text) ?? $text;
+        $text = preg_replace('/(?<![\pL\pN])(?:по|для|в|во|на|из|о|об|про|а|наш(?:и|ими|им|их)|'.self::SECTION_MODIFIER.'|'.self::SOURCE_WRAPPER.'|лист(?:е|а|ов)?|втор(?:ой|ом)|треть(?:ем|ий)|перв(?:ый|ом)|эти|те|же|снизу|сверху|отдельности|пожалуйста|все|всех|всем|всеми|покажи(?:те)?|сделай(?:те)?|сформируй(?:те)?|подготовь(?:те)?|расположи(?:те)?|excel|xlsx|csv|pdf)(?![\pL\pN])/iu', ' ', $text) ?? $text;
         if (count($statuses) > 1 || preg_match('/[\pL\pN]/u', $text) === 1) {
             throw new AssistantReportScopeAmbiguous;
         }

@@ -16,6 +16,22 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_supported_file_formats_preserve_comparison_scopes_and_search_requirements(): void
+    {
+        $comparison = 'Сравни все акты организации с актами проекта 100';
+        $expectedCoverage = AssistantRequestProjectScope::fromPlan($this->plan($comparison))->searchCoverageRequirements($comparison);
+        foreach (['PDF', 'pdf', 'pDf', 'XLSX', 'CSV', 'Excel'] as $format) {
+            $question = 'Сделай '.$format.': сравни все акты организации с актами проекта 100';
+            $arguments = ['format' => strtolower($format) === 'excel' ? 'xlsx' : strtolower($format), 'sections' => [
+                ['scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act', 'filters' => []],
+                ['scope' => 'project', 'project_id' => 100, 'domain' => 'acts', 'entity_type' => 'performance_act', 'filters' => []],
+            ]];
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            self::assertSame($arguments, $scope->bindReportScope($question, $arguments), $question);
+            self::assertSame($expectedCoverage, $scope->searchCoverageRequirements($question), $question);
+        }
+    }
+
     public function test_comparison_cannot_publish_equal_filters_for_different_requested_periods(): void
     {
         $filters = [['field' => 'date', 'operator' => 'gte', 'value' => '2025-01-01'],
