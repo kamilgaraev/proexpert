@@ -597,7 +597,8 @@ final class ApiQuerySourceMetricsTest extends TestCase
             'assistant_report_access_resolve', 'assistant_report_storage_open',
             'assistant_report_domain_checks', 'assistant_report_reference_checks',
             'file_current_disk_resolve', 'file_current_read_stream',
-            'design_freshness', 'design_resources', 'design_response_build', 'design_response_decode'] as $name) {
+            'design_freshness', 'design_resources', 'design_response_build', 'design_response_decode',
+            'calendar_document_scope', 'calendar_project_scope', 'payment_scope_org_permission', 'payment_scope_project_permission'] as $name) {
             ApiQueryMetrics::recordProcessingPhase($request, $name, hrtime(true));
             self::assertArrayNotHasKey('processing_phases', $other->summary());
             $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);

@@ -24,6 +24,7 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Services\Contract\ContractAccessService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -40,6 +41,8 @@ final class PaymentCalendarSourceService
         ?\Closure $scopeDocument = null,
         ?\Closure $scopeProjects = null,
     ): array {
+        $scopeDocument = $this->measureScope($scopeDocument, 'calendar_document_scope');
+        $scopeProjects = $this->measureScope($scopeProjects, 'calendar_project_scope');
         $cashFlowFilters = new PaymentCalendarSourceFilters(
             organizationId: $filters->organizationId,
             periodStart: CarbonImmutable::parse($filters->periodStart)->startOfMonth(),
@@ -72,6 +75,7 @@ final class PaymentCalendarSourceService
 
     public function collectUndated(PaymentCalendarSourceFilters $filters, ?\Closure $scopeDocument = null): array
     {
+        $scopeDocument = $this->measureScope($scopeDocument, 'calendar_document_scope');
         $schedules = PaymentSchedule::query()
             ->with('paymentDocument')
             ->where('status', 'pending')
@@ -101,6 +105,13 @@ final class PaymentCalendarSourceService
             $this->netPaymentRequestItems($items, $requestBalances, $scheduleBalances),
             fn (UndatedPaymentCalendarItem $item): bool => $filters->matches($item),
         ));
+    }
+
+    private function measureScope(?\Closure $scope, string $phase): ?\Closure
+    {
+        return $scope === null ? null : static fn (Builder $query): mixed => ApiQueryMetrics::measureProcessingPhase(
+            $phase, static fn (): mixed => $scope($query),
+        );
     }
 
     private function requestOrderForecastBalances(

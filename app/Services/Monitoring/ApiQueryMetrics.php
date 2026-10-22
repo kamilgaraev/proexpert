@@ -334,6 +334,7 @@ final class ApiQueryMetrics
             'design_freshness', 'design_resources', 'design_response_build', 'design_response_decode',
             'journal_load', 'journal_prepare', 'journal_payload', 'journal_encode', 'journal_actions', 'journal_entry_actions',
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
+            'calendar_document_scope', 'calendar_project_scope', 'payment_scope_org_permission', 'payment_scope_project_permission',
             'file_report_list', 'file_report_classify', 'file_report_access',
             'file_report_storage_exists', 'file_report_storage_url',
             'file_personal_list', 'file_personal_payload', 'file_personal_url',
