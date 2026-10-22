@@ -2238,6 +2238,44 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+    public function test_model_selected_generic_identity_must_belong_to_the_required_project_before_execution(): void
+    {
+        foreach (['assistant_domain_read', 'assistant_domain_navigation'] as $name) {
+            foreach ([[false, true], [true, true], [false, false]] as [$belongs, $requested]) {
+                $shouldExecute = ! $requested || $belongs;
+                $arguments = ['domain' => 'contracts', 'entity_type' => 'contract', 'id' => 315, 'fields' => ['number'],
+                    'projection' => null, 'projection_offset' => 0, 'projection_limit' => 20];
+                if ($name === 'assistant_domain_navigation') { $arguments = array_intersect_key($arguments, ['domain' => true, 'entity_type' => true, 'id' => true]); }
+                $tool = $this->createMock(AIToolInterface::class);
+                $tool->method('getName')->willReturn($name);
+                $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['domain' => ['type' => 'string'],
+                    'entity_type' => ['type' => 'string'], 'id' => ['type' => 'integer'], 'fields' => ['type' => 'array', 'items' => ['type' => 'string']],
+                    'projection' => ['type' => ['string', 'null']], 'projection_offset' => ['type' => 'integer'], 'projection_limit' => ['type' => 'integer']]]);
+                $tool->expects($shouldExecute ? $this->once() : $this->never())->method('execute')
+                    ->with($arguments, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+                $registry = new AIToolRegistry;
+                $registry->registerTool($tool);
+                $service = $this->makeService($registry, true);
+                $service->entityInRequestedProject = $belongs;
+                $question = $requested ? 'Какой бюджет у нашего объекта? В какой валюте сумма?' : 'Сравни договоры всех проектов нашей организации.';
+                $plan = ['request' => ['message' => $question,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+                $failures = [];
+
+                $result = $service->exposeHandleToolCall(['name' => $name, 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
+
+                self::assertSame($requested ? [['contract', 315, 52]] : [], $service->requestedProjectEntityChecks);
+                self::assertSame([], $failures);
+                if ($shouldExecute) { self::assertSame('success', $result['status']); }
+                else {
+                    self::assertSame('current_project_scope_mismatch', $result['reason']);
+                    self::assertSame([], $result['source_refs']);
+                    self::assertSame([], (new \ReflectionProperty(AIAssistantService::class, 'activeToolResults'))->getValue($service));
+                }
+            }
+        }
+    }
+
     private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null, array $history = []): TestableAIAssistantService
     {
         $llmProvider = $provider ?? $this->createMock(NativeResponsesTestProvider::class);
@@ -2317,6 +2355,17 @@ class AIAssistantServiceBudgetTest extends TestCase
 
 class TestableAIAssistantService extends AIAssistantService
 {
+    public bool $entityInRequestedProject = true;
+
+    public array $requestedProjectEntityChecks = [];
+
+    protected function canReadEntityInRequestedProject(User $actor, int $organizationId, string $type, int|string $id, int $projectId): bool
+    {
+        $this->requestedProjectEntityChecks[] = [$type, $id, $projectId];
+
+        return $this->entityInRequestedProject;
+    }
+
     public array|string|null $freshProjectSearch = null;
 
     public array $freshProjectSearchCalls = [];

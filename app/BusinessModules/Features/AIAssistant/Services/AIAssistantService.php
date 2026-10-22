@@ -2601,6 +2601,14 @@ class AIAssistantService
                 return ['error' => $message];
             }
 
+            if ($requestProjectScope->requested && in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
+                && ! $this->readPhase(fn (): bool => $this->canReadEntityInRequestedProject($user, $organizationId,
+                    (string) ($args['entity_type'] ?? ''), $args['id'], (int) $requestProjectScope->projectId), $user, $organizationId)) {
+                $this->recordRequestOutcome('insufficient_data');
+
+                return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+            }
+
             $toolFailureStage = 'tool_preparation';
             $progressCode = AssistantRequestProgress::toolCode($toolName, $args);
             if ($bimScopeMissing) {
@@ -2757,6 +2765,39 @@ class AIAssistantService
                 return $unavailable;
             }
             return ['error' => $message];
+        }
+    }
+
+    protected function canReadEntityInRequestedProject(User $actor, int $organizationId, string $type, int|string $id, int $projectId): bool
+    {
+        $policy = $this->dataAccess ?? app(AssistantDataAccessPolicy::class);
+        try {
+            return $policy->withCurrentChecks($actor, $organizationId, function () use ($policy, $actor, $organizationId, $type, $id, $projectId): bool {
+                $query = $policy->entityQuery($actor, $organizationId, $type);
+
+                if ($query === null) {
+                    return false;
+                }
+                if ($type === 'contractor') {
+                    $anchors = (new AssistantRequestProjectScope(true, $projectId))->withAnchorReferences([
+                        ['entity_type' => $type, 'entity_id' => $id, 'project_id' => null],
+                    ], $this->activeToolResults);
+                    $contractIds = array_column(array_filter($anchors,
+                        static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'contract'), 'entity_id');
+                    if ($contractIds === [] || ! $query->whereKey($id)->exists()) {
+                        return false;
+                    }
+                    $contracts = $policy->entityQuery($actor, $organizationId, 'contract');
+
+                    return $contracts !== null && $policy->applyEntityProjectScope($actor, $organizationId, 'contract', $contracts, $projectId)
+                        && $contracts->whereKey($contractIds)->where($contracts->getModel()->qualifyColumn('contractor_id'), $id)->exists();
+                }
+
+                return $policy->applyEntityProjectScope($actor, $organizationId, $type, $query, $projectId)
+                    && $query->whereKey($id)->exists();
+            }, true);
+        } catch (AccessDeniedHttpException) {
+            return false;
         }
     }
 
