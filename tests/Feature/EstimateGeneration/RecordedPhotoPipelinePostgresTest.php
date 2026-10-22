@@ -303,7 +303,7 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
         ob_start();
         imagepng($image);
         $png = ob_get_clean();
-        imagedestroy($image);
+        unset($image);
         $objects = new class($png) implements BenchmarkObjectReader
         {
             public function __construct(private readonly string $png) {}

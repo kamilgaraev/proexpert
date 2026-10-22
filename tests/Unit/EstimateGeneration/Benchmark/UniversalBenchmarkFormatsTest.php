@@ -31,7 +31,7 @@ final class UniversalBenchmarkFormatsTest extends TestCase
         ob_start();
         imagepng($image);
         $png = ob_get_clean();
-        imagedestroy($image);
+        unset($image);
         $validator->validateBytes($png, BenchmarkSourceType::SitePhoto, 'input.png', []);
         $validator->validateBytes('Ремонт: размеры требуется уточнить.', BenchmarkSourceType::TextDescription, 'input.txt', []);
         self::assertCount(10, BenchmarkSourceType::cases());

@@ -108,6 +108,7 @@ final class ContractPositionedExporter
                 }
             }
         }
+        (new ContractWordParagraphStyles)->apply($word);
         $path = tempnam(sys_get_temp_dir(), 'most-positioned-');
         if ($path === false) {
             throw new ContractBuilderException('contracts.builder_export_failed', 503);

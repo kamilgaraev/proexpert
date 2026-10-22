@@ -6,8 +6,25 @@
          cacheDirectory=".phpunit.cache/postgres"
          stopOnError="true"
          stopOnFailure="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
+        <testsuite name="Php85Compatibility">
+            <file>tests/Feature/Infrastructure/PhpUnitPostgresProfileTest.php</file>
+            <file>tests/Feature/Auth/AuthTokenIssuerContractTest.php</file>
+            <file>tests/Feature/Auth/ConcurrentWebRefreshTest.php</file>
+            <file>tests/Unit/FgiscsBuildingResourcePriceSpreadsheetParserTest.php</file>
+            <file>tests/Unit/EstimateGeneration/Vision/CadProductionRuntimeContractTest.php</file>
+            <file>tests/Unit/EstimateGeneration/Vision/SemanticRegionCropperTest.php</file>
+            <file>tests/Unit/EstimateGeneration/Analysis/IndependentObserversTest.php</file>
+            <file>tests/Unit/EstimateGeneration/Vision/TimewebVisionProviderTest.php</file>
+            <file>tests/Unit/Contract/ContractDocumentLayoutTest.php</file>
+            <file>tests/Unit/Monitoring/SqlConnectionStateTest.php</file>
+            <file>tests/Security/LegacyAdminPanelSecurityRegressionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantChatAttachmentTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantAdvanceSettingsTest.php</file>
+            <file>tests/Feature/Notifications/MobilePushDeliveryTest.php</file>
+        </testsuite>
         <testsuite name="PtoProjectChainRegression">
             <file>tests/Unit/Acting/PtoProjectChainRegressionTest.php</file>
             <file>tests/Feature/Api/V1/Admin/ActReportsPreviewTest.php</file>

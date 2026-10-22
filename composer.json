@@ -9,7 +9,7 @@
     ],
     "license": "MIT",
     "require": {
-        "php": "^8.2",
+        "php": "^8.5",
         "ext-curl": "*",
         "ext-gd": "*",
         "aws/aws-sdk-php": "^3.339",
@@ -115,7 +115,7 @@
             "php-http/discovery": true
         },
         "platform": {
-            "php": "8.2.35"
+            "php": "8.5.12"
         }
     },
     "minimum-stability": "stable",

@@ -101,7 +101,7 @@ final class ObserverInputBuilder
             ObserverProfile::Risk => 9,
         });
         $content = ob_get_clean();
-        imagedestroy($image);
+        unset($image);
         if (! $encoded || ! is_string($content) || $content === '' || strlen($content) > 20_000_000) {
             throw new RuntimeException('observer_image_composition_invalid');
         }

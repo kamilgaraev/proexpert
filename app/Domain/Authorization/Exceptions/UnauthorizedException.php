@@ -18,9 +18,9 @@ class UnauthorizedException extends Exception
         User $user,
         string $permission,
         ?array $context = null,
-        string $message = null,
+        ?string $message = null,
         int $code = 403,
-        Exception $previous = null
+        ?Exception $previous = null
     ) {
         $this->user = $user;
         $this->permission = $permission;
@@ -60,7 +60,7 @@ class UnauthorizedException extends Exception
     /**
      * Создать исключение для заблокированного пользователя
      */
-    public static function userBlocked(User $user, string $reason = null): self
+    public static function userBlocked(User $user, ?string $reason = null): self
     {
         $message = "Пользователь заблокирован" . ($reason ? ": $reason" : "");
         

@@ -17,9 +17,9 @@ class RoleNotFoundException extends Exception
         string $roleSlug,
         string $roleType = 'system',
         ?int $organizationId = null,
-        string $message = null,
+        ?string $message = null,
         int $code = 404,
-        Exception $previous = null
+        ?Exception $previous = null
     ) {
         $this->roleSlug = $roleSlug;
         $this->roleType = $roleType;

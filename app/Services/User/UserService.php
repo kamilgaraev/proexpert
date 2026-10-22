@@ -1396,7 +1396,7 @@ class UserService
      * @return Collection
      * @throws BusinessLogicException
      */
-    public function getAdminPanelUsersForCurrentOrg(Request $request, array $rolesToFetch = null): Collection
+    public function getAdminPanelUsersForCurrentOrg(Request $request, ?array $rolesToFetch = null): Collection
     {
         Log::info('[UserService@getAdminPanelUsersForCurrentOrg] Method entered.', [
             'user_id' => $request->user() ? $request->user()->id : null, 
@@ -1758,7 +1758,7 @@ class UserService
      * @return bool
      * @throws BusinessLogicException
      */
-    public function deleteAdminPanelUser(int $targetUserId, Request $request, array $rolesToDelete = null): bool
+    public function deleteAdminPanelUser(int $targetUserId, Request $request, ?array $rolesToDelete = null): bool
     {
         $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');

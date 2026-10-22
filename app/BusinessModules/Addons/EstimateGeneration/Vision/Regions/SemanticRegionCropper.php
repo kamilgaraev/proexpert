@@ -40,14 +40,13 @@ final readonly class SemanticRegionCropper
                     $scale = min(3.0, $this->maxLongEdge / max(1, $longEdge));
                     $scaled = imagescale($crop, max(1, (int) round(imagesx($crop) * $scale)), max(1, (int) round(imagesy($crop) * $scale)), IMG_BICUBIC_FIXED);
                     if ($scaled instanceof \GdImage) {
-                        imagedestroy($crop);
                         $crop = $scaled;
                     }
                 }
                 ob_start();
                 $encoded = imagepng($crop, null, 6);
                 $bytes = ob_get_clean();
-                imagedestroy($crop);
+                unset($crop);
                 if (! $encoded || ! is_string($bytes) || $bytes === '' || $aggregateBytes + strlen($bytes) > $this->maxAggregateBytes) {
                     continue;
                 }
@@ -63,7 +62,7 @@ final readonly class SemanticRegionCropper
                 ];
             }
         } finally {
-            imagedestroy($source);
+            unset($source);
         }
 
         return $images;

@@ -22,7 +22,7 @@ final class ContractInlineImage
         if (!function_exists('imagecreatefromstring')) { throw new ContractBuilderException('contracts.builder_export_failed', 503); }
         $image = @imagecreatefromstring($bytes);
         if ($image === false) { self::invalid(); }
-        imagedestroy($image);
+        unset($image);
 
         return $bytes;
     }

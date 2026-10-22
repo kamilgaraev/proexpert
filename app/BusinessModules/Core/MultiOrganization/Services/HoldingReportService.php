@@ -1558,7 +1558,7 @@ class HoldingReportService
     /**
      * Рассчитать сумму контрактов с учетом дополнительных соглашений (для запросов с условиями).
      */
-    private function calculateContractAmountFromDbWithConditions(array $organizationIds, array $projectIds = null): float
+    private function calculateContractAmountFromDbWithConditions(array $organizationIds, ?array $projectIds = null): float
     {
         $contractsQuery = DB::table('contracts')
             ->whereIn('organization_id', $organizationIds)

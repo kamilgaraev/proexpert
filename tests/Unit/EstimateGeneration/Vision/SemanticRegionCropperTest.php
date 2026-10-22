@@ -20,7 +20,7 @@ final class SemanticRegionCropperTest extends TestCase
         ob_start();
         imagepng($page);
         $bytes = ob_get_clean();
-        imagedestroy($page);
+        unset($page);
         self::assertIsString($bytes);
         $regions = (new SemanticRegionIngestor(2, 1_000_000))->ingest([
             ['label' => 'Размерная цепочка', 'purpose' => 'microtext', 'box' => [0.6, 0.65, 0.98, 0.95]],

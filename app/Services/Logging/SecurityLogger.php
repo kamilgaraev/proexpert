@@ -224,7 +224,7 @@ class SecurityLogger
         }
     }
 
-    public function injectionAttempt(string $type, string $payload = null): void
+    public function injectionAttempt(string $type, ?string $payload = null): void
     {
         $this->log('security.injection_attempt', [
             'injection_type' => $type, // sql, xss, command, etc.
