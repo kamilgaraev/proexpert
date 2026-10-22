@@ -162,6 +162,32 @@ class ProjectEvent extends Model
         return $start->copy()->addMinutes($this->duration_minutes);
     }
 
+    public function getCalendarStartLocal(): string
+    {
+        $date = $this->event_date->format('Y-m-d');
+        if ($this->is_all_day) {
+            return $date;
+        }
+
+        return Carbon::parse($date . ' ' . ($this->event_time ?: '00:00:00'), 'UTC')
+            ->format('Y-m-d\TH:i:s');
+    }
+
+    public function getCalendarEndLocal(): string
+    {
+        if ($this->is_all_day) {
+            return Carbon::parse(($this->end_date ?? $this->event_date)->format('Y-m-d'), 'UTC')
+                ->addDay()->format('Y-m-d');
+        }
+
+        if ($this->end_date) {
+            return $this->end_date->format('Y-m-d') . 'T23:59:59';
+        }
+
+        return Carbon::parse($this->getCalendarStartLocal(), 'UTC')
+            ->addMinutes($this->duration_minutes ?? 0)->format('Y-m-d\TH:i:s');
+    }
+
     /**
      * Проверка, прошло ли событие
      */
