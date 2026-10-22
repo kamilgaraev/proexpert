@@ -15,6 +15,7 @@ final readonly class CurrentEstimateClarification
         public string $answerFingerprint,
         public ?string $targetFactId,
         public ?array $composerContext = null,
+        public array $targetOptions = [],
     ) {
         if (preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceVersion) !== 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1

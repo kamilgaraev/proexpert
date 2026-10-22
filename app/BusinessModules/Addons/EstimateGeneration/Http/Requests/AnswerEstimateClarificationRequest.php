@@ -24,6 +24,7 @@ final class AnswerEstimateClarificationRequest extends FormRequest
             'idempotency_key' => ['required', 'string', 'min:8', 'max:128', 'regex:/^[A-Za-z0-9][A-Za-z0-9._:-]+$/D'],
             'expected_source_version' => ['required', 'string', 'regex:/^sha256:[a-f0-9]{64}$/D'],
             'answer_fingerprint' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/D'],
+            'target_entity_id' => ['sometimes', 'required', 'string', 'regex:/^[a-z][a-z0-9._:-]{1,191}$/D', 'prohibited_unless:response,other'],
         ];
     }
 }

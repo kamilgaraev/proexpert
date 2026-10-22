@@ -25,6 +25,7 @@ final readonly class ListEstimateClarifications
                 'source_version' => $current->sourceVersion,
                 'answer_fingerprint' => $current->answerFingerprint,
                 'status' => 'unanswered',
+                ...($current->targetOptions === [] ? [] : ['target_options' => $current->targetOptions]),
             ];
         }
 

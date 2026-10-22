@@ -865,6 +865,34 @@ final class EstimateComposerTest extends TestCase
         self::assertSame('quantity_unknown', $item['pricing_blocker']);
     }
 
+    public function test_selected_answer_requires_matching_server_metadata_and_never_falls_back_to_the_root(): void
+    {
+        $facts = $this->sourceClaimInput()->facts;
+        $facts[0]['value']['target_entity_id'] = 'equipment:child';
+        $facts[0]['related_entity_ids'] = ['equipment:child'];
+        $facts[0]['evidence_ids'] = ['evidence:answer'];
+        $intent = ['work_key' => 'custom.installation', 'work_section' => 'equipment', 'source_fact_ids' => ['fact:answer']];
+        $classifier = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\WorkIntentSourceClassifier;
+        self::assertSame('equipment:child', $classifier->binding($intent, $facts)['entity_id']);
+        foreach (['project:root', 'equipment:other'] as $entityId) {
+            try {
+                $classifier->binding([...$intent, 'entity_id' => $entityId], $facts);
+                self::fail('A selected answer cannot authorize another work target.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_composer_work_source_unrelated', $exception->getMessage());
+            }
+        }
+        foreach ([[], ['equipment:child', 'project:root']] as $related) {
+            $facts[0]['related_entity_ids'] = $related;
+            try {
+                $classifier->binding($intent, $facts);
+                self::fail('A raw target without matching current server context is not admissible.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_composer_work_context_unconfirmed', $exception->getMessage());
+            }
+        }
+    }
+
     public function test_input_fingerprint_fences_exact_snapshot_decisions_quantities_candidates_and_missing_documents(): void
     {
         $base = $this->input();

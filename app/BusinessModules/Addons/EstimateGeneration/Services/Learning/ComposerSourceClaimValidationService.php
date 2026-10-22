@@ -51,7 +51,8 @@ final readonly class ComposerSourceClaimValidationService
             return null;
         }
         $context = ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, $decisions, $input, $checkedAnswers);
-        if ($context === null || ! in_array('equipment', $context['work_sections'], true)) {
+        if ($context === null || ! in_array('equipment', $context['work_sections'], true)
+            || (isset($context['target_entity_id']) && $context['target_entity_id'] !== $candidate['entity_id'])) {
             return null;
         }
         $decision = array_column($decisions, null, 'id')[$answer->value['decision_id']] ?? null;

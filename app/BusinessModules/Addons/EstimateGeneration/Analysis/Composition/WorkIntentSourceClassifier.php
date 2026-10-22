@@ -117,6 +117,16 @@ final class WorkIntentSourceClassifier
                 continue;
             }
             $entityId = $this->isComposerAnswer($fact) ? ($fact['context_entity_id'] ?? null) : ($fact['entity_id'] ?? null);
+            if ($this->isComposerAnswer($fact) && array_key_exists('target_entity_id', $fact['value'])) {
+                $selected = $fact['value']['target_entity_id'];
+                if (! is_string($selected) || $selected === '' || ($fact['related_entity_ids'] ?? null) !== [$selected]) {
+                    throw new InvalidArgumentException('estimate_composer_work_context_unconfirmed');
+                }
+                if (isset($intent['entity_id']) && $intent['entity_id'] !== $selected) {
+                    throw new InvalidArgumentException('estimate_composer_work_source_unrelated');
+                }
+                $entityId = $selected;
+            }
             if (! is_string($entityId) || $entityId === '') {
                 continue;
             }

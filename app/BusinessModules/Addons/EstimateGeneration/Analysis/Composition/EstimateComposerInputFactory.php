@@ -123,7 +123,8 @@ final readonly class EstimateComposerInputFactory
             $context = [];
             if (isset($answerContexts[$fact->id])) {
                 return [...$this->fact($fact), 'value' => ['kind' => 'composer_answer', 'answer' => $fact->value['other'],
-                    'question_key' => $fact->value['question_key'], 'numeric_parameters_confirmed' => false],
+                    'question_key' => $fact->value['question_key'], 'numeric_parameters_confirmed' => false,
+                    ...(isset($answerContexts[$fact->id]['target_entity_id']) ? ['target_entity_id' => $answerContexts[$fact->id]['target_entity_id']] : [])],
                     'entity_type' => $entity?->type,
                     'related_entity_ids' => $this->composerAnswerRelatedEntities($fact, $answerContexts[$fact->id], $snapshotById, $eligibleById, $entities, $evidence),
                     'context_kind' => 'composer_answer',
@@ -192,6 +193,9 @@ final readonly class EstimateComposerInputFactory
         $related = [];
         foreach ($answer->value['composer_context']['dependencies'] as $dependency) {
             $source = $facts[$dependency['fact_id']] ?? null;
+            if (isset($context['target_entity_id']) && $source?->entityId !== $context['target_entity_id']) {
+                continue;
+            }
             if (! $source instanceof Fact || $source->origin !== 'document' || $source->status !== 'confirmed') {
                 continue;
             }

@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DocumentRequ
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use Closure;
@@ -100,7 +101,46 @@ final readonly class ResolveCurrentEstimateClarification
         );
 
         return new CurrentEstimateClarification($question, 'sha256:'.$draft['artifact_hash'], $snapshotToken,
-            hash('sha256', CanonicalPipelineJson::encode(['question' => $question->toArray(), 'snapshot_token' => $snapshotToken, 'context' => $context])), null, $context);
+            hash('sha256', CanonicalPipelineJson::encode(['question' => $question->toArray(), 'snapshot_token' => $snapshotToken, 'context' => $context])), null, $context,
+            self::composerTargetOptions($snapshot, $factIds, $policy['mode'] === 'legacy'
+                ? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::WORK_SECTIONS : $policy['selected_sections']));
+    }
+
+    private static function composerTargetOptions(ProjectModelSnapshot $snapshot, array $factIds, array $sections): array
+    {
+        $entities = array_column($snapshot->entities, null, 'id');
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $facts = array_column($snapshot->facts, null, 'id');
+        $options = [];
+        foreach ($factIds as $id) {
+            $fact = $facts[$id] ?? null;
+            if (! $fact instanceof Fact || $fact->origin !== 'document' || $fact->status !== 'confirmed'
+                || $fact->unit !== null || ! is_string($fact->value) || trim($fact->value) === '' || $fact->evidenceIds === []) {
+                continue;
+            }
+            $entity = $entities[$fact->entityId] ?? null;
+            $type = $entity?->attributes['semantic_type'] ?? $entity?->attributes['properties']['semantic_type'] ?? $entity?->type;
+            if ($entity === null || $entity->sourceVersion !== $fact->sourceVersion || ! is_string($type)
+                || ! in_array(FactVocabulary::documentDomain($fact->type), $sections, true)
+                || ! FactVocabulary::documentSupportsEntity($fact->type, $type)) {
+                continue;
+            }
+            $locator = '';
+            foreach ($fact->evidenceIds as $id) {
+                if (($proofs[$id] ?? null)?->sourceType !== 'document') {
+                    continue 2;
+                }
+                $reference = $proofs[$id]->nativeReference;
+                if ($locator === '' && is_string($reference) && str_starts_with($reference, 'xlsx:sheet:')) {
+                    $locator = mb_substr(substr($reference, strlen('xlsx:sheet:')), 0, 100);
+                }
+            }
+            $options[$entity->id] ??= ['entity_id' => $entity->id,
+                'label' => mb_substr(trim($fact->value), 0, $locator === '' ? 300 : 196).($locator === '' ? '' : ' ('.$locator.')')];
+        }
+        ksort($options, SORT_STRING);
+
+        return array_values($options);
     }
 
     public static function composerPolicy(array $input): ?array
@@ -191,8 +231,16 @@ final readonly class ResolveCurrentEstimateClarification
             }
         }
 
-        return ['entity_id' => $initial->entityId, 'work_sections' => $policy['mode'] === 'legacy'
-            ? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::WORK_SECTIONS : $policy['selected_sections']];
+        $sections = $policy['mode'] === 'legacy'
+            ? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::WORK_SECTIONS : $policy['selected_sections'];
+        if (array_key_exists('target_entity_id', $value)
+            && (! is_string($value['target_entity_id'])
+                || ! in_array($value['target_entity_id'], array_column(self::composerTargetOptions($snapshot, $factIds, $sections), 'entity_id'), true))) {
+            return null;
+        }
+
+        return ['entity_id' => $initial->entityId, 'work_sections' => $sections,
+            ...(array_key_exists('target_entity_id', $value) ? ['target_entity_id' => $value['target_entity_id']] : [])];
     }
 
     private static function initialRequest(ProjectModelSnapshot $snapshot, array $policy, array $scope): ?Fact
