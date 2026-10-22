@@ -12,6 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderIn
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateGenerationLearningRagSource;
 use Illuminate\Support\Facades\DB;
@@ -296,6 +297,64 @@ class RagRetrieverTest extends TestCase
         $this->assertLessThanOrEqual(360, mb_strlen($results[0]->excerpt));
         $this->assertStringNotContainsString("\n", $results[0]->excerpt);
         $this->assertStringContainsString('Long line with useful evidence.', $results[0]->excerpt);
+    }
+
+    #[DataProvider('addressedContentModes')]
+    public function test_search_preserves_content_after_preview_and_keeps_project_access_scope(string $mode): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
+            UserProjectAccessMode::ASSIGNED_PROJECTS->value
+        );
+        $user->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $content = str_repeat('Подготовительные требования. ', 32)."\nКонтрольная оговорка: монтаж разрешён только после приёмки основания.";
+        $this->indexChunk($organization->id, $project->id, 'Разрешённые условия', $content, [1.0, 0.0, 0.0]);
+        $deniedProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $this->indexChunk($organization->id, $deniedProject->id, 'Закрытые условия',
+            'Контрольная оговорка: закрытое содержание другого проекта.', [1.0, 0.0, 0.0]);
+
+        $results = $this->retriever([1.0, 0.0, 0.0])->search('контрольная оговорка', $organization->id, $user,
+            ['retrieval_mode' => $mode]);
+        $context = (new RagPromptContextBuilder)->build('контрольная оговорка', $results);
+        $prompt = json_decode($context['prompt'], true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertCount(1, $results);
+        self::assertStringNotContainsString('монтаж разрешён', $results[0]->excerpt);
+        self::assertStringContainsString('монтаж разрешён только после приёмки основания', $results[0]->providerContent());
+        self::assertStringContainsString('монтаж разрешён только после приёмки основания', $prompt['sources'][0]['content']);
+        self::assertStringNotContainsString('закрытое содержание', $context['prompt']);
+        self::assertGreaterThan(0, $prompt['sources'][0]['chunk_id']);
+        self::assertSame(0, $prompt['sources'][0]['chunk_index']);
+        self::assertSame($project->id, $prompt['sources'][0]['project_id']);
+        self::assertArrayNotHasKey('content', $context['metadata']['sources'][0]);
+    }
+
+    #[DataProvider('addressedContentModes')]
+    public function test_search_distinguishes_multiple_chunks_from_the_same_source(string $mode): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
+            UserProjectAccessMode::ALL_PROJECTS->value
+        );
+        $first = 'Контрольная первая часть. '.str_repeat('А', 800);
+        $second = 'Контрольная вторая часть. '.str_repeat('Б', 800);
+        $this->indexChunk($organization->id, $project->id, 'Один источник', $first."\n\n".$second, [1.0, 0.0, 0.0]);
+
+        $results = $this->retriever([1.0, 0.0, 0.0])->search('контрольная', $organization->id, $user,
+            ['retrieval_mode' => $mode]);
+        $context = (new RagPromptContextBuilder)->build('контрольная', $results);
+        $prompt = json_decode($context['prompt'], true, flags: JSON_THROW_ON_ERROR);
+        $sources = $prompt['sources'];
+        usort($sources, static fn (array $left, array $right): int => $left['chunk_index'] <=> $right['chunk_index']);
+
+        self::assertCount(2, $sources);
+        self::assertSame($sources[0]['source_id'], $sources[1]['source_id']);
+        self::assertNotSame($sources[0]['chunk_id'], $sources[1]['chunk_id']);
+        self::assertSame([0, 1], array_column($sources, 'chunk_index'));
+        self::assertSame([$first, $second], array_column($sources, 'content'));
+    }
+
+    public static function addressedContentModes(): array
+    {
+        return ['semantic' => ['hybrid'], 'lexical' => ['lexical']];
     }
 
     public function test_learning_search_rechecks_current_rows_and_index_without_pruning(): void

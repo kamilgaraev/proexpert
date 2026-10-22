@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant\Rag;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagSearchResult;
+use App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
@@ -150,10 +151,100 @@ class RagPromptContextBuilderTest extends TestCase
             $cases
         );
 
-        $context = (new RagPromptContextBuilder)->build('open source', $results);
-
-        foreach ($cases as $index => $case) {
-            $this->assertSame($case[4], $context['metadata']['sources'][$index]['navigation_target']['route']);
+        foreach (array_chunk($results, 20) as $batchIndex => $batch) {
+            $context = (new RagPromptContextBuilder)->build('open source', $batch);
+            foreach ($batch as $index => $result) {
+                $this->assertSame($cases[$batchIndex * 20 + $index][4], $context['metadata']['sources'][$index]['navigation_target']['route']);
+            }
         }
+    }
+
+    public function test_provider_receives_addressed_chunk_content_beyond_preview_without_copying_it_into_metadata(): void
+    {
+        $content = str_repeat('Вводный текст. ', 60)."\nНе закрывать ограждение до приёмки основания.";
+        $result = new RagSearchResult('file_document', 'assistant_document', '41', 10, 'Указания', 'Короткое описание.', 0.9,
+            ['source_id' => 12, 'chunk_id' => 25, 'chunk_index' => 2, 'source_version' => 'v4', 'checksum' => 'source-checksum',
+                'document_id' => 41, 'unit_id' => 51, 'unit_index' => 3, 'unit_type' => 'page', 'provenance' => ['page' => 3]],
+            content: $content);
+
+        $context = (new RagPromptContextBuilder)->build('условия приёмки', [$result]);
+        $prompt = json_decode($context['prompt'], true, flags: JSON_THROW_ON_ERROR);
+        $source = $context['metadata']['sources'][0];
+
+        self::assertSame($content, $prompt['sources'][0]['content']);
+        self::assertArrayNotHasKey('excerpt', $prompt['sources'][0]);
+        self::assertSame('Короткое описание.', $source['excerpt']);
+        self::assertArrayNotHasKey('content', $source);
+        self::assertArrayNotHasKey('content', get_object_vars($result));
+        self::assertStringNotContainsString('Не закрывать ограждение', json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        self::assertSame(25, $source['chunk_id']);
+        self::assertSame(2, $source['chunk_index']);
+        self::assertSame(51, $source['unit_id']);
+        self::assertSame(['page' => 3], $source['provenance']);
+        self::assertSame('v4', $source['source_version']);
+        self::assertSame('source-checksum', $source['checksum']);
+        self::assertSame(['scope' => 'rag_chunk', 'offset' => 0, 'length' => mb_strlen($content),
+            'total_length' => mb_strlen($content), 'truncated' => false], $source['content_range']);
+        self::assertSame(25, $prompt['sources'][0]['chunk_id']);
+        self::assertArrayNotHasKey('checksum', $prompt['sources'][0]);
+        $response = SearchAssistantDocumentsTool::responseForSearch($context,
+            ['status' => 'available', 'semantic_available' => true, 'lexical_used' => false]);
+        self::assertSame($context['prompt'], $response['document_context']);
+        self::assertSame(25, $response['source_refs'][0]['chunk_id']);
+        self::assertSame(2, $response['source_refs'][0]['chunk_index']);
+        self::assertArrayNotHasKey('content', $response['source_refs'][0]);
+        self::assertArrayNotHasKey('excerpt', $response['source_refs'][0]);
+    }
+
+    public function test_unicode_content_budget_bounds_each_chunk_and_the_whole_context(): void
+    {
+        $results = [];
+        foreach (range(1, 8) as $index) {
+            $results[] = new RagSearchResult('project', 'project', '10', 10, 'Проект', 'Кратко', 0.9,
+                ['source_id' => 1, 'chunk_id' => $index, 'chunk_index' => $index - 1],
+                content: str_repeat('Я', $index === 1 ? 2300 : 3000));
+        }
+
+        $context = (new RagPromptContextBuilder)->build('условия', $results);
+        $prompt = json_decode($context['prompt'], true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertCount(6, $prompt['sources']);
+        self::assertSame(12000, array_sum(array_map(static fn (array $source): int => mb_strlen($source['content']), $prompt['sources'])));
+        self::assertSame(2300, mb_strlen($prompt['sources'][0]['content']));
+        self::assertSame(2400, mb_strlen($prompt['sources'][1]['content']));
+        self::assertSame(100, mb_strlen($prompt['sources'][5]['content']));
+        self::assertSame(['scope' => 'rag_chunk', 'offset' => 0, 'length' => 100,
+            'total_length' => 3000, 'truncated' => true], $prompt['sources'][5]['content_range']);
+        self::assertSame([1, 2, 3, 4, 5, 6], array_column($prompt['sources'], 'chunk_id'));
+        self::assertSame(12000, $context['metadata']['limits']['content_characters']);
+        self::assertSame(6, $context['metadata']['limits']['returned']);
+        self::assertSame(2, $context['metadata']['limits']['omitted_sources']);
+        self::assertSame(5, $context['metadata']['limits']['truncated_sources']);
+    }
+
+    public function test_source_count_is_bounded_even_with_a_larger_configured_limit(): void
+    {
+        config()->set('ai-assistant.rag.max_chunks', 1000);
+        $result = new RagSearchResult('project', 'project', '10', 10, 'Проект', 'Кратко', 0.9, content: 'Текст');
+
+        $context = (new RagPromptContextBuilder)->build('условия', array_fill(0, 100, $result));
+
+        self::assertSame(20, $context['metadata']['limits']['requested']);
+        self::assertCount(20, $context['metadata']['sources']);
+        self::assertSame(80, $context['metadata']['limits']['omitted_sources']);
+    }
+
+    public function test_legacy_unit_read_fragment_keeps_its_offset_and_excerpt_contract(): void
+    {
+        $result = new RagSearchResult('file_document', 'assistant_document', '41', 10, 'Указания', 'Продолжение текста', 1.0,
+            ['document_id' => 41, 'unit_id' => 51, 'text_offset' => 1200, 'text_length' => 18]);
+
+        $context = (new RagPromptContextBuilder)->build('', [$result]);
+        $prompt = json_decode($context['prompt'], true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertSame('Продолжение текста', $prompt['sources'][0]['excerpt']);
+        self::assertSame(1200, $prompt['sources'][0]['text_offset']);
+        self::assertArrayNotHasKey('content', $prompt['sources'][0]);
+        self::assertArrayNotHasKey('content_range', $prompt['sources'][0]);
     }
 }

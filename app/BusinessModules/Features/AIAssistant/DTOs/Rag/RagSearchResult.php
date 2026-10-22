@@ -20,7 +20,13 @@ final readonly class RagSearchResult
         public string $excerpt,
         public float $similarity,
         public array $metadata = [],
-        public ?DateTimeInterface $updatedAt = null
+        public ?DateTimeInterface $updatedAt = null,
+        private ?string $content = null
     ) {
+    }
+
+    public function providerContent(): ?string
+    {
+        return $this->content;
     }
 }
