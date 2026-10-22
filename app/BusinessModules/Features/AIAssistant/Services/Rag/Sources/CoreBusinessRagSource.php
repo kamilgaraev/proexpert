@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag\Sources;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantCoreBusinessMetadata as Metadata;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCollectorQueryContext;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\Models\Project;
 use Illuminate\Database\Eloquent\Builder;
@@ -24,7 +25,8 @@ class CoreBusinessRagSource implements RagSourceCollectorInterface
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
         foreach ($this->entities() as $type => $record) {
-            foreach ($this->query($type, $organizationId, $projectId, organizationBatch: true)->lazyById(50) as $model) {
+            $rows = $this->query($type, $organizationId, $projectId, organizationBatch: true)->lazyById(50);
+            foreach ((new RagCollectorQueryContext($this->sourceType(), $type))->iterate($rows) as $model) {
                 yield $this->chunk($model, $type, $record, $organizationId);
             }
         }

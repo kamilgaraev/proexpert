@@ -31,6 +31,8 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
         $sheet = $this->exportSheet('Анна Петрова');
         $mergedRanges = $sheet->getMergeCells();
 
+        $this->assertContains('A6:G6', $mergedRanges);
+        $this->assertSame('организация', $sheet->getCell('A6')->getValue());
         $this->assertContains('D10:F10', $mergedRanges);
         $this->assertContains('D11:F11', $mergedRanges);
         $this->assertContains('G10:I10', $mergedRanges);
