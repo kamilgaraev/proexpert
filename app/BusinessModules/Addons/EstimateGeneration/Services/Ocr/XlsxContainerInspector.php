@@ -162,7 +162,12 @@ final class XlsxContainerInspector
     private function worksheetEntry(string $target): string
     {
         $target = str_replace('\\', '/', $target);
-        if ($target === '' || str_starts_with($target, '/') || in_array('..', explode('/', $target), true)) {
+        if (str_starts_with($target, '/xl/')) {
+            $target = substr($target, 1);
+        }
+        if ($target === '' || str_starts_with($target, '/') || str_contains($target, '//')
+            || in_array('..', explode('/', $target), true)
+            || preg_match('/^(?:[A-Za-z][A-Za-z0-9+.-]*:)|%(?:2e|2f|5c)/i', $target) === 1) {
             $this->invalid('spreadsheet_container_invalid');
         }
 

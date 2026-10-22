@@ -93,7 +93,8 @@ class EstimateGenerationDocumentResource extends JsonResource
             'stage' => $cancelled ? 'completed' : (string) ($document->processing_stage ?? 'stored'),
             'progress_percent' => $cancelled
                 ? (int) ($processingOutcome['execution']['progress_percent'] ?? 100)
-                : (int) ($document->progress_percent ?? 0),
+                : (($processingOutcome['execution']['total_pages'] ?? null) === 0
+                    && in_array((string) $document->status, ['failed', 'needs_review'], true) ? 0 : (int) ($document->progress_percent ?? 0)),
         ];
     }
 
@@ -138,6 +139,7 @@ class EstimateGenerationDocumentResource extends JsonResource
         $counts = is_array($stored['counts'] ?? null) ? $stored['counts'] : [];
         $included = max(0, (int) ($counts['included'] ?? $document->page_count ?? 0));
         $ready = max(0, (int) ($counts['ready'] ?? $document->processed_page_count ?? 0));
+        $requiresFileReview = $type === 'user_action_required' && $included === 0;
         $counts = [
             'included' => $included,
             'ready' => $ready,
@@ -156,53 +158,49 @@ class EstimateGenerationDocumentResource extends JsonResource
         $reportedExecutionProgress = is_int($stored['execution_progress_percent'] ?? null)
             ? $stored['execution_progress_percent']
             : ($liveOutcome !== null ? 0 : (int) ($document->progress_percent ?? 0));
+        $executionProgress = $requiresFileReview ? 0 : max(0, min(100, max($reportedExecutionProgress, $calculatedExecutionProgress)));
         $messageKey = match ($type) {
             'ready' => 'estimate_generation.document_processing_ready',
             'temporary_failure' => 'estimate_generation.document_processing_temporarily_unavailable',
             'system_failure' => 'estimate_generation.document_processing_system_failed',
-            'user_action_required' => 'estimate_generation.document_processing_user_action_required',
+            'user_action_required' => $requiresFileReview ? 'estimate_generation.documents_upload_error' : 'estimate_generation.document_processing_user_action_required',
             'cancelled' => $ready > 0
                 ? 'estimate_generation.document_processing_stopped_partial'
                 : 'estimate_generation.document_processing_cancelled',
             default => 'estimate_generation.document_processing_in_progress',
         };
-        $state = is_string($stored['state'] ?? null) ? $stored['state'] : match (true) {
+        $state = $requiresFileReview ? 'questions' : (is_string($stored['state'] ?? null) ? $stored['state'] : match (true) {
             $type === 'processing' => 'processing',
             $counts['ready'] > 0 && $counts['system_failed'] > 0 => 'partial',
+            $type === 'user_action_required' => 'questions',
             $counts['needs_user_action'] > 0 => 'questions',
             $counts['cancelled'] > 0 => $counts['ready'] > 0 ? 'partial' : 'cancelled',
             in_array($type, ['system_failure', 'temporary_failure'], true) => 'system_failure',
             default => 'ready',
-        };
+        });
 
         return [
             'type' => $type,
             'state' => $state,
             'counts' => $counts,
             'retry_allowed' => ($stored['retry_allowed'] ?? false) === true,
-            'execution_progress_percent' => max(0, min(100, max(
-                $reportedExecutionProgress,
-                $calculatedExecutionProgress,
-            ))),
+            'execution_progress_percent' => $executionProgress,
             'execution' => [
                 'completed_pages' => $terminalCount,
                 'total_pages' => $included,
-                'progress_percent' => max(0, min(100, max(
-                    $reportedExecutionProgress,
-                    $calculatedExecutionProgress,
-                ))),
+                'progress_percent' => $executionProgress,
             ],
             'usefulness' => [
                 'usable_pages' => $ready,
                 'total_pages' => $included,
             ],
-            'readiness' => is_string($stored['readiness'] ?? null) ? $stored['readiness'] : match ($type) {
+            'readiness' => $requiresFileReview ? 'review_required' : (is_string($stored['readiness'] ?? null) ? $stored['readiness'] : match ($type) {
                 'ready' => 'ready',
                 'processing' => 'processing',
                 'user_action_required' => 'review_required',
                 default => 'blocked',
-            },
-            'is_ready' => ($stored['is_ready'] ?? null) === true || $type === 'ready',
+            }),
+            'is_ready' => ! $requiresFileReview && (($stored['is_ready'] ?? null) === true || $type === 'ready'),
             'message_key' => $messageKey,
             'message' => trans_message($messageKey),
         ];
