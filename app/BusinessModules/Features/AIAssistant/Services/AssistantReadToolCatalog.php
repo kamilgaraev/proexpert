@@ -22,6 +22,11 @@ final readonly class AssistantReadToolCatalog
         private AssistantToolEligibilityPolicy $eligibility,
     ) {}
 
+    public static function enabled(): bool
+    {
+        return app()->bound('config') && config('ai-assistant.read_tool_discovery_enabled', false) === true;
+    }
+
     public static function selection(array $registered, mixed $requested, AssistantToolEligibilityPolicy $eligibility): array
     {
         if (! is_array($requested) || ! array_is_list($requested) || count($requested) > self::MAX_SELECTED) {

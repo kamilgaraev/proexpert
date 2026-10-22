@@ -710,7 +710,7 @@ class AIAssistantService
                         $reportClarification = is_array($toolResult) && ($toolResult['needs_clarification'] ?? false) === true
                             ? $toolResult : null;
                     }
-                    if ($toolName === 'assistant_domain_discover_capabilities' && is_array($toolResult)
+                    if (AssistantReadToolCatalog::enabled() && $toolName === 'assistant_domain_discover_capabilities' && is_array($toolResult)
                         && array_key_exists('selected_read_tools', $toolResult)) {
                         $selection = AssistantReadToolCatalog::selection($this->toolRegistry->getToolNames(),
                             $toolResult['selected_read_tools'], $this->toolEligibilityPolicy);
@@ -3803,7 +3803,10 @@ class AIAssistantService
         if ($taskPlan['image_discussion'] ?? false) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_discussion_instructions');
         } elseif (! $conversationNumberRequest) {
-            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions', [
+                'discovery_instructions' => trans_message(AssistantReadToolCatalog::enabled()
+                    ? 'ai_assistant.read_tool_discovery_instructions' : 'ai_assistant.legacy_tool_discovery_instructions'),
+            ]);
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.model_tool_selection');
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
         }
@@ -4147,7 +4150,7 @@ class AIAssistantService
         }
         $metadataFrameActive = $this->preparationMetadataFrameActive;
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
-        if ($this->activeActor !== null && ! ($taskPlan['image_discussion'] ?? false)) {
+        if (AssistantReadToolCatalog::enabled() && $this->activeActor !== null && ! ($taskPlan['image_discussion'] ?? false)) {
             $toolNames = array_values(array_unique([...$toolNames, ...AssistantReadToolCatalog::selection(
                 $this->toolRegistry->getToolNames(), $selectedReadTools, $this->toolEligibilityPolicy)]));
         }

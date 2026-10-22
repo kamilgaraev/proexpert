@@ -14,6 +14,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantReadToolCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\Services\Logging\LoggingService;
 use App\Support\AI\TokenCounter;
 use InvalidArgumentException;
@@ -97,6 +98,8 @@ final class AssistantReadToolCatalogTest extends TestCase
         $plan = ['request' => ['message' => $query, 'allow_actions' => false], 'capability' => []];
         self::assertNotContains('get_project_safety_summary', array_column($method->invoke($service, $plan), 'name'));
         $selection = ['get_project_safety_summary', 'get_bim_model_elements', 'approve_payment_request'];
+        self::assertSame(['assistant_domain_discover_capabilities'], array_column($method->invoke($service, $plan, $selection), 'name'));
+        config(['ai-assistant.read_tool_discovery_enabled' => true]);
         self::assertSame(['assistant_domain_discover_capabilities', 'get_project_safety_summary'],
             array_column($method->invoke($service, $plan, $selection), 'name'));
         $allowed = false;
@@ -147,6 +150,7 @@ final class AssistantReadToolCatalogTest extends TestCase
 
     public function test_production_lazy_registry_resolves_discovery_without_dependency_cycle(): void
     {
+        config(['ai-assistant.read_tool_discovery_enabled' => true]);
         (new AIAssistantServiceProvider(app()))->register();
         app()->instance(AssistantDataAccessPolicy::class, (new ReflectionClass(AssistantDataAccessPolicy::class))->newInstanceWithoutConstructor());
         app()->instance(AIPermissionChecker::class, $this->createMock(AIPermissionChecker::class));
@@ -156,6 +160,25 @@ final class AssistantReadToolCatalogTest extends TestCase
         self::assertInstanceOf(DiscoverAssistantDomainCapabilitiesTool::class, $discovery);
         self::assertSame($discovery, $registry->getTool('assistant_domain_discover_capabilities'));
         self::assertSame(AssistantReadToolCatalog::MAX_SELECTED, $discovery->getParametersSchema()['properties']['read_tool_names']['maxItems']);
+    }
+
+    public function test_read_discovery_is_disabled_by_default_and_keeps_the_legacy_schema_and_catalog(): void
+    {
+        $configuration = require dirname(__DIR__, 3).'/app/BusinessModules/Features/AIAssistant/config/ai-assistant.php';
+        self::assertFalse($configuration['read_tool_discovery_enabled']);
+        self::assertFalse(AssistantReadToolCatalog::enabled());
+        $reflection = new ReflectionClass(DiscoverAssistantDomainCapabilitiesTool::class);
+        $tool = $reflection->newInstanceWithoutConstructor();
+        $reflection->getProperty('catalog')->setValue($tool, new AssistantDomainCatalog(AssistantDomainCatalog::defaults()));
+        $legacyArguments = ['domain', 'entity_type', 'offset', 'limit', 'field_offset', 'field_limit'];
+        self::assertSame($legacyArguments, array_keys($tool->getParametersSchema()['properties']));
+        self::assertSame($legacyArguments, $tool->getParametersSchema()['required']);
+        self::assertStringNotContainsString('read_tool_', $tool->getDescription());
+        self::assertSame(['domains', 'details_tool', 'record_access'], array_keys($tool->compact(static fn (): bool => true, static fn (): bool => true)));
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('unsupported_capability_argument');
+        $tool->describe(['read_tool_names' => ['get_project_snapshot']], static fn (): bool => true, static fn (): bool => true, static fn (): bool => true);
     }
 
     private function registry(array $names): AIToolRegistry

@@ -23,6 +23,7 @@ final class AssistantModelToolChoiceTest extends TestCase
     #[DataProvider('requests')]
     public function test_model_can_choose_search_and_follow_up_reads_regardless_of_backend_route(string $query, string $capability): void
     {
+        config(['ai-assistant.read_tool_discovery_enabled' => true]);
         $registry = new AIToolRegistry;
         $names = ['search_estimate_positions', 'get_estimate_answer', 'get_estimate_positions',
             'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read',
