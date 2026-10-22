@@ -10,6 +10,44 @@ use PHPUnit\Framework\TestCase;
 
 final class ComposedQuantityProvenanceTest extends TestCase
 {
+    public function test_engineering_count_formula_uses_existing_purpose_without_bypassing_entity_unit_or_review_guards(): void
+    {
+        $facts = [['id' => 'count:a', 'entity_id' => 'equipment:a', 'value' => '7', 'unit' => 'count'],
+            ['id' => 'spec:a', 'entity_id' => 'equipment:a', 'value' => 'Насос водяной'],
+            ['id' => 'count:b', 'entity_id' => 'equipment:b', 'value' => '9', 'unit' => 'count']];
+        $quantity = ['id' => 'quantity:equipment-a', 'quantity_key' => 'equipment.count:equipment-a', 'entity_id' => 'equipment:a',
+            'value' => '7', 'unit' => 'count', 'operand_fact_ids' => ['count:a'], 'formula_key' => 'equipment_count',
+            'source' => 'evidenced', 'review_blockers' => []];
+        $intent = ['work_key' => 'equipment.install', 'entity_id' => 'equipment:a', 'unit' => 'count',
+            'derived_quantity_id' => $quantity['id'], 'source_fact_ids' => ['spec:a', 'count:a']];
+        $binding = (new ComposedQuantityProvenance([$quantity], $facts))->binding($intent);
+        self::assertTrue($binding['eligible']);
+        self::assertSame(['count:a'], $binding['operand_fact_ids']);
+        foreach ([[...$quantity, 'source' => 'estimated'], [...$quantity, 'review_blockers' => ['source_changed']]] as $unverified) {
+            self::assertFalse((new ComposedQuantityProvenance([$unverified], $facts))->binding($intent)['eligible']);
+        }
+        self::assertFalse((new ComposedQuantityProvenance([$quantity], $facts))->binding([...$intent, 'work_key' => 'finish.floor'])['eligible']);
+        foreach ([
+            [[...$intent, 'entity_id' => 'equipment:b'], 'estimate_composer_quantity_entity_or_lineage_invalid'],
+            [[...$intent, 'unit' => 'm3'], 'estimate_composer_quantity_dimension_invalid'],
+            [[...$intent, 'source_fact_ids' => ['count:b']], 'estimate_composer_quantity_reference_unrelated'],
+        ] as [$invalid, $reason]) {
+            try {
+                (new ComposedQuantityProvenance([$quantity], $facts))->binding($invalid);
+                self::fail('An unrelated equipment measurement was accepted.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame($reason, $exception->getMessage());
+            }
+        }
+        foreach ([null, [], 'unknown_formula'] as $formula) {
+            self::assertTrue((new ComposedQuantityProvenance([[...$quantity, 'formula_key' => $formula,
+                'quantity_key' => 'equipment.count']], $facts))->binding($intent)['eligible']);
+        }
+        $withoutFormula = $quantity;
+        unset($withoutFormula['formula_key']);
+        self::assertFalse((new ComposedQuantityProvenance([$withoutFormula], $facts))->binding($intent)['eligible']);
+    }
+
     public function test_trusted_formula_can_include_a_related_opening_operand_and_context_is_separate(): void
     {
         $facts = [['id' => 'wall:length', 'entity_id' => 'wall:1', 'value' => '8', 'unit' => 'm'],
@@ -40,7 +78,7 @@ final class ComposedQuantityProvenanceTest extends TestCase
         $items = $method->invoke(new EstimateCompositionProjector, ['supplementary:paint' => $intent], [], $facts, ['supplementary:paint' => 'paint-walls']);
         self::assertNull($items[0]['quantity']);
         self::assertNull($items[0]['quantity_formula']);
-        self::assertSame('m2', $items[0]['unit']);
+        self::assertNull($items[0]['unit']);
         self::assertSame([['fact_id' => 'room:area', 'role' => 'context']], $items[0]['source_refs']);
         self::assertSame('room:1', $items[0]['metadata']['scope_entity_id']);
     }

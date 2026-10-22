@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\Models\Contract;
 use App\Models\Contractor;
@@ -204,6 +205,28 @@ final class AssistantSearchComparisonCoverageTest extends TestCase
         self::assertTrue($metadata['degraded_mode']);
         self::assertSame([], $this->observedResults);
         self::assertStringContainsString(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+    }
+
+    public function test_pdf_comparison_scope_clarification_survives_the_missing_file_guard(): void
+    {
+        $this->actor = $this->fixture->owner;
+        $this->actingAs($this->actor);
+        foreach (['site_requests', 'reports'] as $domain) {
+            self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadDomain($this->actor, $this->fixture->organization->id, $domain));
+        }
+        $response = $this->ask([], 'Сравни все заявки на материалы организации с проектом '.$this->project->id.'. Сделай PDF с полями название и статус.');
+        $metadata = $response['message']['metadata'];
+        self::assertArrayHasKey('telemetry', $metadata, json_encode($response, JSON_UNESCAPED_UNICODE));
+        self::assertSame('pdf', $metadata['telemetry']['request_understanding']['output_format']);
+        self::assertFalse($metadata['access_denied'] ?? false);
+        self::assertTrue($metadata['needs_clarification'], json_encode($metadata, JSON_UNESCAPED_UNICODE));
+        self::assertSame('partial', $metadata['validation_status']);
+        self::assertTrue($metadata['degraded_mode']);
+        self::assertSame([], $metadata['source_refs']);
+        self::assertSame([], $metadata['artifacts']);
+        self::assertSame([], $this->observedResults);
+        self::assertSame(trans_message('ai_assistant_facts.comparison_scope_incomplete'), $response['message']['content']);
+        self::assertNotSame(trans_message('ai_custom_reports.missing_file'), $response['message']['content']);
     }
 
     public static function unsupportedComparisonPeriods(): array

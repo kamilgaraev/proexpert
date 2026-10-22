@@ -7,6 +7,7 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\IgnoreEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvaluationWorkEntity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmEvaluationScenario;
@@ -17,6 +18,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvalu
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScenarioSet;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveSessionPricingSource;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Review\SelectNormativeCandidate;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\ComposedQuantityProvenance;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\WorkIntentSourceClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
@@ -53,6 +59,228 @@ use Tests\Support\EstimateGeneration\RecordedUniversalPipelineAdapter;
 
 final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_generic_supplementary_equipment_keeps_specification_and_quantity_lineage_through_norm_selection(): void
+    {
+        $directory = sys_get_temp_dir().'/most-generic-equipment-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $path = $directory.'/equipment.xlsx';
+        $recordingPath = $directory.'/recording.json';
+        $book = new Spreadsheet;
+        $book->getActiveSheet()->setTitle('Оборудование')->fromArray([
+            ['entity_key', 'parameter', 'value', 'unit'],
+            ['equipment:pump-a', 'equipment_specification', 'Насос водяной по ведомости изготовителя', ''],
+            ['equipment:pump-a', 'equipment_count', 7, 'шт'],
+            ['equipment:pump-b', 'equipment_specification', 'Насос водяной по ведомости изготовителя', ''],
+        ]);
+        $catalog = $this->genericEquipmentCatalog();
+        $source = [];
+        $composerFacts = [];
+        $quantityBinding = null;
+        try {
+            (new Xlsx($book))->save($path);
+            $fixture = json_decode(file_get_contents(base_path('tests/Fixtures/EstimateGeneration/universal-replay/xlsx-floor-finishing-v1.json')), true, flags: JSON_THROW_ON_ERROR);
+            $fixture['description'] = 'Монтаж оборудования по ведомости на промышленной площадке. Технология требует отдельной проверки.';
+            $fixture['selected_sections'] = ['equipment'];
+            $fixture['initial_input'] = ['price_policy' => 'normative', 'regional_context' => $catalog['context']];
+            $fixture['recordings'] = array_slice($fixture['recordings'], 0, 2);
+            $intent = ['kind' => 'supplementary', 'work_key' => 'equipment.install', 'name' => 'Монтаж насоса по ведомости',
+                'derived_quantity_id' => '__native_equipment_count_quantity_id__',
+                'source_fact_ids' => ['__native_specification_fact_id__', '__native_count_fact_id__', '__native_other_specification_fact_id__'],
+                'entity_id' => '__native_equipment_entity_id__', 'technology_package_candidate' => null,
+                'unit' => 'count', 'work_section' => 'equipment', 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+            $fixture['recordings'][0]['response']['choices'][0]['message']['content'] = json_encode(['work_intents' => [$intent]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+            file_put_contents($recordingPath, json_encode($fixture, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+            $adapter = new RecordedUniversalPipelineAdapter($this->app, new LocalBenchmarkObjectReader($directory),
+                $recordingPath, hash_file('sha256', $recordingPath),
+                static function (EstimateGenerationSession $session) use ($catalog): void {
+                    $actor = User::query()->findOrFail($session->user_id);
+                    app(SaveSessionPricingSource::class)->handle($actor, (int) $session->project_id, (int) $session->id,
+                        ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->state_version,
+                            'estimate_regional_price_version_id' => $catalog['context']['estimate_regional_price_version_id'],
+                            'conditions' => ['as_of_date' => '2026-10-01', 'vat_mode' => 'not_applicable',
+                                'delivery' => 'outside_scope', 'basis' => 'Синтетический источник для проверки привязки позиции к норме.']]);
+                },
+                static function (EstimateGenerationSession $session, \Psr\Http\Message\RequestInterface $request) use (&$source, &$composerFacts, &$quantityBinding): array {
+                    $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+                    $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    $entities = array_column($snapshot->entities, null, 'id');
+                    $byKey = [];
+                    foreach ($snapshot->facts as $fact) {
+                        if ($fact->origin === 'document' && in_array($fact->type, ['equipment_specification', 'equipment_count'], true)) {
+                            self::assertSame('confirmed', $fact->status);
+                            self::assertSame($scope, [$fact->organizationId, $fact->projectId, $fact->sessionId]);
+                            $key = $entities[$fact->entityId]->attributes['properties']['source_entity_key'];
+                            $byKey[$key][$fact->type] = $fact;
+                        }
+                    }
+                    $source = ['specification' => $byKey['equipment:pump-a']['equipment_specification'],
+                        'count' => $byKey['equipment:pump-a']['equipment_count'],
+                        'other' => $byKey['equipment:pump-b']['equipment_specification']];
+                    $wire = json_decode((string) $request->getBody(), true, 128, JSON_THROW_ON_ERROR);
+                    $project = null;
+                    foreach ($wire['messages'] as $message) {
+                        if ($message['role'] === 'user') {
+                            $project = json_decode($message['content'], true, 128, JSON_THROW_ON_ERROR)['project'] ?? null;
+                        }
+                    }
+                    self::assertIsArray($project);
+                    self::assertSame(array_combine(['organization_id', 'project_id', 'session_id'], $scope), $project['scope']);
+                    $composerFacts = $project['facts'];
+                    self::assertSame([], array_diff(array_column($source, 'id'), array_column($composerFacts, 'id')));
+                    $quantities = array_values(array_filter($project['derived_quantities'], static fn (array $quantity): bool =>
+                        ($quantity['formula_key'] ?? null) === 'equipment_count' && ($quantity['entity_id'] ?? null) === $source['count']->entityId
+                        && ($quantity['operand_fact_ids'] ?? []) === [$source['count']->id] && ($quantity['review_blockers'] ?? []) === []));
+                    self::assertCount(1, $quantities);
+                    self::assertSame('count', $quantities[0]['unit']);
+                    self::assertSame('7', $source['count']->value);
+                    $quantityBinding = (new ComposedQuantityProvenance($project['derived_quantities'], $composerFacts))->binding([
+                        'work_key' => 'equipment.install', 'derived_quantity_id' => $quantities[0]['id'],
+                        'entity_id' => $source['count']->entityId, 'unit' => 'count',
+                        'source_fact_ids' => [$source['specification']->id, $source['count']->id, $source['other']->id],
+                    ]);
+                    return ['__native_specification_fact_id__' => $source['specification']->id,
+                        '__native_count_fact_id__' => $source['count']->id, '__native_other_specification_fact_id__' => $source['other']->id,
+                        '__native_equipment_entity_id__' => $source['count']->entityId,
+                        '__native_equipment_count_quantity_id__' => $quantities[0]['id']];
+                });
+            $result = $adapter->run(new BenchmarkPredictionCaseData('generic-equipment-source-join', BenchmarkDatasetType::Regression,
+                BenchmarkSourceType::Spreadsheet, 'equipment.xlsx', hash_file('sha256', $path), ['synthetic_transport_fixture'], []), 300000);
+            self::assertSame('success', $result->status);
+            self::assertTrue($quantityBinding['eligible'], json_encode($quantityBinding, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+            $session = EstimateGenerationSession::query()->findOrFail($adapter->lastRun['session_id']);
+            $items = [];
+            foreach ($session->draft_payload['local_estimates'] as $local) {
+                foreach ($local['sections'] as $section) {
+                    foreach ($section['work_items'] as $item) {
+                        if (($item['composition_intent']['work_key'] ?? null) === 'equipment.install') {
+                            $items[] = $item;
+                        }
+                    }
+                }
+            }
+            self::assertCount(1, $items, json_encode($session->draft_payload['estimate_composition'], JSON_THROW_ON_ERROR));
+            $item = $items[0];
+            self::assertSame('supplementary', $item['composition_intent']['kind']);
+            self::assertSame('7', $item['quantity']);
+            self::assertSame('count', $item['unit']);
+            self::assertSame($source['count']->entityId, $item['metadata']['scope_entity_id']);
+            self::assertArrayNotHasKey('specialization_scenario', $item);
+            self::assertNotSame('residential', $session->draft_payload['object_profile']['object_type'] ?? null);
+            $refs = array_column($item['source_refs'], 'role', 'fact_id');
+            self::assertSame('context', $refs[$source['specification']->id]);
+            self::assertSame('context', $refs[$source['other']->id]);
+            self::assertSame('quantity_operand', $refs[$source['count']->id]);
+            self::assertNotSame($source['specification']->id, $source['count']->id);
+            self::assertSame($source['count']->id, $item['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+            $classifier = new WorkIntentSourceClassifier;
+            $basis = $classifier->binding($item['composition_intent'], $composerFacts);
+            self::assertSame([$source['specification']->id], $basis['basis_fact_ids']);
+            self::assertNotContains($source['count']->id, $basis['basis_fact_ids']);
+            self::assertNotContains($source['other']->id, $basis['basis_fact_ids']);
+            $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $session->organization_id, (int) $session->project_id, (int) $session->id, 10001)['snapshot'];
+            $proofs = array_column($snapshot->evidence, null, 'id');
+            self::assertTrue((new NativeNumericFactProof)->matches($source['count'], $proofs[$source['count']->evidenceIds[0]]));
+            $actor = User::query()->findOrFail($session->user_id);
+            $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
+            $role = OrganizationCustomRole::query()->where('organization_id', $session->organization_id)->where('slug', $assignment->role_slug)->firstOrFail();
+            $permissions = $role->module_permissions;
+            $permissions['ai-estimates'][] = 'estimate_generation.select_normative';
+            $role->update(['module_permissions' => $permissions]);
+            app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $session->organization_id, (int) $session->project_id,
+                $actor, (int) $session->state_version, $item['key'], $catalog['norm_id'], true);
+            $selected = array_values(array_filter(array_merge(...array_map(static fn (array $local): array => array_merge(...array_column($local['sections'], 'work_items')),
+                $session->fresh()->draft_payload['local_estimates'])), static fn (array $row): bool => $row['key'] === $item['key']));
+            self::assertCount(1, $selected);
+            self::assertSame('7', $selected[0]['quantity']);
+            self::assertSame('count', $selected[0]['unit']);
+            self::assertSame($catalog['norm_id'], $selected[0]['normative_match']['norm_id']);
+            self::assertSame($item['source_refs'], $selected[0]['source_refs']);
+            self::assertSame($source['count']->id, $selected[0]['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+            self::assertSame($adapter->lastRun['provider_requests'], $adapter->lastRun['requests_after_replay']);
+            $document = EstimateGenerationDocument::query()->where('session_id', $session->id)->sole();
+            app(IgnoreEstimateGenerationDocument::class)->handle($session->fresh(), $document, (int) $session->fresh()->state_version, 'Исходная ведомость исключена пользователем.');
+            $currentInput = app(EstimateComposerInputFactory::class)->capture((int) $session->organization_id, (int) $session->project_id,
+                (int) $session->id, [], [], [], allowedWorkSections: ['equipment'], evaluationMode: 'universal');
+            self::assertNotContains($source['specification']->id, array_column($currentInput->facts, 'id'));
+            try {
+                $classifier->binding($item['composition_intent'], $currentInput->facts);
+                self::fail('An ignored original document cannot remain the current verified work basis.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_composer_work_source_unrelated', $exception->getMessage());
+            }
+        } finally {
+            $book->disconnectWorksheets();
+            foreach ([$path, $recordingPath] as $file) {
+                if (is_file($file)) {
+                    unlink($file);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
+    public function test_default_floor_binding_preserves_current_native_proof_without_claiming_complete_work_scope(): void
+    {
+        $directory = sys_get_temp_dir().'/most-current-floor-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($directory));
+        $path = $directory.'/dimensions.xlsx';
+        $recording = $directory.'/recording.json';
+        $book = $this->floorWorkbook();
+        try {
+            (new Xlsx($book))->save($path);
+            $fixture = json_decode(file_get_contents(base_path('tests/Fixtures/EstimateGeneration/universal-replay/xlsx-floor-finishing-v1.json')), true, flags: JSON_THROW_ON_ERROR);
+            $fixture['recordings'] = array_slice($fixture['recordings'], 0, 2);
+            file_put_contents($recording, json_encode($fixture, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+            $adapter = new RecordedUniversalPipelineAdapter($this->app, new LocalBenchmarkObjectReader($directory), $recording, hash_file('sha256', $recording));
+            $result = $adapter->run(new BenchmarkPredictionCaseData('current-default-floor', BenchmarkDatasetType::Regression,
+                BenchmarkSourceType::Spreadsheet, 'dimensions.xlsx', hash_file('sha256', $path), ['synthetic_transport_fixture'], []), 300000);
+            self::assertSame('success', $result->status);
+            $session = EstimateGenerationSession::query()->findOrFail($adapter->lastRun['session_id']);
+            self::assertTrue(app(BuildMostEstimateDraft::class)->verifyArtifact($session->draft_payload));
+            self::assertCount(count(ProcessingStage::cases()), $adapter->lastRun['completed_stages']);
+            self::assertSame(2, $adapter->lastRun['provider_requests']);
+            self::assertSame(2, $adapter->lastRun['requests_after_replay']);
+            self::assertSame(2, $adapter->lastRun['usage_after_replay']);
+            self::assertEqualsCanonicalizing(['estimate_composer', 'estimate_auditor'], DB::table('estimate_generation_ai_role_runs')
+                ->where('session_id', $session->id)->where('status', 'completed')->pluck('role')->all());
+            $positions = array_values(array_filter($adapter->lastRun['evaluation']['scenarios'][0]['positions'],
+                static fn (array $row): bool => $row['work_key'] === 'finish.floor'));
+            self::assertCount(1, $positions);
+            self::assertSame('50', $positions[0]['quantity']);
+            self::assertSame('m2', $positions[0]['unit']);
+            self::assertSame('floor_area', $positions[0]['quantity_formula']);
+            self::assertSame('supported', $positions[0]['quantity_status']);
+            $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $session->organization_id,
+                (int) $session->project_id, (int) $session->id, 10001)['snapshot'];
+            $numeric = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->origin === 'document'
+                && in_array($fact->type, ['length', 'width'], true)));
+            self::assertCount(2, $numeric);
+            $proofs = array_column($snapshot->evidence, null, 'id');
+            foreach ($numeric as $fact) {
+                self::assertSame($positions[0]['entity_id'], $fact->entityId);
+                self::assertSame('confirmed', $fact->status);
+                self::assertSame([(int) $session->organization_id, (int) $session->project_id, (int) $session->id],
+                    [$fact->organizationId, $fact->projectId, $fact->sessionId]);
+                self::assertTrue((new NativeNumericFactProof)->matches($fact, $proofs[$fact->evidenceIds[0]]));
+            }
+            $details = $positions[0]['quantity_evidence_details'];
+            self::assertEqualsCanonicalizing(array_column($numeric, 'id'), array_column($details, 'fact_id'));
+            self::assertFalse($adapter->lastRun['evaluation']['can_confirm_for_apply']);
+            $missing = $adapter->lastRun['evaluation']['coverage']['missing_requirements'];
+            self::assertCount(1, $missing);
+            self::assertSame('preparation', $missing[0]['requirement']);
+            self::assertSame($positions[0]['entity_id'], $missing[0]['entity_id']);
+        } finally {
+            $book->disconnectWorksheets();
+            foreach ([$path, $recording] as $file) {
+                if (is_file($file)) {
+                    unlink($file);
+                }
+            }
+            rmdir($directory);
+        }
+    }
+
     public function test_actual_xlsx_upload_and_published_measurements_reach_the_real_composer_and_final_signed_draft(): void
     {
         $this->app->singleton(ApplyComposerCorrectionCycle::class, static fn ($app): ApplyComposerCorrectionCycle => new ApplyComposerCorrectionCycle(
@@ -60,14 +288,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $directory = sys_get_temp_dir().'/most-native-replay-'.bin2hex(random_bytes(8));
         self::assertTrue(mkdir($directory));
         $input = $directory.'/dimensions.xlsx';
-        $book = new Spreadsheet;
-        $book->getActiveSheet()->setTitle('Размеры')->fromArray([
-            ['entity_key', 'parameter', 'value', 'unit', 'floor', 'document_role'],
-            ['room:office', 'length', 5, 'м', '1', 'plan'],
-            ['room:office', 'width', 10, 'м', '1', 'plan'],
-            ['room:office', 'room_name', 'Офис', '', '1', 'plan'],
-            ['room:office', 'room_number', '001', '', '1', 'plan'],
-        ]);
+        $book = $this->floorWorkbook();
         try {
             (new Xlsx($book))->save($input);
             $book->disconnectWorksheets();
@@ -220,6 +441,59 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             }
             rmdir($directory);
         }
+    }
+
+    private function floorWorkbook(): Spreadsheet
+    {
+        $book = new Spreadsheet;
+        $book->getActiveSheet()->setTitle('Размеры')->fromArray([
+            ['entity_key', 'parameter', 'value', 'unit', 'floor', 'document_role'],
+            ['room:office', 'length', 5, 'м', '1', 'plan'],
+            ['room:office', 'width', 10, 'м', '1', 'plan'],
+            ['room:office', 'room_name', 'Офис', '', '1', 'plan'],
+            ['room:office', 'room_number', '001', '', '1', 'plan'],
+        ]);
+
+        return $book;
+    }
+
+    private function genericEquipmentCatalog(): array
+    {
+        $now = now();
+        $key = 'synthetic-generic-provenance-'.strtolower((string) Str::ulid());
+        $dataset = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fsnb_2022', 'version_key' => $key,
+            'bucket' => 'test', 'prefix' => $key, 'status' => 'parsed', 'created_at' => $now, 'updated_at' => $now]);
+        $prices = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fgis_labor_prices', 'version_key' => $key.'-prices',
+            'bucket' => 'test', 'prefix' => $key.'-prices', 'status' => 'parsed', 'created_at' => $now, 'updated_at' => $now]);
+        $collection = DB::table('estimate_norm_collections')->insertGetId(['dataset_version_id' => $dataset, 'code' => $key,
+            'name' => 'Synthetic generic source join', 'norm_type' => 'gesn', 'source_file' => 'synthetic-generic-provenance', 'created_at' => $now, 'updated_at' => $now]);
+        $section = DB::table('estimate_norm_sections')->insertGetId(['collection_id' => $collection, 'code' => '20', 'name' => 'Synthetic equipment',
+            'path' => '20/synthetic', 'created_at' => $now, 'updated_at' => $now]);
+        $norm = DB::table('estimate_norms')->insertGetId(['collection_id' => $collection, 'code' => '20-99-999-01',
+            'section_code' => '20', 'section_name' => 'Synthetic equipment', 'section_id' => $section,
+            'name' => 'Монтаж оборудования по требованиям изготовителя',
+            'work_composition' => json_encode(['Установка и крепление оборудования по согласованной спецификации'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            'unit' => '100 шт', 'valid_from' => '2026-10-01', 'valid_to' => '2026-12-31', 'created_at' => $now, 'updated_at' => $now]);
+        $resourceCode = 'SYNTHETIC-LABOR-'.$dataset;
+        DB::table('estimate_norm_resources')->insert(['estimate_norm_id' => $norm, 'resource_code' => $resourceCode,
+            'resource_name' => 'Труд рабочих', 'unit' => 'h', 'quantity' => '10', 'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now]);
+        $region = DB::table('estimate_regions')->insertGetId(['code' => 'JOIN-'.$dataset, 'name' => 'Synthetic region',
+            'fgiscs_subject_id' => random_int(100000, 999999), 'created_at' => $now, 'updated_at' => $now]);
+        $zone = DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $region, 'name' => 'Synthetic zone',
+            'fgiscs_price_zone_id' => random_int(1000000, 1999999), 'created_at' => $now, 'updated_at' => $now]);
+        $period = DB::table('estimate_price_periods')->where('year', 2026)->where('quarter', 4)->value('id')
+            ?? DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999), 'name' => 'Synthetic 2026 Q4',
+                'year' => 2026, 'quarter' => 4, 'created_at' => $now, 'updated_at' => $now]);
+        $version = DB::table('estimate_regional_price_versions')->insertGetId(['source' => 'fgiscs', 'region_id' => $region,
+            'price_zone_id' => $zone, 'period_id' => $period, 'version_key' => $key, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
+        DB::table('estimate_resource_prices')->insert(['dataset_version_id' => $prices, 'regional_price_version_id' => $version,
+            'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period, 'resource_code' => $resourceCode,
+            'resource_name' => 'Труд рабочих', 'unit' => 'h', 'base_price' => '100', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
+        DB::table('estimate_regional_price_versions')->where('id', $version)->update(['status' => 'active']);
+
+        return ['norm_id' => $norm, 'context' => ['region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period,
+            'business_date' => '2026-10-01', 'year' => 2026, 'quarter' => 4, 'version_key' => $key,
+            'estimate_regional_price_version_id' => $version, 'normative_dataset_version' => $key]];
     }
 
     private function confirmAndApplyOriginalWorklist(EstimateGenerationSession $session, RecordedUniversalPipelineAdapter $adapter, string $roomEntityId): void

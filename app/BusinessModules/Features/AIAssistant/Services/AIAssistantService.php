@@ -122,6 +122,8 @@ class AIAssistantService
 
     private array $activeToolResults = [];
 
+    private array $activeCustomReportSources = [];
+
     private array $activeSearchScopeAttempts = [];
 
     private array $providerUsageAttempts = [];
@@ -205,6 +207,7 @@ class AIAssistantService
         $this->activeActor = $user;
         $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
         $this->activeToolResults = [];
+        $this->activeCustomReportSources = [];
         $this->activeSearchScopeAttempts = [];
         $this->documentContextBlocked = false;
         $this->pendingSummary = null;
@@ -221,6 +224,7 @@ class AIAssistantService
             } finally {
                 $this->activeActor = null;
                 $this->activeToolResults = [];
+                $this->activeCustomReportSources = [];
                 $this->activeSearchScopeAttempts = [];
                 $this->documentContextBlocked = false;
             }
@@ -246,6 +250,7 @@ class AIAssistantService
             $this->activeRequest = null;
             $this->activeActor = null;
             $this->activeToolResults = [];
+            $this->activeCustomReportSources = [];
             $this->activeSearchScopeAttempts = [];
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
@@ -269,6 +274,7 @@ class AIAssistantService
         $this->activeActor = $user;
         $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
         $this->activeToolResults = [];
+        $this->activeCustomReportSources = [];
         $this->activeSearchScopeAttempts = [];
         $this->documentContextBlocked = false;
         $this->pendingSummary = null;
@@ -300,6 +306,7 @@ class AIAssistantService
             $this->activeRequest = null;
             $this->activeActor = null;
             $this->activeToolResults = [];
+            $this->activeCustomReportSources = [];
             $this->activeSearchScopeAttempts = [];
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
@@ -646,6 +653,8 @@ class AIAssistantService
 
             $toolFailures = [];
             $toolEvidence = [];
+            $attemptedTools = [];
+            $reportClarification = null;
             $proposedActions = [];
             $trustedDownloadUrls = [];
             $degradedMode = false;
@@ -665,14 +674,23 @@ class AIAssistantService
                 : (int) config('ai-assistant-credits.profiles.'.$this->activeProfile.'.max_calls', TokenBudgetService::limits($this->activeProfile)['calls']) - 1;
             $organization = null;
 
-            while (! empty($response['function_calls']) && $loopCount < $maxLoops) {
+            while ($loopCount < $maxLoops) {
+                if (empty($response['function_calls'])) {
+                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools, $this->activeCustomReportSources);
+                    if ($reportToolChoice === null) {
+                        break;
+                    }
+                    $options['tool_choice'] = $reportToolChoice;
+                }
                 if (! $organization instanceof Organization) {
                     $organization = $this->resolveOrganization($organizationId);
                 }
 
-                array_push($messages, ...$response['output']);
+                array_push($messages, ...($response['output'] ?? []));
 
-                foreach ($response['function_calls'] as $toolCall) {
+                foreach ($response['function_calls'] ?? [] as $toolCall) {
+                    $toolName = (string) ($toolCall['name'] ?? '');
+                    $attemptedTools[] = $toolName;
                     $this->stage('tools');
                     $toolResult = $this->handleToolCall(
                         $toolCall,
@@ -688,7 +706,10 @@ class AIAssistantService
                         $trustedDownloadUrls
                     );
 
-                    $toolName = (string) ($toolCall['name'] ?? '');
+                    if ($toolName === 'generate_custom_report') {
+                        $reportClarification = is_array($toolResult) && ($toolResult['needs_clarification'] ?? false) === true
+                            ? $toolResult : null;
+                    }
                     $providerResult = $this->toolResultForProvider($toolName, $toolResult);
                     $toolContent = is_string($providerResult)
                         ? $providerResult
@@ -854,8 +875,15 @@ class AIAssistantService
                     }
                 }
 
+                if ($loopCount === $maxLoops - 1) {
+                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools, $this->activeCustomReportSources);
+                    if ($reportToolChoice !== null) {
+                        $options['tool_choice'] = $reportToolChoice;
+                    }
+                }
                 try {
                     $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
+                    unset($options['tool_choice']);
                 } catch (AssistantBudgetExceeded) {
                     $budgetStopNotice = trans_message('ai_assistant.approved_budget_exceeded');
                     $toolFailures[] = $budgetStopNotice;
@@ -903,7 +931,7 @@ class AIAssistantService
                     if (! $organization instanceof Organization) {
                         $organization = $this->resolveOrganization($organizationId);
                     }
-                    $this->handleToolCall(
+                    $toolResult = $this->handleToolCall(
                         $toolCall,
                         $organization,
                         $user,
@@ -916,6 +944,10 @@ class AIAssistantService
                         $proposedActions,
                         $trustedDownloadUrls
                     );
+                    if ($toolName === 'generate_custom_report') {
+                        $reportClarification = is_array($toolResult) && ($toolResult['needs_clarification'] ?? false) === true
+                            ? $toolResult : null;
+                    }
                 }
 
                 $response['content'] = trans_message('ai_assistant_facts.live_proof_required');
@@ -992,6 +1024,7 @@ class AIAssistantService
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
+            $reportServerClarification = false;
             if (! $imageDiscussion && $rawPresentationPlan === null && ! $rejectedFinancialPlan && $proposedActions === []
                 && ($structuredCheck['source_refs'] ?? []) === []) {
                 $emptyProjectSearch = $this->verifyEmptyNamedProjectSearch($query, $verificationToolResults, $user, $organizationId,
@@ -999,6 +1032,7 @@ class AIAssistantService
                 if ($emptyProjectSearch !== null) {
                     $assistantContent = $emptyProjectSearch['text'];
                     $structuredCheck = $emptyProjectSearch;
+                    $reportServerClarification = (bool) ($emptyProjectSearch['needs_clarification'] ?? false);
                 }
             }
             if ($terminalToolResponse && ($structuredCheck['source_refs'] ?? []) === [] && $proposedActions === []
@@ -1204,20 +1238,23 @@ class AIAssistantService
 
                     continue;
                 }
-                if (($activeResult['_tool_name'] ?? null) !== 'generate_custom_report' || ($activeResult['status'] ?? null) !== 'success') {
+                $reportTool = (string) ($activeResult['_tool_name'] ?? '');
+                if (! str_starts_with($reportTool, 'generate_') || ! str_ends_with($reportTool, '_report')
+                    || ($activeResult['status'] ?? null) !== 'success') {
                     continue;
                 }
                 $artifacts = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService::class)
-                    ->artifactsFromToolResult('generate_custom_report', $activeResult, $this->resolveOrganization($organizationId), $user);
+                    ->artifactsFromToolResult($reportTool, $activeResult, $this->resolveOrganization($organizationId), $user);
                 $artifacts = $this->filterAgentArtifactsForOrganization($organizationId, $artifacts, (int) $user->id);
                 $reportArtifacts = [...$reportArtifacts, ...$artifacts];
-                $customReportPublished = $customReportPublished || $artifacts !== [];
+                $customReportPublished = $customReportPublished || ($reportTool === 'generate_custom_report' && $artifacts !== []);
                 $reportReferences = [...$reportReferences, ...($activeResult['source_refs'] ?? [])];
             }
             if ($reportArtifacts !== [] && $requestProjectScope->allowsReferences($reportReferences, $verificationToolResults)) {
                 $hasPublishedTask = array_filter($reportArtifacts, static fn (array $artifact): bool => ($artifact['artifact_type'] ?? null) === 'core_report_task') !== [];
+                $hasLegacyReport = array_filter($reportArtifacts, static fn (array $artifact): bool => isset($artifact['source_tool']) && $artifact['source_tool'] !== 'generate_custom_report') !== [];
                 $assistantContent = $reportPresentation->artifacts($reportArtifacts);
-                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $hasPublishedTask ? 'partial' : 'verified',
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $hasPublishedTask || $hasLegacyReport ? 'partial' : 'verified',
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = false;
             } else {
@@ -1231,14 +1268,42 @@ class AIAssistantService
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = ! $validated;
             }
+            if ($reportClarification !== null && $reportArtifacts === [] && $reportControls === []) {
+                $clarificationText = $reportClarification['server_formatted_answer'] ?? null;
+                $assistantContent = is_string($clarificationText) && $clarificationText !== '' ? $clarificationText
+                    : (\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::failureMessage(
+                        [$reportClarification + ['_tool_name' => 'generate_custom_report']]
+                    ) ?? trans_message('ai_custom_reports.scope_clarification'));
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
+                    'source_refs' => [], 'needs_clarification' => true];
+                $reportServerClarification = true;
+                $degradedMode = true;
+                if ($this->requestOutcome === null) {
+                    $this->recordRequestOutcome('insufficient_data');
+                }
+            }
             if ((! $customReportPublished || $reportArtifacts === []) && ! $this->hasCompleteSearchScope($requestProjectScope,
                 (string) ($taskPlan['request']['message'] ?? ''), $user, $organizationId)) {
+                $reportServerClarification = true;
                 $assistantContent = trans_message('ai_assistant_facts.comparison_scope_incomplete');
                 $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
                     'source_refs' => [], 'needs_clarification' => true];
                 $degradedMode = true;
                 $reportArtifacts = [];
                 $this->recordRequestOutcome('insufficient_data');
+            }
+            $missingCustomReport = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::missingFile(
+                $taskPlan, $this->activeToolResults, $reportArtifacts, $reportControls, $reportServerClarification
+            );
+            if ($missingCustomReport) {
+                if ($this->requestOutcome === null) {
+                    $this->recordRequestOutcome('insufficient_data');
+                }
+                $assistantContent = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::failureMessage($this->activeToolResults)
+                    ?? trans_message('ai_custom_reports.missing_file');
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'unverified',
+                    'source_refs' => [], 'needs_clarification' => false];
+                $degradedMode = true;
             }
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'artifacts' => $reportArtifacts,
@@ -1290,7 +1355,7 @@ class AIAssistantService
                 && ! ($financialCheck['replaced'] ?? false)
                 && ! ($structuredCheck['replaced'] ?? false);
             $assistantPayload['fetched_at'] = now()->toISOString();
-            if ($reportArtifacts !== [] || $reportControls !== []) {
+            if ($reportArtifacts !== [] || $reportControls !== [] || $missingCustomReport) {
                 $assistantPayload['artifacts'] = $reportArtifacts;
                 $assistantPayload['answer'] = $assistantContent;
                 $assistantPayload['needs_clarification'] = false;
@@ -3746,6 +3811,7 @@ class AIAssistantService
                 && \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($currentQuery, $understanding)) {
                 $reportSources = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints::class)
                     ->forRequest($this->activeActor, (int) $this->activeActor->current_organization_id, $currentQuery, $understanding);
+                $this->activeCustomReportSources = $reportSources;
                 $messages[] = ['role' => 'system', 'content' => json_encode(['kind' => 'custom_report_sources', 'sources' => $reportSources],
                     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
             }
