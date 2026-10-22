@@ -41,7 +41,7 @@ final class EstimateInterpretationAttemptRepository
                 return ['action' => 'replay', 'result' => $this->decode($row->result_payload)];
             }
             if (in_array($state, ['ambiguous', 'failed'], true)) {
-                return ['action' => $state, 'interpretation' => $this->decode($row->interpretation_payload)];
+                return ['action' => $state, 'interpretation' => $this->decode($row->interpretation_payload), 'failure_code' => $row->failure_code];
             }
             $leaseExpired = $row->lease_expires_at !== null && $now->greaterThanOrEqualTo($row->lease_expires_at);
             if ($state === 'response_received') {
@@ -101,6 +101,17 @@ final class EstimateInterpretationAttemptRepository
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)->where('idempotency_key', $key)
             ->where('request_fingerprint', $fingerprint)->where('state', 'response_received')->where('owner_uuid', $owner)
             ->update(['state' => 'completed', 'result_payload' => json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), 'owner_uuid' => null, 'lease_expires_at' => null, 'completed_at' => now(), 'updated_at' => now()]);
+        if ($updated !== 1) {
+            throw new RuntimeException('estimate_generation.interpretation_completion_collision');
+        }
+    }
+
+    public function failReceivedResponse(int $organizationId, int $projectId, int $sessionId, string $key, string $fingerprint, string $owner): void
+    {
+        $updated = DB::table('estimate_interpretation_attempts')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)->where('idempotency_key', $key)
+            ->where('request_fingerprint', $fingerprint)->where('state', 'response_received')->where('owner_uuid', $owner)
+            ->update(['state' => 'failed', 'failure_code' => 'dialogue_presentation_invalid', 'owner_uuid' => null, 'lease_expires_at' => null, 'updated_at' => now()]);
         if ($updated !== 1) {
             throw new RuntimeException('estimate_generation.interpretation_completion_collision');
         }

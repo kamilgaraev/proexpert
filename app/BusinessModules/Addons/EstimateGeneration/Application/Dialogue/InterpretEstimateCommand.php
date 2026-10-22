@@ -58,6 +58,10 @@ final readonly class InterpretEstimateCommand
         if ($claim['action'] === 'replay' && is_array($claim['result'] ?? null)) {
             return $this->publishReplayedResult($session, $creditOperationId, $claim['result']);
         }
+        if ($claim['action'] === 'failed' && ($claim['failure_code'] ?? null) === 'dialogue_presentation_invalid') {
+            throw new InterpretEstimateCommandFailure('estimate_generation.interpretation_publication_failed',
+                'terminal_new_attempt_allowed', new RuntimeException('estimate_generation.dialogue_presentation_invalid'));
+        }
         if ($claim['action'] === 'ambiguous') {
             $recovered = $this->interpreter instanceof GuardedEstimateCommandInterpreter && ! is_int($actor)
                 ? $this->interpreter->recoverReceivedResponse($session, $actor, $command, $context, $idempotencyKey) : null;
@@ -147,6 +151,17 @@ final readonly class InterpretEstimateCommand
         } catch (InterpretEstimateCommandFailure $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
+            if ($exception->getMessage() === 'estimate_generation.dialogue_presentation_invalid') {
+                DB::transaction(function () use ($session, $creditOperationId, $idempotencyKey, $fingerprint, $owner): void {
+                    $current = EstimateGenerationSession::query()->where('organization_id', $session->organization_id)
+                        ->where('project_id', $session->project_id)->whereKey($session->id)->lockForUpdate()->firstOrFail();
+                    $this->abortCreditOperation($current, $creditOperationId, 'dialogue_presentation_invalid');
+                    $this->attempts->failReceivedResponse((int) $session->organization_id, (int) $session->project_id,
+                        (int) $session->id, $idempotencyKey, $fingerprint, $owner);
+                }, 3);
+                throw new InterpretEstimateCommandFailure('estimate_generation.interpretation_publication_failed',
+                    'terminal_new_attempt_allowed', $exception);
+            }
             if ($exception instanceof \Illuminate\Auth\Access\AuthorizationException
                 || $exception->getMessage() === 'estimate_generation.interpretation_source_changed') {
                 $this->abortCreditOperation($session, $creditOperationId, 'dialogue_publication_not_allowed');
@@ -183,7 +198,9 @@ final readonly class InterpretEstimateCommand
             $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', strtolower($key))
                 ->where('organization_id', $current->organization_id)->where('project_id', $current->project_id)
                 ->where('session_id', $current->id)->where('actor_user_id', $actor->id)->where('kind', 'dialogue')->lockForUpdate()->first();
-            if ($operation?->status === 'settled') {
+            $terminalInvalid = $operation?->status === 'failed'
+                && (json_decode($operation->receipt, true, 64, JSON_THROW_ON_ERROR)['reason'] ?? null) === 'dialogue_presentation_invalid';
+            if ($operation?->status === 'settled' || $terminalInvalid) {
                 $quote = \App\Models\Credits\AICreditQuote::query()->whereKey($operation->quote_id)->firstOrFail();
                 $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
                 if ($quote->public_id !== strtolower($approval['quote_id']) || (int) $operation->approved_state_version !== $approval['state_version']

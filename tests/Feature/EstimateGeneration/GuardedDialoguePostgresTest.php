@@ -139,6 +139,129 @@ SQL);
         self::assertSame($decisions, DB::table('estimate_generation_project_model_corrections')->where('session_id', $session->id)->orderBy('id')->get()->toJson());
     }
 
+    #[DataProvider('invalidTextFinalizationFaults')]
+    public function test_paid_invalid_text_releases_hold_and_terminal_replay_preserves_one_provider_cost(?string $fault): void
+    {
+        config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $history = [];
+        $responses = new MockHandler([new Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'id' => 'invalid-paid-text', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+            'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => json_encode([
+                'kind' => 'explain', 'text' => null, 'explanation' => 'Допустимое старое поле не заменяет повреждённый текст.',
+            ], JSON_THROW_ON_ERROR)], 'finish_reason' => 'stop']],
+            'usage' => ['prompt_tokens' => 200, 'completion_tokens' => 50, 'total_tokens' => 250],
+        ], JSON_THROW_ON_ERROR))]);
+        $stack = HandlerStack::create($responses);
+        $stack->push(Middleware::history($history));
+        [$session, $actor, $interpreter] = $this->fixture(new Client(['handler' => $stack]), realPrices: true);
+        $handler = $this->handler($session, $actor, $interpreter);
+        config(['estimate-generation.credits.enabled' => true, 'ai-assistant-credits.enforce' => false]);
+        $organization = Organization::query()->findOrFail($session->organization_id);
+        $credits = app(\App\Services\Credits\AICreditService::class);
+        $credits->grant($organization, 1000000, 'purchase', null, 'fixture:invalid-paid-text');
+        $balance = $credits->balance($organization);
+        $key = (string) \Illuminate\Support\Str::uuid();
+        $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $key, 'dialogue', ['command' => 'Объясни', 'idempotency_key' => $key]);
+        $approval = ['request_id' => $key, 'quote_id' => $quote['quote_id'], 'state_version' => 0];
+        if ($fault !== null) {
+            $table = $fault === 'cancel' ? 'ai_credit_reservations' : 'estimate_interpretation_attempts';
+            $condition = $fault === 'cancel' ? "NEW.status = 'cancelled'" : "NEW.state = 'failed'";
+            DB::unprepared("CREATE FUNCTION eg_test_invalid_text_failure() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN IF {$condition} THEN RAISE EXCEPTION 'fixture_invalid_text_finalize_failed'; END IF; RETURN NEW; END; \$\$; CREATE TRIGGER eg_test_invalid_text_failure_trg BEFORE UPDATE ON {$table} FOR EACH ROW EXECUTE FUNCTION eg_test_invalid_text_failure();");
+            try {
+                $handler->handle($session, $actor, 'Объясни', $key, $approval);
+                self::fail('A failed financial/attempt close was reported as terminal.');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertStringContainsString('fixture_invalid_text_finalize_failed', $exception->getMessage());
+                $pending = DB::table('estimate_generation_credit_operations')->where('operation_id', $key)->sole();
+                self::assertContains($pending->status, ['reserved', 'running']);
+                self::assertNull($pending->receipt);
+                self::assertSame('reserved', DB::table('ai_credit_reservations')->where('id', $pending->reservation_id)->value('status'));
+                self::assertGreaterThan(0, $credits->balance($organization)['reserved_minor']);
+                $attempt = DB::table('estimate_interpretation_attempts')->where('session_id', $session->id)->sole();
+                self::assertSame('response_received', $attempt->state);
+                self::assertNull($attempt->failure_code);
+                self::assertNull($attempt->result_payload);
+                self::assertNotNull($attempt->owner_uuid);
+                self::assertCount(1, $history);
+                self::assertSame(1, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $pending->reservation_id)->count());
+            } finally {
+                DB::unprepared("DROP TRIGGER eg_test_invalid_text_failure_trg ON {$table}; DROP FUNCTION eg_test_invalid_text_failure();");
+            }
+            $this->travel(61)->seconds();
+        }
+        try {
+            $handler->handle($session, $actor, 'Объясни', $key, $approval);
+            self::fail('Invalid paid text was published.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure $exception) {
+            self::assertSame('estimate_generation.dialogue_presentation_invalid', $exception->getPrevious()?->getMessage());
+            self::assertCount(1, $history);
+            self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $key)->sole();
+            $usages = DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->get()->toJson();
+            self::assertSame(1, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->count());
+            self::assertGreaterThan(0, (int) DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->value('cost_micro_rub'));
+            self::assertSame('terminal_new_attempt_allowed', $exception->retryDisposition());
+        }
+        self::assertSame('failed', $operation->status);
+        self::assertSame(0, (int) $operation->consumed_units_minor);
+        self::assertEquals(['operation_id' => $key, 'status' => 'failed', 'consumed_units_minor' => 0, 'charged_units' => '0', 'reason' => 'dialogue_presentation_invalid'],
+            json_decode($operation->receipt, true, flags: JSON_THROW_ON_ERROR));
+        self::assertSame('cancelled', DB::table('ai_credit_reservations')->where('id', $operation->reservation_id)->value('status'));
+        self::assertSame($balance, $credits->balance($organization));
+        $attempt = DB::table('estimate_interpretation_attempts')->where('session_id', $session->id)->sole();
+        self::assertSame('failed', $attempt->state);
+        self::assertSame('dialogue_presentation_invalid', $attempt->failure_code);
+        self::assertNull($attempt->result_payload);
+        self::assertNull($attempt->owner_uuid);
+        self::assertNull($attempt->lease_expires_at);
+        $this->travel(61)->seconds();
+        try {
+            $handler->handle($session->fresh(), $actor, 'Объясни', $key, $approval);
+            self::fail('A terminal paid request was accepted again.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure $exception) {
+            self::assertSame('terminal_new_attempt_allowed', $exception->retryDisposition());
+            self::assertSame('estimate_generation.dialogue_presentation_invalid', $exception->getPrevious()?->getMessage());
+        }
+        self::assertCount(1, $history);
+        self::assertSame($usages, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->get()->toJson());
+        self::assertSame(1, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
+        self::assertSame(0, DB::table('estimate_change_proposals')->where('session_id', $session->id)->count());
+        $otherActor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+        $otherActor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        foreach ([[$actor, 'Другой вопрос', $approval], [$actor, 'Объясни', array_replace($approval, ['quote_id' => (string) \Illuminate\Support\Str::uuid()])], [$otherActor, 'Объясни', $approval]] as [$requestActor, $command, $requestApproval]) {
+            try {
+                $handler->handle($session->fresh(), $requestActor, $command, $key, $requestApproval);
+                self::fail('A changed terminal request identity was replayed.');
+            } catch (\Illuminate\Validation\ValidationException $exception) {
+                self::assertNotEmpty($exception->errors());
+            }
+        }
+        self::assertCount(1, $history);
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
+        $nextKey = (string) \Illuminate\Support\Str::uuid();
+        $nextQuote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $nextKey, 'dialogue', ['command' => 'Объясни', 'idempotency_key' => $nextKey]);
+        $responses->append(new Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'id' => 'new-paid-text', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+            'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => json_encode(['kind' => 'explain', 'text' => 'Для выбора работ требуется уточнить условия крепления и характеристики основания.'], JSON_THROW_ON_ERROR)], 'finish_reason' => 'stop']],
+            'usage' => ['prompt_tokens' => 200, 'completion_tokens' => 50, 'total_tokens' => 250],
+        ], JSON_THROW_ON_ERROR)));
+        self::assertSame('explanation', $handler->handle($session->fresh(), $actor, 'Объясни', $nextKey,
+            ['request_id' => $nextKey, 'quote_id' => $nextQuote['quote_id'], 'state_version' => 0])['kind']);
+        self::assertCount(2, $history);
+        self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $nextKey)->value('status'));
+        self::assertSame('failed', DB::table('estimate_interpretation_attempts')->where('idempotency_key', $key)->value('state'));
+        self::assertSame($usages, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->get()->toJson());
+        self::assertSame($balance, $credits->balance($organization));
+    }
+
+    public static function invalidTextFinalizationFaults(): array
+    {
+        return [[null], ['cancel'], ['attempt']];
+    }
+
     #[DataProvider('invalidCanonicalText')]
     public function test_invalid_present_text_cannot_fall_back_to_a_valid_legacy_explanation(mixed $text): void
     {
