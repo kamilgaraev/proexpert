@@ -332,7 +332,7 @@ final class ApiQueryMetrics
         if (! $metrics instanceof self || ! $metrics->captureSources || $startedAt < 0 || ! in_array($phase, [
             'list_prepare', 'list_encode', 'request_render', 'request_chain',
             'design_freshness', 'design_resources', 'design_response_build', 'design_response_decode',
-            'journal_load', 'journal_prepare', 'journal_payload', 'journal_encode',
+            'journal_load', 'journal_prepare', 'journal_payload', 'journal_encode', 'journal_actions', 'journal_entry_actions',
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
             'file_report_list', 'file_report_classify', 'file_report_access',
             'file_report_storage_exists', 'file_report_storage_url',

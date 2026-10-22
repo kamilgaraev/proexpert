@@ -8,6 +8,7 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Workflow\JournalScheduleTaskResolver;
 use App\Services\Workflow\WorkflowGuardService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -103,7 +104,7 @@ class ConstructionJournalPayloadService
             'approved_entries' => $summary['approved_entries'],
             'submitted_entries' => $summary['submitted_entries'],
             'rejected_entries' => $summary['rejected_entries'],
-            'available_actions' => $this->buildJournalActions($journal, $user),
+            'available_actions' => ApiQueryMetrics::measureProcessingPhase('journal_actions', fn () => $this->buildJournalActions($journal, $user)),
         ];
 
         if ($includeEntries) {
@@ -317,7 +318,7 @@ class ConstructionJournalPayloadService
                 : [],
             'workflow_state' => $blockers === [] ? 'ready' : 'blocked',
             'blockers' => $blockers,
-            'available_actions' => $this->buildEntryActions($entry, $user),
+            'available_actions' => ApiQueryMetrics::measureProcessingPhase('journal_entry_actions', fn () => $this->buildEntryActions($entry, $user)),
             'attachments' => $entry->attachments->map(fn ($attachment): array => $this->attachments->metadata($attachment))->values()->all(),
         ];
 
