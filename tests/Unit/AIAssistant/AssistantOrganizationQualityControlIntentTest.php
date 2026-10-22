@@ -7,6 +7,7 @@ namespace Tests\Unit\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolSurface;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry;
+use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -86,6 +87,12 @@ final class AssistantOrganizationQualityControlIntentTest extends TestCase
             ['Покажи просроченные замечания качества всей организации без ответственного.'],
             ['Покажи просроченные замечания качества всей организации в работе.'],
             ['Покажи просроченные замечания качества всей организации в статусе «открыт».'],
+            'review_status_constraint' => ['Покажи просроченные замечания качества по всей организации со статусом „На проверке“'],
+            ['Покажи просроченные замечания качества по всей организации на проверке.'],
+            ['Покажи просроченные замечания качества по всей организации на   проверке.'],
+            ['Покажи просроченные возвращённые замечания качества по всей организации.'],
+            ['Покажи просроченные замечания качества по всей организации. Статус: ready_for_review.'],
+            ['Покажи просроченные ready_for_review замечания качества по всей организации.'],
             ['Покажи непросроченные замечания качества всей организации.'],
             ['Покажи не просроченные замечания качества всей организации.'],
             ['Покажи замечания качества всей организации со сроком не раньше сегодняшнего дня.'],
@@ -96,6 +103,7 @@ final class AssistantOrganizationQualityControlIntentTest extends TestCase
             'unsupported_columns' => ['Покажи просроченные замечания качества по всей организации. Нужны ID, описание и ответственный.'],
             ['Покажи просроченные замечания качества всей организации. Нужны ID, номер и дата создания.'],
             ['Покажи просроченные замечания качества всей организации. Нужны автор и дата устранения.'],
+            ...array_map(static fn (QualityDefectStatusEnum $status): array => ['Покажи просроченные '.$status->value.' замечания качества по всей организации.'], QualityDefectStatusEnum::cases()),
         ];
     }
 

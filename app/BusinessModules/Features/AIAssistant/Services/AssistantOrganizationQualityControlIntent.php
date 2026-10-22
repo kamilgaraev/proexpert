@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
+use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 
 final class AssistantOrganizationQualityControlIntent
 {
@@ -46,7 +47,9 @@ final class AssistantOrganizationQualityControlIntent
         }
         $scope = preg_replace('/(?:отдельно\s+(?:отметь|выдели|покажи)|отметь|выдели)\s+критическ[а-яё]*(?:\s+(?:замечан|дефект)[а-яё]*)?(?=\s*(?:[.!?;,]|$))/iu', '', $scope) ?? $scope;
 
-        return preg_match('/(?<!\pL)(?:проект|объект)[а-яё]*|критическ|существен|незначительн|ответствен|назначен|открыт|в\s+работе|в\s+статусе|не\s*просроч|не\s+раньше|отмени|'.$excludedStatus.'/iu', $scope) !== 1;
+        $statusCodes = implode('|', array_map(static fn (QualityDefectStatusEnum $status): string => preg_quote($status->value, '/'), QualityDefectStatusEnum::cases()));
+
+        return preg_match('/(?<!\pL)(?:проект|объект)[а-яё]*|критическ|существен|незначительн|ответствен|назначен|открыт|в\s+работе|на\s+проверк[а-яё]*|возвращ[её]н[а-яё]*|(?<!\pL)статус(?:а|е|ом|у|ы|ов)?(?!\pL)|(?<![\pL\d_])(?:'.$statusCodes.')(?![\pL\d_])|не\s*просроч|не\s+раньше|отмени|'.$excludedStatus.'/iu', $scope) !== 1;
     }
 
     private static function supportedColumns(string $clause): bool
