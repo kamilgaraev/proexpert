@@ -14,6 +14,9 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGu
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantOperationsBusinessMetadata;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
+use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Modules\PackageCatalogService;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -183,6 +186,117 @@ final class AssistantAuthorizationBatchTest extends TestCase
                 self::assertFalse($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
                 self::assertNotContains('ai-assistant', $access->effectiveModuleSlugs($actor, $organizationId));
             }, true);
+    }
+
+    public function test_compiled_acl_and_resolver_share_entitlements_in_each_fresh_frame(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $fixture->memberRole->update(['module_permissions' => [
+            'ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],
+        ]]);
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $foreignProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]));
+        $fixture->member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $access = app(AssistantDataAccessPolicy::class);
+        $actor = $fixture->member;
+        $organizationId = $fixture->organization->id;
+
+        foreach ([false, true] as $resolverFirst) {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            try {
+                $access->withCurrentChecks($actor, $organizationId,
+                    function (AuthorizationService $authorization) use ($access, $actor, $organizationId, $resolverFirst, $project, $foreignProject): void {
+                        if ($resolverFirst) {
+                            self::assertTrue($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                        }
+                        $query = $access->entityQuery($actor, $organizationId, 'project');
+                        self::assertNotNull($query);
+                        $ids = $query->pluck('projects.id')->all();
+                        self::assertContains($project->id, $ids);
+                        self::assertNotContains($foreignProject->id, $ids);
+                        self::assertTrue($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                        self::assertContains('ai-assistant', $access->effectiveModuleSlugs($actor, $organizationId));
+                    }, true);
+                $queries = DB::getQueryLog();
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+            $subscriptionReads = array_filter($queries,
+                static fn (array $query): bool => str_contains($query['query'], 'organization_package_subscriptions'));
+            self::assertCount(1, $subscriptionReads, 'Compiled ACL and resolver must share one current entitlement snapshot in either call order');
+        }
+
+        $fixture->subscription->update(['status' => 'expired']);
+        $access->withCurrentChecks($actor, $organizationId,
+            function (AuthorizationService $authorization) use ($access, $actor, $organizationId): void {
+                $access->entityQuery($actor, $organizationId, 'project');
+                self::assertFalse($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                self::assertNotContains('ai-assistant', $access->effectiveModuleSlugs($actor, $organizationId));
+            }, true);
+    }
+
+    public function test_compiled_acl_keeps_custom_module_snapshot_separate_and_recovers_after_failure(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $source = new class(app(PackageCatalogService::class)) extends OrganizationEntitlementService {
+            public int $reads = 0;
+            public ?RuntimeException $failure = null;
+            public function getEffectiveModuleSlugs(int $organizationId): array
+            {
+                $this->reads++;
+                if ($this->failure !== null) { throw $this->failure; }
+                return ['project-management'];
+            }
+        };
+        $access = new AssistantDataAccessPolicy(app(AuthorizationService::class), app(UserProjectAccessService::class), $source);
+        $actor = $fixture->owner;
+        $organizationId = $fixture->organization->id;
+        foreach ([false, true] as $resolverFirst) {
+            $source->reads = 0;
+            $access->withCurrentChecks($actor, $organizationId,
+                function (AuthorizationService $authorization) use ($access, $actor, $organizationId, $resolverFirst): void {
+                    if ($resolverFirst) {
+                        self::assertTrue($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                    }
+                    self::assertNotNull($access->entityQuery($actor, $organizationId, 'project'));
+                    self::assertFalse($access->canReadDomain($actor, $organizationId, 'assistant'));
+                    self::assertTrue($authorization->canCurrent($actor, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+                }, true);
+            self::assertSame(1, $source->reads);
+        }
+
+        $failure = new RuntimeException('module_snapshot_probe');
+        $source->failure = $failure;
+        try {
+            $access->withCurrentChecks($actor, $organizationId,
+                fn () => $access->entityQuery($actor, $organizationId, 'project'), true);
+            self::fail('Expected original source exception');
+        } catch (RuntimeException $actual) {
+            self::assertSame($failure, $actual);
+        }
+        $source->failure = null;
+        $access->withCurrentChecks($actor, $organizationId, function () use ($access, $actor, $organizationId): void {
+            self::assertNotNull($access->entityQuery($actor, $organizationId, 'project'));
+            self::assertFalse($access->canReadDomain($actor, $organizationId, 'assistant'));
+        }, true);
+    }
+
+    public function test_nested_fresh_compiled_acl_rechecks_role_and_restores_outer_scope(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $access = app(AssistantDataAccessPolicy::class);
+        $actor = $fixture->owner;
+        $organizationId = $fixture->organization->id;
+        $access->withCurrentChecks($actor, $organizationId, function () use ($access, $fixture, $actor, $organizationId): void {
+            self::assertNotNull($access->entityQuery($actor, $organizationId, 'project'));
+            $fixture->ownerAssignment->update(['is_active' => false]);
+            self::assertNull($access->withCurrentChecks($actor, $organizationId,
+                fn () => $access->entityQuery($actor, $organizationId, 'project'), true));
+            self::assertNull($access->entityQuery($actor, $organizationId, 'project'));
+        });
+        self::assertNull($access->entityQuery($actor, $organizationId, 'project'));
     }
 
     public function test_fresh_nested_check_invalidates_outer_allow_after_role_revocation(): void

@@ -39,6 +39,7 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
         $authorization->shouldReceive('can')->andReturn(true);
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $moduleEntitlements = $this->mock(OrganizationEntitlementService::class);
         $moduleEntitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $moduleEntitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
         $moduleEntitlements->shouldReceive('getEffectiveModules')

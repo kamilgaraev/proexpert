@@ -581,7 +581,7 @@ final class AssistantDataAccessPolicy
             ApiQueryMetrics::recordAccessRead('policy_module_load', $this, null, $organizationId);
             $source = $this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class);
 
-            if ($this->batchIdentity === [(int) $user->id, $organizationId] && $this->aclCompiler === null) {
+            if ($this->batchIdentity === [(int) $user->id, $organizationId]) {
                 $modules = $this->currentAuthorization()->memoizedCurrentModuleSlugs($organizationId, $source);
                 if ($modules !== null) {
                     return $modules;
@@ -1184,6 +1184,20 @@ final class AssistantDataAccessPolicy
 
     public function entityQuery(User $user, int $organizationId, string $type): ?Builder
     {
+        return $this->entityQueryInternal($user, $organizationId, $type);
+    }
+
+    public function constructionJournalReferenceQuery(User $user, int $organizationId, int $projectId): ?Builder
+    {
+        if ($projectId < 1 || $this->batchIdentity !== [(int) $user->id, $organizationId]
+            || $this->aclCompiler !== null || $this->entityQueryPath !== []) { return null; }
+
+        return $this->compileAcl($user, $organizationId,
+            fn (): ?Builder => $this->entityQueryInternal($user, $organizationId, 'construction_journal', $projectId));
+    }
+
+    private function entityQueryInternal(User $user, int $organizationId, string $type, ?int $discoveryProjectId = null): ?Builder
+    {
         $this->currentCheckpoint?->__invoke();
         if ($this->aclCompiler !== null && ! $this->aclCompiler->accepts((int) $user->id, $organizationId)) { return null; }
         if (AssistantExtendedDomainRegistry::retrievalMode($type) === 'unavailable') { return null; }
@@ -1206,7 +1220,7 @@ final class AssistantDataAccessPolicy
         }
         $this->entityQueryPath[] = $type;
         try {
-            $build = fn (): ?Builder => $this->buildEntityQuery($user, $organizationId, $type);
+            $build = fn (): ?Builder => $this->buildEntityQuery($user, $organizationId, $type, discoveryProjectId: $discoveryProjectId);
             $query = count($this->entityQueryPath) === 1 ? ApiQueryMetrics::measureProcessingPhase('rag_acl_entity_build', $build, $type) : $build();
             if ($query === null) { return null; }
             $table = $query->getModel()->getTable();
@@ -1321,11 +1335,13 @@ final class AssistantDataAccessPolicy
             ->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns));
     }
 
-    private function constructionJournalQuery(Builder $query, User $user, int $organizationId): Builder
+    private function constructionJournalQuery(Builder $query, User $user, int $organizationId, ?int $discoveryProjectId = null): Builder
     {
-        $pairs = $this->rememberCurrent($user, $organizationId, 'construction-journal:visible-performers', function () use ($user, $organizationId): array {
+        $key = 'construction-journal:visible-performers'.($discoveryProjectId === null ? '' : ':project:'.$discoveryProjectId);
+        $pairs = $this->rememberCurrent($user, $organizationId, $key, function () use ($user, $organizationId, $discoveryProjectId): array {
             $projects = $this->accessibleProjects($user, $organizationId)->whereHas('journals')
                 ->select(['projects.id', 'projects.organization_id']);
+            if ($discoveryProjectId !== null) { $projects->whereKey($discoveryProjectId); }
             $rows = $this->finishAclDiscovery($projects, $projects->toBase())->useWritePdo()->get();
             $projects = Project::hydrate($rows->map(static fn ($row): array => (array) $row)->all());
             $participants = app(\App\Services\Project\ProjectParticipantService::class);
@@ -1355,7 +1371,7 @@ final class AssistantDataAccessPolicy
             .'AS journal_visibility(project_id bigint, performing_organization_id bigint))', [json_encode($pairs, JSON_THROW_ON_ERROR)]);
     }
 
-    private function buildEntityQuery(User $user, int $organizationId, string $type, bool $skipBusinessReferences = false): ?Builder
+    private function buildEntityQuery(User $user, int $organizationId, string $type, bool $skipBusinessReferences = false, ?int $discoveryProjectId = null): ?Builder
     {
         $definition = $this->entities()[$type] ?? null;
         if ($definition === null || ! $this->canReadDomain($user, $organizationId, $definition[2])) {
@@ -1441,7 +1457,7 @@ final class AssistantDataAccessPolicy
         if ($type === 'construction_journal') {
             if (in_array('deleted_at', $columns, true)) { $query->whereNull($table.'.deleted_at'); }
 
-            return $this->constructionJournalQuery($query, $user, $organizationId);
+            return $this->constructionJournalQuery($query, $user, $organizationId, $discoveryProjectId);
         }
         if ($type === 'site_request') {
             (new \App\BusinessModules\Features\SiteRequests\Models\SiteRequest)->scopeVisibleToActor($query, (int) $user->id);

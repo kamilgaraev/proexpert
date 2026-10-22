@@ -50,6 +50,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
             fn (User $actor, string $permission): bool => ! in_array($permission, $this->deniedPermissions, true)
         );
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());

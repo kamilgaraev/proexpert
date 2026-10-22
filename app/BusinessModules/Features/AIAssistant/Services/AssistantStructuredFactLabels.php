@@ -16,6 +16,9 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\QualityControl\Enums\QualityDefectSeverityEnum;
 use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Enums\Contract\ContractStatusEnum;
@@ -50,6 +53,9 @@ final class AssistantStructuredFactLabels
             'project_material_delivery.status' => ProjectMaterialDeliveryStatusEnum::tryFrom($value)?->label(),
             'quality_defect.status' => QualityDefectStatusEnum::tryFrom($value)?->label(),
             'quality_defect.severity' => QualityDefectSeverityEnum::tryFrom($value)?->label(),
+            'site_request.status' => SiteRequestStatusEnum::tryFrom($value)?->label(),
+            'site_request.priority' => SiteRequestPriorityEnum::tryFrom($value)?->label(),
+            'site_request.request_type' => self::siteRequestTypeLabel($value),
             'executive_document.status' => ExecutiveDocumentStatusEnum::tryFrom($value)?->label(),
             'executive_document.document_type' => ExecutiveDocumentTypeEnum::tryFrom($value)?->label(),
             default => null,
@@ -80,5 +86,13 @@ final class AssistantStructuredFactLabels
         }
 
         return $value;
+    }
+
+    private static function siteRequestTypeLabel(string $value): ?string
+    {
+        $type = SiteRequestTypeEnum::fromStoredValue($value);
+
+        return $type !== SiteRequestTypeEnum::OTHER || $value === SiteRequestTypeEnum::OTHER->value
+            ? $type->label() : null;
     }
 }

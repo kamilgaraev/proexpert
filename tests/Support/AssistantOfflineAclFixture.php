@@ -24,6 +24,8 @@ final class AssistantOfflineAclFixture
             {
                 $this->fake++;
                 if (str_contains($q,'authorization_contexts')) { return []; }
+                if (str_contains($q, 'select "projects"."id", "projects"."organization_id"')
+                    && str_contains($q, '"construction_journals"')) { return []; }
                 if (str_contains($q, ' AS permission_key') && str_contains($q, '"knowledge_articles"')) { return []; }
                 if (str_contains($q,'candidate_reports.candidate_refs')) {
                     return array_map(static fn (string $type): object => (object) ['entity_type' => $type], array_keys(P::entityDefinitions()));
@@ -52,8 +54,12 @@ final class AssistantOfflineAclFixture
         $cols=[];foreach(P::entityDefinitions()as$t=>$d){$m=new $d[1];$cols[$m->getTable()]=array_values(array_unique([...$m->getFillable(),...array_keys($m->getCasts()),...(R::values('safeSelectColumns')[$t]??[]),'id','organization_id']));}
         $a->instance('db.schema',new class($cols){function __construct(private $cols){}function hasColumn($t,$c){return true;}function getColumnListing($t){return $this->cols[$t]??['id','organization_id'];}});
         $au=Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);$au->shouldReceive('canCurrent')->andReturn(true);$au->shouldReceive('forCurrentChecks')->andReturnSelf();$au->shouldReceive('getUserRoles')->andReturn(collect());$a->instance(\App\Domain\Authorization\Services\AuthorizationService::class,$au);
+        $au->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $mo=Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);$mo->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $mo->getEffectiveModules($organizationId)->pluck('slug')->all());$mo->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant','project-management','reports','budget-estimates','contract-management','payments','procurement','site-requests'])->map(fn($s)=>(object)['slug'=>$s]));$a->instance(\App\Services\Entitlements\OrganizationEntitlementService::class,$mo);
         $pa=Mockery::mock(\App\Services\Project\UserProjectAccessService::class);$pa->shouldReceive('queryAccessibleProjects')->andReturnUsing(fn()=>\App\Models\Project::query()->where('organization_id',1));$a->instance(\App\Services\Project\UserProjectAccessService::class,$pa);
+        $participants = Mockery::mock(\App\Services\Project\ProjectParticipantService::class);
+        $participants->shouldReceive('getHierarchiesWithActivity')->andReturn([]);
+        $a->instance(\App\Services\Project\ProjectParticipantService::class, $participants);
         $fa=Mockery::mock(\App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeAccessContextFactory::class);$fa->shouldReceive('fromRequest')->andReturn(new \App\BusinessModules\Features\KnowledgeHub\DTOs\KnowledgeAccessContext(\App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::ADMIN,['all'],[],[],null,null,null,1,1));$a->instance(\App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeAccessContextFactory::class,$fa);
         $u=new \App\Models\User(['is_active'=>true,'current_organization_id'=>1]);$u->id=1;$p=new P($au,$pa,$mo);$a->instance(P::class,$p);
         $op=Mockery::mock();$op->shouldReceive('applyFileScope')->andReturnNull();$op->shouldReceive('constrainDocuments')->andReturnUsing(fn($q)=>$q->whereRaw('1=0'));$op->shouldReceive('applyDocumentScope')->andReturnNull();$op->shouldReceive('sourceQueryForActor')->andReturnUsing(fn()=>$c->table('files as native_source')->whereRaw('1=0'));$a->instance(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class,$op);

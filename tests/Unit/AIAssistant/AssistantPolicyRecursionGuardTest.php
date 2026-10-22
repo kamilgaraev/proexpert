@@ -18,6 +18,7 @@ final class AssistantPolicyRecursionGuardTest extends TestCase
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldNotReceive('canCurrent');
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService);
         $path = new ReflectionProperty($policy, 'entityQueryPath');
