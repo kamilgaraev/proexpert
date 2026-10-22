@@ -258,6 +258,35 @@ final class AssistantPurchaseOrderReportsTest extends TestCase
         self::assertSame([], array_values(array_filter($denied, static fn (array $hint): bool => $hint['entity_type'] === 'purchase_order')));
     }
 
+    public function test_physical_filters_limit_loaded_orders_before_virtual_supplier_filter(): void
+    {
+        $party = $this->party('Проверенный поставщик');
+        $wanted = $this->order(['supplier_party_id' => $party->id, 'delivery_date' => '2026-10-21']);
+        $virtualMismatch = $this->order(['supplier_party_id' => $party->id, 'delivery_date' => '2026-10-21',
+            'supplier_snapshot' => ['display_name' => 'Другой поставщик']]);
+        for ($index = 0; $index < 25; $index++) {
+            $this->order(['supplier_party_id' => $party->id, 'status' => 'delivered', 'delivery_date' => '2026-10-20']);
+        }
+        $this->order(['supplier_party_id' => $party->id, 'delivery_date' => '2026-10-22']);
+        $retrieved = [];
+        $dispatcher = Model::getEventDispatcher();
+        Model::setEventDispatcher(clone $dispatcher);
+        try {
+            PurchaseOrder::retrieved(static function (PurchaseOrder $order) use (&$retrieved): void {
+                $retrieved[] = $order->id;
+            });
+            $report = $this->build($this->section(['filters' => [
+                ['field' => 'status', 'operator' => 'eq', 'value' => 'in_delivery'],
+                ['field' => 'delivery_date', 'operator' => 'lt', 'value' => '2026-10-22'],
+                ['field' => 'supplier_name', 'operator' => 'eq', 'value' => 'Проверенный поставщик'],
+            ]]));
+        } finally {
+            Model::setEventDispatcher($dispatcher);
+        }
+        self::assertSame([$wanted->id], array_column($report['sections'][0]['rows'], 0));
+        self::assertSame([$wanted->id, $virtualMismatch->id], $retrieved);
+    }
+
     private function build(array $section, ?User $actor = null): array
     {
         return app(AssistantCustomReportBuilder::class)->build(['title' => 'Заказы закупки', 'format' => 'xlsx', 'sections' => [$section]],

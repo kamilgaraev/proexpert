@@ -101,7 +101,8 @@ final readonly class AssistantCustomReportBuilder
         $table = $model->getTable();
         $projection = $source['projection'] ?? null;
         foreach ($section['filters'] as $filter) {
-            $this->filter($projection !== null ? clone $query : $query, $table.'.'.$filter['field'], $source['fields'][$filter['field']], $filter);
+            $filterInSql = $projection === null || ($projection instanceof AssistantPurchaseOrderReportProjection && $filter['field'] !== 'supplier_name');
+            $this->filter($filterInSql ? $query : clone $query, $table.'.'.$filter['field'], $source['fields'][$filter['field']], $filter);
         }
         foreach ($section['order_by'] as $order) {
             if ($section['metrics'] === [] && $projection === null) {
