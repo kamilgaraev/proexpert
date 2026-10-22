@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Monitoring;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCollectorQueryContext;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceBatchQueryContext;
 use DateTimeInterface;
 use Illuminate\Database\Events\QueryExecuted;
 
@@ -39,6 +40,7 @@ final class SlowQueryContext
             'query_event_intervals' => self::safeEventIntervals($connectionState),
             'execution_context' => $this->tracing->executionContext(),
             'rag_collector' => RagCollectorQueryContext::current(),
+            'rag_source_batch' => RagSourceBatchQueryContext::current(),
             'source' => self::source(),
             ...$this->tracing->slowQueryTrace($query),
         ];
@@ -128,6 +130,7 @@ final class SlowQueryContext
             }
             if ($file !== __FILE__ && $relative !== 'app/Providers/AppServiceProvider.php'
                 && $relative !== 'app/BusinessModules/Features/AIAssistant/Services/Rag/RagCollectorQueryContext.php'
+                && $relative !== 'app/BusinessModules/Features/AIAssistant/Services/Rag/RagSourceBatchQueryContext.php'
                 && preg_match('#^(?:app/|database/|tests/|routes/|artisan$)#', $relative) === 1) {
                 return ['file' => $relative, 'line' => $frame['line'] ?? null];
             }

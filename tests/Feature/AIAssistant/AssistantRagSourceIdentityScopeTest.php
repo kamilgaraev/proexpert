@@ -329,17 +329,32 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $metrics = $this->streamingMetrics();
         $failure = new \RuntimeException('stop_after_first_real_batch');
         $executed = [];
+        $executionContexts = [];
+        $consuming = false;
+        DB::listen(static function () use (&$executionContexts, &$consuming): void {
+            if ($consuming) {
+                $executionContexts[] = \App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceBatchQueryContext::current();
+            }
+        });
         $compilationBeforeConsumer = null;
         try {
             $this->policy->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate, null, null,
-                static function ($batch) use (&$executed, &$compilationBeforeConsumer, $metrics, $failure): void {
+                static function ($batch) use (&$executed, &$compilationBeforeConsumer, &$consuming, $metrics, $failure): void {
                     $compilationBeforeConsumer = $metrics->summary()['processing_phases']['rag_acl_batch_compile'] ?? null;
-                    foreach ($batch->get() as $row) { $executed[$row->source_type] = (int) $row->stored_count; }
+                    $consuming = true;
+                    try {
+                        foreach ($batch->get() as $row) { $executed[$row->source_type] = (int) $row->stored_count; }
+                    } finally {
+                        $consuming = false;
+                    }
                     throw $failure;
                 });
             self::fail('consumer_exception_was_not_propagated');
         } catch (\RuntimeException $caught) { self::assertSame($failure, $caught); }
         self::assertSame(['file_document' => 1], $executed);
+        self::assertSame([['aggregation_ordinal' => 1, 'mode' => 'stored', 'phase' => 'source_batch_consume',
+            'source_types' => ['file_document'], 'entity_type' => null]], $executionContexts);
+        self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceBatchQueryContext::current());
         $summary = $metrics->summary();
         self::assertSame(1, $summary['processing_phases']['rag_acl_batch_compile']['count']);
         self::assertSame($compilationBeforeConsumer, $summary['processing_phases']['rag_acl_batch_compile']);

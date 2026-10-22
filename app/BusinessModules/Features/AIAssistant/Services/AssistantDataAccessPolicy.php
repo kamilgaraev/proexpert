@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceBatchQueryContext;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
@@ -795,7 +796,8 @@ final class AssistantDataAccessPolicy
                     $nextProcessingPhase(null);
                     if ($consume !== null) {
                         ApiQueryMetrics::measureRagSourceBatch($batchIdentities, $expectedProjection,
-                            static fn () => $consume($compiled[array_key_last($compiled)]));
+                            static fn () => (new RagSourceBatchQueryContext(count($compiled), $expectedProjection, $types, $entry['entity']))
+                                ->run(static fn () => $consume($compiled[array_key_last($compiled)])));
                     }
                 }
 
