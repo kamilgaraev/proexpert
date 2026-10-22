@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
 use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Support\ConfigurationUrlParser;
 use Illuminate\Support\Facades\Log;
@@ -84,19 +85,48 @@ final class AssistantStatusSnapshotDiagnostics
         }
     }
 
-    public static function expectedProjectionQuery(bool $collectProof, int $ordinal, float $elapsedMs, bool $completed): void
+    public static function expectedProjectionQuery(bool $collectProof, int $ordinal, float $elapsedMs, bool $completed, ?array $sourceTypeFilters = null, ?array $entityTypeFilters = null): void
     {
         if ($ordinal < 1 || $ordinal > 32 || ! is_finite($elapsedMs) || $elapsedMs < 500) { return; }
         try {
+            $definitions = AssistantEntityAccessCatalog::entityDefinitions();
+            $entities = array_fill_keys([...array_keys($definitions), 'assistant_document'], true);
+            $sources = ['file_document' => true];
+            foreach ($definitions as $entity => $definition) {
+                foreach (AssistantEntityAccessCatalog::indexedSourceTypes($entity, $definition[0]) as $source) { $sources[$source] = true; }
+            }
+            [$sourceFilters, $sourceComplete] = self::filterLabels($collectProof ? null : $sourceTypeFilters, $sources);
+            [$entityFilters, $entityComplete] = self::filterLabels($collectProof ? null : $entityTypeFilters, $entities);
             Log::channel('api_latency')->info('assistant_rag_expected_projection_query', [
                 'projection_mode' => $collectProof ? 'proof' : 'counts',
                 'query_ordinal' => $ordinal,
                 'query_elapsed_ms' => round($elapsedMs, 2),
                 'query_completed' => $completed,
                 'release_sha' => self::releaseSha(),
+                'source_type_filters' => $sourceFilters,
+                'source_type_filters_complete' => $sourceComplete,
+                'entity_type_filters' => $entityFilters,
+                'entity_type_filters_complete' => $entityComplete,
             ]);
         } catch (Throwable) {
         }
+    }
+
+    private static function filterLabels(?array $values, array $allowed): array
+    {
+        if ($values === null) { return [null, false]; }
+        $safe = [];
+        $complete = true;
+        $examined = 0;
+        foreach ($values as $value) {
+            if (++$examined > 128) { $complete = false; break; }
+            if (! is_string($value) || ! isset($allowed[$value])) { $complete = false; continue; }
+            if (isset($safe[$value])) { continue; }
+            if (count($safe) >= 32) { $complete = false; break; }
+            $safe[$value] = true;
+        }
+
+        return [array_keys($safe), $complete];
     }
 
     private static function releaseSha(): ?string
