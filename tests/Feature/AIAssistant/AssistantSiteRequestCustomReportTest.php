@@ -470,6 +470,41 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         self::assertFalse($metadata['degraded_mode']);
     }
 
+    public function test_file_request_preserves_a_fresh_empty_named_project_clarification(): void
+    {
+        $provider = $this->createMock(SiteRequestReportResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->method('isAvailable')->willReturn(true);
+        $provider->method('countTokens')->willReturn(100);
+        $provider->expects(self::never())->method('chat');
+        $calls = 0;
+        $provider->expects(self::exactly(4))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls): array {
+            $call = ['type' => 'function_call', 'id' => 'missing-project-report', 'status' => 'completed', 'call_id' => 'missing-project-report',
+                'name' => 'search_projects', 'arguments' => json_encode(['query' => 'Несуществующий объект', 'limit' => 10], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
+            $first = ++$calls === 1;
+
+            return ['content' => $first ? '' : 'Уточните название проекта.', 'output' => $first ? [$call] : [], 'function_calls' => $first ? [$call] : [],
+                'input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        });
+        $files = $this->createMock(FileService::class);
+        $files->expects(self::never())->method('putPrivate');
+        $this->app->instance(FileService::class, $files);
+        $org = $this->fixture->organization;
+        app(AICreditService::class)->grant($org, 100000, 'purchase', null, 'missing-project-report-'.Str::uuid());
+        $query = 'В проекте «Несуществующий объект» сделай CSV с полями название и статус.';
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false];
+        $payload['quote_id'] = app(AICreditService::class)->quote($org, $this->actor, $payload)['quote_id'];
+        $service = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null]);
+        $response = $service->ask($query, (int) $org->id, $this->actor, null, $payload);
+        $metadata = $response['message']['metadata'];
+        self::assertSame('generate_report', $metadata['telemetry']['request_understanding']['primary_intent']);
+        self::assertSame('csv', $metadata['telemetry']['request_understanding']['output_format']);
+        self::assertSame(trans_message('ai_assistant.project_search_no_matches'), $response['message']['content']);
+        self::assertTrue($metadata['needs_clarification']);
+        self::assertSame('partial', $metadata['validation_status']);
+        self::assertSame([], $metadata['artifacts']);
+    }
+
     private function project(string $name): Project
     {
         return Model::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => $name, 'is_archived' => false]));

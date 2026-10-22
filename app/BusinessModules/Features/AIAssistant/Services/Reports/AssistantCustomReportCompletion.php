@@ -44,9 +44,9 @@ final class AssistantCustomReportCompletion
             ? ['type' => 'function', 'function' => ['name' => 'generate_custom_report']] : null;
     }
 
-    public static function missingFile(array $plan, array $results, array $artifacts, array $controls): bool
+    public static function missingFile(array $plan, array $results, array $artifacts, array $controls, bool $serverNeedsClarification = false): bool
     {
-        if (! self::requiresFile($plan) || $artifacts !== [] || $controls !== []) {
+        if ($serverNeedsClarification || ! self::requiresFile($plan) || $artifacts !== [] || $controls !== []) {
             return false;
         }
         foreach ($results as $result) {

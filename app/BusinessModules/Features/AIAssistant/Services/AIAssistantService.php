@@ -1008,6 +1008,7 @@ class AIAssistantService
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
+            $reportServerClarification = false;
             if (! $imageDiscussion && $rawPresentationPlan === null && ! $rejectedFinancialPlan && $proposedActions === []
                 && ($structuredCheck['source_refs'] ?? []) === []) {
                 $emptyProjectSearch = $this->verifyEmptyNamedProjectSearch($query, $verificationToolResults, $user, $organizationId,
@@ -1015,6 +1016,7 @@ class AIAssistantService
                 if ($emptyProjectSearch !== null) {
                     $assistantContent = $emptyProjectSearch['text'];
                     $structuredCheck = $emptyProjectSearch;
+                    $reportServerClarification = (bool) ($emptyProjectSearch['needs_clarification'] ?? false);
                 }
             }
             if ($terminalToolResponse && ($structuredCheck['source_refs'] ?? []) === [] && $proposedActions === []
@@ -1248,7 +1250,7 @@ class AIAssistantService
                 $degradedMode = ! $validated;
             }
             $missingCustomReport = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::missingFile(
-                $taskPlan, $this->activeToolResults, $reportArtifacts, $reportControls
+                $taskPlan, $this->activeToolResults, $reportArtifacts, $reportControls, $reportServerClarification
             );
             if ($missingCustomReport) {
                 if ($this->requestOutcome === null) {

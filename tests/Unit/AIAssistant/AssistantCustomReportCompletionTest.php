@@ -94,6 +94,16 @@ final class AssistantCustomReportCompletionTest extends TestCase
         self::assertNull(AssistantCustomReportCompletion::toolChoice($forged, $tools, []));
     }
 
+    public function test_confirmed_server_clarification_survives_file_completion_guard(): void
+    {
+        $plan = $this->plan();
+        self::assertTrue(AssistantCustomReportCompletion::requiresFile($plan));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, [], [], [], true));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan,
+            [['_tool_name' => 'search_projects', 'status' => 'success', 'results' => []]], [], [], true));
+        self::assertTrue(AssistantCustomReportCompletion::missingFile($plan, [], [], [], false));
+    }
+
     private function plan(string $format = 'xlsx'): array
     {
         return ['request' => ['message' => 'Собери отчёт с полями название и статус'],
