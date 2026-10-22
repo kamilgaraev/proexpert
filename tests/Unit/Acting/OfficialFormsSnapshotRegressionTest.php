@@ -18,12 +18,26 @@ use ReflectionClass;
 
 final class OfficialFormsSnapshotRegressionTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
+        $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    }
+
+    protected function tearDown(): void
+    {
+        restore_error_handler();
+        restore_exception_handler();
+        parent::tearDown();
+    }
+
     public function test_ks2_uses_stored_vat_after_estimate_rate_changes(): void
     {
         $sheet = $this->renderItems('20.00');
 
-        self::assertEquals(20, $sheet->getCell('G4')->getValue());
-        self::assertEquals(120, $sheet->getCell('G5')->getValue());
+        self::assertEquals(20, $sheet->getCell('H4')->getValue());
+        self::assertEquals(120, $sheet->getCell('H5')->getValue());
         self::assertSame('02.01', $sheet->getCell('B2')->getValue());
     }
 
@@ -31,8 +45,8 @@ final class OfficialFormsSnapshotRegressionTest extends TestCase
     {
         $sheet = $this->renderItems('0.00');
 
-        self::assertEquals(0, $sheet->getCell('G4')->getValue());
-        self::assertEquals(120, $sheet->getCell('G5')->getValue());
+        self::assertEquals(0, $sheet->getCell('H4')->getValue());
+        self::assertEquals(120, $sheet->getCell('H5')->getValue());
     }
 
     public function test_subcontract_export_uses_frozen_contract_parties(): void
@@ -126,7 +140,7 @@ final class OfficialFormsSnapshotRegressionTest extends TestCase
         {
             public function __construct() {}
 
-            protected function ks3LineAggregates(ContractPerformanceAct $act): array
+            protected function ks3LineAggregates(ContractPerformanceAct $act, bool $preview = false): array
             {
                 return [
                     'lines' => [

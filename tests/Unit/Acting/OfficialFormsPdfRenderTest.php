@@ -66,8 +66,8 @@ final class OfficialFormsPdfRenderTest extends TestCase
         $data = $reflection->getMethod('prepareKS2Data')->invoke($service, $act, $contract);
         $sheet = (new \PhpOffice\PhpSpreadsheet\Spreadsheet)->getActiveSheet();
         $reflection->getMethod('setKS2Items')->invoke($service, $sheet, $act);
-        self::assertEquals(20, $sheet->getCell('G4')->getValue());
-        self::assertEquals(120, $sheet->getCell('G5')->getValue());
+        self::assertEquals(20, $sheet->getCell('H4')->getValue());
+        self::assertEquals(120, $sheet->getCell('H5')->getValue());
         [$text, $pages] = $this->render('estimates.exports.ks2', $data, 'ks2');
 
         self::assertSame(1, $pages);
