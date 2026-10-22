@@ -218,7 +218,7 @@ class OfficialFormsExportService
         $this->setKS6aFooter($sheet, $contract);
         $this->applyKS6aStyles($sheet);
 
-        $filename = 'KS6a_'.($contract->number ?: $contract->id).'.xlsx';
+        $filename = 'KS-6a_'.$this->filenameComponent((string) ($contract->number ?: $contract->id)).'.xlsx';
         $path = "exports/acts/ks6a/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
@@ -227,11 +227,12 @@ class OfficialFormsExportService
     public function exportKS6aToPdf(Contract $contract, ?string $periodStart = null, ?string $periodEnd = null): string
     {
         $data = $this->prepareKS6aData($contract, $periodStart, $periodEnd);
+        $data['documentGeneratedAt'] = $this->pdfGeneratedAt($contract);
         $pdf = Pdf::loadView('estimates.exports.ks6a', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
-        $filename = 'KS-6a_'.($contract->number ?: $contract->id).'.pdf';
+        $filename = 'KS-6a_'.$this->filenameComponent((string) ($contract->number ?: $contract->id)).'.pdf';
         $path = "exports/acts/ks6a/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $contract->organization);
