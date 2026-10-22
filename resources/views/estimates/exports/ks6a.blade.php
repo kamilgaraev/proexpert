@@ -68,7 +68,7 @@
         @include('pdf.partials.most-brand-styles')
         @page {
             size: A4 landscape;
-            margin: 6mm 7mm 7mm;
+            margin: 6mm 7mm 12mm;
         }
 
         body {
@@ -310,7 +310,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="header-area">
         <div class="top-note">
             <div>Унифицированная форма № КС-6а</div>
@@ -597,6 +597,5 @@
     </table>
     </div>
     @endforeach
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

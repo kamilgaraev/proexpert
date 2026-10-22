@@ -336,7 +336,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     {{-- Title --}}
     <div class="title">
         Локальный Сметный Расчет
@@ -490,6 +490,5 @@
         @endforeach
     </div>
 
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>
