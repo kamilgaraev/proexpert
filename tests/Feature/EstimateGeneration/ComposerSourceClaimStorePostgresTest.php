@@ -16,6 +16,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEst
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -199,6 +201,54 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame($newSources[0]->entityId, $refs[0]['entity_id']);
         self::assertSame([$newSources[0]->id], $refs[0]['document_fact_ids']);
         self::assertSame(2, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_optional_learning_source_filter_budget_does_not_undo_terminal_publication_or_retry_paid_usage(): void
+    {
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture();
+        $organization = Organization::query()->findOrFail($session->organization_id);
+        $project = Project::query()->findOrFail($session->project_id);
+        $ignoredDocument = EstimateGenerationDocument::query()->where('session_id', $session->id)->sole();
+        $this->publishBinarySource($session);
+        app(Documents\IgnoreEstimateGenerationDocument::class)->handle($session->fresh(), $ignoredDocument,
+            (int) $session->fresh()->state_version, 'Предыдущий источник исключён из текущего проекта.');
+        $session = $session->fresh();
+        $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $current = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $currentDocuments = array_values(array_filter($current->facts, static fn ($fact): bool => $fact->type === 'equipment_specification'));
+        self::assertCount(2, $currentDocuments);
+        self::assertNotContains($documents[0]->id, array_column($current->facts, 'id'));
+        $candidate = ['source_answer_fact_id' => $answer->id, 'entity_id' => $currentDocuments[0]->entityId,
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'Монтаж стендов'],
+            'unit' => null, 'document_fact_ids' => [$currentDocuments[0]->id]];
+        [$session, $operationId, $runId] = $this->paidReceipt('estimate-composer:answers:v2', [$candidate], true,
+            [$organization, $project, $actor, $session], false);
+        [$claim, $result] = $this->terminalFixture($actor, $session, $operationId, true);
+        $this->fillUnresolvedPlanningBudget($session, 10001);
+        $raw = $models->snapshotForUnderstanding(...[...$scope, 10001])['snapshot'];
+        self::assertCount(10001, $raw->facts);
+        self::assertContains($documents[0]->id, array_column($raw->facts, 'id'));
+        try {
+            $models->snapshotForPlanning(...[...$scope, 10001]);
+            self::fail('The actual limited planning snapshot did not report its source-filter budget.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('planning_source_filter_budget_exceeded', $exception->getMessage());
+        }
+        $usage = DB::table('estimate_generation_ai_usage')->where('organization_id', $organization->id)->get()->all();
+        $role = DB::table('estimate_generation_ai_role_runs')->where('id', $runId)->sole();
+        $store = app(Pipeline\PipelineCheckpointStore::class);
+        self::assertTrue($store->complete($claim, $result, new \DateTimeImmutable));
+        self::assertSame('input_review_required', $session->fresh()->status->value);
+        self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
+        self::assertSame('completed', DB::table('estimate_generation_pipeline_checkpoints')->where('id', $claim->checkpointId)->value('status'));
+        self::assertSame(0, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
+        $settled = $this->localCreditState((int) $organization->id);
+        self::assertFalse($store->complete($claim, $result, new \DateTimeImmutable));
+        self::assertSame($settled, $this->localCreditState((int) $organization->id));
+        self::assertEquals($usage, DB::table('estimate_generation_ai_usage')->where('organization_id', $organization->id)->get()->all());
+        self::assertEquals($role, DB::table('estimate_generation_ai_role_runs')->where('id', $runId)->sole());
         Http::assertNothingSent();
     }
 
@@ -425,7 +475,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [$session, $operationId, $claim->runId];
     }
 
-    private function terminalFixture(User $actor, EstimateGenerationSession $session, string $operationId): array
+    private function terminalFixture(User $actor, EstimateGenerationSession $session, string $operationId, bool $acquireCheckpoint = false): array
     {
         $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->sole();
         $session->forceFill(['status' => 'generating', 'input_payload' => [...$session->input_payload,
@@ -449,8 +499,68 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             dependencyVersions: [Pipeline\ProcessingStage::BuildDraft->value => $operation->source_version], creditOperationId: $operationId);
         $result = (new Pipeline\Stages\StageResultFactory(new Pipeline\InMemoryPipelineArtifactStore, Pipeline\PipelineDefinitionGraph::standard()))
             ->make($context, Pipeline\ProcessingStage::ValidateDraft, ['draft' => $draft, 'requires_review' => true]);
+        if ($acquireCheckpoint) {
+            $now = new \DateTimeImmutable;
+            DB::table('estimate_generation_pipeline_checkpoints')->insert([
+                'organization_id' => $context->organizationId, 'project_id' => $context->projectId, 'session_id' => $context->sessionId,
+                'generation_attempt_id' => $operationId, 'base_input_version' => $context->baseInputVersion,
+                'stage' => Pipeline\ProcessingStage::BuildDraft->value, 'input_version' => $context->baseInputVersion,
+                'dependency_versions' => '{}', 'output_version' => $context->dependencyVersions[Pipeline\ProcessingStage::BuildDraft->value],
+                'output_payload' => '{}', 'artifact_bytes' => 2, 'status' => 'completed', 'metrics' => '{}', 'warnings' => '[]',
+                'attempt_count' => 1, 'started_at' => $now, 'completed_at' => $now, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+
+            return [app(Pipeline\PipelineCheckpointStore::class)->claim($context, Pipeline\ProcessingStage::ValidateDraft,
+                $now, $now->modify('+5 minutes')), $result];
+        }
 
         return [Pipeline\CheckpointClaim::acquired($context, Pipeline\ProcessingStage::ValidateDraft, (string) Str::uuid()), $result];
+    }
+
+    private function fillUnresolvedPlanningBudget(EstimateGenerationSession $session, int $total): void
+    {
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $source = 'sha256:'.hash('sha256', 'source-claim-budget-fixture:'.$session->id);
+        $entity = new Entity('entity:zz-budget:template', ...[...$scope, $source, 'quantity', 'entity:zz-budget:template',
+            ['semantic_type' => 'quantity', 'identity' => ['input_field' => 'description']]]);
+        $fact = new Fact('fact:zz-budget:template', ...[...$scope, $source, $entity->id, 'evaluation_answer',
+            ['kind' => 'budget_context_fixture'], null, 0.0, 'unresolved', 'unresolved', []]);
+        app(ProjectModelRepository::class)->saveSourceModel([$entity], [$fact], []);
+        $query = static fn (string $table) => DB::table($table)->where('organization_id', $scope[0])
+            ->where('project_id', $scope[1])->where('session_id', $scope[2]);
+        $entityTemplate = (array) $query('estimate_generation_project_model_entities')->where('stable_key', $entity->id)->sole();
+        $factTemplate = (array) $query('estimate_generation_project_model_assertions')->where('stable_key', $fact->id)->sole();
+        $projectionTemplate = (array) $query('estimate_generation_project_model_fact_projections')->where('fact_id', $factTemplate['id'])->sole();
+        unset($entityTemplate['id'], $factTemplate['id'], $projectionTemplate['id']);
+        $remaining = $total - $query('estimate_generation_project_model_fact_projections')->where('is_current', true)->count();
+        self::assertGreaterThan(0, $remaining);
+        $entityRows = [];
+        for ($index = 0; $index < $remaining; $index++) {
+            $key = 'zz-budget:'.str_pad((string) $index, 6, '0', STR_PAD_LEFT);
+            $entityRows[] = [...$entityTemplate, 'stable_key' => 'entity:'.$key,
+                'payload' => json_encode(['kind' => 'quantity', 'key' => 'entity:'.$key,
+                    'semantic_type' => 'quantity', 'identity' => ['input_field' => 'description']], JSON_THROW_ON_ERROR)];
+        }
+        foreach (array_chunk($entityRows, 500) as $chunk) {
+            DB::table('estimate_generation_project_model_entities')->insert($chunk);
+        }
+        $entities = $query('estimate_generation_project_model_entities')->where('stable_key', 'like', 'entity:zz-budget:%')->pluck('id', 'stable_key');
+        $factRows = [];
+        foreach ($entityRows as $row) {
+            $factRows[] = [...$factTemplate, 'stable_key' => str_replace('entity:', 'fact:', $row['stable_key']), 'entity_id' => $entities[$row['stable_key']]];
+        }
+        foreach (array_chunk($factRows, 500) as $chunk) {
+            DB::table('estimate_generation_project_model_assertions')->insert($chunk);
+        }
+        $facts = $query('estimate_generation_project_model_assertions')->where('stable_key', 'like', 'fact:zz-budget:%')->pluck('id', 'stable_key');
+        $projections = [];
+        foreach ($entityRows as $row) {
+            $projections[] = [...$projectionTemplate, 'entity_stable_key' => $row['stable_key'],
+                'fact_id' => $facts[str_replace('entity:', 'fact:', $row['stable_key'])]];
+        }
+        foreach (array_chunk($projections, 500) as $chunk) {
+            DB::table('estimate_generation_project_model_fact_projections')->insert($chunk);
+        }
     }
 
     private function candidate(): array
