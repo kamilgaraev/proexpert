@@ -17,6 +17,7 @@ use App\Services\Storage\FileService;
 use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -435,6 +436,11 @@ final class WarehouseCustodyFlowTest extends TestCase
 
             try {
                 $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
+                $this->assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
+                $this->assertSame(1, $sheet->getPageSetup()->getFitToWidth());
+                $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+                $this->assertSame('A1:G2', $sheet->getPageSetup()->getPrintArea());
+                $this->assertSame('Последнее движение', $sheet->getCell('G1')->getValue());
                 $responsibleCell = str_contains($path, '/detail/') ? 'B2' : 'A2';
                 $this->assertSame('Владелец организации', $sheet->getCell($responsibleCell)->getValue());
                 $this->assertStringNotContainsString(
