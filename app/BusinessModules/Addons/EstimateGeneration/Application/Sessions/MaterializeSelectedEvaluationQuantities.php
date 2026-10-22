@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationSelectionVerifier;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\User;
+use Brick\Math\BigDecimal;
 use Illuminate\Validation\ValidationException;
 
 /** Converts explicitly accepted scenario values into the existing canonical quantity ledger, retaining their assumed origin. */
@@ -25,6 +27,17 @@ final readonly class MaterializeSelectedEvaluationQuantities
             throw ValidationException::withMessages(['scenario' => 'Разделите проект: предел фактов превышен.']);
         }
         $entities = array_column($snapshot->entities, null, 'id');
+        $facts = array_column($snapshot->facts, null, 'id');
+        $bindingIds = [];
+        foreach ($selected['scenario']['positions'] as $position) {
+            $id = $payload['quantity_selections'][$position['key']]['fact_id'] ?? null;
+            if (($position['quantity_status'] ?? null) === 'assumed' && is_string($id) && isset($facts[$id])) {
+                $bindingIds[] = $id;
+            }
+        }
+        $decisions = $bindingIds === [] ? [] : $this->models->decisionsForSelectedFacts((int) $session->organization_id,
+            (int) $session->project_id, (int) $session->id, array_values(array_unique($bindingIds)));
+        $decisionIndex = array_column($decisions, null, 'selectedFactId');
         $changed = false;
         foreach ($selected['scenario']['positions'] as $position) {
             if (($position['quantity_status'] ?? null) !== 'assumed') {
@@ -38,6 +51,19 @@ final readonly class MaterializeSelectedEvaluationQuantities
             $target = $entities[$position['entity_id'] ?? ''] ?? null;
             if ($target === null) {
                 throw ValidationException::withMessages(['scenario' => 'Подтвердите объект работы перед сохранением сценарного объёма.']);
+            }
+            $selection = $payload['quantity_selections'][$position['key']] ?? null;
+            $bindingId = is_array($selection) ? ($selection['fact_id'] ?? null) : null;
+            $binding = is_string($bindingId) ? ($facts[$bindingId] ?? null) : null;
+            $decision = $binding === null ? null : ($decisionIndex[$binding->id] ?? null);
+            $current = $binding === null || $decision === null ? null : (new DirectQuantityBinding)->source($snapshot, $binding, $decision);
+            if ($current !== null && ($selection['decision_id'] ?? null) === $decision->id
+                && ($binding->value['work_item_key'] ?? null) === $position['key']
+                && (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $selection, 'evaluation_answer',
+                    array_diff_key($binding->value, array_flip(['reason', 'decision_id'])))
+                && $current->origin === 'user_assumption' && $current->entityId === $target->id
+                && $current->unit === $normalized['unit'] && BigDecimal::of($current->value)->isEqualTo($normalized['value'])) {
+                continue;
             }
             $source = $this->numbers->write($actor, $session, $position['key'], $normalized['value'], $normalized['unit'], $reason, $requestId, true, $target);
             $selection = ['answer_kind' => 'direct_quantity', 'work_item_key' => $position['key'], 'quantity_key' => DirectQuantityBinding::key($position['key']),

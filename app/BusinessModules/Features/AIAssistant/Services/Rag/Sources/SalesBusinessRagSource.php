@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag\Sources;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantSalesBusinessMetadata;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCollectorQueryContext;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\Models\Project;
 use DateTimeInterface;
@@ -33,7 +34,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
         foreach ($this->entities() as $type => $definition) {
             $query = $this->collectionQuery($type, $organizationId, $projectId);
             $batchSize = array_intersect($definition['fields'], ['payload', 'source_snapshot', 'source_manifest', 'totals', 'preview_summary']) === [] ? 50 : 1;
-            foreach ($query->lazyById($batchSize) as $model) {
+            foreach ((new RagCollectorQueryContext($this->sourceType(), $type))->iterate($query->lazyById($batchSize)) as $model) {
                 yield $this->chunk($model, $type, $definition['fields'], $organizationId);
             }
         }

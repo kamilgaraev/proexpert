@@ -277,6 +277,113 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         Queue::assertNothingPushed();
     }
 
+    public function test_current_materialized_assumptions_reuse_their_signed_binding_without_new_history(): void
+    {
+        [$actor, $session, , $input] = $this->fixture();
+        Queue::fake();
+        app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $session->refresh();
+        $current = app(GetCurrentEvaluation::class)->handle($actor, (int) $session->project_id, (int) $session->id);
+        $selected = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEvaluationScenario)->select($current['result'], 'base');
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $before = $session->getRawOriginal();
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $counts = [];
+        foreach (['estimate_generation_project_model_assertions', 'estimate_generation_project_model_corrections'] as $table) {
+            $counts[$table] = DB::table($table)->where('session_id', $session->id)->count();
+        }
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            self::assertFalse(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\MaterializeSelectedEvaluationQuantities::class)
+                ->materialize($actor, $session, $selected, (string) Str::uuid(), $current['revision_id']));
+            self::assertSame($before, $session->fresh()->getRawOriginal());
+            self::assertSame($snapshot['token'], $models->snapshotForPlanning(...[...$scope, 10001])['token']);
+            foreach ($counts as $table => $count) {
+                self::assertSame($count, DB::table($table)->where('session_id', $session->id)->count());
+            }
+        }
+        Queue::assertNothingPushed();
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('materializerChanges')]
+    public function test_materializer_does_not_reuse_changed_or_unproven_quantity_bindings(string $change): void
+    {
+        [$actor, $session, , $input] = $this->fixture();
+        Queue::fake();
+        app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $session->refresh();
+        $current = app(GetCurrentEvaluation::class)->handle($actor, (int) $session->project_id, (int) $session->id);
+        $selected = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEvaluationScenario)->select($current['result'], 'base');
+        $selected['scenario']['positions'] = array_values(array_filter($selected['scenario']['positions'], static fn (array $position): bool => $position['key'] === 'preparation'));
+        self::assertCount(1, $selected['scenario']['positions']);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $before = $session->input_payload['quantity_selections']['preparation'];
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $facts = array_column($snapshot->facts, null, 'id');
+        $target = array_column($snapshot->entities, null, 'id')[$selected['scenario']['positions'][0]['entity_id']];
+        if ($change === 'value') {
+            $selected['scenario']['positions'][0]['quantity'] = '2';
+        } elseif ($change === 'unit') {
+            $selected['scenario']['positions'][0]['unit'] = 'count';
+        } elseif ($change === 'target') {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2],
+                (int) $session->fresh()->state_version, (string) Str::uuid(),
+                ['entities' => [['key' => 'materializer-second', 'type' => 'room', 'name' => 'Другая комната']]]);
+            $session->refresh();
+            $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+            $sources = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetRoomIdentitySources::class)
+                ->handle($actor, $scope[1], $scope[2], includeManual: true)['sources'];
+            $sources = array_values(array_filter($sources, static fn (array $source): bool => $source['name'] === 'Другая комната'));
+            self::assertCount(1, $sources);
+            $target = array_column($snapshot->entities, null, 'id')[$sources[0]['entity_id']];
+            $selected['scenario']['positions'][0]['entity_id'] = $target->id;
+        } elseif ($change === 'stale') {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserWorkQuantityFactWriter::class)
+                ->write($actor, $session, 'preparation', '2', 'm2', 'Пользователь изменил прежнее допущение объёма.', (string) Str::uuid(), true, $target);
+        } elseif ($change === 'revoked') {
+            $models->invalidateSourceVersion(...[...$scope, $facts[$before['fact_id']]->sourceVersion, 'sha256:'.hash('sha256', 'revoked-choice')]);
+        } elseif ($change === 'foreign') {
+            [$foreignActor, $foreign, , $foreignInput] = $this->fixture();
+            app(ConfirmEvaluationScenario::class)->handle($foreignActor, (int) $foreign->project_id, (int) $foreign->id, $foreignInput);
+            $payload = $session->input_payload;
+            $payload['quantity_selections']['preparation'] = $foreign->fresh()->input_payload['quantity_selections']['preparation'];
+            $session->update(['input_payload' => $payload]);
+        } elseif ($change === 'origin') {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2],
+                ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'work_item_key' => 'preparation',
+                    'value' => '1', 'unit' => 'm2', 'reason' => 'Пользователь вводит текущий объём без сценарного допущения.']);
+            $session->refresh();
+            $source = $models->fact(...[...$scope, $session->input_payload['quantity_selections']['preparation']['source_fact_id']]);
+            self::assertSame('user_input', $source->origin);
+        } elseif (in_array($change, ['payload', 'malformed'], true)) {
+            $payload = $session->input_payload;
+            if ($change === 'malformed') {
+                $payload['quantity_selections']['preparation']['fact_id'] = [];
+            } else {
+                $payload['quantity_selections']['preparation']['source_value_hash'] = str_repeat('0', 64);
+            }
+            $session->update(['input_payload' => $payload]);
+        }
+        $beforeReplacement = $session->fresh()->input_payload['quantity_selections']['preparation'];
+        self::assertTrue(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\MaterializeSelectedEvaluationQuantities::class)
+            ->materialize($actor, $session, $selected, (string) Str::uuid(), $current['revision_id']));
+        $selection = $session->fresh()->input_payload['quantity_selections']['preparation'];
+        self::assertNotSame($beforeReplacement['fact_id'], $selection['fact_id']);
+        $source = $models->fact(...[...$scope, $selection['source_fact_id']]);
+        self::assertSame('user_assumption', $source->origin);
+        self::assertSame($change === 'value' ? '2' : '1', $source->value);
+        self::assertSame($change === 'unit' ? 'count' : 'm2', $source->unit);
+        self::assertSame($target->id, $source->entityId);
+        self::assertSame([], $source->nativeNumericProofs);
+        Queue::assertNothingPushed();
+    }
+
+    public static function materializerChanges(): array
+    {
+        return array_map(static fn (string $change): array => [$change], ['value', 'unit', 'target', 'stale', 'revoked', 'foreign', 'origin', 'payload', 'malformed']);
+    }
+
     public function test_confirmation_is_a_real_free_choice_of_one_current_scenario_and_replays_once(): void
     {
         [$actor, $session, $catalog, $input] = $this->fixture();

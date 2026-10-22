@@ -59,6 +59,7 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->mergeCells('A5:G5');
         $sheet->setCellValue('A5', $org->legal_name ?? $org->name);
         $this->setUnderline($sheet, 'A5:G5');
+        $sheet->mergeCells('A6:G6');
         $sheet->setCellValue('A6', 'организация');
         $this->setCenter($sheet, 'A6:G6');
         $sheet->getStyle('A6')->getFont()->setSize(8);
