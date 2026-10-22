@@ -111,7 +111,7 @@ final readonly class AssistantCustomReportSource
                 $values = ['available', 'assigned', 'in_operation', 'maintenance', 'unavailable', 'archived', 'under_maintenance', 'out_of_service'];
             }
             if ($entityType === 'crm_deal' && $field === 'status') {
-                $values = ['open', 'won', 'lost', 'archived'];
+                $values = ['open', 'won', 'lost'];
             }
             if (is_string($cast) && enum_exists($cast) && is_subclass_of($cast, \BackedEnum::class)) {
                 $values = array_column($cast::cases(), 'value');
