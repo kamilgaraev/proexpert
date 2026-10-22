@@ -710,6 +710,14 @@ class AIAssistantService
                         $reportClarification = is_array($toolResult) && ($toolResult['needs_clarification'] ?? false) === true
                             ? $toolResult : null;
                     }
+                    if ($toolName === 'assistant_domain_discover_capabilities' && is_array($toolResult)
+                        && array_key_exists('selected_read_tools', $toolResult)) {
+                        $selection = AssistantReadToolCatalog::selection($this->toolRegistry->getToolNames(),
+                            $toolResult['selected_read_tools'], $this->toolEligibilityPolicy);
+                        $tools = $this->readPhase(fn (): array => $this->resolveToolDefinitions($taskPlan, $selection), $user, $organizationId);
+                        $options['tools'] = $tools;
+                        $toolResult['activated_read_tools'] = array_values(array_intersect($selection, array_column($tools, 'name')));
+                    }
                     $providerResult = $this->toolResultForProvider($toolName, $toolResult);
                     $toolContent = is_string($providerResult)
                         ? $providerResult
@@ -4132,13 +4140,17 @@ class AIAssistantService
         return $metadata;
     }
 
-    protected function resolveToolDefinitions(array $taskPlan): array
+    protected function resolveToolDefinitions(array $taskPlan, array $selectedReadTools = []): array
     {
         if ($this->isConversationNumberRequest($taskPlan)) {
             return [];
         }
         $metadataFrameActive = $this->preparationMetadataFrameActive;
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
+        if ($this->activeActor !== null && ! ($taskPlan['image_discussion'] ?? false)) {
+            $toolNames = array_values(array_unique([...$toolNames, ...AssistantReadToolCatalog::selection(
+                $this->toolRegistry->getToolNames(), $selectedReadTools, $this->toolEligibilityPolicy)]));
+        }
         if ($this->documentContextBlocked) {
             $toolNames = array_values(array_filter($toolNames,
                 static fn (string $toolName): bool => $toolName !== 'generate_rag_pdf_report'));

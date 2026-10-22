@@ -46,9 +46,20 @@ final class AssistantModelToolChoiceTest extends TestCase
         $plan = ['task_type' => 'find', 'capability' => ['id' => $capability],
             'request' => ['message' => $query, 'allow_actions' => false],
             'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray()];
-        $definitions = $class->getMethod('resolveToolDefinitions')->invoke($service, $plan);
+        $reachable = [];
+        foreach (array_chunk(array_slice($names, 0, 7), 3) as $selection) {
+            $definitions = $class->getMethod('resolveToolDefinitions')->invoke($service, $plan, $selection);
+            $advertised = array_column($definitions, 'name');
+            foreach ($selection as $name) {
+                self::assertContains($name, $advertised);
+            }
+            self::assertNotContains('search_users', $advertised);
+            self::assertNotContains('approve_payment_request', $advertised);
+            self::assertNotContains('generate_operational_pdf_report', $advertised);
+            $reachable = array_values(array_unique([...$reachable, ...$advertised]));
+        }
 
-        self::assertSame(array_slice($names, 0, 7), array_column(array_column($definitions, 'function'), 'name'));
+        self::assertSame([], array_values(array_diff(array_slice($names, 0, 7), $reachable)));
     }
 
     public static function requests(): iterable

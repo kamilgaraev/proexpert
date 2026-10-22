@@ -797,6 +797,65 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame('Правила проверки получены.', $response['message']['content']);
     }
 
+    public function test_discovery_activates_read_schema_for_next_model_call_without_keyword_route(): void
+    {
+        $service = $this->service([
+            'assistant_domain_discover_capabilities' => ['selected_read_tools' => ['get_project_safety_summary']],
+            'get_project_safety_summary' => ['status' => 'success'],
+        ], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_discover_capabilities')]],
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_project_safety_summary')]],
+            ['content' => 'Сведения получены.'],
+        ]);
+
+        $response = $service->ask('Помоги коллегам спокойно завершить смену.', 15, $this->actor(), 7);
+
+        self::assertCount(3, $this->providerCalls);
+        self::assertSame(2, $this->toolExecutions);
+        self::assertNotContains('get_project_safety_summary', array_column($this->providerCalls[0]['options']['tools'], 'name'));
+        self::assertContains('get_project_safety_summary', array_column($this->providerCalls[1]['options']['tools'], 'name'));
+        $outputs = array_values(array_filter($this->providerCalls[1]['messages'], static fn (array $item): bool => ($item['type'] ?? null) === 'function_call_output'));
+        self::assertSame(['get_project_safety_summary'], json_decode($outputs[0]['output'], true, 512, JSON_THROW_ON_ERROR)['activated_read_tools']);
+        self::assertSame('Сведения получены.', $response['message']['content']);
+    }
+
+    public function test_discovery_result_cannot_activate_report_mutation_or_unknown_tool(): void
+    {
+        $service = $this->service([
+            'assistant_domain_discover_capabilities' => ['selected_read_tools' => ['generate_custom_report', 'approve_payment_request', 'unknown_read']],
+            'generate_custom_report' => ['status' => 'success'],
+            'approve_payment_request' => ['status' => 'success'],
+        ], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_discover_capabilities')]],
+            ['content' => 'Нужны дополнительные сведения.'],
+        ]);
+
+        $service->ask('Помоги коллегам спокойно завершить смену.', 15, $this->actor(), 7);
+
+        self::assertSame(1, $this->toolExecutions);
+        self::assertSame(['assistant_domain_discover_capabilities'], array_column($this->providerCalls[1]['options']['tools'], 'name'));
+    }
+
+    public function test_discovered_read_is_denied_when_permission_is_revoked_before_execution(): void
+    {
+        $service = $this->service([
+            'assistant_domain_discover_capabilities' => ['selected_read_tools' => ['get_project_safety_summary']],
+            'get_project_safety_summary' => ['status' => 'success', 'secret' => 'FORBIDDEN_RESULT'],
+        ], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_discover_capabilities')]],
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_project_safety_summary')]],
+            ['content' => 'Нет доступа к дополнительным сведениям.'],
+        ], canExecuteTool: static fn (User $user, string $name): bool => $name !== 'get_project_safety_summary');
+
+        $service->ask('Помоги коллегам спокойно завершить смену.', 15, $this->actor(), 7);
+
+        self::assertSame(1, $this->toolExecutions);
+        self::assertContains('get_project_safety_summary', array_column($this->providerCalls[1]['options']['tools'], 'name'));
+        self::assertStringNotContainsString('FORBIDDEN_RESULT', json_encode($this->providerCalls[2]['messages'], JSON_THROW_ON_ERROR));
+        $outputs = array_values(array_filter($this->providerCalls[2]['messages'], static fn (array $item): bool => ($item['type'] ?? null) === 'function_call_output'));
+        self::assertArrayHasKey('error', json_decode($outputs[1]['output'], true, 512, JSON_THROW_ON_ERROR));
+    }
+
     public function test_verified_bim_answer_replaces_generic_freshness_warning_and_hides_internal_receipt(): void
     {
         $refs = [['entity_type' => 'design_artifact_version', 'entity_id' => 8, 'organization_id' => 15]];
@@ -1641,7 +1700,7 @@ final class AssistantToolFirstQualityTest extends TestCase
 
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
         ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null,
-        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true, array $toolSchemas = []): ToolFirstStubService
+        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true, array $toolSchemas = [], ?callable $canExecuteTool = null): ToolFirstStubService
     {
         $registry = new AIToolRegistry;
         foreach ($toolResults as $name => $result) {
@@ -1702,7 +1761,7 @@ final class AssistantToolFirstQualityTest extends TestCase
         $context->method('buildSystemPrompt')->willReturn('Помощник МОСТ.');
         $permissions = $this->createMock(AIPermissionChecker::class);
         $permissions->method('canUseAssistant')->willReturn(true);
-        $permissions->method('canExecuteTool')->willReturn(true);
+        $permissions->method('canExecuteTool')->willReturnCallback($canExecuteTool ?? static fn (): bool => true);
         $permissions->method('canExposeTool')->willReturn(true);
         $permissions->method('isMutationTool')->willReturn(false);
         $usage = $this->createMock(UsageTracker::class);

@@ -144,7 +144,9 @@ final class AssistantAuthorizationBatchTest extends TestCase
             $definition = new AssistantDomainDefinition('projects', 'project-management', 'project', ['projects.view'],
                 $fields, [], ['read'], '/projects/{id}', 'project', ['project'],
                 array_fill_keys($fields, 'finance.view_project_budget'));
-            $tool = new DiscoverAssistantDomainCapabilitiesTool(new AssistantDomainCatalog([$definition]), $access, $authorization);
+            $tool = new DiscoverAssistantDomainCapabilitiesTool(new AssistantDomainCatalog([$definition]), $access,
+                new \App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry, new AIPermissionChecker($authorization),
+                new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy);
             DB::flushQueryLog();
             DB::enableQueryLog();
             try {
