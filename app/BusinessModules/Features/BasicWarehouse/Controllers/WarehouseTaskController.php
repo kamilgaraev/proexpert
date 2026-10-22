@@ -534,9 +534,9 @@ class WarehouseTaskController extends Controller
             'planned_quantity' => $plannedQuantity,
             'completed_quantity' => $completedQuantity,
             'progress_percent' => $progressPercent,
-            'due_at' => optional($task->due_at)?->toDateTimeString(),
-            'started_at' => optional($task->started_at)?->toDateTimeString(),
-            'completed_at' => optional($task->completed_at)?->toDateTimeString(),
+            'due_at' => optional($task->due_at)?->toIso8601String(),
+            'started_at' => optional($task->started_at)?->toIso8601String(),
+            'completed_at' => optional($task->completed_at)?->toIso8601String(),
             'source_document_type' => $task->source_document_type,
             'source_document_id' => $task->source_document_id !== null ? (int) $task->source_document_id : null,
             'metadata' => $task->metadata ?? [],
@@ -601,8 +601,8 @@ class WarehouseTaskController extends Controller
                 'name' => $task->completedBy->name,
                 'email' => $task->completedBy->email,
             ] : null,
-            'created_at' => optional($task->created_at)?->toDateTimeString(),
-            'updated_at' => optional($task->updated_at)?->toDateTimeString(),
+            'created_at' => optional($task->created_at)?->toIso8601String(),
+            'updated_at' => optional($task->updated_at)?->toIso8601String(),
         ];
     }
 }
