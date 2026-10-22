@@ -32,6 +32,11 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
     {
         if (! $this->enabled()) { return []; }
         foreach ($this->entities() as $type => $definition) {
+            if ($this::class === ProcurementBusinessRagSource::class && $type === 'supply_reliability_row') {
+                $candidates = $definition['model']::query()->where('organization_id', $organizationId);
+                if ($projectId !== null) { $candidates->where('project_id', $projectId); }
+                if (! $candidates->exists()) { continue; }
+            }
             $query = $this->collectionQuery($type, $organizationId, $projectId);
             $batchSize = array_intersect($definition['fields'], ['payload', 'source_snapshot', 'source_manifest', 'totals', 'preview_summary']) === [] ? 50 : 1;
             foreach ((new RagCollectorQueryContext($this->sourceType(), $type))->iterate($query->lazyById($batchSize)) as $model) {
@@ -54,7 +59,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
 
     public static function scopedQuery(string $type, int $organizationId, ?int $projectId = null, bool $skipSelf = false, array $seen = []): Builder
     {
-        $scopes = in_array($type, ['purchase_receipt_return', 'supply_lifecycle_event', 'procurement_process_event', 'purchase_receipt_inventory_lot', 'supply_reliability_row'], true) && $seen === [] ? [] : null;
+        $scopes = in_array($type, ['purchase_receipt_return', 'supply_lifecycle_event', 'procurement_process_event', 'purchase_receipt_inventory_lot'], true) && $seen === [] ? [] : null;
         $query = self::buildScopedQuery($type, $organizationId, $projectId, $skipSelf, $seen, $scopes);
         if ($scopes === null || $scopes === []) {
             return $query;

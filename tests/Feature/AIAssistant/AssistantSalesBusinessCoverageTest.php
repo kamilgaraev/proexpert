@@ -296,7 +296,7 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
         self::assertSame([], [...$source->collectEntity($fixture->foreignOrganization->id, 'purchase_receipt_inventory_lot', $expected[0])]);
     }
 
-    public function test_supply_reliability_rows_shared_parent_scopes_preserve_legacy_pages_and_project_denials(): void
+    public function test_supply_reliability_rows_preserve_legacy_pages_and_project_denials(): void
     {
         $fixture = $this->fixture();
         $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
@@ -347,7 +347,49 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
             self::assertSame($project->id, $chunks[0]->projectId);
         }
         self::assertSame([], [...$source->collectEntity($fixture->foreignOrganization->id, 'supply_reliability_row', $expected[0])]);
-        self::assertLessThan(30000, strlen($collection->invoke($source, 'supply_reliability_row', $fixture->organization->id)->toSql()));
+        self::assertStringNotContainsString('AS MATERIALIZED', $collection->invoke($source, 'supply_reliability_row', $fixture->organization->id)->toSql());
+    }
+
+    public function test_empty_supply_row_collection_skips_parent_sql_and_rechecks_new_rows(): void
+    {
+        $fixture = $this->fixture();
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]);
+        $foreignEvent = $this->receiptEvent($fixture->foreignOrganization, $foreignProject, true);
+        $this->supplyRow($foreignEvent, $this->supplyRowSnapshot($fixture->foreignOrganization->id, null), $foreignProject->id);
+        $source = new ProcurementBusinessRagSource;
+        $connection = DB::connection();
+        $dispatcher = $connection->getEventDispatcher();
+        self::assertNotNull($dispatcher);
+        $rootQueries = [];
+        $connection->setEventDispatcher(clone $dispatcher);
+        $connection->listen(static function (\Illuminate\Database\Events\QueryExecuted $event) use (&$rootQueries): void {
+            if (str_contains($event->sql, '"supply_reliability_rows"')) {
+                $rootQueries[] = ['bytes' => strlen($event->sql), 'parents' => str_contains($event->sql, '"purchase_order_promise_versions"')];
+            }
+        });
+        try {
+            $chunks = [...$source->collectForOrganization($fixture->organization->id)];
+            self::assertSame([], array_values(array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'supply_reliability_row')));
+            self::assertCount(1, $rootQueries);
+            self::assertFalse($rootQueries[0]['parents']);
+            self::assertLessThan(500, $rootQueries[0]['bytes']);
+            $event = $this->receiptEvent($fixture->organization, $project, true);
+            $row = $this->supplyRow($event, $this->supplyRowSnapshot($fixture->organization->id, null), $project->id);
+            $rootQueries = [];
+            $chunks = [...$source->collectForOrganization($fixture->organization->id)];
+            $rows = array_values(array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'supply_reliability_row'));
+            self::assertCount(1, $rows);
+            self::assertSame($row, (int) $rows[0]->entityId);
+            self::assertTrue(in_array(true, array_column($rootQueries, 'parents'), true));
+            $rootQueries = [];
+            $chunks = [...$source->collectForOrganization($fixture->organization->id, $foreignProject->id)];
+            self::assertSame([], array_values(array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'supply_reliability_row')));
+            self::assertCount(1, $rootQueries);
+            self::assertFalse($rootQueries[0]['parents']);
+        } finally {
+            $connection->setEventDispatcher($dispatcher);
+        }
     }
 
     public function test_supply_reliability_row_current_project_and_role_revocation_remain_visible(): void
