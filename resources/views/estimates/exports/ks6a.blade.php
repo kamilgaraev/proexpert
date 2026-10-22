@@ -57,6 +57,7 @@
     $contractDate = $formatDate($contract->date ?? null);
     $contractAmount = (float) ($contract->total_amount ?? $contract->base_amount ?? $total_estimate_amount ?? 0);
     $letters = range('A', 'X');
+    $columnWidths = [3, 3, 17, 6, 4, 5, 5, 6, ...array_fill(0, 16, 3.1875)];
 @endphp
 <!DOCTYPE html>
 <html lang="ru">
@@ -251,6 +252,7 @@
             line-height: 1.02;
             padding: 0.6mm 0.5mm;
             vertical-align: middle;
+            overflow-wrap: anywhere;
         }
 
         .official-table th {
@@ -265,8 +267,16 @@
             page-break-inside: avoid;
         }
 
-        .month-page-continuation {
+        .month-page {
             page-break-before: always;
+        }
+
+        .column-widths td {
+            border: 0;
+            font-size: 0;
+            height: 0;
+            line-height: 0;
+            padding: 0;
         }
 
         .letter-row td,
@@ -428,7 +438,7 @@
         </div>
     </div>
 
-    @foreach($monthPages as $pageIndex => $pageMonths)
+    @foreach($monthPages as $pageMonths)
     @php
         $firstMonth = $pageMonths[0] ?? ['key' => null, 'title' => ''];
         $secondMonth = $pageMonths[1] ?? ['key' => null, 'title' => ''];
@@ -443,14 +453,14 @@
             return 0.0;
         };
     @endphp
-    <div class="month-page{{ $pageIndex > 0 ? ' month-page-continuation' : '' }}">
+    <div class="month-page">
     <table class="official-table">
-        <colgroup>
-            @for($col = 1; $col <= 24; $col++)
-                <col style="width: {{ $col === 3 ? '28mm' : '10mm' }};">
-            @endfor
-        </colgroup>
         <thead>
+            <tr class="column-widths">
+                @foreach($columnWidths as $width)
+                    <td style="width: {{ $width }}%;"></td>
+                @endforeach
+            </tr>
             <tr><td colspan="24">КС-6а. Договор № {{ $contract->number ?? '' }}. Объект: {{ $project->name ?? '' }}. Заказчик: {{ $customer_org->legal_name ?? $customer_org->name ?? '' }}. Подрядчик: {{ $contractor->name ?? '' }}.</td></tr>
             <tr class="letter-row">
                 @foreach($letters as $letter)
