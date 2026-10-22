@@ -16,6 +16,15 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_report_virtual_crm_fields_are_not_advertised_by_generic_domain_reads(): void
+    {
+        $definition = (new AssistantDomainCatalog(AssistantDomainCatalog::defaults()))->definition('crm');
+        self::assertNotNull($definition);
+        foreach (['company_name', 'owner_name', 'stage_label'] as $field) {
+            self::assertNotContains($field, $definition->fields);
+        }
+    }
+
     public function test_crm_report_column_list_does_not_create_a_named_project_scope(): void
     {
         $question = 'Собери CSV для контроля открытых сделок CRM по всей организации: название сделки, компания, этап, ответственный, проект и ожидаемая дата закрытия. Сделки без проекта тоже включи. Не ограничивайся выбранным проектом.';

@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Crm\Models\CrmCompany;
 use App\BusinessModules\Features\Crm\Models\CrmDeal;
 use App\BusinessModules\Features\Crm\Models\CrmPipeline;
 use App\BusinessModules\Features\Crm\Models\CrmPipelineStage;
+use App\BusinessModules\Features\Crm\Services\CrmDealReportReadService;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Credits\AICreditService;
@@ -20,6 +21,7 @@ use App\Services\Modules\PackageCatalogService;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
@@ -183,6 +185,33 @@ final class AssistantCrmDealReportsTest extends TestCase
         $actor = Model::withoutEvents(fn () => $this->fixture->addMember(['crm' => ['crm.view']]));
         $this->expectException(AccessDeniedHttpException::class);
         app(AssistantCustomReportSource::class)->resolve($actor, $this->fixture->organization->id, 'crm', 'crm_deal', null);
+    }
+
+    public function test_public_crm_report_reader_checks_actor_organization_permission_and_project_scope_itself(): void
+    {
+        $reader = app(CrmDealReportReadService::class);
+        $organizationId = $this->fixture->organization->id;
+        $denied = Model::withoutEvents(fn () => $this->fixture->addMember(['crm' => ['crm.view']]));
+        foreach ([[$denied, $organizationId], [$this->fixture->owner, $this->fixture->foreignOrganization->id]] as [$actor, $org]) {
+            try {
+                $reader->query($actor, $org, CrmDeal::query());
+                self::fail('The public CRM reader must enforce access independently of assistant/controller');
+            } catch (ModelNotFoundException) {
+                self::assertTrue(true);
+            }
+        }
+        $member = Model::withoutEvents(fn () => $this->fixture->addMember(['crm' => ['crm.view', 'crm.deals.view']]));
+        $rows = $reader->query($member, $organizationId, CrmDeal::query())->where('status', 'open')->get();
+        self::assertSame([$this->dealIds[1]], $rows->modelKeys());
+        self::assertSame('Компания заказчика', $rows[0]->getRawOriginal('company_name'));
+        foreach (['amount', 'currency', 'custom_fields', 'lost_reason'] as $field) {
+            self::assertArrayNotHasKey($field, $rows[0]->getRawOriginal());
+        }
+        $foreignRestriction = CrmDeal::query()->where('organization_id', $this->fixture->foreignOrganization->id);
+        self::assertSame(0, $reader->query($this->fixture->owner, $organizationId, $foreignRestriction)->count());
+        DB::table('organization_user')->where('organization_id', $organizationId)->where('user_id', $member->id)->update(['is_active' => false]);
+        $this->expectException(ModelNotFoundException::class);
+        $reader->query($member, $organizationId, CrmDeal::query());
     }
 
     public function test_exact_crm_question_generates_real_csv_with_projectless_deals_and_native_labels(): void

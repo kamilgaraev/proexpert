@@ -4,46 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
-use App\BusinessModules\Features\Crm\Models\CrmCompany;
-use App\BusinessModules\Features\Crm\Models\CrmPipelineStage;
-use App\Models\User;
+use App\BusinessModules\Features\Crm\Services\CrmDealReportReadService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 
 final class AssistantCrmDealReportProjection
 {
-    public const LABEL_FIELDS = ['company_name', 'owner_name', 'stage_label'];
+    public const LABEL_FIELDS = CrmDealReportReadService::LABEL_FIELDS;
 
-    public const HIDDEN_FIELDS = ['_report_crm_company_id', '_report_crm_owner_id', '_report_crm_stage_id', '_report_crm_pipeline_id'];
-
-    public function apply(Builder $deals, int $organizationId, array $columns): Builder
-    {
-        $model = $deals->getModel();
-        $table = $model->getTable();
-        $companies = CrmCompany::query()->where('crm_companies.organization_id', $organizationId)
-            ->whereColumn('crm_companies.organization_id', $table.'.organization_id')
-            ->whereColumn('crm_companies.id', $table.'.company_id')->limit(1);
-        $owners = User::query()->whereColumn('users.id', $table.'.owner_user_id')
-            ->whereHas('organizations', static fn ($organizations) => $organizations
-                ->where('organizations.id', $organizationId)->where('organization_user.is_active', true))->limit(1);
-        $stages = CrmPipelineStage::query()->join('crm_pipelines', 'crm_pipelines.id', '=', 'crm_pipeline_stages.pipeline_id')
-            ->whereColumn('crm_pipeline_stages.id', $table.'.stage_id')
-            ->whereColumn('crm_pipeline_stages.pipeline_id', $table.'.pipeline_id')
-            ->where('crm_pipelines.entity_type', 'deal')
-            ->where(static fn ($pipelines) => $pipelines->where('crm_pipelines.organization_id', $organizationId)->orWhereNull('crm_pipelines.organization_id'))->limit(1);
-        $stageLabel = (clone $stages)->select('crm_pipeline_stages.label');
-        $inner = (clone $deals)->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns))
-            ->selectSub((clone $companies)->select('crm_companies.name'), 'company_name')
-            ->selectSub((clone $companies)->select('crm_companies.id'), '_report_crm_company_id')
-            ->selectSub((clone $owners)->select('users.name'), 'owner_name')
-            ->selectSub((clone $owners)->select('users.id'), '_report_crm_owner_id')
-            ->selectSub((clone $stages)->select('crm_pipeline_stages.id'), '_report_crm_stage_id')
-            ->selectSub((clone $stages)->select('crm_pipeline_stages.pipeline_id'), '_report_crm_pipeline_id');
-        $grammar = $inner->getQuery()->getGrammar();
-        $inner->selectRaw('COALESCE(('.$stageLabel->toSql().'), '.$grammar->wrap($table.'.stage_code').') AS '.$grammar->wrap('stage_label'), $stageLabel->getBindings());
-
-        return $model->newModelQuery()->fromSub($inner, $table);
-    }
+    public const HIDDEN_FIELDS = CrmDealReportReadService::HIDDEN_FIELDS;
 
     public static function links(array $rows, array $fields): array
     {
