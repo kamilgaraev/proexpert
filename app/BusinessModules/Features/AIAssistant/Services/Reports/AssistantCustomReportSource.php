@@ -126,6 +126,10 @@ final readonly class AssistantCustomReportSource
         if ($entityType === 'time_entry' && isset($fields['hours_worked'])) {
             $query = (new AssistantTimeEntryReportProjection)->apply($query, array_keys($columnTypes));
         }
+        if ($entityType === 'safety_incident' && isset($fields['occurred_at'])) {
+            $fields['occurred_at']['label'] = trans_message('ai_custom_reports.incident_datetime_msk');
+            $query = (new AssistantSafetyIncidentReportProjection)->apply($query, array_keys($columnTypes));
+        }
         if ($entityType === 'warehouse_movement') {
             if (isset($fields['movement_date'])) {
                 $fields['movement_date']['label'] = trans_message('ai_custom_reports.movement_datetime_msk');

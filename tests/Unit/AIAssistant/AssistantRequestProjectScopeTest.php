@@ -16,6 +16,36 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_safety_incidents_organization_report_clears_selected_project_scope(): void
+    {
+        $question = 'Подготовь CSV по всем инцидентам охраны труда организации, включая закрытые и отменённые: номер, название, проект, тип, серьёзность, статус и дата происшествия. Не ограничивайся выбранным проектом.';
+        $scope = AssistantRequestProjectScope::fromPlan(['request' => ['message' => $question,
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => 102]]]]]);
+        $arguments = ['title' => 'Инциденты', 'format' => 'csv', 'sections' => [[
+            'title' => 'Инциденты', 'scope' => 'organization', 'domain' => 'safety', 'entity_type' => 'safety_incident',
+            'project_id' => 102, 'columns' => ['incident_number', 'title', 'project_id', 'incident_type', 'severity', 'status'],
+            'filters' => [], 'group_by' => [], 'metrics' => [], 'order_by' => [], 'row_limit' => 1000,
+        ]]];
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        self::assertFalse($scope->requested);
+        self::assertNull($scope->bindReportScope($question, $arguments)['sections'][0]['project_id']);
+    }
+
+    public function test_occupational_safety_record_inflections_preserve_real_project_restrictions(): void
+    {
+        foreach (['все инциденты охраны труда', 'всех инцидентов по охране труда', 'по всем происшествиям охраны труда',
+            'всеми происшествиями по охране труда'] as $records) {
+            $question = 'Подготовь CSV: '.$records.' организации. Не ограничивайся выбранным проектом.';
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => 52, 'filters' => []]]];
+            self::assertNull(AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments)['sections'][0]['project_id']);
+            self::assertFalse(AssistantRequestProjectScope::organizationWide('Не показывай '.$records.' организации.'), $records);
+            self::assertFalse(AssistantRequestProjectScope::organizationWide('Покажи '.$records.' организации по проекту 100.'), $records);
+        }
+        self::assertFalse(AssistantRequestProjectScope::organizationWide('Покажи все инциденты охраны труда.'));
+        self::assertFalse(AssistantRequestProjectScope::organizationWide('Сделай CSV проекта «Все инциденты охраны труда организации».'));
+    }
+
     public function test_supported_file_formats_preserve_comparison_scopes_and_search_requirements(): void
     {
         $comparison = 'Сравни все акты организации с актами проекта 100';
