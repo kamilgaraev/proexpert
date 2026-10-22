@@ -1327,6 +1327,7 @@ final class EstimateComposerTest extends TestCase
         $payload = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project'];
         self::assertSame($input->canonicalPayload(), $payload);
         self::assertStringContainsString('Не вычисляй и не возвращай цены', $messages[0]['content']);
+        self::assertStringNotContainsString('related_entity_ids', $messages[0]['content']);
         if ($answered) {
             self::assertStringContainsString('context_kind=composer_answer', $messages[0]['content']);
             self::assertStringContainsString('Это user_assumption, не независимое подтверждение', $messages[0]['content']);

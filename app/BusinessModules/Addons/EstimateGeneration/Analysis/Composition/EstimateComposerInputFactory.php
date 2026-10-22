@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
@@ -107,7 +108,9 @@ final readonly class EstimateComposerInputFactory
             }
             $decisions = array_values(array_filter($decisions, static fn (Decision $decision): bool => $decision->selectedFactId === null || isset($eligibleIds[$decision->selectedFactId])));
         }
-        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts): array {
+        $eligibleById = $answerContexts === [] ? [] : array_column($eligibleFacts, null, 'id');
+        $snapshotById = $answerContexts === [] ? [] : array_column($snapshot->facts, null, 'id');
+        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts, $eligibleById, $snapshotById): array {
             $entity = $entities[$fact->entityId] ?? null;
             $related = [];
             foreach (['room_id', 'wall_id', 'roof_id'] as $relation) {
@@ -121,7 +124,9 @@ final readonly class EstimateComposerInputFactory
             if (isset($answerContexts[$fact->id])) {
                 return [...$this->fact($fact), 'value' => ['kind' => 'composer_answer', 'answer' => $fact->value['other'],
                     'question_key' => $fact->value['question_key'], 'numeric_parameters_confirmed' => false],
-                    'entity_type' => $entity?->type, 'related_entity_ids' => [], 'context_kind' => 'composer_answer',
+                    'entity_type' => $entity?->type,
+                    'related_entity_ids' => $this->composerAnswerRelatedEntities($fact, $answerContexts[$fact->id], $snapshotById, $eligibleById, $entities, $evidence),
+                    'context_kind' => 'composer_answer',
                     'context_entity_id' => $answerContexts[$fact->id]['entity_id'], 'answer_work_sections' => $answerContexts[$fact->id]['work_sections']];
             }
             if ($fact->type === 'evaluation_answer' && $fact->origin === 'user_input' && $fact->status === 'confirmed'
@@ -180,6 +185,39 @@ final readonly class EstimateComposerInputFactory
         }
 
         return $input;
+    }
+
+    private function composerAnswerRelatedEntities(Fact $answer, array $context, array $facts, array $eligibleFacts, array $entities, array $evidence): array
+    {
+        $related = [];
+        foreach ($answer->value['composer_context']['dependencies'] as $dependency) {
+            $source = $facts[$dependency['fact_id']] ?? null;
+            if (! $source instanceof Fact || $source->origin !== 'document' || $source->status !== 'confirmed') {
+                continue;
+            }
+            $entity = $entities[$source->entityId] ?? null;
+            if ($entity === null) {
+                continue;
+            }
+            foreach ($source->evidenceIds as $id) {
+                if (($evidence[$id] ?? null)?->sourceType !== 'document') {
+                    return [];
+                }
+            }
+            $related[$source->entityId] ??= [];
+            if (count($related) > 1) {
+                return [];
+            }
+            $type = $entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type;
+            if (isset($eligibleFacts[$source->id]) && $source->unit === null && is_string($source->value) && trim($source->value) !== ''
+                && ($domain = FactVocabulary::documentDomain($source->type)) !== null
+                && is_string($type) && FactVocabulary::documentSupportsEntity($source->type, $type)) {
+                $related[$source->entityId][$domain] = true;
+            }
+        }
+        $entityId = array_key_first($related);
+
+        return $entityId !== null && array_intersect(array_keys($related[$entityId]), $context['work_sections']) !== [] ? [$entityId] : [];
     }
 
     /** @param array<string, mixed> $quantity @return array<string, mixed> */
