@@ -365,7 +365,7 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
         $connection->setEventDispatcher(clone $dispatcher);
         $connection->listen(static function (\Illuminate\Database\Events\QueryExecuted $event) use (&$rootQueries): void {
             if (str_contains($event->sql, '"supply_reliability_rows"')) {
-                $rootQueries[] = ['bytes' => strlen($event->sql), 'parents' => str_contains($event->sql, '"purchase_order_promise_versions"')];
+                $rootQueries[] = ['bytes' => strlen($event->sql), 'parents' => str_contains($event->sql, '"purchase_order_promise_versions"'), 'project_filter' => str_contains($event->sql, '"project_id" = ?')];
             }
         });
         try {
@@ -385,8 +385,9 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
             $rootQueries = [];
             $chunks = [...$source->collectForOrganization($fixture->organization->id, $foreignProject->id)];
             self::assertSame([], array_values(array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'supply_reliability_row')));
-            self::assertCount(1, $rootQueries);
-            self::assertFalse($rootQueries[0]['parents']);
+            self::assertFalse($rootQueries[0]['project_filter']);
+            self::assertCount(2, $rootQueries);
+            self::assertTrue(in_array(true, array_column($rootQueries, 'parents'), true));
         } finally {
             $connection->setEventDispatcher($dispatcher);
         }

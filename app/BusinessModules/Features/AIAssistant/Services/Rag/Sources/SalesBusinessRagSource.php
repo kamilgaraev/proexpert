@@ -34,7 +34,6 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
         foreach ($this->entities() as $type => $definition) {
             if ($this::class === ProcurementBusinessRagSource::class && $type === 'supply_reliability_row') {
                 $candidates = $definition['model']::query()->where('organization_id', $organizationId);
-                if ($projectId !== null) { $candidates->where('project_id', $projectId); }
                 if (! $candidates->exists()) { continue; }
             }
             $query = $this->collectionQuery($type, $organizationId, $projectId);
