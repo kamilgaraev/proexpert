@@ -1202,6 +1202,24 @@ final class AssistantRequestProjectScopeTest extends TestCase
         }
     }
 
+    public function test_projectless_inclusion_with_exclusive_pronoun_requires_a_null_only_filter(): void
+    {
+        foreach ([', и только их.', ', только их.', ' и только их.', '. И только их.', '; лишь их.', ', и исключительно их.'] as $ending) {
+            $question = 'Все документы организации. Учти документы без проекта'.$ending;
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null,
+                'filters' => [['field' => 'project_id', 'operator' => 'is_null', 'value' => null]]]]];
+            self::assertSame($arguments, $scope->bindReportScope($question, $arguments), $question);
+            try {
+                $arguments['sections'][0]['filters'] = [];
+                $scope->bindReportScope($question, $arguments);
+                self::fail('Exclusive projectless wording accepted all project documents: '.$question);
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
     public function test_negated_preposed_inclusion_does_not_drop_projectless_constraints(): void
     {
         $question = 'Все документы организации. Не включи документы без проекта.';
