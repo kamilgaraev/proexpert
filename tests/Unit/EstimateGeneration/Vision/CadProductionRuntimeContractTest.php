@@ -65,7 +65,7 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('MIT', $notice);
         self::assertStringContainsString('HPND', $notice);
         self::assertMatchesRegularExpression('/FROM alpine:3\.20@sha256:[a-f0-9]{64}/', $dockerfile);
-        self::assertMatchesRegularExpression('/FROM php:8\.2-cli-alpine@sha256:[a-f0-9]{64}/', $dockerfile);
+        self::assertMatchesRegularExpression('/FROM php:8\.2\.35-cli-alpine@sha256:[a-f0-9]{64}/', $dockerfile);
         self::assertStringNotContainsString('bubblewrap', $dockerfile);
         self::assertStringContainsString('--require-hashes', $dockerfile);
         self::assertStringContainsString('geometry-sandbox', $dockerfile);
