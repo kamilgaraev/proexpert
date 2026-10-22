@@ -88,6 +88,7 @@ final readonly class EstimatorCreditOperations
 
             $response = [...$payload, 'operation_id' => $request->operationId, 'state_version' => $stateVersion,
                 'operation_kind' => $kind, 'maximum_calls' => $request->maximumCalls, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna',
+                'approved_work_item_limit' => $kind === 'generation' ? FrozenWorkItemLimit::fromPlan($plan) : null,
                 'available_units_minor' => $balance['available_minor'],
                 'reconciliation_held_units_minor' => $balance['reconciliation_held_minor'],
                 'provider_budget' => [
@@ -139,30 +140,39 @@ final readonly class EstimatorCreditOperations
             throw new DomainException('estimator_credit_quote_not_approved');
         }
         $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
-        if (CanonicalPipelineJson::encode($plan['operation_parameters'] ?? []) !== CanonicalPipelineJson::encode($this->parameters($session, $kind, $parameters))) {
+        $capacity = $kind === 'generation' && array_key_exists('max_work_items', $plan['operation_parameters'] ?? []);
+        if ($capacity) {
+            $approvedParameters = $this->parameters($session, $kind, $plan['operation_parameters']);
+            if ($parameters !== [] || FrozenWorkItemLimit::fromPlan($plan) !== $approvedParameters['max_work_items']) {
+                throw new DomainException('estimator_credit_operation_parameters_changed');
+            }
+        } elseif (CanonicalPipelineJson::encode($plan['operation_parameters'] ?? []) !== CanonicalPipelineJson::encode($this->parameters($session, $kind, $parameters))) {
             throw new DomainException('estimator_credit_operation_parameters_changed');
         }
         if ($operation->status !== 'quoted') {
             return (string) $operation->operation_id;
         }
-        app(EstimatorDocumentCostAllocation::class)->validate($session, $plan);
-        if ((int) $session->state_version !== $stateVersion || ! hash_equals($operation->input_hash, $this->inputs->fromSession($session))) {
-            throw new StaleEstimateGenerationState((int) $session->id, $stateVersion);
-        }
-        if (isset($plan['known_context']) && is_array($plan['known_context'])) {
-            $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::legacyCapture(),
-                $plan['operation_parameters']['local_estimate_key'] ?? null, $plan['known_context']['role_limits'] ?? null);
-            if (! hash_equals((string) $plan['known_context']['fingerprint'], $current['fingerprint'])) {
-                throw new DomainException('estimator_known_context_changed');
+        if ($capacity) {
+            $request = $this->replayRequest($actor, $session, $operation, $kind, $approvedParameters);
+        } else {
+            app(EstimatorDocumentCostAllocation::class)->validate($session, $plan);
+            if ((int) $session->state_version !== $stateVersion || ! hash_equals($operation->input_hash, $this->inputs->fromSession($session))) {
+                throw new StaleEstimateGenerationState((int) $session->id, $stateVersion);
             }
+            if (isset($plan['known_context']) && is_array($plan['known_context'])) {
+                $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::legacyCapture(),
+                    $plan['operation_parameters']['local_estimate_key'] ?? null, $plan['known_context']['role_limits'] ?? null);
+                if (! hash_equals((string) $plan['known_context']['fingerprint'], $current['fingerprint'])) {
+                    throw new DomainException('estimator_known_context_changed');
+                }
+            }
+            $request = $this->request(json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR));
         }
-        $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
         if (isset($plan['retained_pipeline_prefix'])) {
             app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class)
                 ->assertCurrent($session, $plan['retained_pipeline_prefix'], $plan['known_context'], (int) $actor->id);
             app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan, 'quote_id');
         }
-        $request = $this->request($identity);
         app(EstimatorGenerationCycleBudget::class)->assertFits($kind, $plan, 'quote_id');
         $qaGuard->assertReservationBudget($plan, (int) $quote->max_units_minor);
         $reservation = $this->credits->beginEstimator(Organization::query()->findOrFail($session->organization_id), $actor, $quoteId, $request);
@@ -195,7 +205,16 @@ final readonly class EstimatorCreditOperations
         $complex = count($manifest) > 1 || ($session->input_payload['profile_id'] ?? null) === 'industrial';
         $known = in_array($kind, ['documents', 'dialogue'], true) ? null : $this->knownInputs->capture($session, $complex,
             localEstimateKey: $parameters['local_estimate_key'] ?? null);
-        $workItems = max($workItems + ($known['equipment_work_scope']['expansion_delta'] ?? 0), $known['known_work_count'] ?? 0);
+        if (isset($parameters['max_work_items'])) {
+            $minimum = max(1, ($known['draft_context_status'] ?? null) === 'current' ? ($known['known_work_count'] ?? 0) : 0,
+                $known['equipment_work_scope']['operation_count'] ?? 0);
+            if ($parameters['max_work_items'] < $minimum) {
+                throw new DomainException('estimator_credit_work_capacity_invalid');
+            }
+            $workItems = $parameters['max_work_items'];
+        } else {
+            $workItems = max($workItems + ($known['equipment_work_scope']['expansion_delta'] ?? 0), $known['known_work_count'] ?? 0);
+        }
         $plan = $this->plans->build($kind, $rasterUnits, $workItems, $complex, $tariff,
             ($session->input_payload['regional_context']['normative_rerank_requested'] ?? null) === true, $known['part_limits'] ?? []);
         if ($known !== null) {
@@ -319,6 +338,17 @@ final readonly class EstimatorCreditOperations
 
     private function parameters(EstimateGenerationSession $session, string $kind, array $parameters): array
     {
+        if ($kind === 'generation' && $parameters !== []) {
+            if (array_keys($parameters) !== ['max_work_items']) {
+                throw new DomainException('estimator_credit_operation_parameters_invalid');
+            }
+            $limit = $parameters['max_work_items'];
+            if (! is_int($limit) || $limit < 1 || $limit > FrozenWorkItemLimit::MAX_WORK_ITEMS) {
+                throw new DomainException('estimator_credit_work_capacity_invalid');
+            }
+
+            return ['max_work_items' => $limit];
+        }
         if ($kind === 'dialogue') {
             $command = $parameters['command'] ?? null;
             $key = $parameters['idempotency_key'] ?? null;

@@ -10,6 +10,8 @@ use InvalidArgumentException;
 /** A scoped, frozen ceiling. No mutable counter is shared between operations. */
 final class FrozenWorkItemLimit
 {
+    public const MAX_WORK_ITEMS = 512;
+
     public const EXCEEDED = 'estimate_work_items_exceed_approved_plan';
 
     public static function forOperation(int $organizationId, int $projectId, int $sessionId, ?string $operationId): ?int
@@ -35,7 +37,7 @@ final class FrozenWorkItemLimit
         }
         $limit = $plan['work_item_limit'] ?? null;
         if ($version !== 'estimator-processing-plan:v2' || ($plan['work_ceiling_policy'] ?? null) !== 'global_work_items:v1'
-            || ! is_int($limit) || $limit < 0 || $limit > 512
+            || ! is_int($limit) || $limit < 0 || $limit > self::MAX_WORK_ITEMS
             || (isset($plan['roles']['estimate_audit']) && (! is_int($plan['audit_part_limit'] ?? null)
                 || $plan['audit_part_limit'] < max(1, $limit)))) {
             throw new InvalidArgumentException('estimate_work_approved_plan_invalid');

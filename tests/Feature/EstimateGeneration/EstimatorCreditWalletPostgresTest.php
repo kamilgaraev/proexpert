@@ -6,6 +6,7 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
@@ -29,6 +30,336 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_explicit_generation_capacity_cannot_reserve_unknown_foreign_or_changed_sources(): void
+    {
+        foreach (['unknown_quote', 'foreign_actor', 'input', 'source_bytes', 'manifest', 'known_context', 'expired'] as $change) {
+            [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(0);
+            $document = in_array($change, ['source_bytes', 'manifest'], true) ? $this->equipmentProfileDocument($scope, $actor, 'scope.pdf', 'План офиса') : null;
+            $id = (string) Str::uuid();
+            $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation', ['max_work_items' => 2]);
+            $quoteId = $quote['quote_id'];
+            $caller = $actor;
+            $expected = match ($change) {
+                'unknown_quote', 'foreign_actor' => 'estimator_credit_quote_not_approved',
+                'manifest' => 'estimator_credit_manifest_changed',
+                'known_context' => 'estimator_known_context_changed',
+                'expired' => 'AI credit quote is invalid or expired.',
+                default => null,
+            };
+            if ($change === 'unknown_quote') {
+                $quoteId = (string) Str::uuid();
+            } elseif ($change === 'foreign_actor') {
+                $caller = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+                $caller->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+            } elseif ($change === 'input') {
+                $session->update(['input_payload' => [...$session->input_payload, 'description' => 'Changed source description']]);
+            } elseif ($change === 'source_bytes') {
+                $document->update(['checksum_sha256' => hash('sha256', 'changed source bytes')]);
+            } elseif ($change === 'manifest') {
+                $document->processingUnits()->sole()->update(['metadata' => ['processing_attempt_id' => (string) Str::uuid()]]);
+            } elseif ($change === 'known_context') {
+                $this->saveKnownQuoteFact($scope, 1, 'New source room');
+            } else {
+                $this->travel(1)->days();
+            }
+            try {
+                DB::transaction(fn () => $operations->begin($caller, $session, 0, $id, $quoteId, 'generation'));
+                self::fail('An unrelated or stale quote reserved a hold: '.$change);
+            } catch (\DomainException|\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState $error) {
+                if ($expected === null) {
+                    self::assertInstanceOf(\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState::class, $error);
+                } else {
+                    self::assertSame($expected, $error->getMessage(), $change);
+                }
+            } finally {
+                $this->travelBack();
+            }
+            self::assertSame('quoted', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
+            self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+            self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+            self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        }
+    }
+
+    public function test_explicit_generation_capacity_customer_pricing_drift_matches_default_and_supplier_drift_stays_pre_wire(): void
+    {
+        $catalog = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPricingCatalog::class);
+        foreach ([[], ['max_work_items' => 2]] as $parameters) {
+            [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(0);
+            $this->saveKnownQuoteFact($scope, 1, 'Quoted room');
+            $id = (string) Str::uuid();
+            $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation', $parameters);
+            $before = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+            $identity = json_decode($before->credit_request, true, 64, JSON_THROW_ON_ERROR);
+            config(['ai-assistant-credits.price_version' => $quote['price_version'] + 1,
+                'ai-assistant-credits.rub_per_unit' => 9.99, 'estimate-generation.estimate_composer.max_input_bytes' => 1]);
+            self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+            $stored = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+            $reservation = DB::table('ai_credit_reservations')->where('id', $stored->reservation_id)->sole();
+            self::assertSame($quote['max_units_minor'], (int) $reservation->reserved_minor);
+            self::assertSame($quote['price_version'], (int) DB::table('ai_credit_quotes')->where('id', $stored->quote_id)->value('price_version'));
+            self::assertSame($before->processing_plan, $stored->processing_plan);
+            self::assertSame($before->credit_request, $stored->credit_request);
+            $changed = $identity['supplier_tariff'];
+            $changed['version'] = 'changed-after-capacity-quote';
+            $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPricingCatalog::class,
+                new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiPricingCatalog([
+                    'estimate_composition' => ['timeweb' => ['openai/gpt-6-luna' => [$changed]]],
+                ]));
+            try {
+                DB::transaction(fn () => app(EstimatorCreditAttemptAdmission::class)->admit($id, (string) Str::uuid(),
+                    $scope->organizationId, $scope->projectId, $scope->sessionId, 'estimate_composition', new AiCost('0.000001', 'RUB', 'available')));
+                self::fail('Changed supplier pricing reached a physical attempt.');
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $error) {
+                self::assertSame('estimator_credit_supplier_tariff_changed', $error->reason);
+            } finally {
+                $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPricingCatalog::class, $catalog);
+                config(['estimate-generation.estimate_composer.max_input_bytes' => 524288]);
+            }
+            self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->count());
+            self::assertSame('reserved', DB::table('ai_credit_reservations')->where('id', $reservation->id)->value('status'));
+            self::assertGreaterThan(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+            DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                ->abort($session, $id));
+            self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+        }
+    }
+
+    public function test_explicit_generation_capacity_counts_only_current_saved_work_topology(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $old = $this->saveKnownQuoteFact($scope, 1, 'Original room');
+        $draft = ['local_estimates' => [['key' => 'local:1', 'sections' => [['key' => 'section:1', 'work_items' => array_map(
+            static fn (int $index): array => ['key' => 'work:'.$index, 'item_type' => 'priced_work', 'name' => 'Work '.$index,
+                'unit' => 'm2', 'quantity' => null, 'source_refs' => [['fact_id' => $old->id]]], [1, 2, 3]),
+        ]]]]];
+        $draft['source_input_version'] = $scope->sourceVersion;
+        $draft['quality_summary'] = ['content_version' => \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot::contentVersion($draft),
+            'review_items' => \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot::create($draft, [])];
+        $session->update(['draft_payload' => $draft]);
+        try {
+            $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), 'generation', ['max_work_items' => 2]);
+            self::fail('The capacity excluded current known work rows.');
+        } catch (\DomainException $error) {
+            self::assertSame('estimator_credit_work_capacity_invalid', $error->getMessage());
+        }
+        $currentId = (string) Str::uuid();
+        self::assertSame(3, $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $currentId, 'generation', ['max_work_items' => 3])['approved_work_item_limit']);
+        $new = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:quote-1:rev2',
+            $scope->organizationId, $scope->projectId, $scope->sessionId, $old->sourceVersion, $old->entityId, 'room_name',
+            'Updated room', null, 0.0, 'user_assumption', 'confirmed', [], 2, $old->id);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class)->saveSourceModel([], [$new], []);
+        $staleId = (string) Str::uuid();
+        self::assertSame(1, $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $staleId, 'generation', ['max_work_items' => 1])['approved_work_item_limit']);
+        $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $staleId)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame('recomposition_required', $plan['known_context']['draft_context_status']);
+        self::assertSame(3, $plan['known_context']['known_work_count']);
+        self::assertSame(1, $plan['work_item_limit']);
+        self::assertSame(CanonicalPipelineJson::encode($draft), CanonicalPipelineJson::encode($session->fresh()->draft_payload));
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+    }
+
+    public function test_explicit_generation_capacity_rejects_nonintegers_and_other_operation_kinds_without_a_quote(): void
+    {
+        [$organization, $actor, $scope, , $operations] = $this->equipmentQuoteFixture(0);
+        foreach ([0, -1, 513, '2', 2.0, true, null, [], ['value' => 2]] as $limit) {
+            try {
+                $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), 'generation', ['max_work_items' => $limit]);
+                self::fail('A noninteger or out-of-range capacity was quoted.');
+            } catch (\DomainException $error) {
+                self::assertSame('estimator_credit_work_capacity_invalid', $error->getMessage());
+            }
+        }
+        foreach (['analysis', 'documents'] as $kind) {
+            try {
+                $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), $kind, ['max_work_items' => 2]);
+                self::fail('A nongeneration operation accepted a generation capacity.');
+            } catch (\DomainException $error) {
+                self::assertSame('estimator_credit_operation_parameters_invalid', $error->getMessage());
+            }
+        }
+        self::assertSame(0, DB::table('ai_credit_quotes')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $scope->sessionId)->count());
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+        self::assertNull($operations->quote($actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), 'analysis')['approved_work_item_limit']);
+    }
+
+    public function test_explicit_generation_capacity_controller_preserves_json_integer_validation(): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(0);
+        $controller = app(\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationCreditController::class);
+        $project = Project::query()->findOrFail($scope->projectId);
+        foreach (['2', 2.0, true, null, 0, 513] as $limit) {
+            $request = \Illuminate\Http\Request::create('/quote', 'POST', [], [], [], ['CONTENT_TYPE' => 'application/json'],
+                json_encode(['request_id' => (string) Str::uuid(), 'state_version' => 0, 'operation_kind' => 'generation',
+                    'operation_parameters' => ['max_work_items' => $limit]], JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION));
+            $request->setUserResolver(static fn (): User => $actor);
+            try {
+                $controller->quote($request, $project, $session, $operations);
+                self::fail('The controller accepted a coerced JSON capacity.');
+            } catch (\Illuminate\Validation\ValidationException $error) {
+                self::assertArrayHasKey('operation_parameters.max_work_items', $error->errors());
+            }
+        }
+        self::assertSame(0, DB::table('ai_credit_quotes')->where('organization_id', $organization->id)->count());
+
+        $request = \Illuminate\Http\Request::create('/quote', 'POST', [], [], [], ['CONTENT_TYPE' => 'application/json'],
+            json_encode(['request_id' => (string) Str::uuid(), 'state_version' => 0, 'operation_kind' => 'generation',
+                'operation_parameters' => ['max_work_items' => 2]], JSON_THROW_ON_ERROR));
+        $request->setUserResolver(static fn (): User => $actor);
+        $response = $controller->quote($request, $project, $session, $operations);
+        $body = json_decode($response->getContent(), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(200, $response->getStatusCode());
+        self::assertTrue($body['success']);
+        self::assertSame(2, $body['data']['approved_work_item_limit']);
+        self::assertTrue($response->headers->hasCacheControlDirective('private'));
+        self::assertTrue($response->headers->hasCacheControlDirective('no-store'));
+        self::assertSame(1, DB::table('ai_credit_quotes')->where('organization_id', $organization->id)->count());
+
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->expects('canCurrent')->once()->withArgs(static fn (User $user, string $permission, array $context): bool =>
+            $user->id === $actor->id && $permission === 'estimate_generation.generate'
+            && $context === ['organization_id' => $scope->organizationId, 'project_id' => $scope->projectId])->andReturn(false);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $denied = \Illuminate\Http\Request::create('/quote', 'POST', [], [], [], ['CONTENT_TYPE' => 'application/json'],
+            json_encode(['request_id' => (string) Str::uuid(), 'state_version' => 0, 'operation_kind' => 'generation',
+                'operation_parameters' => ['max_work_items' => 2]], JSON_THROW_ON_ERROR));
+        $denied->setUserResolver(static fn (): User => $actor);
+        try {
+            $controller->quote($denied, $project, $session,
+                app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class));
+            self::fail('The controller accepted a generation quote without permission.');
+        } catch (\Illuminate\Auth\Access\AuthorizationException $error) {
+            self::assertSame(trans_message('estimate_generation.access_denied'), $error->getMessage());
+        }
+        self::assertSame(1, DB::table('ai_credit_quotes')->where('organization_id', $organization->id)->count());
+        self::assertSame(1, DB::table('estimate_generation_credit_operations')->where('session_id', $scope->sessionId)->count());
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope->sessionId)->count());
+    }
+
+    public function test_explicit_generation_capacity_default_plan_and_hard_maximum_are_preserved(): void
+    {
+        [$organization, $actor, $scope, , $operations] = $this->equipmentQuoteFixture(0);
+        $defaultId = (string) Str::uuid();
+        $default = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $defaultId, 'generation');
+        $emptyId = (string) Str::uuid();
+        $empty = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $emptyId, 'generation', []);
+        $defaultRow = DB::table('estimate_generation_credit_operations')->where('operation_id', $defaultId)->sole();
+        $emptyRow = DB::table('estimate_generation_credit_operations')->where('operation_id', $emptyId)->sole();
+        self::assertSame($defaultRow->processing_plan, $emptyRow->processing_plan);
+        self::assertSame($defaultRow->plan_hash, $emptyRow->plan_hash);
+        self::assertSame($default['max_units_minor'], $empty['max_units_minor']);
+        $defaultPlan = json_decode($defaultRow->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(32, $default['approved_work_item_limit']);
+        self::assertArrayNotHasKey('operation_parameters', $defaultPlan);
+        $maximumId = (string) Str::uuid();
+        $maximum = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $maximumId, 'generation', ['max_work_items' => 512]);
+        self::assertSame(512, $maximum['approved_work_item_limit']);
+        $maximumPlan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $maximumId)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(512, $maximumPlan['work_item_limit']);
+        self::assertSame(512, $maximumPlan['audit_part_limit']);
+        self::assertTrue($maximum['provider_budget']['generation_cycle']['full_cycle_fits']);
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+    }
+
+    public function test_explicit_generation_capacity_uses_current_unique_equipment_operations(): void
+    {
+        [$organization, $actor, $scope, , $operations] = $this->equipmentQuoteFixture(2);
+        foreach ([3, 4] as $index) {
+            $this->saveKnownQuoteEquipment($scope, $index, ['estimate_scope' => 'requires_confirmation', 'visual_inventory_category' => 'sanitary_fixture']);
+            app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class)->saveSourceModel([], [
+                new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:visual-quote-'.$index,
+                    $scope->organizationId, $scope->projectId, $scope->sessionId, 'sha256:'.str_repeat('a', 64), 'equipment:quote-'.$index,
+                    'sanitary_fixture', 'Прибор '.$index, null, 0.7, 'document', 'candidate', []),
+            ], []);
+            $this->answerEquipmentQuoteScope($scope, $index, $index === 3 ? 'installation_only' : 'exclude');
+        }
+        try {
+            $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), 'generation', ['max_work_items' => 4]);
+            self::fail('Capacity ignored the unique current equipment operations.');
+        } catch (\DomainException $error) {
+            self::assertSame('estimator_credit_work_capacity_invalid', $error->getMessage());
+        }
+        $id = (string) Str::uuid();
+        self::assertSame(5, $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation', ['max_work_items' => 5])['approved_work_item_limit']);
+        $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(5, $plan['known_context']['equipment_work_scope']['operation_count']);
+        self::assertSame(3, $plan['known_context']['equipment_work_scope']['expansion_delta']);
+        self::assertSame(5, $plan['work_item_limit']);
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+    }
+
+    public function test_explicit_generation_capacity_is_frozen_and_begin_uses_the_approved_server_limit(): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(0);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation', ['max_work_items' => 2]);
+        self::assertSame(2, $quote['approved_work_item_limit']);
+        self::assertSame($quote, $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation', ['max_work_items' => 2]));
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(['max_work_items' => 2], $plan['operation_parameters']);
+        self::assertSame(2, $plan['work_item_limit']);
+        self::assertGreaterThanOrEqual(2, $plan['composer_part_limit']);
+        self::assertGreaterThanOrEqual(2, $plan['audit_part_limit']);
+        self::assertSame(hash('sha256', CanonicalPipelineJson::encode($plan)), $operation->plan_hash);
+        self::assertTrue($quote['provider_budget']['generation_cycle']['full_cycle_fits']);
+        self::assertTrue($quote['provider_budget']['generation_cycle']['corrections_included']);
+        self::assertTrue($quote['provider_budget']['generation_cycle']['retries_included']);
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+        try {
+            $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation', ['max_work_items' => 3]);
+            self::fail('The same operation accepted a different capacity.');
+        } catch (\DomainException $error) {
+            self::assertSame('estimator_credit_request_id_conflict', $error->getMessage());
+        }
+        foreach ([2, 3] as $callerLimit) {
+            try {
+                DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation', ['max_work_items' => $callerLimit]));
+                self::fail('Begin accepted a second caller-owned capacity.');
+            } catch (\DomainException $error) {
+                self::assertSame('estimator_credit_operation_parameters_changed', $error->getMessage());
+            }
+        }
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+        self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+        self::assertSame(2, FrozenWorkItemLimit::forOperation($scope->organizationId, $scope->projectId, $scope->sessionId, $id));
+        FrozenWorkItemLimit::assertCount(2, 2);
+        try {
+            FrozenWorkItemLimit::assertCount(3, FrozenWorkItemLimit::forOperation($scope->organizationId, $scope->projectId, $scope->sessionId, $id));
+            self::fail('Actual N+1 exceeded the user-approved work ceiling.');
+        } catch (\InvalidArgumentException $error) {
+            self::assertSame('estimate_work_items_exceed_approved_plan', $error->getMessage());
+        }
+        $reserved = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $balance = app(AICreditService::class)->balance($organization);
+        config(['estimate-generation.estimate_composer.max_input_bytes' => 1]);
+        self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+        self::assertEquals($reserved, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertSame($balance, app(AICreditService::class)->balance($organization));
+        DB::transaction(fn () => app(EstimatorCreditAttemptAdmission::class)->admit($id, (string) Str::uuid(),
+            $scope->organizationId, $scope->projectId, $scope->sessionId, 'estimate_composition', new AiCost('0.000001', 'RUB', 'available')));
+        $running = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        self::assertSame('running', $running->status);
+        $attempts = DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->get();
+        self::assertCount(1, $attempts);
+        self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+        self::assertEquals($running, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertEquals($attempts, DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->get());
+        self::assertSame($balance, app(AICreditService::class)->balance($organization));
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->abort($session, $id));
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reserved_minor']);
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
     public function test_a_full_generation_quote_publishes_the_frozen_cycle_and_replays_it_without_reserving(): void
     {
         \Illuminate\Support\Facades\Http::preventStrayRequests();
@@ -1224,7 +1555,8 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             ->abort($session->fresh(), $operationId, 'fixture_finished'));
     }
 
-    public function test_global_work_ceiling_blocks_direct_composer_auditor_and_corrector_before_claim_callback_or_http(): void
+    #[DataProvider('workCeilingApprovals')]
+    public function test_global_work_ceiling_blocks_direct_composer_auditor_and_corrector_before_claim_callback_or_http(?int $limit): void
     {
         $this->seedGlobalSettings();
         [$organization, $actor, $scope] = $this->fixture();
@@ -1235,7 +1567,8 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
         $id = (string) Str::uuid();
         $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
-        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation', $limit === null ? [] : ['max_work_items' => $limit]);
+        $limit ??= 32;
         DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
         config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
         $history = [];
@@ -1247,7 +1580,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore::class),
             httpClient: new \GuzzleHttp\Client(['handler' => $handler]));
         $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class, $wire);
-        $items = array_map(static fn ($i): array => ['key' => 'work:'.$i, 'name' => 'Work '.$i, 'quantity' => null, 'unit' => 'm2'], range(1, 33));
+        $items = array_map(static fn ($i): array => ['key' => 'work:'.$i, 'name' => 'Work '.$i, 'quantity' => null, 'unit' => 'm2'], range(1, $limit + 1));
         $draft = ['local_estimates' => [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]]];
         $wireScope = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $id);
         $audit = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput(
@@ -1256,7 +1589,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $correction = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput($audit, [['finding_id' => 'finding:missing']]);
         $candidates = array_map(static fn ($i): array => ['candidate_id' => 'candidate:'.$i, 'work_key' => 'work:'.$i,
             'name' => 'Work '.$i, 'unit' => null, 'quantity' => null, 'quantity_formula' => null,
-            'source_fact_ids' => [], 'technology_package_candidate' => null], range(1, 33));
+            'source_fact_ids' => [], 'technology_package_candidate' => null], range(1, $limit + 1));
         $composer = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput(
             (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), [], [], [], $candidates, [],
             \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::PROMPT_CONTRACT, $wireScope);
@@ -1843,6 +2176,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame($legacyQuote['quote_id'], $replay['quote_id']);
         self::assertSame($legacyQuote['max_units_minor'], $replay['max_units_minor']);
         self::assertSame($legacyQuote['price_version'], $replay['price_version']);
+        self::assertNull($replay['approved_work_item_limit']);
         self::assertSame($legacyQuote['expires_at'], $replay['expires_at']);
         self::assertSame(18, $replay['maximum_calls']);
         self::assertEquals($before, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
@@ -2471,6 +2805,11 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $receipt = DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->publish($session->fresh(), $id, $draft));
         self::assertSame(0, $receipt['consumed_units_minor']);
         self::assertSame(1000000, $credits->balance($organization)['available_minor']);
+    }
+
+    public static function workCeilingApprovals(): array
+    {
+        return ['default quote' => [null], 'explicit capacity' => [2]];
     }
 
     private function fixture(): array
