@@ -46,7 +46,7 @@
         @include('pdf.partials.most-brand-styles')
         @page {
             size: A4 landscape;
-            margin: 8mm 10mm 10mm;
+            margin: 8mm 10mm 12mm;
         }
 
         html,
@@ -237,7 +237,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="top-area">
         <div class="top-note">
             <div>Оперативный отчёт о выполнении работ</div>
@@ -412,6 +412,5 @@
             </td>
         </tr>
     </table>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

@@ -48,7 +48,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
 
     <table class="header-table mb-10">
         <tr>
@@ -185,7 +185,6 @@
         </table>
     </div>
 
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>
 

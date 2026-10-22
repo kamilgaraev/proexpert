@@ -54,16 +54,10 @@
         .numeric {
             text-align: right;
         }
-        .footer {
-            margin-top: 20px;
-            text-align: center;
-            font-size: 8px;
-            color: #999;
-        }
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="header">
         <div class="report-title">Отчет по выполненным работам</div>
         <div class="metadata">
@@ -99,9 +93,5 @@
         </tbody>
     </table>
 
-    <div class="footer">
-        Документ сформирован автоматически в системе МОСТ
-    </div>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

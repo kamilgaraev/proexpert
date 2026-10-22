@@ -117,7 +117,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="header">
         <div class="title">АКТ № {{ $act->act_document_number }} от «{{ $act->act_date->format('d') }}» 
         @php
@@ -216,6 +216,5 @@
             </tr>
         </table>
     </div>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html> 
