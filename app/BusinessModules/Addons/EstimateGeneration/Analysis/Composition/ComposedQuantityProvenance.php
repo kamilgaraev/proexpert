@@ -73,7 +73,7 @@ final readonly class ComposedQuantityProvenance
             }
         }
 
-        $purpose = CurrentProjectDerivedQuantityService::FORMULA_PURPOSES[$quantity['formula_key'] ?? '']
+        $purpose = CurrentProjectDerivedQuantityService::formulaPurpose(is_string($quantity['formula_key'] ?? null) ? $quantity['formula_key'] : '')
             ?? $quantity['quantity_key'] ?? null;
         $eligible = ($quantity['source'] ?? null) === 'evidenced' && ($quantity['review_blockers'] ?? []) === []
             && is_string($purpose) && is_string($intent['work_key'] ?? null)
