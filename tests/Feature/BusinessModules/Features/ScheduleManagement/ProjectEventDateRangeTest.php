@@ -16,6 +16,34 @@ class ProjectEventDateRangeTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_a_midday_event_finds_all_day_and_multiday_blockers_on_its_first_day(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create([
+            'organization_id' => $context->organization->id,
+        ]));
+        $attributes = [
+            'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id,
+            'project_id' => $project->id,
+            'event_type' => 'meeting', 'title' => 'All-day candidate fixture',
+            'event_date' => '2026-10-24', 'event_time' => null, 'duration_minutes' => 60,
+            'is_all_day' => true, 'is_blocking' => true, 'priority' => 'normal', 'status' => 'scheduled',
+        ];
+        $allDay = ProjectEvent::query()->create($attributes);
+        $multiday = ProjectEvent::query()->create(array_replace($attributes, [
+            'event_date' => '2026-10-23', 'end_date' => '2026-10-24',
+        ]));
+        $meeting = ProjectEvent::query()->create(array_replace($attributes, [
+            'event_time' => '12:00', 'is_all_day' => false, 'is_blocking' => false,
+        ]));
+
+        $conflicts = (new ProjectEventService())->checkEventConflicts($meeting);
+
+        $this->assertTrue($conflicts['has_conflicts']);
+        $this->assertEqualsCanonicalizing([$allDay->id, $multiday->id], $conflicts['conflicts']->pluck('id')->all());
+    }
+
     public function test_conflicts_compare_exact_half_open_intervals_and_all_day_boundaries(): void
     {
         $context = AdminApiTestContext::create();
