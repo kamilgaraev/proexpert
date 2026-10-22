@@ -7,6 +7,7 @@ namespace Tests\Unit\AIAssistant\Rag;
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagSearchResult;
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
@@ -161,6 +162,7 @@ class RagPromptContextBuilderTest extends TestCase
 
     public function test_provider_receives_addressed_chunk_content_beyond_preview_without_copying_it_into_metadata(): void
     {
+        config()->set('ai-assistant.rag.expanded_context_enabled', true);
         $content = str_repeat('Вводный текст. ', 60)."\nНе закрывать ограждение до приёмки основания.";
         $result = new RagSearchResult('file_document', 'assistant_document', '41', 10, 'Указания', 'Короткое описание.', 0.9,
             ['source_id' => 12, 'chunk_id' => 25, 'chunk_index' => 2, 'source_version' => 'v4', 'checksum' => 'source-checksum',
@@ -198,6 +200,7 @@ class RagPromptContextBuilderTest extends TestCase
 
     public function test_unicode_content_budget_bounds_each_chunk_and_the_whole_context(): void
     {
+        config()->set('ai-assistant.rag.expanded_context_enabled', true);
         $results = [];
         foreach (range(1, 8) as $index) {
             $results[] = new RagSearchResult('project', 'project', '10', 10, 'Проект', 'Кратко', 0.9,
@@ -224,6 +227,7 @@ class RagPromptContextBuilderTest extends TestCase
 
     public function test_source_count_is_bounded_even_with_a_larger_configured_limit(): void
     {
+        config()->set('ai-assistant.rag.expanded_context_enabled', true);
         config()->set('ai-assistant.rag.max_chunks', 1000);
         $result = new RagSearchResult('project', 'project', '10', 10, 'Проект', 'Кратко', 0.9, content: 'Текст');
 
@@ -246,5 +250,39 @@ class RagPromptContextBuilderTest extends TestCase
         self::assertSame(1200, $prompt['sources'][0]['text_offset']);
         self::assertArrayNotHasKey('content', $prompt['sources'][0]);
         self::assertArrayNotHasKey('content_range', $prompt['sources'][0]);
+    }
+
+    public function test_default_and_disabled_context_keep_private_chunk_out_of_provider_and_tool_output(): void
+    {
+        $preview = str_repeat('Я', 340);
+        $content = $preview."\nPRIVATE-FULL-CHUNK-GATE-SENTINEL";
+        $result = new RagSearchResult('file_document', 'assistant_document', '41', 10, 'Указания', $preview, 0.9,
+            ['source_id' => 12, 'chunk_id' => 25, 'chunk_index' => 2, 'document_id' => 41, 'unit_id' => 51],
+            content: $content);
+        self::assertSame($content, $result->providerContent());
+        self::assertFalse(config()->has('ai-assistant.rag.expanded_context_enabled'));
+
+        foreach ([null, false] as $enabled) {
+            if ($enabled !== null) {
+                config()->set('ai-assistant.rag.expanded_context_enabled', $enabled);
+            }
+            $context = (new RagPromptContextBuilder)->build('условия', [$result]);
+            $prompt = json_decode($context['prompt'], true, flags: JSON_THROW_ON_ERROR);
+            self::assertArrayHasKey('excerpt', $prompt['sources'][0]);
+            self::assertSame($preview, $prompt['sources'][0]['excerpt']);
+            self::assertArrayNotHasKey('content', $prompt['sources'][0]);
+            self::assertArrayNotHasKey('content_range', $prompt['sources'][0]);
+            self::assertArrayNotHasKey('content_range', $context['metadata']['sources'][0]);
+            self::assertSame(['requested' => 8, 'returned' => 1], $context['metadata']['limits']);
+            $response = SearchAssistantDocumentsTool::responseForSearch($context,
+                ['status' => 'available', 'semantic_available' => true, 'lexical_used' => false]);
+            $provider = AssistantToolResultProjection::forProvider('search_assistant_documents', $response);
+            self::assertStringNotContainsString('PRIVATE-FULL-CHUNK-GATE-SENTINEL',
+                json_encode([$context, $response, $provider, $result], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+            $public = json_encode([$context, $response, $provider], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            foreach (['chunk_id', 'chunk_index', 'content_range'] as $field) {
+                self::assertStringNotContainsString('"'.$field.'"', $public);
+            }
+        }
     }
 }

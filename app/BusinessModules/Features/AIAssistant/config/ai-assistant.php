@@ -120,6 +120,7 @@ return [
 
     'rag' => [
         'enabled' => true,
+        'expanded_context_enabled' => $configEnv('AI_RAG_EXPANDED_CONTEXT_ENABLED', false),
         'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'timeweb'),
         'embedding_api_key' => $configEnv('AI_RAG_EMBEDDING_API_KEY'),
         'embedding_base_uri' => $configEnv('AI_RAG_EMBEDDING_BASE_URI'),

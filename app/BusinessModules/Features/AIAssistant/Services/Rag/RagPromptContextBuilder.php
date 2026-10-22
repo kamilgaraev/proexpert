@@ -22,6 +22,7 @@ final class RagPromptContextBuilder
     public function build(string $query, array $results): array
     {
         $requested = min(self::MAX_SOURCES, $this->configInt('ai-assistant.rag.max_chunks', 8));
+        $expandedContextEnabled = $this->expandedContextEnabled();
         $candidateCount = count($results);
         $results = array_slice($results, 0, $requested);
         $sources = [];
@@ -33,7 +34,10 @@ final class RagPromptContextBuilder
                 break;
             }
             $source = $this->source($result);
-            $providerContent = $result->providerContent();
+            if (! $expandedContextEnabled) {
+                unset($source['chunk_id'], $source['chunk_index']);
+            }
+            $providerContent = $expandedContextEnabled ? $result->providerContent() : null;
             $content = $providerContent ?? $result->excerpt;
             $totalLength = mb_strlen($content);
             $length = min($totalLength, self::MAX_SOURCE_CHARACTERS, $remaining);
@@ -76,10 +80,12 @@ final class RagPromptContextBuilder
                 'limits' => [
                     'requested' => $requested,
                     'returned' => $used ? count($sources) : 0,
-                    'content_characters' => self::MAX_CONTEXT_CHARACTERS - $remaining,
-                    'max_content_characters' => self::MAX_CONTEXT_CHARACTERS,
-                    'truncated_sources' => $truncatedSources,
-                    'omitted_sources' => $candidateCount - count($sources),
+                    ...($expandedContextEnabled ? [
+                        'content_characters' => self::MAX_CONTEXT_CHARACTERS - $remaining,
+                        'max_content_characters' => self::MAX_CONTEXT_CHARACTERS,
+                        'truncated_sources' => $truncatedSources,
+                        'omitted_sources' => $candidateCount - count($sources),
+                    ] : []),
                 ],
             ],
         ];
@@ -246,6 +252,15 @@ final class RagPromptContextBuilder
         $value = $result->metadata[$key] ?? null;
 
         return is_numeric($value) ? (int) $value : null;
+    }
+
+    private function expandedContextEnabled(): bool
+    {
+        try {
+            return config('ai-assistant.rag.expanded_context_enabled', false) === true;
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     private function configInt(string $key, int $default): int
