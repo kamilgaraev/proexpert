@@ -41,6 +41,12 @@ final class AssistantConcurrentSubmitTest extends TestCase
             $table->id(); $table->foreignId('organization_id'); $table->foreignId('user_id'); $table->boolean('is_active')->default(true); $table->boolean('is_owner')->default(false); $table->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $table): void { $table->id(); $table->string('kind')->default('purchase'); });
+        Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('organization_id');
+            $table->string('status')->default('active');
+            $table->timestampTz('current_period_start_at')->nullable();
+            $table->timestampTz('current_period_end_at')->nullable();
+        });
         Schema::create('ai_conversations', function (Blueprint $table): void { $table->id(); });
         (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
         (require database_path('migrations/2026_09_29_000009_create_ai_assistant_requests_table.php'))->up();
@@ -116,7 +122,8 @@ final class AssistantConcurrentSubmitTest extends TestCase
                 foreach ($paths as $path) {
                     if (is_file($path.'.result') && !is_file($path.'.ready')) {
                         $result = json_decode((string) file_get_contents($path.'.result'), true, 64, JSON_THROW_ON_ERROR);
-                        self::fail('Assistant worker initialization failed: '.($result['exception_class'] ?? 'unknown'));
+                        self::fail('Assistant worker initialization failed: '.($result['exception_class'] ?? 'unknown')
+                            .' at '.($result['exception_file'] ?? 'unknown').':'.($result['exception_line'] ?? 0));
                     }
                 }
                 return count(array_filter($paths, fn (string $path): bool => is_file($path.'.ready'))) === count($paths);
