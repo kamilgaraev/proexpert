@@ -7,6 +7,10 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagExpectedSourceProjection;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
@@ -16,9 +20,11 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignReviewRound;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Modules\PackageCatalogService;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 final class AssistantIfcSourceIdentityPlanTest extends TestCase
@@ -157,12 +163,21 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => false]);
         self::assertSame([], $read());
         $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => true]);
+        $sparseCounterPlan = $expectedProjection ? $this->assertFullExpectedCounterPlan($policy, $fixture, $project, $generation, $allowed) : null;
         $extraColumns = $expectedProjection ? 'generation, identity_project_id, pending_since' : 'title';
         $extraValues = $expectedProjection ? 'CAST(? AS uuid), e.project_id, CURRENT_TIMESTAMP' : "'IFC'";
         $bindings = $expectedProjection ? [$generation, $organizationId, $project->id] : [$organizationId, $project->id];
         DB::statement('INSERT INTO '.$table.' (organization_id, project_id, source_type, entity_type, entity_id, checksum, '.$extraColumns.") SELECT e.organization_id, e.project_id, 'design_additional', 'design_ifc_model_element', e.id::text, md5(e.id::text), ".$extraValues.' FROM design_ifc_model_elements e WHERE e.organization_id = ? AND e.project_id = ? AND NOT EXISTS (SELECT 1 FROM '.$table." s WHERE s.organization_id = e.organization_id AND s.project_id = e.project_id AND s.source_type = 'design_additional' AND s.entity_type = 'design_ifc_model_element' AND s.entity_id = e.id::text)", $bindings);
         DB::statement('ANALYZE '.($expectedProjection ? $table : 'ai_rag_status_sources'));
         self::assertCount(20005, $read());
+        if ($expectedProjection) {
+            $this->assertFullExpectedCounterPlan($policy, $fixture, $project, $generation, $allowed, dense: true);
+            self::assertNotNull($sparseCounterPlan);
+            self::assertLessThanOrEqual(32, $sparseCounterPlan['source_visits'], 'A sparse expected IFC generation must not materialize unrelated stored identities.');
+            self::assertLessThanOrEqual(128, $sparseCounterPlan['source_blocks']);
+            self::assertLessThanOrEqual(32, $sparseCounterPlan['status_visits']);
+            self::assertLessThanOrEqual(64, $sparseCounterPlan['expected_visits']);
+        }
         $policy->withCurrentChecks($fixture->owner, $organizationId, function () use ($build): void {
             foreach ($build() as $batch) {
                 self::assertStringNotContainsString('ARRAY_AGG', $batch->toSql());
@@ -196,6 +211,164 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             }, fresh: true);
             $this->assertMixedCorpusCounterPlan($policy, $fixture, $project, $package);
         }
+    }
+
+    private function assertFullExpectedCounterPlan(AssistantDataAccessPolicy $policy, AssistantRealAuthorizationFixture $fixture, Project $project, string $generation, array $allowed, bool $dense = false): array
+    {
+        $organizationId = (int) $fixture->organization->id;
+        if (! $dense) {
+            DB::statement("INSERT INTO ai_rag_sources (organization_id, project_id, identity_project_id, source_type, entity_type, entity_id, checksum, title) SELECT organization_id, project_id, project_id, 'design_additional', 'design_ifc_model_element', id::text, md5(id::text), 'IFC' FROM design_ifc_model_elements WHERE organization_id = ? AND project_id = ?", [$organizationId, $project->id]);
+        }
+        $expected = RagExpectedSource::query()->where('organization_id', $organizationId)->where('generation', $generation)->whereIn('id', $allowed)->get();
+        $first = null;
+        foreach ($expected as $row) {
+            $source = RagSource::query()->updateOrCreate($row->only(['organization_id', 'project_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id']),
+                ['title' => 'IFC', 'checksum' => $row->checksum]);
+            $first ??= $source;
+        }
+        self::assertInstanceOf(RagSource::class, $first);
+        if (! $dense) { DB::table('ai_rag_chunks')->insert([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'source_id' => $first->id,
+            'chunk_index' => 0, 'content' => 'IFC fixture', 'content_hash' => hash('sha256', 'IFC fixture'),
+            'embedding' => '['.implode(',', RagTestEmbedding::fromLeadingValues([0.1, 0.2])).']',
+        ]); }
+        $actor = $fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],
+            'design-management' => ['design-management.view', 'design-management.models.view'],
+        ]);
+        $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        foreach (['design_ifc_model_elements', 'ai_rag_sources', 'ai_rag_status_sources', 'ai_rag_expected_sources'] as $table) { DB::statement('ANALYZE '.$table); }
+        $projection = new RagExpectedSourceProjection(new RagIndexer(\Mockery::mock(RagEmbeddingProviderInterface::class), new RagSourceRegistry([])));
+        $queries = [];
+        $connection = DB::connection();
+        $dispatcher = $connection->getEventDispatcher();
+        self::assertNotNull($dispatcher);
+        $connection->setEventDispatcher(clone $dispatcher);
+        $connection->listen(static function (QueryExecuted $event) use (&$queries): void {
+            if (str_contains($event->sql, 'expected.source_type, COUNT(*)')) { $queries[] = $event; }
+        });
+        $read = fn (): array => $policy->withCurrentChecks($actor, $organizationId,
+            fn (): array => $projection->actorCounts($organizationId, $actor, $policy, ['design_additional'], $generation, collectProof: false), fresh: true);
+        try {
+            $counts = $read();
+        } finally {
+            $connection->setEventDispatcher($dispatcher);
+        }
+        self::assertCount(1, $queries);
+        $expectedCount = $dense ? 20005 : 6;
+        self::assertSame($expectedCount, (int) $counts['design_additional']->expected_count);
+        self::assertSame(1, (int) $counts['design_additional']->indexed_count);
+        $query = $queries[0];
+        if ($dense) {
+            $estimated = DB::selectOne('EXPLAIN (FORMAT JSON) '.$query->sql, $query->bindings);
+            self::assertNotNull($estimated);
+            $nodes = [];
+            $walk = static function (array $node) use (&$walk, &$nodes): void {
+                $nodes[] = ['node' => $node['Node Type'], 'join' => $node['Join Type'] ?? null, 'rows' => $node['Plan Rows']];
+                foreach ($node['Plans'] ?? [] as $child) { $walk($child); }
+            };
+            $walk(json_decode($estimated->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+            fwrite(STDERR, json_encode(['probe' => 'ifc_dense_estimated_plan', 'nodes' => $nodes], JSON_THROW_ON_ERROR).PHP_EOL);
+        }
+        $timeoutRow = DB::selectOne('SHOW statement_timeout');
+        self::assertNotNull($timeoutRow);
+        $previousTimeout = $timeoutRow->statement_timeout;
+        try {
+            $row = DB::transaction(static function () use ($query): object {
+                DB::selectOne("SELECT pg_catalog.set_config('statement_timeout', ?, true)", ['10s']);
+
+                $explained = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$query->sql, $query->bindings);
+                self::assertNotNull($explained);
+
+                return $explained;
+            });
+        } finally {
+            DB::selectOne("SELECT pg_catalog.set_config('statement_timeout', ?, true)", [$previousTimeout]);
+        }
+        $plan = json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
+        $relations = [];
+        $sourceVisits = 0;
+        $joinComparisonsMax = 0;
+        $collect = static function (array $node) use (&$collect, &$relations, &$sourceVisits, &$joinComparisonsMax): void {
+            if (($node['Node Type'] ?? null) === 'Nested Loop') {
+                $joinComparisonsMax = max($joinComparisonsMax, (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Join Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1));
+            }
+            if (in_array($node['Relation Name'] ?? null, ['design_ifc_model_elements', 'ai_rag_sources', 'ai_rag_status_sources', 'ai_rag_expected_sources'], true)) {
+                $visits = (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1);
+                $relations[] = ['relation' => $node['Relation Name'], 'node' => $node['Node Type'], 'rows' => $node['Actual Rows'] ?? 0,
+                    'loops' => $node['Actual Loops'] ?? 0, 'visits' => $visits, 'shared_hit_blocks' => $node['Shared Hit Blocks'] ?? 0,
+                    'shared_read_blocks' => $node['Shared Read Blocks'] ?? 0, 'temp_read_blocks' => $node['Temp Read Blocks'] ?? 0,
+                    'temp_written_blocks' => $node['Temp Written Blocks'] ?? 0];
+                if ($node['Relation Name'] === 'ai_rag_sources') { $sourceVisits += $visits; }
+            }
+            foreach ($node['Plans'] ?? [] as $child) { $collect($child); }
+        };
+        $collect($plan['Plan']);
+        fwrite(STDERR, json_encode(['probe' => $dense ? 'ifc_dense_expected_counts' : 'ifc_full_expected_counts', 'planning_ms' => $plan['Planning Time'], 'execution_ms' => $plan['Execution Time'],
+            'sql_bytes' => strlen($query->sql), 'bindings' => count($query->bindings), 'join_comparisons_max' => $joinComparisonsMax, 'relations' => $relations], JSON_THROW_ON_ERROR).PHP_EOL);
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertSame([], $read());
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
+        $restored = $read();
+        self::assertSame($expectedCount, (int) $restored['design_additional']->expected_count);
+        self::assertSame(1, (int) $restored['design_additional']->indexed_count);
+        $sourceBlocks = array_sum(array_map(static fn (array $node): int => $node['relation'] === 'ai_rag_sources' ? $node['shared_hit_blocks'] + $node['shared_read_blocks'] : 0, $relations));
+        $statusVisits = array_sum(array_map(static fn (array $node): int => $node['relation'] === 'ai_rag_status_sources' ? $node['visits'] : 0, $relations));
+        $expectedVisits = array_sum(array_map(static fn (array $node): int => $node['relation'] === 'ai_rag_expected_sources' ? $node['visits'] : 0, $relations));
+        if ($dense) {
+            self::assertLessThanOrEqual(21000, $sourceVisits, 'Dense IFC counts must not repeatedly scan stored identities.');
+            self::assertLessThanOrEqual(100000, $sourceBlocks);
+            self::assertLessThanOrEqual(21000, $statusVisits);
+            self::assertLessThanOrEqual(100000, $expectedVisits);
+            self::assertLessThanOrEqual(250000, $joinComparisonsMax, 'Dense IFC counts must not compare every expected identity with every stored source.');
+        }
+        if (! $dense) {
+            $checksum = $first->checksum;
+            $first->update(['checksum' => hash('sha256', 'stale indexed IFC')]);
+            self::assertSame(0, (int) $read()['design_additional']->indexed_count);
+            $first->update(['checksum' => $checksum]);
+            self::assertSame(1, (int) $read()['design_additional']->indexed_count);
+            $older = $expected->first()->replicate()->forceFill(['generation' => (string) Str::uuid(), 'checksum' => hash('sha256', 'other generation')]);
+            $older->saveQuietly();
+            $other = $policy->withCurrentChecks($actor, $organizationId,
+                fn (): array => $projection->actorCounts($organizationId, $actor, $policy, ['design_additional'], $older->generation, collectProof: false), fresh: true);
+            self::assertSame(1, (int) $other['design_additional']->expected_count);
+            self::assertSame(0, (int) $other['design_additional']->indexed_count);
+            self::assertSame(6, (int) $read()['design_additional']->expected_count);
+            $status = (array) DB::table('ai_rag_status_sources')->where('id', $first->id)->first();
+            DB::table('ai_rag_status_sources')->where('id', $first->id)->delete();
+            $missing = $read();
+            self::assertSame(6, (int) $missing['design_additional']->expected_count);
+            self::assertSame(0, (int) $missing['design_additional']->indexed_count);
+            self::assertNotNull($missing['design_additional']->pending_since);
+            DB::table('ai_rag_status_sources')->insert($status);
+            self::assertSame(1, (int) $read()['design_additional']->indexed_count);
+            $nullExpected = $expected->first()->replicate()->forceFill(['project_id' => null, 'identity_project_id' => 0, 'identity_part_key' => 'null-project']);
+            $nullExpected->saveQuietly();
+            $nullSource = RagSource::query()->create($nullExpected->only(['organization_id', 'project_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum']) + ['title' => 'IFC null project']);
+            DB::table('ai_rag_chunks')->insert([
+                'organization_id' => $organizationId, 'project_id' => null, 'source_id' => $nullSource->id,
+                'chunk_index' => 0, 'content' => 'IFC null fixture', 'content_hash' => hash('sha256', 'IFC null fixture'),
+                'embedding' => '['.implode(',', RagTestEmbedding::fromLeadingValues([0.1, 0.2])).']',
+            ]);
+            $nullCounts = $read();
+            self::assertSame(7, (int) $nullCounts['design_additional']->expected_count);
+            self::assertSame(2, (int) $nullCounts['design_additional']->indexed_count);
+            $proof = null;
+            $full = $policy->withCurrentChecks($actor, $organizationId,
+                function () use ($projection, $organizationId, $actor, $policy, $generation, &$proof): array {
+                    return $projection->actorCounts($organizationId, $actor, $policy, ['design_additional'], $generation, proof: $proof);
+                }, fresh: true);
+            self::assertCount(7, $proof);
+            self::assertArrayHasKey($nullExpected->id, $proof);
+            self::assertSame((int) $full['design_additional']->expected_count, (int) $nullCounts['design_additional']->expected_count);
+            self::assertSame((int) $full['design_additional']->indexed_count, (int) $nullCounts['design_additional']->indexed_count);
+            self::assertSame((string) $full['design_additional']->pending_since, (string) $nullCounts['design_additional']->pending_since);
+            $nullExpected->delete();
+            $nullSource->delete();
+        }
+
+        return ['source_visits' => $sourceVisits, 'source_blocks' => $sourceBlocks, 'status_visits' => $statusVisits, 'expected_visits' => $expectedVisits];
     }
 
     private function assertMixedCorpusCounterPlan(AssistantDataAccessPolicy $policy, AssistantRealAuthorizationFixture $fixture, Project $project, DesignPackage $package): void

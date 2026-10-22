@@ -735,6 +735,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateComposerInputFactory::class, static fn ($app): EstimateComposerInputFactory => new EstimateComposerInputFactory(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             (int) config('estimate-generation.estimate_composer.max_facts'),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService::class),
         ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection::class,

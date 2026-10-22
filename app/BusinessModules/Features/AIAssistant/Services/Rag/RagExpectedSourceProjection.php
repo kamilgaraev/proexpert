@@ -91,9 +91,7 @@ final class RagExpectedSourceProjection
                     ->select(['ai_rag_sources.id', 'ai_rag_sources.organization_id', 'ai_rag_sources.project_id', 'ai_rag_sources.identity_project_id', 'ai_rag_sources.identity_part_key',
                         'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id', 'ai_rag_sources.checksum', 'matched_status_cache.indexed_chunk_count']);
                 if ($entityTypes !== null) { $matchedSources->whereIn('ai_rag_sources.entity_type', $entityTypes); }
-                $materialized = DB::query()->fromRaw('(WITH matched_source_cache AS MATERIALIZED ('.$matchedSources->toSql().') SELECT * FROM matched_source_cache) AS matched_source_cache', $matchedSources->getBindings())
-                    ->select('matched_source_cache.*');
-                $query->leftJoinSub($materialized, 'matched_sources', $joinIdentity);
+                $query->leftJoinSub($matchedSources, 'matched_sources', $joinIdentity);
             }
             $query->groupBy('expected.source_type')
                 ->selectRaw('expected.source_type, COUNT(*) AS expected_count, pg_catalog.SUM(CASE WHEN '.$matched.' THEN 1 ELSE 0 END) AS indexed_count, MIN(CASE WHEN NOT ('.$matched.') THEN expected.pending_since END) AS pending_since');

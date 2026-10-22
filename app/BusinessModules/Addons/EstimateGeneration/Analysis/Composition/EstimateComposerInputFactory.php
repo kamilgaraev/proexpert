@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use InvalidArgumentException;
 
 final readonly class EstimateComposerInputFactory
@@ -16,6 +17,7 @@ final readonly class EstimateComposerInputFactory
     public function __construct(
         private ProjectModelRepository $models,
         private int $maxFacts,
+        private ?EstimateGenerationLearningEvidenceService $learning = null,
     ) {
         if ($maxFacts < 1 || $maxFacts > 10000) {
             throw new InvalidArgumentException('estimate_composer_fact_limit_invalid');
@@ -156,7 +158,7 @@ final readonly class EstimateComposerInputFactory
                 ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::ANSWER_PROMPT_CONTRACT;
         }
 
-        return new EstimateComposerInput(
+        $input = new EstimateComposerInput(
             organizationId: $organizationId,
             projectId: $projectId,
             sessionId: $sessionId,
@@ -170,6 +172,14 @@ final readonly class EstimateComposerInputFactory
             wireScope: $wireScope,
             allowedWorkSections: $allowedWorkSections,
         );
+        if ($input->claimAnswerFactIds !== [] && $this->learning !== null) {
+            $references = $this->learning->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot, $decisions, $answerPolicy);
+            $references = array_values(array_filter(array_slice($references, 0, EstimateComposerInput::MAX_SOURCE_CLAIMS),
+                static fn (mixed $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $facts, $input->claimAnswerFactIds)));
+            $input = $input->withSourceClaimReferences($references);
+        }
+
+        return $input;
     }
 
     /** @param array<string, mixed> $quantity @return array<string, mixed> */
