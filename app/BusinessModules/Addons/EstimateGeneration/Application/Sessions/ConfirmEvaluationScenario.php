@@ -150,7 +150,7 @@ final readonly class ConfirmEvaluationScenario
                 $this->quantityProof->assertCurrent(...[...$scope, $quantityDraft]);
                 $verified = $this->models->snapshotForPlanning(...[...$scope, 10001]);
                 if (! hash_equals($capture['token'], $verified['token'])) {
-                    throw ValidationException::withMessages(['scenario' => 'Исходные факты изменились во время пересчёта.']);
+                    throw ValidationException::withMessages(['scenario' => trans_message('estimate_generation.stage6_snapshot_stale')]);
                 }
                 if (! (new EvaluationScenarioSourceBinding)->materializationMatches($beforeMaterialization,
                     [...$capture, 'decisions' => $decisions, 'selections' => $session->input_payload['quantity_selections'] ?? [], 'input_payload' => $session->input_payload],

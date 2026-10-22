@@ -711,8 +711,10 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                     }
                 }
             }
-            self::assertSame(['preparation' => '2', 'finish.floor' => '50', 'finishing' => '1'], array_column(array_values($items), 'quantity', 'key'));
-            self::assertSame(['0.05', '1.25', '0.03'], array_column(array_values($items), 'total_cost'));
+            self::assertSame(CanonicalPipelineJson::encode(['preparation' => '2', 'finish.floor' => '50', 'finishing' => '1']),
+                CanonicalPipelineJson::encode(array_column(array_values($items), 'quantity', 'key')));
+            self::assertSame(CanonicalPipelineJson::encode(['preparation' => '0.05', 'finish.floor' => '1.25', 'finishing' => '0.03']),
+                CanonicalPipelineJson::encode(array_column(array_values($items), 'total_cost', 'key')));
             $request = Request::create('/export', 'GET', ['format' => 'excel']);
             $request->setUserResolver(static fn () => $actor);
             self::assertSame(200, app(EstimateGenerationPackageController::class)->export($request, $session->project, $session->fresh())->getStatusCode());
