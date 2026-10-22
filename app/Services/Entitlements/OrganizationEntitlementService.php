@@ -6,6 +6,7 @@ namespace App\Services\Entitlements;
 
 use App\Models\Module;
 use App\Models\OrganizationPackageSubscription;
+use App\Services\Billing\Bank\BankPaymentProofAccess;
 use App\Services\Modules\PackageCatalogService;
 use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Database\Eloquent\Builder;
@@ -58,8 +59,12 @@ class OrganizationEntitlementService
             $this->packageCatalog->foundationModules(),
             $this->getAlwaysOnModuleSlugs(),
         )));
-        foreach (app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->packageSlugs($organizationId) as $packageSlug) {
-            $slugs = array_merge($slugs, $this->packageCatalog->tierModules($packageSlug, 'standard'));
+        $bank = app(BankPaymentProofAccess::class);
+        if ($moduleSlug === null || ! in_array($moduleSlug, $slugs, true)
+            || $bank::class !== BankPaymentProofAccess::class || $this->packageCatalog::class !== PackageCatalogService::class) {
+            foreach ($bank->packageSlugs($organizationId) as $packageSlug) {
+                $slugs = array_merge($slugs, $this->packageCatalog->tierModules($packageSlug, 'standard'));
+            }
         }
         if ($moduleSlug !== null) {
             $slugs = array_values(array_filter($slugs, static fn (string $slug): bool => $slug === $moduleSlug));
