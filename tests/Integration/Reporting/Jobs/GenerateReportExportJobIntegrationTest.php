@@ -268,6 +268,35 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
         self::assertSame(2, $authorizer->calls);
     }
 
+    public function test_renderer_version_transition_rejects_old_work_before_rendering_or_uploading(): void
+    {
+        $fixture = $this->fixture();
+        $fixture['published'] = (new ReportDefinitionBuilder)->rendererVersion('1.1.0')->published();
+        $files = new RecordingExportFileService;
+        $store = new RecordingExecutionExportStore($fixture['export'], ReportExportStatus::RUNNING);
+        $telemetry = new RecordingExportTelemetry;
+        try {
+            $this->fullService(
+                $fixture,
+                new RecordingExportAttemptStore($store),
+                $store,
+                $files,
+                new LinkedExportInventory($files),
+                new CountingExportAuthorizer($fixture['context']),
+                $telemetry,
+            )->execute(self::EXPORT_ID, self::TOKEN);
+            self::fail('Old renderer version must not execute under the new definition.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_INTERNAL_ERROR, $exception->errorCode);
+        }
+        self::assertSame(0, $store->startRenderingCount);
+        self::assertSame(0, $store->startUploadingCount);
+        self::assertSame(0, $store->sealCount);
+        self::assertSame(0, $files->startCount);
+        self::assertSame(0, $files->completeCount);
+        self::assertSame(0, $telemetry->artifacts);
+    }
+
     public function test_post_completion_store_failure_is_recovered_without_second_artifact(): void
     {
         $fixture = $this->fixture();
