@@ -63,6 +63,47 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         );
     }
 
+    public function writeReviewedLiteral(DocumentUnitPublication $publication, DocumentUnitExecutionContext $context,
+        \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $review): void
+    {
+        $claim = $publication->claims[0] ?? null;
+        if ($this->database->transactionLevel() < 1 || count($publication->claims) !== 1 || count($publication->decisions) !== 1
+            || $claim?->factType !== 'equipment_specification' || $claim->unit !== null || ($claim->value['type'] ?? null) !== 'string'
+            || $publication->numericSources !== null || $publication->literalSources === null
+            || ($publication->decisions[0]->status ?? null) !== 'accepted'
+            || ($review->value['kind'] ?? null) !== 'document_cell_review' || ($review->value['decision'] ?? null) !== 'accept') {
+            throw new LogicException('document_cell_review_publication_invalid');
+        }
+        $publication->assertScope($context->organizationId, $context->projectId, $context->sessionId, $context->sourceVersion);
+        $page = $this->database->table('estimate_generation_document_pages')->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)->where('session_id', $context->sessionId)->where('document_id', $context->documentId)
+            ->where('processing_unit_id', $context->unitId)->where('page_number', $context->index)
+            ->where('source_version', $context->sourceVersion)->whereNull('excluded_at')->lockForUpdate()->first(['id']);
+        if ($page === null) {
+            throw new LogicException('document_cell_review_source_stale');
+        }
+        (new CanonicalFactReducer)->assertReduced($publication->claims, $publication->decisions);
+        $this->evidence->writeArbitration($publication->claims, $publication->decisions, $context->documentId, $context->index,
+            null, $publication->literalSources, $review);
+        $this->writeAcceptedDocumentFacts($publication, $context->organizationId, $context->projectId, $context->sessionId,
+            $context->documentId, $context->index, $context->sourceVersion, appendOnly: true);
+    }
+
+    public function revokeReviewedLiteral(DocumentUnitExecutionContext $context, string $entityKey, string $value): void
+    {
+        if ($this->database->transactionLevel() < 1 || preg_match('/\Aequipment:review\.[a-f0-9]{64}\z/D', $entityKey) !== 1
+            || trim($value) === '' || mb_strlen($value) > 500) {
+            throw new LogicException('document_cell_review_publication_invalid');
+        }
+        $key = 'sha256:'.hash('sha256', implode('|', [(new ClaimSemanticMatcher)->keyForCanonical([
+            'entity_key' => $entityKey, 'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => $value], 'unit' => null]),
+            $context->sourceVersion, (string) $context->documentId, (string) $context->index]));
+        $this->database->table('estimate_generation_document_facts')->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)->where('session_id', $context->sessionId)->where('document_id', $context->documentId)
+            ->where('page_id', $context->pageId)->where('scope_key', $entityKey)
+            ->where('normalized_payload->decision_reason_code', 'human_reviewed_literal')->where('normalized_payload->projection_key', $key)->delete();
+    }
+
     private function writeAcceptedDocumentFacts(
         DocumentUnitPublication $publication,
         int $organizationId,
@@ -71,6 +112,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         int $documentId,
         int $pageNumber,
         string $sourceVersion,
+        bool $appendOnly = false,
     ): void {
         $page = $this->database->table('estimate_generation_document_pages')
             ->where('organization_id', $organizationId)
@@ -157,16 +199,23 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             ];
         }
 
-        $this->database->table('estimate_generation_document_facts')
+        $existing = $this->database->table('estimate_generation_document_facts')
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('session_id', $sessionId)
             ->where('document_id', $documentId)
             ->where('page_id', (int) $page->id)
-            ->where('normalized_payload->projection', 'arbiter_consensus:v1')
-            ->delete();
+            ->where('normalized_payload->projection', 'arbiter_consensus:v1');
+        if ($appendOnly) {
+            $keys = array_map(static fn (array $row): string => json_decode($row['normalized_payload'], true, flags: JSON_THROW_ON_ERROR)['projection_key'], $rows);
+            $existing->whereIn('normalized_payload->projection_key', $keys);
+        }
+        $existing->delete();
         if ($rows !== []) {
             $this->database->table('estimate_generation_document_facts')->insert($rows);
+        }
+        if ($appendOnly) {
+            return;
         }
         $this->writeRequestedAreaTakeoff(
             $requestedArea,

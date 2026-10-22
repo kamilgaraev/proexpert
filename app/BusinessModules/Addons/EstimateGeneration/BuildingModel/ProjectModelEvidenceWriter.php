@@ -54,7 +54,7 @@ final readonly class ProjectModelEvidenceWriter
     }
 
     /** @param list<ObservationClaim> $claims @param list<ArbitrationDecision> $decisions */
-    public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber, ?VerifiedNativeNumericSources $numericSources = null, ?NativeSpreadsheetLiteralSources $literalSources = null): void
+    public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber, ?VerifiedNativeNumericSources $numericSources = null, ?NativeSpreadsheetLiteralSources $literalSources = null, ?Fact $cellReview = null): void
     {
         if ($claims === [] || $decisions === []) {
             throw new InvalidArgumentException('Arbitration projection cannot be empty.');
@@ -84,7 +84,7 @@ final readonly class ProjectModelEvidenceWriter
         }
         $nativeRoomIdentities = $this->nativeRoomIdentities($byId, $decisions, $documentId, $pageNumber, $numericSources);
         $roomLocations = $this->roomLocations($byId, $decisions, $documentId, $pageNumber);
-        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources, $literalSources, $nativeRoomIdentities, $roomLocations): void {
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources, $literalSources, $nativeRoomIdentities, $roomLocations, $cellReview): void {
             $entities = [];
             $facts = [];
             $factsByClaimId = [];
@@ -159,6 +159,13 @@ final readonly class ProjectModelEvidenceWriter
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
+                if ($cellReview !== null) {
+                    if ($claim->factType !== 'equipment_specification' || $claim->unit !== null || $numericSources !== null
+                        || $literalSources?->binding($claim, $documentId, $pageNumber) === null) {
+                        throw new InvalidArgumentException('document_cell_review_publication_invalid');
+                    }
+                    $projection['attributes']['properties']['document_cell_review_anchor'] = $cellReview->entityId;
+                }
                 $documentEngineering = $projection['type'] === 'equipment'
                     && ($projection['attributes']['properties']['document_context'] ?? false) === true;
                 if ($documentEngineering) {
@@ -283,6 +290,9 @@ final readonly class ProjectModelEvidenceWriter
                 if ($nativeNamedRoom) {
                     $factIdentity .= '|'.self::NATIVE_NAMED_ROOM_CONTRACT;
                 }
+                if ($cellReview !== null) {
+                    $factIdentity .= '|document-cell-review:'.$cellReview->id;
+                }
                 if ($locationClaims !== []) {
                     $factIdentity .= '|'.$entityIdentity;
                 }
@@ -316,7 +326,7 @@ final readonly class ProjectModelEvidenceWriter
                     $evidenceIds,
                     nativeNumericProofs: array_map(static fn (array $proof): array => [...$proof, 'entity_id' => $entityId], $numericProofs),
                 );
-                if ($stableNumberContext) {
+                if ($stableNumberContext || $cellReview !== null) {
                     $fact = $this->literalRevision($fact);
                 }
                 if (isset($facts[$factId])) {
