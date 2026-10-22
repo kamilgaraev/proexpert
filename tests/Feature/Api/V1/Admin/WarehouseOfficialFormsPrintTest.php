@@ -117,6 +117,34 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
         }
     }
 
+    public static function m4PriceCases(): array
+    {
+        return [
+            'unknown' => [null, null, null],
+            'known-zero' => ['0.00', '0,00', '0,00'],
+            'known-positive' => ['100.00', '100,00', '125,00'],
+        ];
+    }
+
+    #[DataProvider('m4PriceCases')]
+    public function test_m4_preserves_unknown_price_and_amount_instead_of_substituting_zero(
+        ?string $price,
+        ?string $expectedPrice,
+        ?string $expectedAmount,
+    ): void {
+        [, , $movements] = $this->fixture(false, 1);
+        $movement = $movements->first();
+        $movement->price = $price;
+        $movement->save();
+        $movement->refresh();
+        $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+
+        $this->assertSame($expectedPrice, $sheet->getCell('H17')->getValue());
+        $this->assertSame($expectedAmount, $sheet->getCell('I17')->getValue());
+        $this->assertSame(1.25, (float) $sheet->getCell('F17')->getValue());
+        $this->assertSame($price, $movement->fresh()->price);
+    }
+
     public function test_m7_preserves_known_document_quantities_including_zero_and_calculates_differences(): void
     {
         [, , $movements] = $this->fixture(false, 1);

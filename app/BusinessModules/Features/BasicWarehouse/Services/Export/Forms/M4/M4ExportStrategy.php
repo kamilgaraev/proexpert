@@ -123,8 +123,8 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
             $sheet->setCellValue("A{$row}", $m->material->name);
             $sheet->setCellValue("E{$row}", $m->material->measurementUnit->name ?? '');
             $sheet->setCellValue("F{$row}", $m->quantity);
-            $sheet->setCellValue("H{$row}", number_format((float) $m->price, 2, ',', ' '));
-            $sheet->setCellValue("I{$row}", number_format((float) ($m->quantity * $m->price), 2, ',', ' '));
+            $sheet->setCellValue("H{$row}", $m->price === null ? null : number_format((float) $m->price, 2, ',', ' '));
+            $sheet->setCellValue("I{$row}", $m->price === null ? null : number_format((float) ($m->quantity * $m->price), 2, ',', ' '));
         }
 
         $this->applyTableStyle($sheet, "A16:I{$row}");
