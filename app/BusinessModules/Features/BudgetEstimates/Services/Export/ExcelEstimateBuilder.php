@@ -74,12 +74,12 @@ class ExcelEstimateBuilder
             $row = $this->buildTotals($sheet, $row, $data);
         }
         $this->buildSignatures($sheet, $row, $options);
+        $sheet->getPageMargins()->setTop(0.3937)->setBottom(0.3937)
+            ->setLeft(0.3937)->setRight(0.3937)->setHeader(0.19685)->setFooter(0.19685);
         $fitsOnePage = $this->fitsShortPrintPage($sheet);
         if (! $fitsOnePage) {
             $sheet->setBreak('A'.($closingRow - 1), Worksheet::BREAK_ROW);
         }
-        $sheet->getPageMargins()->setTop(0.3937)->setBottom(0.3937)
-            ->setLeft(0.3937)->setRight(0.3937)->setHeader(0.19685)->setFooter(0.19685);
         $number = str_replace('&', '&&', (string) ($data['estimate']['number'] ?? ''));
         $sheet->getHeaderFooter()->setOddFooter('&L&"Arial,Regular"&8Смета № '.$number.'&R&"Arial,Regular"&8Страница &P из &N');
         $sheet->getPageSetup()
@@ -492,7 +492,14 @@ class ExcelEstimateBuilder
         if ($lastRow > 45) {
             return false;
         }
+        $availableHeight = (210 / 25.4 - $sheet->getPageMargins()->getTop() - $sheet->getPageMargins()->getBottom()) * 72;
+        $height = 0.0;
         for ($row = 1; $row <= $lastRow; $row++) {
+            $rowHeight = $sheet->getRowDimension($row)->getRowHeight();
+            $height += $rowHeight >= 0 ? $rowHeight : $sheet->getDefaultRowDimension()->getRowHeight();
+            if ($height > $availableHeight) {
+                return false;
+            }
             foreach (['B', 'C', 'D', 'F', 'H'] as $column) {
                 $value = (string) $sheet->getCell($column.$row)->getValue();
                 if (mb_strwidth($value, 'UTF-8') > $sheet->getColumnDimension($column)->getWidth() * 2) {

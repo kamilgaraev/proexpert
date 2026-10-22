@@ -496,6 +496,31 @@ final class EstimateExportReadbackTest extends TestCase
         return ['medium' => [30], 'long' => [55]];
     }
 
+    public function test_excel_long_section_heading_does_not_force_small_text_onto_one_page(): void
+    {
+        $estimate = $this->fixture();
+        $section = $estimate->sections->first();
+        $section->name = str_repeat('Подробное наименование учебного раздела сметы. ', 60);
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-long-section-');
+        try {
+            file_put_contents($path, $result['content']);
+            $sheet = IOFactory::load($path)->getSheetByName('Смета');
+            $sectionRow = $this->rowContaining($sheet, 'A', $section->full_section_number.'. '.$section->name);
+            self::assertGreaterThan(200, $sheet->getRowDimension($sectionRow)->getRowHeight());
+            self::assertLessThan(45, $sheet->getHighestRow());
+            self::assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+            $summaryRow = $this->rowContaining($sheet, 'A', 'ИТОГОВАЯ СВОДКА');
+            self::assertSame(Worksheet::BREAK_ROW, $sheet->getBreaks()['A'.($summaryRow - 1)] ?? null);
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-long-section.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
     private function rowContaining(Worksheet $sheet, string $column, string $value): int
     {
         for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
