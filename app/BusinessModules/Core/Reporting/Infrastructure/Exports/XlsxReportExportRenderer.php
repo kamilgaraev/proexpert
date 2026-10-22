@@ -83,11 +83,25 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         $rowCount = 0;
         $worksheetRow = 1;
         $startedAt = hrtime(true);
+        $headers = $this->headers($source, $data);
+        $widths = array_map(static fn (string $header): int => max(12, min(24, (int) ceil(mb_strlen($header) / 2) + 3)), $headers);
+        $totalWidth = array_sum($widths);
+        $paperSize = count($headers) <= 13 && $totalWidth <= 190 ? 9 : 8;
+        $pagesAcross = max(1, (int) ceil($totalWidth / ($paperSize === 9 ? 190 : 220)));
+        $columns = '';
+        foreach ($widths as $index => $width) {
+            $column = $index + 1;
+            $columns .= '<col min="'.$column.'" max="'.$column.'" width="'.$width.'" customWidth="1"/>';
+        }
 
         try {
             $this->writeSheet($sheet, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>', $xmlBytes);
-            $this->writeSheet($sheet, $this->xmlRow($worksheetRow++, $this->headers($source, $data), true), $xmlBytes);
+                .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                .'<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'
+                .'<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+                .'<selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews>'
+                .'<sheetFormatPr defaultRowHeight="15"/><cols>'.$columns.'</cols><sheetData>', $xmlBytes);
+            $this->writeSheet($sheet, $this->xmlRow($worksheetRow++, $headers, true), $xmlBytes);
 
             foreach ($chunks as $chunk) {
                 $this->assertChunk($source, $chunk, $stream, $startedAt);
@@ -129,12 +143,15 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                 $this->writeSheet($sheet, $this->xmlRow($worksheetRow, $totals, true), $xmlBytes);
             }
 
-            $this->writeSheet($sheet, '</sheetData></worksheet>', $xmlBytes);
+            $this->writeSheet($sheet, '</sheetData>'
+                .'<pageMargins left="0.25" right="0.25" top="0.35" bottom="0.35" header="0.15" footer="0.15"/>'
+                .'<pageSetup paperSize="'.$paperSize.'" orientation="landscape" fitToWidth="'.$pagesAcross.'" fitToHeight="0"/>'
+                .'<headerFooter><oddFooter>&amp;R&amp;9&amp;P / &amp;N</oddFooter></headerFooter></worksheet>', $xmlBytes);
         } finally {
             fclose($sheet);
         }
 
-        $this->createArchive($sheetPath, $zipPath);
+        $this->createArchive($sheetPath, $zipPath, count($headers), 1 + $rowCount + ($source->result->totals !== [] ? 1 : 0));
         $size = filesize($zipPath);
         if (! is_int($size) || $size < 1 || $size > $this->limits->maxBytes) {
             throw $this->limit();
@@ -144,7 +161,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         return $rowCount;
     }
 
-    private function createArchive(string $sheetPath, string $zipPath): void
+    private function createArchive(string $sheetPath, string $zipPath, int $columnCount, int $lastRow): void
     {
         $zip = new ZipArchive;
         if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
@@ -167,7 +184,9 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
             'xl/workbook.xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 .'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
                 .'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-                .'<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets></workbook>',
+                .'<bookViews><workbookView/></bookViews><sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets>'
+                .'<definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">Report!$1:$1</definedName>'
+                .'<definedName name="_xlnm.Print_Area" localSheetId="0">Report!$A$1:$'.$this->columnName($columnCount).'$'.$lastRow.'</definedName></definedNames></workbook>',
             'xl/_rels/workbook.xml.rels' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 .'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
                 .'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
@@ -175,9 +194,18 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                 .'</Relationships>',
             'xl/styles.xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 .'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-                .'<fonts count="2"><font/><font><b/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
-                .'<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>'
-                .'<cellXfs count="2"><xf xfId="0"/><xf xfId="0" fontId="1" applyFont="1"/></cellXfs></styleSheet>',
+                .'<fonts count="2"><font><sz val="10"/><name val="Arial"/></font><font><b/><sz val="10"/><name val="Arial"/></font></fonts>'
+                .'<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+                .'<fill><patternFill patternType="solid"><fgColor rgb="FFF2F2F2"/><bgColor indexed="64"/></patternFill></fill></fills>'
+                .'<borders count="2"><border/><border><left style="thin"><color rgb="FF666666"/></left><right style="thin"><color rgb="FF666666"/></right>'
+                .'<top style="thin"><color rgb="FF666666"/></top><bottom style="thin"><color rgb="FF666666"/></bottom></border></borders>'
+                .'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+                .'<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+                .'<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">'
+                .'<alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+                .'<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1" applyBorder="1">'
+                .'<alignment vertical="top" wrapText="1"/></xf></cellXfs>'
+                .'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>',
         ];
 
         try {
@@ -229,7 +257,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         $cells = '';
         foreach ($values as $index => $value) {
             $reference = $this->columnName($index + 1).$rowNumber;
-            $style = $bold ? ' s="1"' : '';
+            $style = $bold ? ' s="1"' : ' s="2"';
             if (is_int($value) || (is_float($value) && is_finite($value))) {
                 $number = is_int($value)
                     ? (string) $value

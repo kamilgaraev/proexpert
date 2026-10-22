@@ -8,11 +8,81 @@ require_once __DIR__.'/CsvReportExportRendererTest.php';
 
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportLimits;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Throwable;
 use ZipArchive;
 
 final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
 {
+    public static function printCases(): array
+    {
+        return [
+            'empty-thirteen' => [13, 0],
+            'long-thirteen' => [13, 1],
+            'many-thirteen' => [13, 45],
+            'wide-twenty-seven' => [27, 2],
+            'small-three' => [3, 2],
+        ];
+    }
+
+    #[DataProvider('printCases')]
+    public function test_print_layout_preserves_all_selected_columns_and_full_values(int $columnCount, int $rowCount): void
+    {
+        $labels = ['Договор', 'Сумма договора', 'Дата отчёта', 'Проект', 'Контрагент', 'Валюта', 'Направление расчётов', 'Принято работ', 'Оплачено', 'Сальдо расчётов', 'Неоплаченные обязательства', 'Неисполненные обязательства', 'Срок задолженности'];
+        $values = [
+            str_repeat('УЧ-102 — учебный договор ремонта офиса ', 3), '123456.78', '2026-10-23',
+            str_repeat('Учебный проект ремонта офиса ', 3), str_repeat('Учебный подрядчик по ремонту офиса ', 4), 'RUB',
+            'Расход', '100000.00', '0.00', '23456.78', '23456.78', '23456.78', 'До 30 дней',
+        ];
+        $schema = [];
+        $row = [];
+        for ($index = 0; $index < $columnCount; $index++) {
+            $id = ['name', 'amount', 'date'][$index] ?? 'column_'.$index;
+            $schema[] = ['id' => $id, 'labels' => ['ru-RU' => $labels[$index] ?? 'Дополнительная колонка '.($index + 1)]];
+            $row[$id] = $values[$index] ?? 'Учебное значение '.($index + 1);
+        }
+        [$source] = $this->source($rowCount, rowSchema: $schema);
+        $stream = new InMemoryReportArtifactStream;
+        $rows = array_fill(0, $rowCount, $row);
+        (new XlsxReportExportRenderer)->render($source, $this->data('xlsx', array_column($schema, 'id')), $rows === [] ? [] : [$this->chunk($source, $rows)], $stream);
+        if ($directory = getenv('MOST_REPORT_XLSX_PRINT_QA_DIR')) {
+            file_put_contents($directory.'/report-'.$columnCount.'-columns-'.$rowCount.'-rows.xlsx', $stream->bytes());
+        }
+        $path = tempnam(sys_get_temp_dir(), 'report-print-');
+        self::assertIsString($path);
+        try {
+            file_put_contents($path, $stream->bytes());
+            $sheet = IOFactory::load($path)->getActiveSheet();
+            self::assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
+            self::assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+            self::assertGreaterThanOrEqual(1, $sheet->getPageSetup()->getFitToWidth());
+            self::assertSame([1, 1], array_map('intval', $sheet->getPageSetup()->getRowsToRepeatAtTop()));
+            self::assertSame('A2', $sheet->getFreezePane());
+            self::assertSame('Arial', $sheet->getStyle('A1')->getFont()->getName());
+            self::assertTrue($sheet->getStyle('A1')->getFont()->getBold());
+            self::assertTrue($sheet->getStyle('A1')->getAlignment()->getWrapText());
+            self::assertCount($columnCount, $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1')[0]);
+            foreach ($schema as $index => $column) {
+                self::assertSame($column['labels']['ru-RU'], (string) $sheet->getCell([$index + 1, 1])->getValue());
+            }
+            if ($rowCount > 0) {
+                self::assertSame($row['name'], (string) $sheet->getCell('A'.($rowCount + 1))->getValue());
+                self::assertSame(123456.78, $sheet->getCell('B'.($rowCount + 1))->getValue());
+                self::assertSame('2026-10-23', (string) $sheet->getCell('C'.($rowCount + 1))->getValue());
+                self::assertTrue($sheet->getStyle('A2')->getAlignment()->getWrapText());
+                self::assertNotSame(0, $sheet->getCell('A2')->getXfIndex());
+            }
+            if ($columnCount === 27) {
+                self::assertSame('Учебное значение 27', (string) $sheet->getCell('AA3')->getValue());
+                self::assertGreaterThan(1, $sheet->getPageSetup()->getFitToWidth());
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
     public function test_accepted_excel_headers_are_localized_without_mutating_persisted_schema(): void
     {
         $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on']];
