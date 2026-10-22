@@ -50,7 +50,7 @@ final class AssistantReportEntityQuery
                 $name = trim((string) ($parts[0] ?? ''));
             } else {
                 $prefix = substr($message, 0, $offset);
-                if ($type === 'project' && self::isColonReportColumn($message, $offset, $mention)) {
+                if ($type === 'project' && self::isColonReportColumn($message, $offset, $mention, $noun)) {
                     continue;
                 }
                 if ($type === 'project'
@@ -86,14 +86,13 @@ final class AssistantReportEntityQuery
         return array_values($names);
     }
 
-    private static function isColonReportColumn(string $message, int $offset, string $mention): bool
+    private static function isColonReportColumn(string $message, int $offset, string $mention, string $noun): bool
     {
-        if (preg_match('/^(?:проект|объект)\s+$/iu', $mention) !== 1) {
+        if (preg_match('/^'.$noun.'\s+$/iu', $mention) !== 1) {
             return false;
         }
         $prefix = substr($message, 0, $offset);
-        if (preg_match('/:(?<columns>[^:;.!?\r\n]*)$/u', $prefix, $match, PREG_OFFSET_CAPTURE) !== 1
-            || preg_match('/(?:^|,|\b(?:и|или))\s*$/iu', $match['columns'][0]) !== 1) {
+        if (preg_match('/:[^:;.!?\r\n]*$/u', $prefix, $match, PREG_OFFSET_CAPTURE) !== 1) {
             return false;
         }
         $colon = $match[0][1];

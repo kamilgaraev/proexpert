@@ -16,6 +16,17 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_colon_report_columns_accept_registered_project_identifier_inflections(): void
+    {
+        foreach (['идентификатор проекта', 'Идентификатор проекта', 'идентификатору проекта'] as $field) {
+            $question = 'Сделай CSV по всей организации: номер, '.$field.' и статус.';
+            self::assertNull(AssistantReportEntityQuery::extract($question, 'project'), $question);
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => 52, 'filters' => []]]];
+            self::assertNull(AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments)['sections'][0]['project_id']);
+        }
+    }
+
     public function test_report_virtual_crm_fields_are_not_advertised_by_generic_domain_reads(): void
     {
         $definition = (new AssistantDomainCatalog(AssistantDomainCatalog::defaults()))->definition('crm');
