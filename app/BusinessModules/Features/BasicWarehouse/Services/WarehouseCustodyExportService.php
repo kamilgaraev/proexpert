@@ -15,6 +15,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use RuntimeException;
@@ -169,7 +170,7 @@ final class WarehouseCustodyExportService
             $row++;
         }
 
-        $this->styleSheet($sheet, 'A', 'G', max(1, $row - 1));
+        $this->styleSheet($sheet, 'A', 'G', max(1, $row - 1), true);
     }
 
     private function saveSpreadsheet(
@@ -204,7 +205,7 @@ final class WarehouseCustodyExportService
         );
     }
 
-    private function styleSheet(Worksheet $sheet, string $firstColumn, string $lastColumn, int $lastRow): void
+    private function styleSheet(Worksheet $sheet, string $firstColumn, string $lastColumn, int $lastRow, bool $summary = false): void
     {
         $headerRange = "{$firstColumn}1:{$lastColumn}1";
         $tableRange = "{$firstColumn}1:{$lastColumn}{$lastRow}";
@@ -212,13 +213,32 @@ final class WarehouseCustodyExportService
         $sheet->getStyle($headerRange)->getFont()->setBold(true);
         $sheet->getStyle($headerRange)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle($headerRange)->getFill()->setFillType(Fill::FILL_SOLID);
-        $sheet->getStyle($headerRange)->getFill()->getStartColor()->setRGB('EAF2FF');
+        $sheet->getStyle($headerRange)->getFill()->getStartColor()->setRGB('F2F2F2');
         $sheet->getStyle($tableRange)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-        $sheet->getStyle($tableRange)->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
+        $sheet->getStyle($tableRange)->getFont()->setName('Arial')->setSize(10);
+        $sheet->getStyle($tableRange)->getAlignment()->setVertical(Alignment::VERTICAL_TOP)->setWrapText(true);
+        $sheet->getRowDimension(1)->setRowHeight(32);
 
-        foreach (range($firstColumn, $lastColumn) as $column) {
-            $sheet->getColumnDimension($column)->setAutoSize(true);
+        $widths = $summary
+            ? ['A' => 28, 'B' => 12, 'C' => 12, 'D' => 12, 'E' => 16, 'F' => 16, 'G' => 24]
+            : ['A' => 24, 'B' => 26, 'C' => 34, 'D' => 10, 'E' => 14, 'F' => 14, 'G' => 24];
+        foreach ($widths as $column => $width) {
+            $sheet->getColumnDimension($column)->setAutoSize(false)->setWidth($width);
         }
+        if ($lastRow > 1) {
+            $numericFirstColumn = $summary ? 'B' : 'E';
+            $sheet->getStyle("{$numericFirstColumn}2:F{$lastRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        }
+        $sheet->freezePane('A2');
+        $sheet->getPageSetup()
+            ->setPaperSize(PageSetup::PAPERSIZE_A4)
+            ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
+            ->setFitToWidth(1)
+            ->setFitToHeight(0)
+            ->setPrintArea($tableRange)
+            ->setRowsToRepeatAtTop([1, 1]);
+        $sheet->getPageMargins()->setLeft(0.25)->setRight(0.25)->setTop(0.35)->setBottom(0.35)->setHeader(0.15)->setFooter(0.15);
+        $sheet->getHeaderFooter()->setOddFooter('&R&9&P / &N');
     }
 
     private function formatSummaryDate(?string $date): ?string
