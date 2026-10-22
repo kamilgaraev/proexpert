@@ -150,6 +150,7 @@ final class AssistantRequestUnderstandingResolver
             'payment' => ['платеж', 'платежи', 'оплат', 'счет', 'счёт', 'согласован'],
             'schedule' => ['график', 'срок', 'задач', 'этап'],
             'measurement_unit' => ['единиц измерен', 'единицу измерен', 'единицы измерен', 'measurement unit'],
+            'change_request' => ['запрос на изменен', 'запросы на изменен', 'запросов на изменен'],
         ];
 
         foreach ($map as $entity => $markers) {
@@ -439,6 +440,9 @@ final class AssistantRequestUnderstandingResolver
     {
         return $this->containsAny($normalized, [
             'проанализируй',
+            'посчитай',
+            'подсчитай',
+            'сосчитай',
             'анализ',
             'риски',
             'риск',

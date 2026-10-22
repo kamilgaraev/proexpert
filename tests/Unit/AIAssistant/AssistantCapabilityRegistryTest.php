@@ -10,6 +10,48 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantCapabilityRegistryTest extends TestCase
 {
+    public function test_website_change_requests_remain_in_the_holding_site_domain(): void
+    {
+        self::assertSame('holding_site', (new AssistantCapabilityRegistry)
+            ->match('Сколько запросов на изменения сайта холдинга по всей организации?')['id']);
+    }
+
+    public function test_organization_change_status_counts_require_a_grouped_read_without_the_ui_project(): void
+    {
+        $question = 'Посчитай запросы на изменения по всей организации по текущим статусам, включая черновики. Если запросов нет, скажи об этом прямо. Не ограничивайся выбранным проектом.';
+        $plan = ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 102]]]]];
+        self::assertSame(['name' => 'get_organization_change_request_status_counts', 'arguments' => ['scope' => 'organization']],
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::fromPlan($plan));
+    }
+
+    public function test_grouped_change_counts_reject_additional_filters_and_website_changes(): void
+    {
+        $intent = \App\BusinessModules\Features\AIAssistant\Services\AssistantOrganizationChangeRequestStatusCountIntent::class;
+        foreach (['Сколько запросов на изменения по всей организации по статусам?',
+            'Подсчитайте запросы на изменение по всей организации по текущим статусам, включая черновики.'] as $query) {
+            self::assertTrue($intent::matches($query), $query);
+        }
+        foreach (['Посчитай запросы на изменения по всей организации по статусам без черновиков.',
+            'Посчитай запросы на изменения по всей организации по статусам за октябрь.',
+            'Посчитай запросы на изменения по всей организации по статусам и проектам.',
+            'Сделай Excel: количество запросов на изменения по всей организации по статусам.',
+            'Сколько запросов на изменения сайта холдинга по всей организации по статусам?',
+            'Посчитай запросы на изменения по всей организации по статусам с суммой больше 1000.',
+            'Посчитай запросы на изменения проекта 102 по статусам.'] as $query) {
+            self::assertFalse($intent::matches($query), $query);
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $query]]), $query);
+        }
+    }
+
+    public function test_change_request_counts_use_the_business_domain_for_plural_forms(): void
+    {
+        $question = 'Посчитай запросы на изменения по всей организации по текущим статусам, включая черновики. Если запросов нет, скажи об этом прямо. Не ограничивайся выбранным проектом.';
+        self::assertSame('change_management', (new AssistantCapabilityRegistry)->match($question)['domain']);
+        foreach (['Сколько запросов на изменения по всей организации?', 'Подсчитай запросы на изменение по всей организации.'] as $query) {
+            self::assertSame('change_management', (new AssistantCapabilityRegistry)->match($query)['domain']);
+        }
+    }
+
     public function test_estimate_position_fields_do_not_switch_to_the_unit_dictionary(): void
     {
         $query = 'Теперь выбери одну доступную смету текущего проекта и одну её позицию. Покажи название, количество, единицу измерения, цену за единицу и сохранённый итог. Укажи валюту и применённые коэффициенты, если они известны. Ничего не изменяй.';

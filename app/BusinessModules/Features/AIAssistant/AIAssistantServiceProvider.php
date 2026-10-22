@@ -299,6 +299,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'get_rag_index_status' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetRagIndexStatusTool::class,
                 'get_organization_calculation_health' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationCalculationHealthTool::class,
                 'get_organization_quality_defect_control' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationQualityDefectControlTool::class,
+                'get_organization_change_request_status_counts' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationChangeRequestStatusCountsTool::class,
                 'get_organization_handover_control' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationHandoverControlTool::class,
                 'get_organization_advance_settings' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationAdvanceSettingsTool::class,
                 'get_organization_effective_modules' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationEffectiveModulesTool::class,

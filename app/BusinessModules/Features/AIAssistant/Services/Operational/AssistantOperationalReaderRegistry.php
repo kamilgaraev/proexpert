@@ -46,6 +46,7 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_change_request_status_counts' => AssistantOrganizationChangeRequestStatusCountReader::class,
         'get_organization_handover_control' => AssistantOrganizationHandoverControlReader::class,
         'get_organization_quality_defect_control' => AssistantOrganizationQualityDefectControlReader::class,
         'get_rag_index_status' => AssistantRagIndexStatusReader::class,
@@ -91,6 +92,10 @@ final class AssistantOperationalReaderRegistry
     public static function intent(string $query): ?array
     {
         $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
+        if (AssistantOrganizationChangeRequestStatusCountReader::hasIntent($query)) {
+            return AssistantOrganizationChangeRequestStatusCountReader::matches($query)
+                ? ['name' => 'get_organization_change_request_status_counts', 'reader' => AssistantOrganizationChangeRequestStatusCountReader::class] : null;
+        }
         if (AssistantOrganizationHandoverControlReader::hasIntent($query)) {
             return AssistantOrganizationHandoverControlReader::matches($query)
                 ? ['name' => 'get_organization_handover_control', 'reader' => AssistantOrganizationHandoverControlReader::class] : null;
