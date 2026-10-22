@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationScenarioSourceBinding;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEvaluationScenario;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder;
@@ -26,6 +28,7 @@ final readonly class ConfirmEvaluationScenario
         private EvaluationDraftArithmeticRecalculator $arithmetic, private UserEvaluationChoiceWriter $choices,
         private MaterializeSelectedEvaluationQuantities $quantities, private SaveEvaluationRevision $revisions,
         private \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow $workflow,
+        private CurrentDraftQuantityProofGuard $quantityProof,
         private SelectedEvaluationScenario $scenarios = new SelectedEvaluationScenario,
         private UniversalEvaluationBuilder $builder = new UniversalEvaluationBuilder,
         private BuildMostEstimateDraft $artifacts = new BuildMostEstimateDraft) {}
@@ -84,7 +87,8 @@ final readonly class ConfirmEvaluationScenario
                 throw ValidationException::withMessages(['scenario' => 'Исходный состав оценки изменился. Пересчитайте оценку.']);
             }
             $scope = [(int) $session->organization_id, $projectId, $sessionId];
-            $snapshot = $this->models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+            $capture = $this->models->snapshotForPlanning(...[...$scope, 10001, true]);
+            $snapshot = $capture['snapshot'];
             if (count($snapshot->facts) > 10000) {
                 throw ValidationException::withMessages(['scenario' => 'Разделите проект: предел фактов превышен.']);
             }
@@ -103,6 +107,7 @@ final readonly class ConfirmEvaluationScenario
             }
             $sourceRevisionId = $revision->public_id;
             $sourceContentHash = $revision->content_hash;
+            $beforeMaterialization = [...$capture, 'decisions' => $decisions, 'selections' => $payload['quantity_selections'] ?? [], 'input_payload' => $payload];
             if ($this->quantities->materialize($actor, $session, $selected, $input['request_id'], $sourceRevisionId)) {
                 $originalPositions = array_column($selected['scenario']['positions'], null, 'key');
                 foreach ($fresh['local_estimates'] ?? [] as $estimateIndex => $estimate) {
@@ -118,7 +123,8 @@ final readonly class ConfirmEvaluationScenario
                 }
                 $inputHash = $this->inputs->fromSession($session);
                 $version = 'sha256:'.$inputHash;
-                $snapshot = $this->models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                $capture = $this->models->snapshotForPlanning(...[...$scope, 10001, true]);
+                $snapshot = $capture['snapshot'];
                 if (count($snapshot->facts) > 10000) {
                     throw ValidationException::withMessages(['scenario' => 'Разделите проект: предел фактов превышен.']);
                 }
@@ -132,9 +138,26 @@ final readonly class ConfirmEvaluationScenario
                 } catch (\InvalidArgumentException) {
                     throw ValidationException::withMessages(['scenario' => 'Подтверждённые объёмы не прошли проверку состава или цен. Изменение не сохранено.']);
                 }
-                if (! hash_equals($selected['scenario_hash'], $materialized['scenario_hash'])) {
+                $quantityDraft = $fresh;
+                $selectedKeys = array_fill_keys(array_column($materialized['scenario']['positions'], 'key'), true);
+                foreach ($quantityDraft['local_estimates'] as &$estimate) {
+                    foreach ($estimate['sections'] as &$section) {
+                        $section['work_items'] = array_values(array_filter($section['work_items'], static fn (array $item): bool => isset($selectedKeys[$item['key']])));
+                    }
+                    unset($section);
+                }
+                unset($estimate);
+                $this->quantityProof->assertCurrent(...[...$scope, $quantityDraft]);
+                $verified = $this->models->snapshotForPlanning(...[...$scope, 10001]);
+                if (! hash_equals($capture['token'], $verified['token'])) {
+                    throw ValidationException::withMessages(['scenario' => 'Исходные факты изменились во время пересчёта.']);
+                }
+                if (! (new EvaluationScenarioSourceBinding)->materializationMatches($beforeMaterialization,
+                    [...$capture, 'decisions' => $decisions, 'selections' => $session->input_payload['quantity_selections'] ?? [], 'input_payload' => $session->input_payload],
+                    $selected, $materialized, (string) $actor->id, $sourceRevisionId)) {
                     throw ValidationException::withMessages(['scenario' => 'Пересчёт изменил выбранные объёмы или деньги. Проверьте новую оценку.']);
                 }
+                $selected = $materialized;
                 $saved = $this->revisions->save($actor, ...[...$scope, $session->state_version, $input['request_id'], $inputHash, $evaluation, 'arithmetic_recalculation']);
                 $revision = (object) ['public_id' => $saved['revision_id'], 'content_hash' => $saved['content_hash']];
                 $fresh['source_input_version'] = $version;
