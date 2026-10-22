@@ -67,6 +67,18 @@ final class SensitiveDataRedactor
 
     private function isSensitiveKey(string $key): bool
     {
+        static $pattern = null;
+        $pattern ??= self::SENSITIVE_KEY_PARTS === [] ? '/(?!)/'
+            : '/(?:'.implode('|', array_map(static fn (string $part): string => preg_quote($part, '/'), self::SENSITIVE_KEY_PARTS)).')/';
+
+        try {
+            $matched = preg_match($pattern, $key);
+            if ($matched !== false) {
+                return $matched === 1;
+            }
+        } catch (\Throwable) {
+        }
+
         foreach (self::SENSITIVE_KEY_PARTS as $part) {
             if ($key === $part || str_contains($key, $part)) {
                 return true;
