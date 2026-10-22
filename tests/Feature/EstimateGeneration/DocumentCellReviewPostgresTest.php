@@ -256,6 +256,25 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         $native = array_values(array_filter($facts, static fn ($fact): bool => $fact->type === 'equipment_count'));
         self::assertCount(1, $native);
         self::assertNotEmpty($native[0]->nativeNumericProofs);
+        $queries = [];
+        $collect = false;
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$queries, &$collect): void {
+            if ($collect) {
+                $queries[] = [$query->sql, $query->bindings];
+            }
+        });
+        $collect = true;
+        $current = app(ProjectModelRepository::class)->snapshotForUnderstanding(...[...$scope, 100, false, true]);
+        $collect = false;
+        $currentQueries = $queries;
+        $queries = [];
+        $collect = true;
+        $withoutReviews = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository(app('db')))
+            ->snapshotForUnderstanding(...[...$scope, 100, false, true]);
+        $collect = false;
+        self::assertEquals($withoutReviews, $current);
+        self::assertSame($currentQueries, $queries);
+        self::assertArrayNotHasKey('cell_review_projection', $current['token_state']);
         Http::assertNothingSent();
     }
 
@@ -597,6 +616,128 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
     }
 
+    #[\PHPUnit\Framework\Attributes\TestWith(['snapshot', 'revoke'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['understanding', 'revoke'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['audit', 'revoke'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['factory', 'revoke'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['audit', 'policy'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['factory', 'policy'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['audit', 'identity'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['factory', 'identity'])]
+    public function test_planning_consumers_exclude_reviewed_semantics_without_a_current_review(string $consumer, string $change): void
+    {
+        [$session, $actor, $document] = $this->ordinaryWorkbook(neighbors: true, alternate: true);
+        app(InitialProjectFactsWriter::class)->write($session, $actor);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        self::assertInstanceOf(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore::class,
+            app(DocumentProcessingUnitStore::class));
+        self::assertInstanceOf(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::class,
+            app(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::class));
+        $models = app(ProjectModelRepository::class);
+        $native = array_values(array_filter($models->snapshotForPlanning(...[...$scope, 100])['snapshot']->facts,
+            static fn ($fact): bool => $fact->type === 'equipment_count'))[0];
+        self::assertNotEmpty($native->nativeNumericProofs);
+        $this->composeCells($session, $actor, publish: true);
+        $reviews = app(ReviewSpreadsheetCellInterpretation::class);
+        $rows = $reviews->rows($actor, $session->fresh(), (int) $document->id);
+        $reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $this->reviewRequest($session->fresh(), $rows[0]));
+        $source = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->fresh()->input_payload])
+            ->sourceClaimReferences[0]['document_fact_ids'][0];
+        $original = $models->fact(...[...$scope, $source]);
+        $consumerIds = function () use ($consumer, $session, $scope, $models): array {
+            if ($consumer === 'snapshot') {
+                return array_column($models->snapshot(...[...$scope, 100])->facts, 'id');
+            }
+            if ($consumer === 'understanding') {
+                return array_column($models->snapshotForUnderstanding(...[...$scope, 100])['snapshot']->facts, 'id');
+            }
+            if ($consumer === 'audit') {
+                return array_column(app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory::class)
+                    ->capture(...[...$scope, $session->fresh()->draft_payload])->facts, 'id');
+            }
+            $capture = DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput::class)
+                ->capture($session->fresh()));
+            self::assertTrue($capture['within_budget']);
+
+            return array_column($capture['snapshot']->facts, 'id');
+        };
+        self::assertContains($source, $consumerIds());
+        $before = $models->snapshotForUnderstanding(...[...$scope, 100, false, true]);
+        self::assertNotNull($before['token_state']['cell_review_projection'][$source]);
+        if ($change === 'revoke') {
+            $reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $this->reviewRequest($session->fresh(), $rows[0], 'revoke'));
+        } else {
+            config(['estimate-generation.universal_enabled' => true]);
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection::class)
+                ->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->fresh()->state_version,
+                    'selected_sections' => ['equipment'], 'profile_id' => 'renovation', 'construction_type' => 'current_repair', 'price_policy' => 'mixed']);
+            if ($change === 'identity') {
+                $this->composeCells($session->fresh(), $actor, publish: true, valueCellAddress: 'E2', identityCellAddress: 'F2');
+                $rows = $reviews->rows($actor, $session->fresh(), (int) $document->id);
+                $reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $this->reviewRequest($session->fresh(), $rows[0]));
+            }
+        }
+        self::assertNotContains($source, $consumerIds());
+        self::assertContains($native->id, $consumerIds());
+        $after = $models->snapshotForUnderstanding(...[...$scope, 100, false, true]);
+        self::assertNotContains($source, array_column($after['snapshot']->facts, 'id'));
+        self::assertNull($after['token_state']['cell_review_projection'][$source]);
+        self::assertNotSame($before['token'], $after['token']);
+        self::assertSame($after['token'], \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingInputFingerprint::fromExactState($after['token_state']));
+        self::assertNull($models->replayUnderstanding(...[...$scope, $original->sourceVersion, str_repeat('a', 64), $before['token']]));
+        self::assertFalse($models->replaceUnderstanding(...[...$scope, $original->sourceVersion, str_repeat('a', 64), $before['token'], [], [], [], [], 0]));
+        self::assertEquals($original, $models->fact(...[...$scope, $source]));
+        self::assertNotContains($source, array_column((new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository(app('db')))
+            ->snapshotForPlanning(...[...$scope, 100])['snapshot']->facts, 'id'));
+        self::assertSame($change === 'identity' ? 2 : 1, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
+    public function test_understanding_capture_rejects_admission_drift_and_does_not_hide_a_limited_current_prefix(): void
+    {
+        [$session, $actor, $document] = $this->ordinaryWorkbook();
+        app(InitialProjectFactsWriter::class)->write($session, $actor);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $this->composeCells($session, $actor, publish: true);
+        $reviews = app(ReviewSpreadsheetCellInterpretation::class);
+        $row = $reviews->rows($actor, $session->fresh(), (int) $document->id)[0];
+        $reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $this->reviewRequest($session->fresh(), $row));
+        $models = app(ProjectModelRepository::class);
+        $before = $models->snapshotForUnderstanding(...[...$scope, 100, false, true]);
+        $source = array_key_first($before['token_state']['cell_review_projection']);
+        $armed = true;
+        $changed = false;
+        config(['estimate-generation.universal_enabled' => true]);
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$armed, &$changed, $actor, $session, $scope): void {
+            if (! $armed || ! str_contains($query->sql, '"projection"."id" as "projection_id"')) {
+                return;
+            }
+            $armed = false;
+            $changed = true;
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection::class)
+                ->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->fresh()->state_version,
+                    'selected_sections' => ['equipment'], 'profile_id' => 'renovation', 'construction_type' => 'current_repair', 'price_policy' => 'mixed']);
+        });
+        try {
+            $models->snapshotForUnderstanding(...[...$scope, 100, false, true]);
+            self::fail('Changed admission must not be paired with the earlier snapshot.');
+        } catch (\InvalidArgumentException $error) {
+            self::assertSame('project_model_cell_review_snapshot_changed', $error->getMessage());
+        }
+        self::assertTrue($changed);
+        self::assertEquals($before, $models->snapshotForUnderstanding(...[...$scope, 100, false, true]));
+        $reviews->handle($actor, $scope[1], $scope[2], (int) $document->id, $this->reviewRequest($session->fresh(), $row, 'revoke'));
+        $rawFacts = $models->currentFacts(...$scope);
+        self::assertContains($source, array_column($rawFacts, 'id'));
+        try {
+            $models->snapshot(...[...$scope, count($rawFacts)]);
+            self::fail('Filtering a complete limited prefix must fail closed.');
+        } catch (\InvalidArgumentException $error) {
+            self::assertSame('planning_source_filter_budget_exceeded', $error->getMessage());
+        }
+        self::assertNotContains($source, array_column($models->snapshot(...[...$scope, 100])->facts, 'id'));
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
     public function test_cell_context_scans_past_typed_units_and_caps_eligible_rows_without_another_composer_wire(): void
     {
         [$session, $actor, $document] = $this->ordinaryWorkbook(leadingTypedSheets: 8, extraLiteralRows: 8);
@@ -623,6 +764,13 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
 
     private function ordinaryWorkbook(bool $multiple = false, bool $typed = false, bool $neighbors = false, bool $alternate = false, int $leadingTypedSheets = 0, int $extraLiteralRows = 0): array
     {
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->allows('hasModuleAccess')->andReturn(true);
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $permissions->allows('can')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
         Http::fake([]);
         Http::preventStrayRequests();
         Queue::fake();
@@ -747,13 +895,6 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
 
     private function composeCells(EstimateGenerationSession $session, User $actor, bool $publish = false, ?int $expectedRefs = null, ?string $valueCellAddress = null, ?string $identityCellAddress = null, array $forbiddenFactIds = []): array
     {
-        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
-        $entitlements->allows('hasModuleAccess')->andReturn(true);
-        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
-        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
-        $permissions->allows('canCurrent')->andReturn(true);
-        $permissions->allows('can')->andReturn(true);
-        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
         config(['ai-assistant-credits.enforce' => false, 'estimate-generation.credits.enabled' => true, 'estimate-generation.live_qa.enabled' => false]);
         app(AICreditService::class)->grant($session->organization, 1000000, 'purchase', null, 'test:cell-review:'.$session->id);
         $operationId = (string) Str::uuid();

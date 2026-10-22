@@ -514,7 +514,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository::class,
+            static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository(
+                $app->make('db'),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::class),
+            ),
         );
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitratorFactory::class,
@@ -963,7 +966,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::class,
             static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService(
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class),
-                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore::class),
+                new EloquentDocumentProcessingUnitStore($app->make('db')->connection()),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::class),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
             ));
