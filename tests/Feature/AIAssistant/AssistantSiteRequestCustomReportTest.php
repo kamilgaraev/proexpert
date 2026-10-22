@@ -507,6 +507,52 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         self::assertSame([], $metadata['artifacts']);
     }
 
+    public function test_file_request_preserves_the_generator_current_project_clarification(): void
+    {
+        $this->actor = $this->fixture->owner;
+        $this->actingAs($this->actor);
+        $report = ['title' => 'Учебные заявки', 'format' => 'csv', 'sections' => [$this->section('Заявки', [])]];
+        $provider = $this->createMock(SiteRequestReportResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->method('isAvailable')->willReturn(true);
+        $provider->method('countTokens')->willReturn(100);
+        $provider->expects(self::never())->method('chat');
+        $calls = 0;
+        $sawClarification = false;
+        $provider->expects(self::atLeast(2))->method('responses')->willReturnCallback(static function (array $input) use (&$calls, &$sawClarification, $report): array {
+            foreach ($input as $item) {
+                if (($item['type'] ?? null) === 'function_call_output' && ($item['call_id'] ?? null) === 'current-project-report') {
+                    $result = json_decode($item['output'], true, 512, JSON_THROW_ON_ERROR);
+                    self::assertTrue($result['needs_clarification']);
+                    self::assertSame('current_project_required', $result['reason']);
+                    $sawClarification = true;
+                }
+            }
+            $call = ['type' => 'function_call', 'id' => 'current-project-report', 'status' => 'completed', 'call_id' => 'current-project-report',
+                'name' => 'generate_custom_report', 'arguments' => json_encode($report, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
+            $first = ++$calls === 1;
+
+            return ['content' => $first ? '' : 'Отчёт сформирован.', 'output' => $first ? [$call] : [], 'function_calls' => $first ? [$call] : [],
+                'input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        });
+        $files = $this->createMock(FileService::class);
+        $files->expects(self::never())->method('putPrivate');
+        $this->app->instance(FileService::class, $files);
+        $org = $this->fixture->organization;
+        app(AICreditService::class)->grant($org, 100000, 'purchase', null, 'current-project-report-'.Str::uuid());
+        $query = 'Собери CSV по заявкам текущего проекта с полями название и статус.';
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false];
+        $payload['quote_id'] = app(AICreditService::class)->quote($org, $this->actor, $payload)['quote_id'];
+        $service = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null]);
+        $response = $service->ask($query, (int) $org->id, $this->actor, null, $payload);
+        self::assertTrue($sawClarification);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame(trans_message('ai_assistant_facts.live_proof_required'), $response['message']['content']);
+        self::assertSame('partial', $response['message']['metadata']['validation_status']);
+        self::assertSame([], $response['message']['metadata']['artifacts']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
     public static function reportFailures(): array
     {
         return ['row limit' => ['row_limit'], 'unavailable source' => ['unavailable'], 'internal failure' => ['internal']];

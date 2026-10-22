@@ -654,6 +654,7 @@ class AIAssistantService
             $toolFailures = [];
             $toolEvidence = [];
             $attemptedTools = [];
+            $reportClarification = null;
             $proposedActions = [];
             $trustedDownloadUrls = [];
             $degradedMode = false;
@@ -705,6 +706,10 @@ class AIAssistantService
                         $trustedDownloadUrls
                     );
 
+                    if ($toolName === 'generate_custom_report') {
+                        $reportClarification = is_array($toolResult) && ($toolResult['needs_clarification'] ?? false) === true
+                            ? $toolResult : null;
+                    }
                     $providerResult = $this->toolResultForProvider($toolName, $toolResult);
                     $toolContent = is_string($providerResult)
                         ? $providerResult
@@ -1258,6 +1263,20 @@ class AIAssistantService
                 $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $validated ? 'partial' : 'unverified',
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = ! $validated;
+            }
+            if ($reportClarification !== null && $reportArtifacts === [] && $reportControls === []) {
+                $clarificationText = $reportClarification['server_formatted_answer'] ?? null;
+                $assistantContent = is_string($clarificationText) && $clarificationText !== '' ? $clarificationText
+                    : (\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::failureMessage(
+                        [$reportClarification + ['_tool_name' => 'generate_custom_report']]
+                    ) ?? trans_message('ai_custom_reports.scope_clarification'));
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
+                    'source_refs' => [], 'needs_clarification' => true];
+                $reportServerClarification = true;
+                $degradedMode = true;
+                if ($this->requestOutcome === null) {
+                    $this->recordRequestOutcome('insufficient_data');
+                }
             }
             if ((! $customReportPublished || $reportArtifacts === []) && ! $this->hasCompleteSearchScope($requestProjectScope,
                 (string) ($taskPlan['request']['message'] ?? ''), $user, $organizationId)) {
