@@ -72,7 +72,7 @@ final readonly class UserEvaluationChoiceWriter
     }
 
     public function writeComposerAnswer(User $actor, EstimateGenerationSession $session, CurrentEstimateClarification $current,
-        string $response, ?string $other, string $requestId, string $decisionId): Decision
+        string $response, ?string $other, string $requestId, string $decisionId, ?string $targetEntityId = null): Decision
     {
         $this->authorization->authorize($actor, $session, 'estimate_generation.review');
         $choice = array_column($current->question->choices, null, 'value')[$response] ?? null;
@@ -81,6 +81,8 @@ final readonly class UserEvaluationChoiceWriter
             || $choice === null || $choice->kind !== $response
             || ($current->composerContext['state_version'] ?? null) !== (int) $session->state_version
             || ! in_array($response, ['other', 'leave_unresolved'], true)
+            || ($targetEntityId !== null && ($response !== 'other'
+                || ! in_array($targetEntityId, array_column($current->targetOptions, 'entity_id'), true)))
             || ($response === 'other' ? ! is_string($other) || trim($other) === '' || mb_strlen($other) > 500 : $other !== null)) {
             throw new InvalidArgumentException('estimate_generation.question_response_invalid');
         }
@@ -95,7 +97,8 @@ final readonly class UserEvaluationChoiceWriter
             'choice_label' => $choice->label,
             'other' => $other, 'question_fingerprint' => $current->answerFingerprint,
             'source_locator' => $current->question->sourceLocator, 'composer_context' => $current->composerContext,
-            'decision_id' => $decisionId, 'reason' => $reason];
+            'decision_id' => $decisionId, 'reason' => $reason,
+            ...($targetEntityId === null ? [] : ['target_entity_id' => $targetEntityId])];
         $hash = hash('sha256', CanonicalPipelineJson::encode($value));
 
         return $this->evidence->transaction($scope[0], $scope[2], function () use ($scope, $version, $entityId, $factId, $reason,

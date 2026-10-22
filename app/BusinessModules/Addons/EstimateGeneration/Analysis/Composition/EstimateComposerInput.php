@@ -162,6 +162,8 @@ final readonly class EstimateComposerInput
         $document = $byId[$candidate['document_fact_ids'][0]] ?? null;
 
         return isset($byId[$candidate['source_answer_fact_id']])
+            && (! array_key_exists('target_entity_id', $byId[$candidate['source_answer_fact_id']]['value'] ?? [])
+                || $byId[$candidate['source_answer_fact_id']]['value']['target_entity_id'] === $candidate['entity_id'])
             && $candidate['document_fact_ids'][0] !== $candidate['source_answer_fact_id']
             && self::sourceClaimDocument($document) && $document['entity_id'] === $candidate['entity_id'];
     }

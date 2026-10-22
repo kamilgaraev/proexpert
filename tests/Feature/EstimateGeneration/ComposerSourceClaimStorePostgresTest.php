@@ -147,7 +147,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                         new TimewebEstimateComposerModel($wire, app(EloquentAiUsageStore::class), app(AiPriceSnapshotResolver::class),
                             'openai/gpt-6-luna', 524288, 8192, 60), 'openai/gpt-6-luna', allowance: app(EstimateComposerAllowance::class));
                     $outcome = $composer->runDetailed($input);
-                    $expectedWork = $targetWork && $phase === 0 && $uploadMoment === 'before_answer';
+                    $expectedWork = $targetWork && $phase === 0 && ($uploadMoment === 'before_answer' || isset($answer->value['target_entity_id']));
                     if ($targetWork && $phase === 0) {
                         $projection = (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector)
                             ->apply([], $outcome['intents'], $input->derivedQuantities, $input->facts);
@@ -226,13 +226,14 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'answer_then_document' => [true, 'after_answer'], 'document_then_answer' => [true, 'before_answer'],
             'unique_current_card_target' => [true, 'before_answer', true], 'late_document_target' => [true, 'after_answer', true],
             'no_frozen_card_target' => [false, null, true], 'two_current_card_targets' => [true, null, true, 'multiple'],
-            'mixed_numeric_card_targets' => [true, null, true, 'mixed']];
+            'mixed_numeric_card_targets' => [true, null, true, 'mixed'], 'selected_current_card_target' => [true, null, true, 'selected']];
     }
 
-    public function test_answer_target_context_does_not_survive_ignoring_its_frozen_document(): void
+    #[DataProvider('answerTargetModes')]
+    public function test_answer_target_context_does_not_survive_ignoring_its_frozen_document(string $mode): void
     {
         Queue::fake();
-        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture(naturalInitial: true);
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture(naturalInitial: true, targetMode: $mode);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $factory = app(EstimateComposerInputFactory::class);
         $input = $factory->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->input_payload]);
@@ -261,6 +262,52 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame([], $current->sourceClaimReferences);
         self::assertSame($answer->value, app(ProjectModelRepository::class)->fact(...[...$scope, $answer->id])->value);
         self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('organization_id', $scope[0])->count());
+        Http::assertNothingSent();
+    }
+
+    public static function answerTargetModes(): array
+    {
+        return ['inferred' => ['unique'], 'selected' => ['selected']];
+    }
+
+    public function test_atomic_target_receipt_replay_and_fresh_question_for_the_other_object(): void
+    {
+        Queue::fake();
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture(naturalInitial: true, targetMode: 'selected');
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $project = Project::query()->findOrFail($scope[1]);
+        $card = ['code' => $answer->value['question_key'], 'source_version' => $answer->sourceVersion,
+            'answer_fingerprint' => $answer->value['question_fingerprint']];
+        $request = ['idempotency_key' => 'selected-answer-'.$session->id, 'target_entity_id' => $documents[0]->entityId];
+        $receiptInput = [...$request, 'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint']];
+        $receipts = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetClarificationAnswerReceipt::class);
+        self::assertSame('saved', $receipts->handle($actor, $scope[1], $scope[2], $card['code'], $receiptInput)['status']);
+        self::assertSame('unavailable', $receipts->handle($actor, $scope[1], $scope[2], $card['code'],
+            [...$receiptInput, 'target_entity_id' => $documents[1]->entityId])['status']);
+        self::assertSame(200, $this->answerComposerCard($actor, $project, $session->fresh(), $card, $request));
+        self::assertSame(422, $this->answerComposerCard($actor, $project, $session->fresh(), $card,
+            [...$request, 'target_entity_id' => $documents[1]->entityId]));
+        foreach ([null, ''] as $invalid) {
+            try {
+                $this->answerComposerCard($actor, $project, $session->fresh(), $card, ['target_entity_id' => $invalid]);
+                self::fail('An empty target must fail request validation.');
+            } catch (\Illuminate\Validation\ValidationException $exception) {
+                self::assertArrayHasKey('target_entity_id', $exception->errors());
+            }
+        }
+        $session = $this->publishNaturalQuestion($actor, $session->fresh(), [$documents[1], $documents[0]]);
+        $get = Request::create('/', 'GET');
+        $get->setUserResolver(static fn (): User => $actor);
+        $items = app(EstimateGenerationQuestionController::class)->index($get, $project, $session)->getData(true)['data']['items'];
+        self::assertCount(1, $items);
+        self::assertNotSame($card['code'], $items[0]['code']);
+        self::assertSame([$documents[1]->entityId], array_column($items[0]['target_options'], 'entity_id'));
+        self::assertContains($this->answerComposerCard($actor, $project, $session, $card, ['target_entity_id' => $documents[0]->entityId]), [404, 409]);
+        $answers = array_values(array_filter(app(ProjectModelRepository::class)->snapshot(...$scope)->facts,
+            static fn (Fact $fact): bool => ($fact->value['kind'] ?? null) === 'composer_answer'));
+        self::assertCount(1, $answers);
+        self::assertSame(get_object_vars($answer), get_object_vars($answers[0]));
+        self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('organization_id', $scope[0])->count());
         Http::assertNothingSent();
     }
 
@@ -836,7 +883,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             self::assertNotSame($documents[0]->entityId, $documents[1]->entityId);
         }
         if ($naturalInitial) {
-            return $this->naturallyAnsweredSourceFixture($actor, $session, $documents, $uploadMoment, $targetMode !== 'unique');
+            return $this->naturallyAnsweredSourceFixture($actor, $session, $documents, $uploadMoment, $targetMode !== 'unique', $targetMode === 'selected');
         }
         $artifact = (new BuildMostEstimateDraft)->seal([
             'generation_contract' => UniversalDraftProjector::CONTRACT, 'source_info_only' => true, 'is_complete' => false,
@@ -920,7 +967,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 $wire->method('provider')->willReturn('timeweb');
                 $wire->expects(self::once())->method('call')->willReturnCallback(function (string $model, array $messages, array $options) use ($operationId, $documents, $scope, $multipleTargets): array {
                     $payload = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project'];
-                    self::assertArrayNotHasKey('claim_answer_fact_ids', $payload);
+                    $hasAnswers = array_filter($payload['facts'], static fn (array $fact): bool => ($fact['context_kind'] ?? null) === 'composer_answer') !== [];
+                    self::assertSame($hasAnswers, array_key_exists('claim_answer_fact_ids', $payload));
                     self::assertContains($documents[0]->id, array_column($payload['facts'], 'id'));
                     $work = static fn (Fact $document): array => [
                         'kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.installation',
@@ -929,7 +977,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                         'technology_package_candidate' => null, 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
                     ];
                     return $this->composerWireResponse($scope, $operationId, $options,
-                        ['work_intents' => array_map($work, $multipleTargets ? $documents : [$documents[0]])], $model);
+                        ['work_intents' => array_map($work, $multipleTargets ? $documents : [$documents[0]]),
+                            ...($hasAnswers ? ['claim_candidates' => []] : [])], $model);
                 });
                 $composer = new RunEstimateComposer(app(AiRoleRunRepository::class),
                     new TimewebEstimateComposerModel($wire, app(EloquentAiUsageStore::class), app(AiPriceSnapshotResolver::class),
@@ -948,7 +997,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return $session;
     }
 
-    private function naturallyAnsweredSourceFixture(User $actor, EstimateGenerationSession $session, array $documents, ?string $uploadMoment = null, bool $multipleTargets = false): array
+    private function naturallyAnsweredSourceFixture(User $actor, EstimateGenerationSession $session, array $documents, ?string $uploadMoment = null, bool $multipleTargets = false, bool $selectTarget = false): array
     {
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $models = app(ProjectModelRepository::class);
@@ -981,7 +1030,12 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             $card = $items[0];
             $documents = [$newSource, $documents[1]];
         }
-        self::assertSame(200, $this->answerComposerCard($actor, $project, $session, $card));
+        if ($selectTarget) {
+            self::assertEqualsCanonicalizing(array_column($documents, 'entityId'), array_column($card['target_options'], 'entity_id'));
+            self::assertSame(422, $this->answerComposerCard($actor, $project, $session, $card, ['target_entity_id' => 'entity:forged']));
+        }
+        self::assertSame(200, $this->answerComposerCard($actor, $project, $session, $card, $selectTarget
+            ? ['target_entity_id' => $documents[0]->entityId, 'idempotency_key' => 'selected-answer-'.$session->id] : []));
         $answers = array_values(array_filter($models->snapshot(...$scope)->facts,
             static fn (Fact $fact): bool => ($fact->value['kind'] ?? null) === 'composer_answer'));
         self::assertCount(1, $answers);
@@ -994,7 +1048,37 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 self::assertContains($document->id, array_column($answers[0]->value['composer_context']['dependencies'], 'fact_id'));
             }
             $captured = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->fresh()->input_payload]);
-            self::assertSame([], array_column($captured->facts, null, 'id')[$answers[0]->id]['related_entity_ids']);
+            self::assertSame($selectTarget ? [$documents[0]->entityId] : [], array_column($captured->facts, null, 'id')[$answers[0]->id]['related_entity_ids']);
+            if ($selectTarget) {
+                self::assertSame($documents[0]->entityId, $answers[0]->value['target_entity_id']);
+                $classifier = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\WorkIntentSourceClassifier;
+                $work = ['work_key' => 'custom.installation', 'work_section' => 'equipment', 'source_fact_ids' => [$answers[0]->id]];
+                self::assertSame($documents[0]->entityId, $classifier->binding($work, $captured->facts)['entity_id']);
+                foreach ([$initial->entityId, $documents[1]->entityId] as $wrongTarget) {
+                    try {
+                        $classifier->binding([...$work, 'entity_id' => $wrongTarget], $captured->facts);
+                        self::fail('A selected answer must not bind a different work entity.');
+                    } catch (\InvalidArgumentException $exception) {
+                        self::assertSame('estimate_composer_work_source_unrelated', $exception->getMessage());
+                    }
+                }
+                foreach ([$documents[1]->id => $documents[1]->entityId, $initial->id => $initial->entityId] as $sourceId => $entityId) {
+                    foreach ([[$answers[0]->id, $sourceId], [$sourceId, $answers[0]->id]] as $sources) {
+                        $independent = $classifier->binding(['work_key' => 'equipment.install', 'work_section' => 'equipment',
+                            'source_fact_ids' => $sources, 'entity_id' => $entityId], $captured->facts);
+                        self::assertSame($entityId, $independent['entity_id']);
+                        self::assertSame([$sourceId], $independent['basis_fact_ids']);
+                    }
+                }
+                $candidate = ['source_answer_fact_id' => $answers[0]->id, 'entity_id' => $documents[1]->entityId,
+                    'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => $documents[1]->value],
+                    'unit' => null, 'document_fact_ids' => [$documents[1]->id]];
+                self::assertFalse(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::sourceClaimCandidate($candidate, $captured->facts, $captured->claimAnswerFactIds));
+                $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                self::assertNull(app(ComposerSourceClaimValidationService::class)->capture($scope, $snapshot,
+                    $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]), $session->fresh()->input_payload,
+                    $candidate, GeometryInventory::currentDocumentVersions($snapshot, false)));
+            }
         }
         if ($uploadMoment === 'after_answer') {
             $saved = get_object_vars($answers[0]);
@@ -1014,11 +1098,11 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [$actor, $session->fresh(), $answers[0], $documents];
     }
 
-    private function answerComposerCard(User $actor, Project $project, EstimateGenerationSession $session, array $card): int
+    private function answerComposerCard(User $actor, Project $project, EstimateGenerationSession $session, array $card, array $overrides = []): int
     {
         $request = AnswerEstimateClarificationRequest::create('/', 'POST', ['response' => 'other',
             'other' => 'Требуется установить оборудование согласно проекту.', 'idempotency_key' => 'natural-answer-'.Str::uuid(),
-            'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint']]);
+            'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint'], ...$overrides]);
         $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $actor);
         $route = new Route('POST', 'projects/{project}/questions/{question}/answer', []);
@@ -1026,7 +1110,11 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $route->setParameter('project', $project);
         $request->setRouteResolver(static fn (): Route => $route);
         $request->validateResolved();
-        return app(EstimateGenerationQuestionController::class)->answer($request, $project, $session, $card['code'])->getStatusCode();
+        $response = app(EstimateGenerationQuestionController::class)->answer($request, $project, $session, $card['code']);
+        if ($response->getStatusCode() === 200 && isset($overrides['target_entity_id'])) {
+            self::assertSame($overrides['target_entity_id'], $response->getData(true)['data']['source_locator']['target_entity_id']);
+        }
+        return $response->getStatusCode();
     }
 
     private function uploadIndependentSpecification(User $actor, Project $project, EstimateGenerationSession $session): array

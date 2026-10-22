@@ -45,8 +45,12 @@ final class AnswerEstimateClarification
         string $questionKey,
         string $response,
         ?string $other = null,
+        ?string $targetEntityId = null,
     ): EstimateClarificationAnswer {
         $this->authorize($actor, $session, $context);
+        if ($targetEntityId !== null && ($response !== 'other' || ! str_starts_with($questionKey, 'composer_source_'))) {
+            throw new InvalidArgumentException('estimate_generation.question_response_invalid');
+        }
         if ($context->expectedSourceVersion === null || $context->expectedValueFingerprint === null) {
             throw new InvalidArgumentException('estimate_generation.question_fence_required');
         }
@@ -64,6 +68,7 @@ final class AnswerEstimateClarification
                 $questionKey,
                 $response,
                 $other,
+                $targetEntityId,
             );
             if ($this->models->currentCompleteness(
                 $context->organizationId,
@@ -76,7 +81,7 @@ final class AnswerEstimateClarification
             return $this->replayResult($decision, $selected);
         }
         if (str_starts_with($questionKey, 'composer_source_')) {
-            $answer = DB::transaction(function () use ($actor, $session, $context, $questionKey, $response, $other, $decisionId): EstimateClarificationAnswer {
+            $answer = DB::transaction(function () use ($actor, $session, $context, $questionKey, $response, $other, $targetEntityId, $decisionId): EstimateClarificationAnswer {
                 $locked = EstimateGenerationSession::query()->where('organization_id', $context->organizationId)
                     ->where('project_id', $context->projectId)->whereKey($session->getKey())->lockForUpdate()->first();
                 if ($locked === null) {
@@ -84,7 +89,7 @@ final class AnswerEstimateClarification
                 }
                 $existing = $this->models->decisions($context->organizationId, $context->projectId, (int) $locked->getKey(), [$decisionId]);
                 if ($existing !== []) {
-                    [$decision, $selected] = $this->replay($existing[0], $context, $questionKey, $response, $other);
+                    [$decision, $selected] = $this->replay($existing[0], $context, $questionKey, $response, $other, $targetEntityId);
 
                     return $this->replayResult($decision, $selected);
                 }
@@ -98,9 +103,9 @@ final class AnswerEstimateClarification
                 }
                 [$normalized, $label, $normalizedOther] = $this->answer($current->question, $response, $other);
                 $decision = ($this->choices ?? app(UserEvaluationChoiceWriter::class))->writeComposerAnswer(
-                    $actor, $locked, $current, $normalized, $normalizedOther, $context->idempotencyKey, $decisionId);
+                    $actor, $locked, $current, $normalized, $normalizedOther, $context->idempotencyKey, $decisionId, $targetEntityId);
 
-                return $this->result($current, $decision, $normalized, $label, $normalizedOther);
+                return $this->result($current, $decision, $normalized, $label, $normalizedOther, $targetEntityId);
             });
             $this->reanalysis->trigger((int) $session->getKey(), $context);
 
@@ -193,6 +198,7 @@ final class AnswerEstimateClarification
         string $questionKey,
         string $response,
         ?string $other,
+        ?string $targetEntityId = null,
     ): array {
         $selected = $decision->selectedFactId === null ? null : $this->models->fact(
             $context->organizationId,
@@ -206,6 +212,7 @@ final class AnswerEstimateClarification
             || ($selected->value['question_key'] ?? null) !== $questionKey
             || ($selected->value['choice_value'] ?? null) !== $response
             || ($selected->value['other'] ?? null) !== $normalizedOther
+            || ($selected->value['target_entity_id'] ?? null) !== $targetEntityId
             || ($selected->value['question_fingerprint'] ?? null) !== $context->expectedValueFingerprint
             || ! hash_equals($decision->sourceVersion, $context->expectedSourceVersion)
             || $decision->organizationId !== $context->organizationId
@@ -223,6 +230,7 @@ final class AnswerEstimateClarification
         string $response,
         ?string $choiceLabel,
         ?string $other,
+        ?string $targetEntityId = null,
     ): EstimateClarificationAnswer {
         return new EstimateClarificationAnswer(
             $current->question->code,
@@ -231,7 +239,7 @@ final class AnswerEstimateClarification
             $choiceLabel,
             $other,
             $decision->id,
-            $current->question->sourceLocator,
+            [...$current->question->sourceLocator, ...($targetEntityId === null ? [] : ['target_entity_id' => $targetEntityId])],
         );
     }
 
@@ -246,7 +254,8 @@ final class AnswerEstimateClarification
             is_string($value['choice_label'] ?? null) ? $value['choice_label'] : null,
             is_string($value['other'] ?? null) ? $value['other'] : null,
             $decision->id,
-            is_array($value['source_locator'] ?? null) ? $value['source_locator'] : [],
+            [...(is_array($value['source_locator'] ?? null) ? $value['source_locator'] : []),
+                ...(isset($value['target_entity_id']) ? ['target_entity_id' => $value['target_entity_id']] : [])],
         );
     }
 }

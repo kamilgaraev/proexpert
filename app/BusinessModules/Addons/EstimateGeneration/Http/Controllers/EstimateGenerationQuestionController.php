@@ -63,6 +63,7 @@ final class EstimateGenerationQuestionController extends Controller
                 $question,
                 (string) $request->validated('response'),
                 is_string($request->validated('other')) ? $request->validated('other') : null,
+                is_string($request->validated('target_entity_id')) ? $request->validated('target_entity_id') : null,
             );
 
             return (new EstimateClarificationAnswerResource($result))->resolve($request);

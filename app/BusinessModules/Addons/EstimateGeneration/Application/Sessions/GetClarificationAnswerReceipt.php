@@ -20,7 +20,8 @@ final readonly class GetClarificationAnswerReceipt
     {
         $rules = ['idempotency_key' => ['required', 'string', 'min:8', 'max:128', 'regex:/\A[A-Za-z0-9][A-Za-z0-9._:-]+\z/'],
             'expected_source_version' => ['required', 'string', 'regex:/\Asha256:[a-f0-9]{64}\z/'],
-            'answer_fingerprint' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/']];
+            'answer_fingerprint' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'target_entity_id' => ['sometimes', 'required', 'string', 'regex:/\A[a-z][a-z0-9._:-]{1,191}\z/']];
         $input = validator($input, $rules)->validate();
         if (preg_match('/\A[a-z][a-z0-9_]{1,79}\z/', $question) !== 1) {
             throw ValidationException::withMessages(['question' => trans_message('estimate_generation.question_not_found')]);
@@ -46,12 +47,14 @@ final readonly class GetClarificationAnswerReceipt
                 || ! is_array($fact?->value)
                 || ($fact->value['question_key'] ?? null) !== $question
                 || ($fact->value['question_fingerprint'] ?? null) !== $input['answer_fingerprint']
+                || ($fact->value['target_entity_id'] ?? null) !== ($input['target_entity_id'] ?? null)
                 || ! is_string($fact->value['choice_value'] ?? null)) {
                 return [...$result, 'status' => 'unavailable'];
             }
 
             return [...$result, 'status' => 'saved', 'decision_id' => $id,
-                'response' => $fact->value['choice_value'], 'other' => $fact->value['other'] ?? null];
+                'response' => $fact->value['choice_value'], 'other' => $fact->value['other'] ?? null,
+                ...(isset($fact->value['target_entity_id']) ? ['target_entity_id' => $fact->value['target_entity_id']] : [])];
         });
     }
 }
