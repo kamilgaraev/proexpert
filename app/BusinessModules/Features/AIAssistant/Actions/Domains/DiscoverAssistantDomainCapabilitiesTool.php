@@ -8,7 +8,11 @@ use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
-use App\Domain\Authorization\Services\AuthorizationService;
+use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
+use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantReadToolCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\Models\Organization;
 use App\Models\User;
 use InvalidArgumentException;
@@ -16,7 +20,13 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolInterface
 {
-    public function __construct(private AssistantDomainCatalog $catalog, private AssistantDataAccessPolicy $access, private AuthorizationService $authorization) {}
+    public function __construct(
+        private AssistantDomainCatalog $catalog,
+        private AssistantDataAccessPolicy $access,
+        private AIToolRegistry $tools,
+        private AIPermissionChecker $permissions,
+        private AssistantToolEligibilityPolicy $eligibility,
+    ) {}
 
     public function getName(): string
     {
@@ -25,7 +35,10 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
 
     public function getDescription(): string
     {
-        return 'Постраничный конечный каталог зарегистрированных типов и разрешённых полей МОСТ для текущих прав и модулей. Не читает записи и не подтверждает их наличие. Для чтения используй точный domain/entity_type; fields=null выбирает доступные поля.';
+        if (! AssistantReadToolCatalog::enabled()) {
+            return 'Постраничный конечный каталог зарегистрированных типов и разрешённых полей МОСТ для текущих прав и модулей. Не читает записи и не подтверждает их наличие. Для чтения используй точный domain/entity_type; fields=null выбирает доступные поля.';
+        }
+        return 'Каталог разрешённых типов, полей и инструментов чтения. Не читает записи и не подтверждает их наличие. read_tool_offset/read_tool_limit листают инструменты; read_tool_names выбирает до 3 инструментов для следующих вызовов, независимо от формулировки вопроса. Выбор заменяет прежний дополнительный набор; null сохраняет его. Права и бюджет проверяет сервер. Для данных используй точный domain/entity_type; fields=null выбирает доступные поля.';
     }
 
     public function getParametersSchema(): array
@@ -38,6 +51,14 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
             'field_offset' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 10000],
             'field_limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 16],
         ];
+        if (AssistantReadToolCatalog::enabled()) {
+            $properties += [
+                'read_tool_offset' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 10000],
+                'read_tool_limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => AssistantReadToolCatalog::MAX_PAGE],
+                'read_tool_names' => ['type' => ['array', 'null'], 'maxItems' => AssistantReadToolCatalog::MAX_SELECTED,
+                    'items' => ['type' => 'string', 'maxLength' => 64, 'pattern' => '^[a-zA-Z_][a-zA-Z0-9_]{0,63}$']],
+            ];
+        }
         return ['type' => 'object', 'properties' => $properties, 'required' => array_keys($properties), 'additionalProperties' => false];
     }
 
@@ -54,10 +75,16 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
             if (!$this->access->canReadDomain($actor, $organizationId, 'assistant')) {
                 throw new AccessDeniedHttpException;
             }
-            return $this->compact(
+            $catalog = $this->compact(
                 fn (string $domain): bool => $this->access->canReadDomain($actor, $organizationId, $domain),
                 fn (string $permission): bool => $this->access->canCurrentPermission($actor, $organizationId, $permission),
             );
+            if (AssistantReadToolCatalog::enabled()) {
+                $catalog['read_tool_discovery'] += (new AssistantReadToolCatalog($this->tools, $this->eligibility))->index(
+                    fn (string $name): bool => $this->canDescribeReadTool($actor, $name));
+            }
+
+            return $catalog;
         }, $fresh);
     }
 
@@ -92,7 +119,12 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
                     'entity_type_count' => count($allowedTypes), 'operations' => $definition->operations];
             }
         }
-        return ['domains' => $rows, 'details_tool' => $this->getName(), 'record_access' => 'checked_on_read'];
+        $catalog = ['domains' => $rows, 'details_tool' => $this->getName(), 'record_access' => 'checked_on_read'];
+        if (AssistantReadToolCatalog::enabled()) {
+            $catalog['read_tool_discovery'] = ['tool' => $this->getName(), 'selection_argument' => 'read_tool_names',
+                'maximum_selected' => AssistantReadToolCatalog::MAX_SELECTED, 'catalog_offset_argument' => 'read_tool_offset'];
+        }
+        return $catalog;
     }
 
     private function executeCurrent(array $arguments, User $user, Organization $organization): array
@@ -100,12 +132,27 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
         if (! $this->access->canReadDomain($user, (int) $organization->id, 'assistant')) {
             throw new AccessDeniedHttpException;
         }
-        return $this->describe(
+        $result = $this->describe(
             $arguments,
             fn (string $domain): bool => $this->access->canReadDomain($user, (int) $organization->id, $domain),
             fn (string $permission): bool => $this->access->canCurrentPermission($user, (int) $organization->id, $permission),
             fn (string $type): bool => $this->access->entityQuery($user, (int) $organization->id, $type) !== null,
         );
+        if (AssistantReadToolCatalog::enabled()) {
+            $result += (new AssistantReadToolCatalog($this->tools, $this->eligibility))->describe($arguments,
+                fn (string $name): bool => $this->canDescribeReadTool($user, $name));
+        }
+        return $result;
+    }
+
+    private function canDescribeReadTool(User $actor, string $name): bool
+    {
+        $execution = app()->bound(AssistantRequestExecutionContext::class) ? app(AssistantRequestExecutionContext::class) : null;
+        $execution?->remainingMilliseconds();
+        $allowed = $this->permissions->canExposeTool($actor, $name, false);
+        $execution?->remainingMilliseconds();
+
+        return $allowed;
     }
 
     public function describe(array $arguments, callable $domainAllowed, callable $permissionAllowed, callable $entityAllowed): array

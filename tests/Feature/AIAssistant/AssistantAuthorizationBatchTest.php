@@ -36,6 +36,21 @@ final class AssistantAuthorizationBatchTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_disabled_read_discovery_preserves_legacy_metadata_and_never_checks_a_tool_index(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $permissions = $this->createMock(AIPermissionChecker::class);
+        $permissions->expects($this->never())->method('canExposeTool');
+        $registry = new \App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+        $registry->registerFactory('get_project_safety_summary', static fn () => throw new \LogicException('disabled tool metadata loaded'));
+        $tool = new DiscoverAssistantDomainCapabilitiesTool(app(AssistantDomainCatalog::class), app(AssistantDataAccessPolicy::class),
+            $registry, $permissions, new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy);
+
+        self::assertFalse(config('ai-assistant.read_tool_discovery_enabled'));
+        self::assertSame(['domains', 'details_tool', 'record_access'], array_keys($tool->compactForActor($fixture->member, (int) $fixture->organization->id)));
+        self::assertSame(['capabilities', 'next_offset', 'record_access'], array_keys($tool->execute([], $fixture->member, $fixture->organization)));
+    }
+
     public function test_snapshot_fingerprint_preliminary_lookup_reuses_the_current_frame_module_read(): void
     {
         $this->freezeTime();
@@ -144,7 +159,9 @@ final class AssistantAuthorizationBatchTest extends TestCase
             $definition = new AssistantDomainDefinition('projects', 'project-management', 'project', ['projects.view'],
                 $fields, [], ['read'], '/projects/{id}', 'project', ['project'],
                 array_fill_keys($fields, 'finance.view_project_budget'));
-            $tool = new DiscoverAssistantDomainCapabilitiesTool(new AssistantDomainCatalog([$definition]), $access, $authorization);
+            $tool = new DiscoverAssistantDomainCapabilitiesTool(new AssistantDomainCatalog([$definition]), $access,
+                new \App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry, new AIPermissionChecker($authorization),
+                new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy);
             DB::flushQueryLog();
             DB::enableQueryLog();
             try {
