@@ -126,6 +126,17 @@ final readonly class AssistantCustomReportSource
         if ($entityType === 'time_entry' && isset($fields['hours_worked'])) {
             $query = (new AssistantTimeEntryReportProjection)->apply($query, array_keys($columnTypes));
         }
+        if ($entityType === 'warehouse_movement') {
+            if (isset($fields['movement_date'])) {
+                $fields['movement_date']['label'] = trans_message('ai_custom_reports.movement_datetime_msk');
+            }
+            $materials = $this->policy->entityQuery($actor, $organizationId, 'material');
+            $units = $this->policy->entityQuery($actor, $organizationId, 'measurement_unit');
+            if ($materials !== null && $units !== null) {
+                $fields['unit'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.work_unit')];
+            }
+            $query = (new AssistantWarehouseMovementReportProjection)->apply($query, $organizationId, array_keys($columnTypes), $materials, $units);
+        }
         if ($entityType === 'completed_work') {
             $fields['name'] = ['type' => 'string', 'label' => trans_message('ai_assistant_facts.fields.name')];
             $fields['unit'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.work_unit')];

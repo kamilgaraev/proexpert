@@ -77,6 +77,7 @@ final class AssistantStructuredFactLabels
             'machinery_assignment.status' => 'machinery_operations.assignment_statuses',
             'machinery_shift_report.status' => 'machinery_operations.shift_statuses',
             'machinery_maintenance_order.status' => 'machinery_operations.maintenance_statuses',
+            'warehouse_movement.movement_type' => 'ai_assistant_facts.warehouse_movement_types',
             default => null,
         };
         if ($group !== null && preg_match('/^[a-z_]+$/D', $value)) {

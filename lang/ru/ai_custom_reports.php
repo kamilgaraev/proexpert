@@ -25,6 +25,7 @@ return [
     'current_project' => 'Текущий проект',
     'assignee_id' => 'Идентификатор ответственного',
     'work_unit' => 'Единица измерения',
+    'movement_datetime_msk' => 'Дата и время движения (МСК)',
     'member_position' => 'Должность',
     'member_active' => 'Активен',
     'member_roles' => 'Роли в организации',
