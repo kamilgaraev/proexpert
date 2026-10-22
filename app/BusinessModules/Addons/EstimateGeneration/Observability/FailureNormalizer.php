@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
+use InvalidArgumentException;
 use Throwable;
 
 final readonly class FailureNormalizer
@@ -22,6 +24,9 @@ final readonly class FailureNormalizer
     public function normalize(Throwable $error, FailureContext $context): FailureData
     {
         [$category, $code, $diagnostics] = match (true) {
+            $error instanceof InvalidArgumentException && $error->getMessage() === FrozenWorkItemLimit::EXCEEDED => [
+                FailureCategory::UserActionRequired, FrozenWorkItemLimit::EXCEEDED, [],
+            ],
             $error instanceof OcrConfigurationException => [FailureCategory::Terminal, 'ocr_not_configured', []],
             $error instanceof PipelineStageException => [$error->category, $error->safeCode, []],
             $error instanceof TypedFailureException => [$error->category, $error->safeCode, $error->safeContext],

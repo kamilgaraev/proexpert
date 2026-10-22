@@ -39,8 +39,9 @@ final readonly class HandleEstimateGenerationDraftFailure
         private Connection $database,
     ) {}
 
-    public function handle(FailureExecutionSnapshot $snapshot, Throwable $error): void
+    public function handle(FailureExecutionSnapshot $snapshot, Throwable $error): bool
     {
+        $recovered = false;
         $checkpoint = EstimateGenerationPipelineCheckpoint::query()
             ->where('session_id', $snapshot->sessionId)
             ->where('organization_id', $snapshot->organizationId)
@@ -91,7 +92,7 @@ final readonly class HandleEstimateGenerationDraftFailure
                     dependencyVersions: $dependencies,
                 );
                 if ($checkpoint->status === CheckpointStatus::Failed) {
-                    $this->recover($failure, (string) $checkpoint->base_input_version, $snapshot->attemptId);
+                    $recovered = $this->recover($failure, (string) $checkpoint->base_input_version, $snapshot->attemptId);
                 } else {
                     $claim = CheckpointClaim::acquired(
                         $context,
@@ -101,7 +102,7 @@ final readonly class HandleEstimateGenerationDraftFailure
                         (int) $checkpoint->getKey(),
                     );
                     if ($this->checkpoints->fail($claim, $error, new DateTimeImmutable)) {
-                        $this->recover($failure, (string) $checkpoint->base_input_version, $snapshot->attemptId);
+                        $recovered = $this->recover($failure, (string) $checkpoint->base_input_version, $snapshot->attemptId);
                     }
                 }
             } catch (Throwable) {
@@ -113,11 +114,13 @@ final readonly class HandleEstimateGenerationDraftFailure
             'failure_code' => 'draft_generation_failed',
             'failure_fingerprint' => hash('sha256', $error::class.'|'.(string) $error->getCode()),
         ]);
+
+        return $recovered;
     }
 
-    private function recover(FailureData $failure, string $inputVersion, string $generationAttemptId): void
+    private function recover(FailureData $failure, string $inputVersion, string $generationAttemptId): bool
     {
-        $this->database->transaction(function () use ($failure, $inputVersion, $generationAttemptId): void {
+        return $this->database->transaction(function () use ($failure, $inputVersion, $generationAttemptId): bool {
             $session = EstimateGenerationSession::query()
                 ->whereKey($failure->context->sessionId)
                 ->where('organization_id', $failure->context->organizationId)
@@ -126,7 +129,7 @@ final readonly class HandleEstimateGenerationDraftFailure
                 ->first();
             if (! $session instanceof EstimateGenerationSession
                 || ! hash_equals((string) ($session->input_payload['generation_attempt_id'] ?? ''), $generationAttemptId)) {
-                return;
+                return false;
             }
 
             $stateVersion = (int) $session->state_version;
@@ -150,14 +153,16 @@ final readonly class HandleEstimateGenerationDraftFailure
             if ($outcome === FailureRecoveryOutcome::NeedsInput) {
                 if ($session->status === EstimateGenerationStatus::ProcessingDocuments) {
                     $this->advance->documentsNeedReview($session, $failure->code);
+                    return true;
                 } elseif ($session->status === EstimateGenerationStatus::Generating) {
                     $this->advance->generationNeedsReview($session, $failure->code);
+                    return true;
                 }
 
-                return;
+                return false;
             }
             if ($outcome !== FailureRecoveryOutcome::Terminal) {
-                return;
+                return false;
             }
 
             $failed = $this->advance->failed($session, $failure->code);
@@ -167,6 +172,8 @@ final readonly class HandleEstimateGenerationDraftFailure
                     (string) $failed->getKey(),
                 );
             }
+
+            return false;
         }, 3);
     }
 }

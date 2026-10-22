@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureDiagnosticIdentity;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\SensitiveDiagnosticSanitizer;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptCollision;
@@ -15,6 +19,25 @@ use PHPUnit\Framework\TestCase;
 
 final class FailureDiagnosticIdentityTest extends TestCase
 {
+    #[Test]
+    public function only_the_actual_work_ceiling_exception_requires_user_action(): void
+    {
+        $context = new FailureContext(1, 2, 3, ProcessingStage::PlanWorkItems, 'run_stage', 1,
+            '018f4a20-3f4c-7a11-8a22-123456789abc', '018f4a20-3f4c-7a11-8a22-123456789abd');
+        $normalizer = new FailureNormalizer;
+        $overflow = $normalizer->normalize(new InvalidArgumentException('estimate_work_items_exceed_approved_plan'), $context);
+        self::assertSame(FailureCategory::UserActionRequired, $overflow->category);
+        self::assertSame('estimate_work_items_exceed_approved_plan', $overflow->code);
+        self::assertSame('estimate_work_items_exceed_approved_plan', $overflow->safeContext['invariant_code']);
+        foreach ([new InvalidArgumentException('estimate_work_approved_plan_invalid'),
+            new InvalidArgumentException('estimate_work_items_exceed_approved_plan extra'),
+            new \RuntimeException('estimate_work_items_exceed_approved_plan')] as $error) {
+            $failure = $normalizer->normalize($error, $context);
+            self::assertSame(FailureCategory::Terminal, $failure->category);
+            self::assertSame('unexpected_internal_failure', $failure->code);
+        }
+    }
+
     #[Test]
     public function postgres_diagnostics_keep_only_sqlstate_constraint_or_typed_invariant(): void
     {

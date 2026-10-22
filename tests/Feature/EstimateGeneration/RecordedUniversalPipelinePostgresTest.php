@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObject
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 use Tests\Support\EstimateGeneration\RecordedUniversalPipelineAdapter;
 
@@ -55,7 +56,8 @@ final class RecordedUniversalPipelinePostgresTest extends EstimateGenerationCano
         self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $adapter->lastRun['session_id'])->count());
     }
 
-    public function test_paid_composer_supplementary_overflow_stops_before_auditor_and_refunds_the_operation_without_publishing(): void
+    #[DataProvider('overflowRecoveryModes')]
+    public function test_paid_composer_supplementary_overflow_stops_before_auditor_and_refunds_the_operation_without_publishing(bool $recoveryError): void
     {
         $fixture = base_path('tests/Fixtures/EstimateGeneration/universal-replay/text-work-overflow-v1.json');
         $source = json_decode(file_get_contents($fixture), true, 64, JSON_THROW_ON_ERROR)['description'];
@@ -73,45 +75,135 @@ final class RecordedUniversalPipelinePostgresTest extends EstimateGenerationCano
             }
         };
         $before = (int) DB::table('estimate_generation_sessions')->max('id');
+        $reserved = [];
+        $this->app->resolving(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class, function () use ($before, $recoveryError, &$reserved): void {
+            $job = \Illuminate\Support\Facades\Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
+            if ($job instanceof \App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob && $job->job === null) {
+                $job->withFakeQueueInteractions();
+                $session = DB::table('estimate_generation_sessions')->where('id', '>', $before)->sole();
+                $operation = DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->sole();
+                $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
+                $reserved = ['balance' => $this->app->make(\App\Services\Credits\AICreditService::class)->balance($organization),
+                    'reservation' => DB::table('ai_credit_reservations')->where('id', $operation->reservation_id)->sole(),
+                    'ledger' => DB::table('ai_credit_ledger_entries')->where('organization_id', $session->organization_id)->orderBy('id')->get(),
+                    'state_version' => $session->state_version];
+                if ($recoveryError) {
+                    DB::unprepared(<<<'SQL'
+                        CREATE FUNCTION pg_temp.reject_overflow_refund() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN
+                            RAISE EXCEPTION 'simulated_overflow_refund_failure' USING ERRCODE = '23514';
+                        END;
+                        $$;
+                        SQL);
+                    DB::unprepared('CREATE TRIGGER reject_overflow_refund BEFORE UPDATE ON ai_credit_reservations '
+                        .'FOR EACH ROW WHEN (OLD.id = '.(int) $operation->reservation_id." AND OLD.status = 'reserved' AND NEW.status = 'cancelled') "
+                        .'EXECUTE FUNCTION pg_temp.reject_overflow_refund()');
+                }
+            }
+        });
         $adapter = new RecordedUniversalPipelineAdapter($this->app, $objects, $fixture, hash_file('sha256', $fixture));
         try {
             $adapter->run(new BenchmarkPredictionCaseData('supplementary-overflow', BenchmarkDatasetType::Regression,
                 BenchmarkSourceType::TextDescription, 'work-ceiling.txt', hash('sha256', $source), ['current_repair'], []), 300000);
             self::fail('A paid composer expanded the approved work limit.');
         } catch (\InvalidArgumentException $exception) {
-            if ($exception instanceof BenchmarkContractException) {
-                $cause = $exception->getPrevious();
-                self::assertInstanceOf(\InvalidArgumentException::class, $cause);
-                $exception = $cause;
+            if ($recoveryError) {
+                $job = \Illuminate\Support\Facades\Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
+                $job->assertNotDeleted()->assertNotReleased()->assertNotFailed();
+                self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getPrevious()?->getMessage());
+                self::assertSame('generating', DB::table('estimate_generation_sessions')->where('id', '>', $before)->sole()->status);
+                self::assertSame($reserved['state_version'], DB::table('estimate_generation_sessions')->where('id', '>', $before)->sole()->state_version);
+                self::assertContains(DB::table('estimate_generation_credit_operations')->where('session_id', '>', $before)->sole()->status, ['reserved', 'running']);
+                self::assertEquals($reserved['reservation'], DB::table('ai_credit_reservations')->where('id', $reserved['reservation']->id)->sole());
+                $organization = \App\Models\Organization::query()->findOrFail($reserved['reservation']->organization_id);
+                self::assertEquals($reserved['balance'], $this->app->make(\App\Services\Credits\AICreditService::class)->balance($organization));
+                self::assertEquals($reserved['ledger'], DB::table('ai_credit_ledger_entries')->where('organization_id', $organization->id)->orderBy('id')->get());
+                DB::unprepared('DROP TRIGGER reject_overflow_refund ON ai_credit_reservations');
+                $job->handle($this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
             }
-            self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getMessage());
-            // The adapter invokes handle directly. Deliver the remaining queue attempts,
-            // then execute the production terminal callback instead of assuming first-failure refund.
-            $queue = \Illuminate\Support\Facades\Queue::getFacadeRoot();
-            self::assertInstanceOf(\Illuminate\Support\Testing\Fakes\QueueFake::class, $queue);
-            $job = $queue->pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
-            self::assertInstanceOf(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, $job);
-            for ($delivery = 1; $delivery < $job->maxExceptions; $delivery++) {
-                try {
-                    $job->handle($this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
-                    self::fail('An overflowing paid result passed on queue redelivery.');
-                } catch (\InvalidArgumentException $replayedError) {
-                    self::assertSame($exception->getMessage(), $replayedError->getMessage());
-                }
+            self::assertSame('estimate_review_required', DB::table('estimate_generation_sessions')->where('id', '>', $before)->sole()->status);
+            self::assertInstanceOf(BenchmarkContractException::class, $exception);
+            if (! $recoveryError) {
+                self::assertStringStartsWith('recorded_replay_result_missing:', $exception->reason);
+                self::assertNull($exception->getPrevious());
             }
-            $job->failed($exception);
+        } finally {
+            if ($recoveryError) {
+                DB::unprepared('DROP TRIGGER IF EXISTS reject_overflow_refund ON ai_credit_reservations');
+            }
         }
         $session = DB::table('estimate_generation_sessions')->where('id', '>', $before)->sole();
+        self::assertSame('estimate_work_items_exceed_approved_plan', $session->failure_code);
+        self::assertNull($session->last_error);
+        self::assertNull($session->applied_estimate_id);
+        $job = \Illuminate\Support\Facades\Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
+        $job->assertDeleted()->assertNotReleased()->assertNotFailed();
         $operation = DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->sole();
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(32, $plan['work_item_limit']);
+        $role = DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->where('role', 'estimate_composer')->sole();
+        self::assertSame('completed', $role->status);
+        $receipt = json_decode($role->result_payload, true, 64, JSON_THROW_ON_ERROR);
+        self::assertCount($plan['work_item_limit'] + 1, $receipt['work_intents']);
         self::assertSame('failed', $operation->status);
         self::assertSame(0, (int) $operation->consumed_units_minor);
         self::assertSame(0, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_packages')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimates')->where('project_id', $session->project_id)->count());
         $usage = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->get();
         self::assertCount(1, $usage);
         self::assertSame('estimate_composition', $usage[0]->operation);
         self::assertGreaterThan(0, $usage[0]->cost_amount);
         self::assertSame(0, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->where('role', 'estimate_auditor')->count());
         self::assertSame('cancelled', DB::table('ai_credit_reservations')->where('id', $operation->reservation_id)->value('status'));
+        $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
+        $credits = $this->app->make(\App\Services\Credits\AICreditService::class);
+        $balance = $credits->balance($organization);
+        self::assertSame(0, $balance['reserved_minor']);
+        self::assertSame(1000000, $balance['available_minor']);
+        self::assertSame(1000000, $balance['total_minor']);
+        $ledger = DB::table('ai_credit_ledger_entries')->where('organization_id', $session->organization_id)->orderBy('id')->get();
+        $attempts = DB::table('estimate_generation_credit_attempts')->where('operation_id', $operation->operation_id)->get();
+        self::assertCount(1, $attempts);
+        self::assertNotNull($attempts[0]->usage_transferred_at);
+        $models = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
+        $source = $models->snapshot((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
+        self::assertNotEmpty($source->facts);
+        self::assertSame(1, DB::table('estimate_generation_failures')->where('session_id', $session->id)
+            ->where('code', 'estimate_work_items_exceed_approved_plan')->where('category', 'user_action_required')->count());
+        $beforeReplay = DB::table('estimate_generation_sessions')->where('id', $session->id)->sole();
+        $beforeOperation = DB::table('estimate_generation_credit_operations')->where('operation_id', $operation->operation_id)->sole();
+        $job->handle($this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
+        self::assertEquals($beforeReplay, DB::table('estimate_generation_sessions')->where('id', $session->id)->sole());
+        self::assertEquals($beforeOperation, DB::table('estimate_generation_credit_operations')->where('operation_id', $operation->operation_id)->sole());
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($role->result_payload, DB::table('estimate_generation_ai_role_runs')->where('id', $role->id)->value('result_payload'));
+        self::assertEquals($balance, $credits->balance($organization));
+        self::assertEquals($ledger, DB::table('ai_credit_ledger_entries')->where('organization_id', $session->organization_id)->orderBy('id')->get());
+        self::assertEquals($attempts, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operation->operation_id)->get());
+        self::assertEquals($source, $models->snapshot((int) $session->organization_id, (int) $session->project_id, (int) $session->id));
+        $input = json_decode($session->input_payload, true, 64, JSON_THROW_ON_ERROR);
+        $handler = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\HandleEstimateGenerationDraftFailure::class);
+        foreach ([(int) $session->project_id, (int) $session->project_id + 1] as $projectId) {
+            self::assertFalse($handler->handle(new \App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot(
+                (int) $session->organization_id, $projectId, (int) $session->id, (int) $session->state_version - 1, 'generating',
+                $input['generation_attempt_id'], (string) \Illuminate\Support\Str::uuid(), (string) \Illuminate\Support\Str::uuid(),
+            ), new \InvalidArgumentException('estimate_work_items_exceed_approved_plan')));
+        }
+        self::assertEquals($beforeReplay, DB::table('estimate_generation_sessions')->where('id', $session->id)->sole());
+        self::assertEquals($beforeOperation, DB::table('estimate_generation_credit_operations')->where('operation_id', $operation->operation_id)->sole());
+        self::assertEquals($balance, $credits->balance($organization));
+        $snapshot = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot::class)
+            ->handle(\App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()->findOrFail($session->id),
+                ['estimate_generation.view', 'estimate_generation.generate']);
+        self::assertSame('estimate_work_items_exceed_approved_plan', $snapshot->failureSummary['latest']['code']);
+        self::assertSame('user_action_required', $snapshot->failureSummary['latest']['category']);
+        self::assertFalse($snapshot->canApply);
+    }
+
+    public static function overflowRecoveryModes(): array
+    {
+        return ['first delivery' => [false], 'recovery error retries without deleting' => [true]];
     }
 
     public function test_changing_the_oracle_cannot_change_prediction_or_make_the_adapter_read_expected(): void
