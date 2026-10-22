@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
@@ -35,9 +39,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGene
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorCreditAttemptAdmission;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use App\Models\Organization;
@@ -57,6 +64,113 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_actual_composer_claim_receipt_reaches_terminal_learning_and_the_next_explicit_composer_wire(): void
+    {
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $originals = array_map(static fn ($fact): array => get_object_vars($fact), [$answer, ...$documents]);
+        $candidate = ['source_answer_fact_id' => $answer->id, 'entity_id' => $documents[0]->entityId,
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'Монтаж стендов'],
+            'unit' => null, 'document_fact_ids' => [$documents[0]->id]];
+        $organization = Organization::query()->findOrFail($scope[0]);
+        $project = Project::query()->findOrFail($scope[1]);
+        $inputs = $operationIds = $runIds = [];
+        Queue::fake();
+        foreach ([0, 1] as $phase) {
+            $terminal = null;
+            [$session, $operationId, $runId] = $this->paidReceipt(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, [], true,
+                [$organization, $project, $actor, $session->fresh()], false,
+                function (EstimateGenerationSession $current, string $operationId) use ($actor, $scope, $answer, $documents, $candidate, $phase, &$inputs, &$terminal): int {
+                    $terminal = $this->terminalFixture($actor, $current, $operationId);
+                    $current = $current->fresh();
+                    $input = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [],
+                        new AiSessionWireScope((int) $current->state_version, $operationId, $operationId), ['equipment'], 'universal', $current->input_payload]);
+                    $inputs[] = $input;
+                    self::assertSame(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, $input->contractVersion);
+                    self::assertSame([$answer->id], $input->claimAnswerFactIds);
+                    self::assertCount($phase, $input->sourceClaimReferences);
+                    self::assertSame([], $input->derivedQuantities);
+                    $facts = array_column($input->facts, null, 'id');
+                    self::assertNotSame($facts[$answer->id]['context_entity_id'], $documents[0]->entityId);
+                    self::assertSame('equipment', $facts[$documents[0]->id]['entity_type']);
+                    $wire = $this->createMock(RerankWireClient::class);
+                    $wire->method('provider')->willReturn('timeweb');
+                    $wire->expects(self::once())->method('call')->willReturnCallback(static function (string $model, array $messages, array $options) use ($input, $scope, $answer, $documents, $candidate, $operationId, $phase): array {
+                        $payload = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project'];
+                        self::assertSame($input->canonicalPayload(), $payload);
+                        self::assertSame([$answer->id], $payload['claim_answer_fact_ids']);
+                        if ($phase === 0) {
+                            self::assertArrayNotHasKey('source_claim_refs', $payload);
+                        } else {
+                            self::assertCount(1, $payload['source_claim_refs']);
+                            $reference = $payload['source_claim_refs'][0];
+                            self::assertCount(6, $reference);
+                            self::assertSame('equipment_specification', $reference['fact_type']);
+                            self::assertSame((int) EstimateGenerationLearningExample::query()->where('organization_id', $scope[0])
+                                ->where('project_id', $scope[1])->where('generation_session_id', $scope[2])->sole()->id, $reference['learning_example_id']);
+                            self::assertSame($documents[0]->entityId, $reference['entity_id']);
+                            self::assertSame([$documents[0]->id], $reference['document_fact_ids']);
+                            self::assertSame(CanonicalPipelineJson::encode($candidate['value']), CanonicalPipelineJson::encode($reference['value']));
+                            self::assertNull($reference['unit']);
+                            self::assertArrayNotHasKey('source_answer_fact_id', $reference);
+                            self::assertStringContainsString('engineering applicability остаётся unresolved', $messages[0]['content']);
+                        }
+                        $attempt = $options['estimate_generation_attempt']['attempt_id'];
+                        DB::transaction(static function () use ($operationId, $attempt, $scope): void {
+                            app(EstimatorCreditAttemptAdmission::class)->admit(...[$operationId, $attempt, ...$scope,
+                                'estimate_composition', new AiCost('1.00000000', 'RUB', 'available')]);
+                            DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $attempt)
+                                ->where('state', 'pre_wire')->update(['state' => 'wire_started', 'wire_started_at' => now()]);
+                        });
+
+                        return ['content' => json_encode(['work_intents' => [], 'claim_candidates' => $phase === 0 ? [$candidate] : []], JSON_THROW_ON_ERROR),
+                            'model' => $model, 'usage_available' => true, 'input_tokens' => 1000, 'output_tokens' => 100];
+                    });
+                    $composer = new RunEstimateComposer(app(AiRoleRunRepository::class),
+                        new TimewebEstimateComposerModel($wire, app(EloquentAiUsageStore::class), app(AiPriceSnapshotResolver::class),
+                            'openai/gpt-6-luna', 524288, 8192, 60), 'openai/gpt-6-luna', allowance: app(EstimateComposerAllowance::class));
+                    $outcome = $composer->runDetailed($input);
+                    self::assertSame([], $outcome['intents']);
+                    self::assertSame($outcome, $composer->runDetailed($input));
+                    $receipt = DB::table('estimate_generation_ai_role_runs')->where('organization_id', $scope[0])
+                        ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('input_fingerprint', $input->fingerprint())
+                        ->where('status', 'completed')->sole();
+                    $stored = json_decode($receipt->result_payload, true, 512, JSON_THROW_ON_ERROR);
+                    self::assertSame(2, $stored['schema_version']);
+                    self::assertSame(CanonicalPipelineJson::encode($phase === 0 ? [$candidate] : []), CanonicalPipelineJson::encode($stored['claim_candidates']));
+
+                    return (int) $receipt->id;
+                });
+            self::assertNotNull($terminal);
+            DB::transaction(fn () => app(Pipeline\PublishValidatedDraft::class)->beforeComplete($terminal[0], $terminal[1], new \DateTimeImmutable));
+            $session = $session->fresh();
+            self::assertSame('input_review_required', $session->status->value);
+            self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
+            self::assertSame(1, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
+            $operationIds[] = $operationId;
+            $runIds[] = $runId;
+        }
+        self::assertCount(2, array_unique($operationIds));
+        self::assertCount(2, array_unique($runIds));
+        $row = EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->sole();
+        self::assertSame($runIds[0], (int) $row->source_entity_id);
+        self::assertNull($row->norm_code);
+        self::assertFalse($row->is_positive);
+        self::assertNull($row->accepted_at);
+        self::assertSame('proposed', $row->context_payload['source_claim_validation']['interpretation_status']);
+        self::assertSame('passed', $row->context_payload['source_claim_validation']['source_correspondence']);
+        self::assertSame('unresolved', $row->context_payload['source_claim_validation']['engineering_applicability']);
+        self::assertSame($originals, array_map(static fn ($fact): array => get_object_vars($models->fact(...[...$scope, $fact->id])), [$answer, ...$documents]));
+        self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('organization_id', $scope[0])->count());
+        self::assertSame(2, DB::table('estimate_generation_ai_role_runs')->where('organization_id', $scope[0])->count());
+        self::assertSame(2, DB::table('estimate_generation_credit_attempts')->where('organization_id', $scope[0])->count());
+        self::assertArrayNotHasKey('source_claim_refs', $inputs[0]->canonicalPayload());
+        self::assertArrayHasKey('source_claim_refs', $inputs[1]->canonicalPayload());
+        Queue::assertNothingPushed();
+        Http::assertNothingSent();
+    }
+
     public function test_source_info_request_fixture_real_answer_and_independent_binary_literal_support_only_the_exact_document_entity(): void
     {
         [$actor, $session, $answer, $documents] = $this->answeredSourceFixture();
@@ -380,7 +494,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         ];
     }
 
-    private function paidReceipt(string $contract, mixed $candidates, bool $measured = true, ?array $fixture = null, bool $settle = true): array
+    private function paidReceipt(string $contract, mixed $candidates, bool $measured = true, ?array $fixture = null, bool $settle = true, ?callable $compose = null): array
     {
         [$organization, $project, $actor, $session] = $fixture ?? $this->fixture();
         $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
@@ -398,6 +512,16 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $operations = app(EstimatorCreditOperations::class);
         $quote = $operations->quote($actor, (int) $project->id, (int) $session->id, (int) $session->state_version, $operationId, 'generation');
         DB::transaction(fn () => $operations->begin($actor, $session, (int) $session->state_version, $operationId, $quote['quote_id'], 'generation'));
+        if ($compose !== null) {
+            $runId = $compose($session, $operationId);
+            if ($settle) {
+                $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->sole();
+                DB::transaction(fn () => app(EstimatorCreditOperationSettlement::class)->publish($session, $operationId,
+                    ['source_input_version' => $operation->source_version, 'local_estimates' => []]));
+            }
+
+            return [$session, $operationId, $runId];
+        }
         $input = new AiRoleRunInput((int) $organization->id, (int) $project->id, (int) $session->id, null, null,
             'estimate_session', (string) $session->id, hash('sha256', $operationId), AiAnalysisRole::EstimateComposer,
             'openai/gpt-6-luna', $contract, hash('sha256', 'source-claim-input:'.$operationId));
