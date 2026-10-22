@@ -303,7 +303,40 @@ final class SqlConnectionStateTest extends TestCase
         self::assertSame([['value' => 1]], $connection->select('select 1', [], false));
     }
 
-    private function connection(SqlConnectionState $observer, PDO|Closure|null $write, PDO|Closure|null $read = null): Connection
+    public function test_runtime_capture_does_not_call_custom_pdo_getters_or_materialize_lazy_read(): void
+    {
+        $observer = new SqlConnectionState;
+        $pdo = new class extends PDO {
+            public int $attributeCalls = 0;
+
+            public function __construct() {}
+
+            public function getAttribute(int $attribute): mixed
+            {
+                $this->attributeCalls++;
+                throw new \RuntimeException('private-pdo-attribute');
+            }
+
+            public function prepare(string $query, array $options = []): PDOStatement|false
+            {
+                return new ConnectionStateTestStatement(null);
+            }
+        };
+        $created = 0;
+        $connection = $this->connection($observer, $pdo, static function () use (&$created): PDO {
+            $created++;
+
+            return new ConnectionStateTestPdo;
+        }, true);
+        $connection->select('select 1', [], false);
+        self::assertSame(0, $created);
+        self::assertSame(0, $pdo->attributeCalls);
+        self::assertTrue($this->observations[0]['observed']);
+        self::assertSame(['observed' => true, 'php_version_id' => PHP_VERSION_ID,
+            'write' => ['observed' => false], 'read' => ['observed' => false]], $this->observations[0]['pdo_runtime']);
+    }
+
+    private function connection(SqlConnectionState $observer, PDO|Closure|null $write, PDO|Closure|null $read = null, bool $includePdoRuntime = false): Connection
     {
         $connection = new Connection($write, 'test', '', ['name' => 'test']);
         $connection->setReadPdo($read);
@@ -311,8 +344,8 @@ final class SqlConnectionStateTest extends TestCase
         $connection->setEventDispatcher($events);
         $events->listen(ConnectionEstablished::class, static fn (ConnectionEstablished $event) => $observer->established($event->connection));
         $events->listen(StatementPrepared::class, static fn (StatementPrepared $event) => $observer->prepared($event->connection));
-        $events->listen(QueryExecuted::class, function (QueryExecuted $event) use ($observer): void {
-            $this->observations[] = $observer->finish($event);
+        $events->listen(QueryExecuted::class, function (QueryExecuted $event) use ($observer, $includePdoRuntime): void {
+            $this->observations[] = $observer->finish($event, $includePdoRuntime);
         });
         $events->dispatch(new ConnectionEstablished($connection));
 

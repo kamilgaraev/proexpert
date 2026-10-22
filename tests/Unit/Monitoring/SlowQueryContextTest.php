@@ -93,6 +93,52 @@ final class SlowQueryContextTest extends TestCase
         }
     }
 
+    public function test_pdo_runtime_is_a_closed_schema_and_survives_log_redaction(): void
+    {
+        $previous = Container::getInstance();
+        $application = new Application(dirname(__DIR__, 3));
+        $application->instance('config', new Repository);
+        try {
+            $factory = new SlowQueryContext(new TracingService(null));
+            $event = new QueryExecuted('select 1', [], 600, new Connection(null));
+            $state = ['observed' => true, 'write_lazy_before' => true, 'read_lazy_before' => false,
+                'write_ready_before' => false, 'read_ready_before' => false,
+                'write_ready_after' => true, 'read_ready_after' => false, 'manager_connection_event_during_run' => false];
+            $handle = ['observed' => true, 'driver' => 'pgsql', 'emulate_prepares' => false, 'disable_prepares' => true];
+            $runtime = ['observed' => true, 'php_version_id' => PHP_VERSION_ID, 'write' => $handle, 'read' => ['observed' => false]];
+            $context = $factory->forQuery($event, $state + ['pdo_runtime' => $runtime + ['password' => 'private-value']]);
+            self::assertSame($runtime, $context['pdo_runtime']);
+            self::assertSame($state, $context['connection_state']);
+            $handler = new TestHandler;
+            $handler->setFormatter(new JsonFormatter);
+            $logger = new IlluminateLogger(new MonologLogger('slow_queries', [$handler]));
+            (new EnsureLogFailuresAreNonFatal)($logger);
+            $logger->warning('slow_query', $context);
+            $serialized = $handler->getRecords()[0]->formatted;
+            self::assertSame($runtime, json_decode($serialized, true, 512, JSON_THROW_ON_ERROR)['context']['pdo_runtime']);
+            self::assertStringNotContainsString('private-value', $serialized);
+            self::assertSame(['observed' => false], $factory->forQuery($event, $state)['pdo_runtime']);
+            foreach ([null, ['observed' => false], $runtime + ['ignored' => 'private-value']] as $candidate) {
+                $context = $factory->forQuery($event, $state + ['pdo_runtime' => $candidate]);
+                self::assertStringNotContainsString('private-value', json_encode($context, JSON_THROW_ON_ERROR));
+            }
+            foreach ([79999, 100000, '80512', true, [], new \stdClass] as $version) {
+                self::assertSame(['observed' => false], $factory->forQuery($event, $state + ['pdo_runtime' => array_replace($runtime, ['php_version_id' => $version])])['pdo_runtime']);
+            }
+            foreach (['driver' => 'private-driver', 'emulate_prepares' => 0, 'disable_prepares' => 'private-value', 'observed' => null] as $field => $invalid) {
+                $candidate = array_replace($runtime, ['write' => array_replace($handle, [$field => $invalid])]);
+                self::assertSame(['observed' => false], $factory->forQuery($event, $state + ['pdo_runtime' => $candidate])['pdo_runtime']);
+            }
+            self::assertSame(['observed' => false], $factory->forQuery($event,
+                array_replace($state, ['write_ready_after' => false, 'pdo_runtime' => $runtime]))['pdo_runtime']);
+            self::assertSame(['observed' => false], $factory->forQuery($event, ['observed' => false, 'pdo_runtime' => $runtime])['pdo_runtime']);
+            $candidate = array_replace($runtime, ['write' => $handle + ['dsn' => 'private-value'], 'read' => ['observed' => false, 'host' => 'private-value']]);
+            self::assertSame($runtime, $factory->forQuery($event, $state + ['pdo_runtime' => $candidate])['pdo_runtime']);
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     public function test_event_intervals_accept_only_finite_nonnegative_numbers_after_safe_boolean_state(): void
     {
         $previous = Container::getInstance();

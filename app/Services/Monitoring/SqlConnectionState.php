@@ -93,7 +93,7 @@ final class SqlConnectionState
         }
     }
 
-    public function finish(QueryExecuted $query): array
+    public function finish(QueryExecuted $query, bool $includePdoRuntime = false): array
     {
         try {
             $at = hrtime(true);
@@ -115,6 +115,12 @@ final class SqlConnectionState
 
                 return ['observed' => false];
             }
+            $runtime = [];
+            if ($includePdoRuntime) {
+                $writeRuntime = $this->pdoRuntime($write);
+                $runtime['pdo_runtime'] = ['observed' => true, 'php_version_id' => PHP_VERSION_ID,
+                    'write' => $writeRuntime, 'read' => $read === $write ? $writeRuntime : $this->pdoRuntime($read)];
+            }
 
             return [
                 'observed' => true,
@@ -126,6 +132,7 @@ final class SqlConnectionState
                 'read_ready_after' => $read instanceof PDO,
                 'manager_connection_event_during_run' => $pending['manager_connection_event_during_run'],
                 'event_intervals' => $this->intervals($pending, $write, $read, $at),
+                ...$runtime,
             ];
         } catch (Throwable) {
             $this->poison($query->connection);
@@ -199,6 +206,27 @@ final class SqlConnectionState
     private function supportedHandle(mixed $handle): bool
     {
         return $handle === null || $handle instanceof PDO || $handle instanceof Closure;
+    }
+
+    private function pdoRuntime(mixed $handle): array
+    {
+        if (! $handle instanceof PDO || ! in_array($handle::class, [PDO::class, \Pdo\Pgsql::class], true)) {
+            return ['observed' => false];
+        }
+        try {
+            if ($handle->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'pgsql') {
+                return ['observed' => false];
+            }
+            $emulate = $handle->getAttribute(PDO::ATTR_EMULATE_PREPARES);
+            $disable = $handle->getAttribute(\Pdo\Pgsql::ATTR_DISABLE_PREPARES);
+            if (! is_bool($emulate) || ! is_bool($disable)) {
+                return ['observed' => false];
+            }
+
+            return ['observed' => true, 'driver' => 'pgsql', 'emulate_prepares' => $emulate, 'disable_prepares' => $disable];
+        } catch (Throwable) {
+            return ['observed' => false];
+        }
     }
 
     private function poison(Connection $connection): void
