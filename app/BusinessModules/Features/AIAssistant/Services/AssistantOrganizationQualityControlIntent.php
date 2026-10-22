@@ -18,8 +18,7 @@ final class AssistantOrganizationQualityControlIntent
             return false;
         }
         if (preg_match('/excel|xlsx|csv|pdf|файл|выгруз|создай|закрой|удали|измени|обнови|переназначь|отправь|стоим|бюджет|сумм|затрат|сгрупп|разбивк|по\s+кажд|только|лишь|исключительно|вчера|завтра|за\s+(?:\d|[а-яё]*\s*(?:недел|месяц|год))|\b\d{4}\b|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/iu', $query) === 1
-            || preg_match('/(?<!\pL)(?:устрани(?:те)?|исправь(?:те)?)(?!\pL)/iu', $query) === 1
-            || preg_match('/(?:включ|учт|добав)[а-яё]*\s+(?:и\s+)?черновик|черновик[а-яё]*\s+(?:тоже|также)|не\s+исключ[а-яё]*\s+черновик/iu', $query) === 1) {
+            || preg_match('/(?<!\pL)(?:устрани(?:те)?|исправь(?:те)?)(?!\pL)/iu', $query) === 1) {
             return false;
         }
         $scope = preg_replace('/не\s+ограничивай(?:ся|тесь)\s+(?:выбранным|текущим)\s+(?:проектом|объектом)/iu', '', $query) ?? $query;
@@ -27,6 +26,10 @@ final class AssistantOrganizationQualityControlIntent
             return false;
         }
         $scope = preg_replace('/(?<!\pL)(?:по|во?)\s+вс(?:ем|ех)\s+(?:(?:нашим|наших|доступным|доступных)\s+)?(?:проект|объект)[а-яё]*/iu', '', $scope) ?? $scope;
+        $excludedStatus = '(?:черновик[а-яё]*|устран[её]нн[а-яё]*|отмен[её]нн[а-яё]*)';
+        $statusList = $excludedStatus.'(?:(?:\s*,\s*|\s+и\s+)'.$excludedStatus.')*';
+        $scope = preg_replace('/(?<!\pL)кроме\s+'.$statusList.'(?=\s*(?:[.!?;]|$))/iu', '', $scope) ?? $scope;
+        $scope = preg_replace('/(?:^|(?<=[.!?;]))\s*(?:'.$statusList.'\s+исключи(?:те)?|исключи(?:те)?\s+'.$statusList.')(?=\s*(?:[.!?;]|$))/iu', '', $scope) ?? $scope;
         if (preg_match_all('/(?<!\pL)нужны\s+([^.!?]*)(?:[.!?]|$)/iu', $scope, $clauses, PREG_SET_ORDER) > 0) {
             foreach ($clauses as $clause) {
                 if (! self::supportedColumns($clause[1])) {
@@ -37,7 +40,7 @@ final class AssistantOrganizationQualityControlIntent
         }
         $scope = preg_replace('/(?:отдельно\s+(?:отметь|выдели|покажи)|отметь|выдели)\s+критическ[а-яё]*(?:\s+(?:замечан|дефект)[а-яё]*)?(?=\s*(?:[.!?;,]|$))/iu', '', $scope) ?? $scope;
 
-        return preg_match('/(?<!\pL)(?:проект|объект)[а-яё]*|критическ|существен|незначительн|ответствен|назначен|открыт|в\s+работе|в\s+статусе|не\s*просроч|не\s+раньше|отмени/iu', $scope) !== 1;
+        return preg_match('/(?<!\pL)(?:проект|объект)[а-яё]*|критическ|существен|незначительн|ответствен|назначен|открыт|в\s+работе|в\s+статусе|не\s*просроч|не\s+раньше|отмени|'.$excludedStatus.'/iu', $scope) !== 1;
     }
 
     private static function supportedColumns(string $clause): bool
