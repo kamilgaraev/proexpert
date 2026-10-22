@@ -493,6 +493,64 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         Http::assertNothingSent();
     }
 
+    public function test_changed_scope_does_not_hide_fresh_proposals_behind_a_stale_accepted_binding(): void
+    {
+        [$session, $actor, $document] = $this->ordinaryWorkbook();
+        app(InitialProjectFactsWriter::class)->write($session, $actor);
+        $this->composeCells($session, $actor, publish: true);
+        $reviews = app(ReviewSpreadsheetCellInterpretation::class);
+        $original = $reviews->rows($actor, $session->fresh(), (int) $document->id)[0];
+        self::assertSame(200, $this->postReview($actor, $session->fresh(), $document, $this->reviewRequest($session->fresh(), $original))->getStatusCode());
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $before = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 100])['snapshot'];
+        $oldFact = array_values(array_filter($before->facts, static fn ($fact): bool => $fact->origin === 'document'))[0];
+        $oldReview = array_values(array_filter($before->facts, static fn ($fact): bool => ($fact->value['kind'] ?? null) === 'document_cell_review'))[0];
+        $oldDecisions = app(ProjectModelRepository::class)->decisions(...[...$scope, [$oldReview->value['decision_id']]]);
+        config(['estimate-generation.universal_enabled' => true]);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection::class)
+            ->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->fresh()->state_version,
+                'selected_sections' => ['equipment'], 'profile_id' => 'renovation', 'construction_type' => 'current_repair', 'price_policy' => 'mixed']);
+        $session = $session->fresh();
+        $changed = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->input_payload]);
+        self::assertSame([], $changed->sourceClaimReferences);
+        self::assertNotContains($oldFact->id, array_column($changed->facts, 'id'));
+        self::assertSame($original['row'], $changed->nativeCellContext[1]['row']);
+        self::assertSame(422, $this->postReview($actor, $session, $document, $this->reviewRequest($session, $original, 'revoke'))->getStatusCode());
+        [$operationId, $runId] = $this->composeCells($session, $actor, publish: true);
+        $session = $session->fresh();
+        $current = $reviews->rows($actor, $session, (int) $document->id);
+        self::assertCount(1, $current);
+        self::assertSame($runId, $current[0]['proposal_run_id']);
+        self::assertNotSame($original['proposal_hash'], $current[0]['proposal_hash']);
+        self::assertSame('pending', $current[0]['status']);
+        self::assertSame(['accept', 'reject'], $current[0]['actions']);
+        $input = $this->reviewRequest($session, $current[0]);
+        $accepted = $this->postReview($actor, $session, $document, $input);
+        self::assertSame(200, $accepted->getStatusCode());
+        self::assertSame(CanonicalPipelineJson::encode($accepted->getData(true)),
+            CanonicalPipelineJson::encode($this->postReview($actor, $session, $document, $input)->getData(true)));
+        $session = $session->fresh();
+        $next = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->input_payload]);
+        self::assertCount(1, $next->sourceClaimReferences);
+        self::assertSame($accepted->getData(true)['data']['decision_id'], $next->sourceClaimReferences[0]['source_review_decision_id']);
+        self::assertNotContains($oldFact->id, $next->sourceClaimReferences[0]['document_fact_ids']);
+        $newFact = app(ProjectModelRepository::class)->fact(...[...$scope, $next->sourceClaimReferences[0]['document_fact_ids'][0]]);
+        self::assertSame($oldFact->version + 1, $newFact->version);
+        self::assertSame($oldFact->id, $newFact->supersedesFactId);
+        $current = $reviews->rows($actor, $session, (int) $document->id);
+        self::assertSame(['revoke'], $current[0]['actions']);
+        self::assertSame(422, $this->postReview($actor, $session, $document, $this->reviewRequest($session, $current[0]))->getStatusCode());
+        self::assertSame(200, $this->postReview($actor, $session, $document, $this->reviewRequest($session, $current[0], 'revoke'))->getStatusCode());
+        $after = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->fresh()->input_payload]);
+        self::assertSame([], $after->sourceClaimReferences);
+        self::assertNotEmpty($after->nativeCellContext);
+        self::assertEquals($oldFact, app(ProjectModelRepository::class)->fact(...[...$scope, $oldFact->id]));
+        self::assertEquals($oldReview, app(ProjectModelRepository::class)->fact(...[...$scope, $oldReview->id]));
+        self::assertEquals($oldDecisions, app(ProjectModelRepository::class)->decisions(...[...$scope, [$oldReview->value['decision_id']]]));
+        self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
+    }
+
     public function test_cell_context_scans_past_typed_units_and_caps_eligible_rows_without_another_composer_wire(): void
     {
         [$session, $actor, $document] = $this->ordinaryWorkbook(leadingTypedSheets: 8, extraLiteralRows: 8);

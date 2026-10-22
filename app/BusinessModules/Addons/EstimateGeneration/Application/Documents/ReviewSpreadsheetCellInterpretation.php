@@ -120,7 +120,8 @@ final readonly class ReviewSpreadsheetCellInterpretation
             if (($input['decision'] === 'revoke' && (($previous['decision'] ?? null) !== 'accept'
                     || $previous['proposal_hash'] !== $selected['proposal_hash'] || $previous['run_id'] !== $selected['run_id']))
                 || ($input['decision'] !== 'revoke' && $previous !== null
-                    && ($previous['decision'] === 'accept' || $previous['proposal_hash'] === $selected['proposal_hash']))) {
+                    && (($previous['decision'] === 'accept' && $this->current($session, $previous) !== null)
+                        || $previous['proposal_hash'] === $selected['proposal_hash']))) {
                 $this->invalid();
             }
 
@@ -191,10 +192,10 @@ final readonly class ReviewSpreadsheetCellInterpretation
             if (($stored['decision'] ?? null) !== 'accept') {
                 continue;
             }
-            $proposals = array_values(array_filter($proposals, static fn (array $row): bool => $row['proposal']['row_id'] !== $stored['proposal']['row_id']));
             $loaded[$stored['operation_id']] ??= $this->learning->cellReviewProposalsForOperation($session, $stored['operation_id']);
             foreach ($loaded[$stored['operation_id']] as $original) {
-                if ($original['proposal_hash'] === $stored['proposal_hash']) {
+                if ($original['proposal_hash'] === $stored['proposal_hash'] && $this->current($session, $original) !== null) {
+                    $proposals = array_values(array_filter($proposals, static fn (array $row): bool => $row['proposal']['row_id'] !== $stored['proposal']['row_id']));
                     $proposals[] = $original;
                 }
             }
