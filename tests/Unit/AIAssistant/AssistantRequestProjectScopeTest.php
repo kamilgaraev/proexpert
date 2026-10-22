@@ -576,7 +576,9 @@ final class AssistantRequestProjectScopeTest extends TestCase
         foreach (['проект 100 не включай', 'проект 100 не включать', 'проект 100 не учитывайте',
             'проект 100 не учитывать', 'проект 100 исключить', 'проект 100 исключи из отчёта',
             'проект 100, пожалуйста, не включай', 'выбранный проект не включай',
-            'проект «СевГУ» не включай', 'проект СевГУ не учитывать'] as $clause) {
+            'проект «СевГУ» не включай', 'проект СевГУ не учитывать',
+            ...array_map(static fn (string $format): string => 'проект 100 не включай в '.$format, ['PDF', 'pdf', 'pDf', 'CSV', 'XLSX', 'Excel']),
+            'выбранный проект не включай в PDF', 'проект «СевГУ» не включай в PDF'] as $clause) {
             $question = 'Покажи все акты организации, '.$clause;
             $id = str_contains($clause, 'выбранный') ? 52 : 100;
             $search = static function (array $arguments): array {
@@ -602,7 +604,8 @@ final class AssistantRequestProjectScopeTest extends TestCase
 
     public function test_postpositive_project_exclusions_require_clarification_before_search(): void
     {
-        foreach (['проект 100 не включай', 'выбранный проект исключить', 'проект «СевГУ» не учитывать'] as $clause) {
+        foreach (['проект 100 не включай', 'выбранный проект исключить', 'проект «СевГУ» не учитывать',
+            'проект 100 не включай в PDF', 'выбранный проект не включай в PDF', 'проект «СевГУ» не учитывай в PDF'] as $clause) {
             $search = static function (): never {
                 self::fail('Excluded project reached a positive search');
             };

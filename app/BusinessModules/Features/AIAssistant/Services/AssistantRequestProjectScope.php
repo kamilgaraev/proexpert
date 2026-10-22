@@ -668,7 +668,7 @@ final readonly class AssistantRequestProjectScope
         $excluded = '(?:'.$operand.'|'.$noun.')';
         $directive = '(?:не\s+(?:(?:надо|нужно|следует|стоит)\s+)?(?:включ(?:ать|ай(?:те)?|и(?:те)?)|учитыва(?:ть|й(?:те)?|ем)|уч(?:ти(?:те)?|есть))|исключ(?:ить|и(?:те)?|ай(?:те)?))(?![\pL\pN])';
         $negative = '(?<![\pL\pN])(?:без|кроме|исключая|не\s+включая|за\s+исключением|не(?:\s+(?:в|во|на|по|для|из|с|со))?|'.$directive.')\s+';
-        $ending = '(?=\s*(?:$|[,;.!?\r\n]|(?:в|из|для)\s+(?:отч[её]т[а-яё]*|сводк[а-яё]*|выборк[а-яё]*|CSV|XLSX|Excel)(?![\pL\pN])))';
+        $ending = '(?=\s*(?:$|[,;.!?\r\n]|(?:в|из|для)\s+(?:отч[её]т[а-яё]*|сводк[а-яё]*|выборк[а-яё]*|CSV|XLSX|Excel|PDF)(?![\pL\pN])))';
         $postfix = '\s*(?:[,—–:-]\s*)?(?:пожалуйста\s*,?\s*)?'.$directive.$ending;
 
         return '/(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|'.$negative.'(?<excluded_project>'.$excluded.')|(?<postfix_excluded_project>'.$operand.')'.$postfix.'/iu';

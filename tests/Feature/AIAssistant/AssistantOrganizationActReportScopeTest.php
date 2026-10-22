@@ -34,6 +34,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
     public static function reportCases(): array
     {
         return [
+            'search rejects postfix PDF exclusion' => [true, true, false, 4, 4, true, '', 'search_postfix_pdf'],
             'section project' => [true, false, false, 7, 5],
             'nested project filter' => [false, true, false, 7, 5],
             'both with date and status filters' => [true, true, true, 5, 3],
@@ -188,6 +189,7 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             });
             $this->app->instance(\App\Services\Logging\LoggingService::class, $logging);
             $question = match ($variant) {
+                'search_postfix_pdf' => 'Покажи все акты организации, проект '.$first->id.' не включай в PDF',
                 'search_numeric', 'search_unrequested' => 'Сравни все акты организации с проектом '.$second->id,
                 'search_separate' => 'Покажи все акты организации и отдельно акты по проекту '.$second->id,
                 'search_named' => 'Сравни все акты организации с проектом '.$first->name,
@@ -196,6 +198,15 @@ final class AssistantOrganizationActReportScopeTest extends TestCase
             $searchArguments = ['domain' => 'acts', 'entity_type' => 'performance_act', 'query' => '', 'project_id' => null,
                 'limit' => 20, 'predicate' => null, 'cursor' => null, 'fields' => ['id', 'project_id', 'status', 'currency']];
             $all = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
+            if ($variant === 'search_postfix_pdf') {
+                self::assertSame('insufficient_data', $all['status'] ?? null, json_encode($all, JSON_UNESCAPED_UNICODE));
+                self::assertTrue($all['needs_clarification'] ?? false);
+                self::assertSame([], $all['source_refs'] ?? []);
+                self::assertSame([], $all['results'] ?? []);
+                self::assertNull($csv);
+
+                return;
+            }
             self::assertArrayHasKey('result_window', $all, json_encode($all, JSON_UNESCAPED_UNICODE));
             self::assertSame(7, $all['result_window']['total']);
             $project = in_array($variant, ['search_numeric', 'search_separate'], true) ? $second : $first;
