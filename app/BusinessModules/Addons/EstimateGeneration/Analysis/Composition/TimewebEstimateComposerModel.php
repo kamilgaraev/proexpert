@@ -224,6 +224,8 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
     {
         $legacy = in_array($input->contractVersion, [RunEstimateComposer::LEGACY_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
         $answered = in_array($input->contractVersion, [RunEstimateComposer::ANSWER_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
+        $relatedAnswers = $answered && array_filter($input->facts, static fn (array $fact): bool => ($fact['context_kind'] ?? null) === 'composer_answer'
+            && ($fact['related_entity_ids'] ?? []) !== []) !== [];
 
         return 'Ты составитель строительной сметы. Детерминированные кандидаты уже принадлежат серверу; возвращай kind=existing только когда нужно добавить к выбранному кандидату смысловые допущения, исключения или рекомендации. '
             .'Если подтверждённый факт модели требует отсутствующей в кандидатах работы, добавь bounded намерение kind=supplementary с work_key, русским name и при наличии точного объёма derived_quantity_id. Сервер создаст candidate_id. '
@@ -235,7 +237,11 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 ? 'context_kind=initial_description с semantic_work_sections обозначает проверенный сервером источник пользовательского запроса в режиме legacy. Определи смысл запрошенных работ и их work_section в пределах semantic_work_sections и allowed_work_sections: это канонический словарь допустимых разделов, не выбранный пользователем состав. Не добавляй работы только из-за наличия раздела в словаре. Описание допускает лишь предварительный состав и не подтверждает размеры, объёмы или технологию. '
                 : 'context_kind=initial_description обозначает введённое пользователем описание; оно допускает предварительный состав только в declared_work_sections и не подтверждает размеры или объёмы. ')
             .($answered
-                ? 'context_kind=composer_answer содержит отдельное пользовательское уточнение к исходному запросу. Используй его смысл только в answer_work_sections и для context_entity_id, ссылаясь на id самого ответа. Это user_assumption, не независимое подтверждение технологии, количества, единицы, нормы или цены. Отсутствующий ответ и неизвестные данные не дополняй догадками. '
+                ? 'context_kind=composer_answer содержит отдельное пользовательское уточнение к исходному запросу. Используй его смысл только в answer_work_sections и для context_entity_id'
+                    .($relatedAnswers ? ' или явно переданных сервером related_entity_ids этого ответа' : '')
+                    .', ссылаясь на id самого ответа. '
+                    .($relatedAnswers ? 'Для related_entity_ids допускается только предварительный состав без количества, единицы, нормы и цены. ' : '')
+                    .'Это user_assumption, не независимое подтверждение технологии, количества, единицы, нормы или цены. Отсутствующий ответ и неизвестные данные не дополняй догадками. '
                 : '')
             .($answered
                 ? 'Дополнительно можешь предложить claim_candidates только для source_answer_fact_id из claim_answer_fact_ids текущей части: не более одного кандидата на ответ и не более 8 всего. Если список пуст или отсутствует, верни пустой claim_candidates. '
