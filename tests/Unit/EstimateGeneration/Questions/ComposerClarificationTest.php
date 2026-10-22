@@ -44,6 +44,28 @@ final class ComposerClarificationTest extends TestCase
         return [['legacy'], ['universal']];
     }
 
+    public function test_target_options_are_outside_the_hashed_question_and_only_include_frozen_document_context(): void
+    {
+        [$draft, $input, $snapshot] = $this->fixture('universal');
+        $current = $this->resolver()->resolveComposer($draft, $input, $snapshot, str_repeat('a', 64), [10, 20, 30]);
+        self::assertSame([['entity_id' => 'entity:equipment', 'label' => 'Установка из спецификации (Оборудование!C2)']], $current->targetOptions);
+        self::assertArrayNotHasKey('target_options', $current->question->toArray());
+        self::assertArrayNotHasKey('target_options', $current->composerContext);
+        self::assertSame(hash('sha256', CanonicalPipelineJson::encode(['question' => $current->question->toArray(),
+            'snapshot_token' => str_repeat('a', 64), 'context' => $current->composerContext])), $current->answerFingerprint);
+        $document = $snapshot->facts[1];
+        $late = new Fact('fact:late', 10, 20, 30, $document->sourceVersion, 'entity:late', $document->type,
+            'Поздняя спецификация', null, 0.0, 'document', 'confirmed', $document->evidenceIds);
+        $withLate = new ProjectModelSnapshot([...$snapshot->entities, new Entity('entity:late', 10, 20, 30, $document->sourceVersion,
+            'equipment', 'late', ['semantic_type' => 'equipment'])], [...$snapshot->facts, $late], $snapshot->evidence, []);
+        self::assertSame($current->targetOptions, $this->resolver()->resolveComposer($draft, $input, $withLate, str_repeat('a', 64), [10, 20, 30])->targetOptions);
+        $numeric = new Fact($document->id, 10, 20, 30, $document->sourceVersion, $document->entityId,
+            'equipment_count', 3, 'count', 0.0, 'document', 'confirmed', $document->evidenceIds);
+        self::assertSame([], $this->resolver()->resolveComposer($draft, $input,
+            new ProjectModelSnapshot($snapshot->entities, [$snapshot->facts[0], $numeric], $snapshot->evidence, []),
+            str_repeat('a', 64), [10, 20, 30])->targetOptions);
+    }
+
     public function test_old_tampered_foreign_and_non_actionable_artifacts_do_not_issue_a_question(): void
     {
         [$draft, $input, $snapshot] = $this->fixture('universal');
@@ -99,14 +121,28 @@ final class ComposerClarificationTest extends TestCase
             new ProjectModelSnapshot($snapshot->entities, $snapshot->facts, $proofs, []), [$decision], $input));
     }
 
-    private function answered(string $mode): array
+    #[DataProvider('modes')]
+    public function test_selected_target_is_rechecked_against_current_frozen_document_dependencies(string $mode): void
+    {
+        [$input, $snapshot, $answer, $decision] = $this->answered($mode, 'entity:equipment');
+        $context = ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, [$decision], $input);
+        self::assertSame('entity:equipment', $context['target_entity_id']);
+        self::assertSame('entity:request', $context['entity_id']);
+        foreach (['', 'entity:request', 'entity:foreign', null] as $invalid) {
+            [$input, $snapshot, $answer, $decision] = $this->answered($mode, $invalid, true);
+            self::assertNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, [$decision], $input));
+        }
+    }
+
+    private function answered(string $mode, ?string $target = null, bool $forceTarget = false): array
     {
         [$draft, $input, $snapshot] = $this->fixture($mode);
         $current = $this->resolver()->resolveComposer($draft, $input, $snapshot, str_repeat('a', 64), [10, 20, 30]);
         $value = ['kind' => 'composer_answer', 'numeric_parameters_confirmed' => false, 'response' => 'other',
             'other' => 'Требуется только монтаж стендов по отдельной спецификации.', 'question_key' => $current->question->code,
             'question_fingerprint' => $current->answerFingerprint, 'source_locator' => $current->question->sourceLocator,
-            'composer_context' => $current->composerContext, 'decision_id' => 'decision:answer', 'reason' => $current->question->subject];
+            'composer_context' => $current->composerContext, 'decision_id' => 'decision:answer', 'reason' => $current->question->subject,
+            ...($target !== null || $forceTarget ? ['target_entity_id' => $target] : [])];
         $answer = new Fact('fact:answer', 10, 20, 30, $current->sourceVersion, 'entity:answer', 'evaluation_answer', $value, null,
             0.0, 'user_assumption', 'confirmed', ['evidence:answer']);
         $proof = new Evidence('evidence:answer', 10, 20, 30, $answer->sourceVersion, 'input:30', 'user_input', null, null,

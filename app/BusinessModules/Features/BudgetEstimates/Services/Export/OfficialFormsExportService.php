@@ -689,7 +689,7 @@ class OfficialFormsExportService
             $sheet->freezePane('C'.($headerEnd + 1));
         }
         foreach ($sheet->getRowIterator() as $row) {
-            $height = 8;
+            $height = 4;
             foreach ($row->getCellIterator() as $cell) {
                 $value = (string) $cell->getValue();
                 if ($value === '') {
@@ -697,7 +697,7 @@ class OfficialFormsExportService
                 }
                 if ($cell->getDataType() === \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC) {
                     $cell->getStyle()->getAlignment()->setWrapText(false)->setShrinkToFit(true);
-                    $height = max($height, 18);
+                    $height = max($height, 15);
 
                     continue;
                 }
@@ -714,7 +714,8 @@ class OfficialFormsExportService
                 foreach (explode("\n", $value) as $line) {
                     $lines += max(1, (int) ceil(mb_strlen($line) / max(1, $width * 0.85)));
                 }
-                $height = max($height, 18, (int) ceil(($lines * 12 + 6) / $span));
+                $padding = str_contains($value, "\n") ? 6 : 3;
+                $height = max($height, 15, (int) ceil(($lines * 12 + $padding) / $span));
             }
             $sheet->getRowDimension($row->getRowIndex())->setRowHeight(min(409, $height));
         }
