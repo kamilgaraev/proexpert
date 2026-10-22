@@ -29,6 +29,7 @@ use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Monitoring\SlowQueryContext;
 use App\Services\Project\ProjectParticipantService;
 use App\Services\Workflow\JournalScheduleTaskResolver;
@@ -395,7 +396,29 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
         $service = app(ConstructionJournalPayloadService::class);
         $service->prepareEntryPage($journal->entries);
 
-        $payload = $service->mapJournal($journal, $context->user, true);
+        $request = app('request');
+        $previousMetrics = $request->attributes->get(ApiQueryMetrics::REQUEST_ATTRIBUTE);
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        try {
+            $payload = $service->mapJournal($journal, $context->user, true);
+        } finally {
+            if ($previousMetrics === null) {
+                $request->attributes->remove(ApiQueryMetrics::REQUEST_ATTRIBUTE);
+            } else {
+                $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $previousMetrics);
+            }
+        }
+
+        $phases = $metrics->summary()['processing_phases'];
+        $this->assertSame(1, $phases['journal_actions']['count']);
+        $this->assertSame(8, $phases['journal_entry_actions']['count']);
+        foreach (['journal_actions', 'journal_entry_actions'] as $phase) {
+            foreach (['total_ms', 'max_ms', 'sql_count', 'sql_total_ms'] as $field) {
+                $this->assertIsNumeric($phases[$phase][$field]);
+                $this->assertGreaterThanOrEqual(0, $phases[$phase][$field]);
+            }
+        }
 
         $this->assertCount(8, $payload['entries']);
         foreach ($payload['entries'] as $entry) {
