@@ -8,6 +8,7 @@ final class AssistantOrganizationQualityControlIntent
 {
     public static function matches(string $query): bool
     {
+        $query = preg_replace('/(?<!\pL)(?:только|лишь|исключительно)\s+(?=(?:незакрыт[а-яё]*\s+)?просроч[а-яё]*(?!\pL))/iu', '', $query) ?? $query;
         $scopeQuery = preg_replace('/(?<!\pL)(по\s+всем\s+)доступным\s+((?:проект|объект)ам)(?!\pL)/iu', '$1$2', $query) ?? $query;
         if (! AssistantRequestProjectScope::organizationWide($scopeQuery)
             || preg_match('/качеств/iu', $query) !== 1
@@ -27,6 +28,6 @@ final class AssistantOrganizationQualityControlIntent
         $scope = preg_replace('/(?<!\pL)нужн[а-яё]*\s+[^.!?]*(?:[.!?]|$)/iu', '', $scope) ?? $scope;
         $scope = preg_replace('/(?:отдельно\s+)?(?:отметь|выдели|покажи)\s+критическ[а-яё]*(?:\s+(?:замечан|дефект)[а-яё]*)?/iu', '', $scope) ?? $scope;
 
-        return preg_match('/(?<!\pL)(?:проект|объект)[а-яё]*|критическ|существен|незначительн|ответствен|назначенн|в\s+работе|в\s+статусе|не\s*просроч|не\s+раньше|отмени/iu', $scope) !== 1;
+        return preg_match('/(?<!\pL)(?:проект|объект)[а-яё]*|критическ|существен|незначительн|ответствен|назначен|открыт|в\s+работе|в\s+статусе|не\s*просроч|не\s+раньше|отмени/iu', $scope) !== 1;
     }
 }
