@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantCoreBusinessMetadata as Metadata;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCollectorQueryContext;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CoreBusinessMoneyRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CoreBusinessRagSource;
 use App\Models\Estimate;
@@ -13,6 +14,7 @@ use App\Models\EstimateItemTotal;
 use App\Models\EstimateItemWork;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Services\Monitoring\SlowQueryContext;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
@@ -54,7 +56,25 @@ final class CoreBusinessRagEstimateChildrenTest extends TestCase
         $deletedProject->deleteQuietly();
 
         $collector = new EstimateChildBatchTestSource($entity);
+        $reads = [];
+        $capture = true;
+        $table = $entity === 'core_estimate_item_work' ? 'estimate_item_works' : 'estimate_item_totals';
+        DB::listen(static function (QueryExecuted $query) use (&$reads, &$capture, $table): void {
+            if ($capture && str_starts_with($query->sql, 'select "'.$table.'".')) {
+                $reads[] = [
+                    'identity' => RagCollectorQueryContext::current(),
+                    'source' => SlowQueryContext::source(['tests/Feature/AIAssistant/CoreBusinessRagEstimateChildrenTest.php']),
+                ];
+            }
+        });
         $chunks = [...$collector->collectForOrganization($organization->id)];
+        $capture = false;
+        self::assertCount(2, $reads);
+        foreach ($reads as $read) {
+            self::assertSame(['source_type' => $collector->sourceType(), 'entity_type' => $entity, 'phase' => 'collection_page'], $read['identity']);
+            self::assertSame('app/BusinessModules/Features/AIAssistant/Services/Rag/Sources/CoreBusinessRagSource.php', $read['source']['file']);
+        }
+        self::assertNull(RagCollectorQueryContext::current());
         self::assertSame($expected, array_column($chunks, 'entityId'));
         self::assertCount(62, $chunks);
         foreach ($chunks as $chunk) {
