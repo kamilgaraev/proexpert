@@ -296,6 +296,110 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
         self::assertSame([], [...$source->collectEntity($fixture->foreignOrganization->id, 'purchase_receipt_inventory_lot', $expected[0])]);
     }
 
+    public function test_supply_reliability_rows_shared_parent_scopes_preserve_legacy_pages_and_project_denials(): void
+    {
+        $fixture = $this->fixture();
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]);
+        $event = $this->receiptEvent($fixture->organization, $project, true);
+        $foreignEvent = $this->receiptEvent($fixture->foreignOrganization, $foreignProject, true);
+        $snapshot = $this->supplyRowSnapshot($fixture->organization->id, $this->reportingPolicy('supply_reliability_snapshot', $fixture->organization->id));
+        $foreignSnapshot = $this->supplyRowSnapshot($fixture->foreignOrganization->id, null);
+        $expected = [];
+        for ($index = 0; $index < 65; $index++) {
+            $this->supplyRow($foreignEvent, $foreignSnapshot, $foreignProject->id);
+            $expected[] = $this->supplyRow($event, $snapshot, $project->id);
+        }
+        $policylessSnapshot = $this->supplyRowSnapshot($fixture->organization->id, null);
+        $nullProject = $this->supplyRow($event, $policylessSnapshot, null);
+        $this->supplyRow($event, $snapshot, $foreignProject->id);
+        $this->supplyRow($event, $foreignSnapshot, $project->id);
+        $this->supplyRow($event, $snapshot, $project->id, ['purchase_order_id' => $foreignEvent->purchase_order_id]);
+        $this->supplyRow($event, $snapshot, $project->id, ['purchase_order_item_id' => $foreignEvent->purchase_order_item_id]);
+        $this->supplyRow($event, $snapshot, $project->id, ['promise_version_id' => $foreignEvent->promise_version_id]);
+        $foreignOrder = PurchaseOrder::query()->findOrFail($foreignEvent->purchase_order_id);
+        $this->supplyRow($event, $snapshot, $project->id, ['supplier_id' => $foreignOrder->supplier_id]);
+        $foreignPromise = DB::table('purchase_order_promise_versions')->where('id', $foreignEvent->promise_version_id)->first();
+        self::assertNotNull($foreignPromise);
+        $this->supplyRow($event, $snapshot, $project->id, ['warehouse_id' => $foreignPromise->warehouse_id]);
+        $this->supplyRow($event, $snapshot, $project->id, ['material_id' => $foreignPromise->material_id]);
+        $source = new ProcurementBusinessRagSource;
+        $collection = new \ReflectionMethod($source, 'collectionQuery');
+        $legacyMethod = new \ReflectionMethod($source, 'buildScopedQuery');
+        foreach ([null, $project->id, $foreignProject->id] as $projectId) {
+            $scopes = null;
+            $arguments = ['supply_reliability_row', $fixture->organization->id, $projectId, false, [], &$scopes];
+            $legacy = $legacyMethod->invokeArgs(null, $arguments)->orderBy('id')->pluck('id')->all();
+            $query = $collection->invoke($source, 'supply_reliability_row', $fixture->organization->id, $projectId);
+            $rows = $query->lazyById(50)->all();
+            self::assertSame($projectId === $foreignProject->id ? [] : ($projectId === null ? [...$expected, $nullProject] : $expected), $legacy);
+            self::assertSame($legacy, array_map(static fn ($row): int => (int) $row->id, $rows));
+            foreach ($rows as $row) { self::assertSame($row->id === $nullProject ? null : $project->id, $row->project_id); }
+        }
+        $order = PurchaseOrder::query()->findOrFail($event->purchase_order_id);
+        $order->deleteQuietly();
+        self::assertSame([], $collection->invoke($source, 'supply_reliability_row', $fixture->organization->id)->get()->all());
+        $order->restoreQuietly();
+        self::assertSame([...$expected, $nullProject], $collection->invoke($source, 'supply_reliability_row', $fixture->organization->id)->orderBy('id')->pluck('id')->all());
+        foreach ([$expected[0], $expected[64]] as $id) {
+            $chunks = [...$source->collectEntity($fixture->organization->id, 'supply_reliability_row', $id)];
+            self::assertCount(1, $chunks);
+            self::assertSame($project->id, $chunks[0]->projectId);
+        }
+        self::assertSame([], [...$source->collectEntity($fixture->foreignOrganization->id, 'supply_reliability_row', $expected[0])]);
+        self::assertLessThan(30000, strlen($collection->invoke($source, 'supply_reliability_row', $fixture->organization->id)->toSql()));
+    }
+
+    public function test_supply_reliability_row_current_project_and_role_revocation_remain_visible(): void
+    {
+        $fixture = $this->fixture();
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $event = $this->receiptEvent($fixture->organization, $project, true);
+        $row = $this->supplyRow($event, $this->supplyRowSnapshot($fixture->organization->id, null), $project->id);
+        $member = $fixture->addMember(['procurement' => ['procurement.purchase_orders.view'], 'contract-management' => ['contracts.view'],
+            'catalog-management' => ['materials.view', 'measurement_units.view', 'suppliers.view'], 'basic-warehouse' => ['warehouse.view'], 'project-management' => ['projects.view']]);
+        $member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $policy = app(AssistantDataAccessPolicy::class);
+        self::assertTrue($policy->canReadEntity($member, $fixture->organization->id, 'supply_reliability_row', $row));
+        $member->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($policy->canReadEntity($member, $fixture->organization->id, 'supply_reliability_row', $row));
+        $member->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
+        self::assertTrue($policy->canReadEntity($member, $fixture->organization->id, 'supply_reliability_row', $row));
+        UserRoleAssignment::query()->where('user_id', $member->id)->where('context_id', AuthorizationContext::getOrganizationContext($fixture->organization->id)->id)->update(['is_active' => false]);
+        self::assertFalse($policy->canReadEntity($member, $fixture->organization->id, 'supply_reliability_row', $row));
+    }
+
+    private function supplyRowSnapshot(int $organizationId, ?int $policyId): string
+    {
+        $id = (string) Str::ulid();
+        $hash = hash('sha256', $id);
+        DB::table('supply_reliability_snapshots')->insert([
+            'id' => $id, 'organization_id' => $organizationId, 'definition_hash' => $hash, 'query_hash' => $hash,
+            'scope_hash' => $hash, 'source_hash' => $hash, 'formula_version' => 'v1', 'source_schema_version' => 'v1',
+            'policy_version_id' => $policyId, 'as_of' => now(), 'generated_at' => now(), 'row_count' => 65,
+            'eligible_count' => 65, 'otif_numerator' => 65, 'quality_status' => 'complete', 'reconciliation_status' => 'not_applicable', 'totals' => '{}']);
+
+        return $id;
+    }
+
+    private function supplyRow(\App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent $event, string $snapshotId, ?int $projectId, array $overrides = []): int
+    {
+        $promise = DB::table('purchase_order_promise_versions')->where('id', $event->promise_version_id)->first();
+        self::assertNotNull($promise);
+
+        return DB::table('supply_reliability_rows')->insertGetId(array_replace([
+            'organization_id' => $event->organization_id, 'snapshot_id' => $snapshotId, 'row_key' => (string) Str::uuid(),
+            'purchase_order_id' => $event->purchase_order_id, 'purchase_order_item_id' => $event->purchase_order_item_id,
+            'promise_version_id' => $event->promise_version_id, 'supplier_id' => null, 'project_id' => $projectId,
+            'warehouse_id' => null, 'material_id' => null, 'original_promised_at' => $promise->promised_at,
+            'promised_month' => substr((string) $promise->promised_at, 0, 7), 'delay_bucket' => 'on_time',
+            'ordered_quantity' => '2.500000', 'net_received_quantity' => '2.500000', 'unit_dimension' => 'volume', 'unit_code' => 'м3', 'conversion_version' => 'qa-v1',
+            'eligible' => true, 'on_time' => true, 'in_full' => true, 'stable_in_full' => true, 'mature' => true, 'otif' => true,
+            'otif_numerator' => 1, 'eligible_denominator' => 1, 'quantity_otif_numerator' => '2.500000', 'quantity_otif_denominator' => '2.500000',
+            'quality_warnings' => '[]', 'lifecycle_event_ids' => json_encode([$event->id], JSON_THROW_ON_ERROR),
+        ], $overrides));
+    }
+
     private function receiptEvent(Organization $organization, Project $project, bool $withPromise): \App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent
     {
         return Model::withoutEvents(function () use ($organization, $project, $withPromise) {
