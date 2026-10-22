@@ -45,10 +45,20 @@ final readonly class AssistantCustomReportReference
                 $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id'], referenceFields: $reference['checked_fields'], journalReference: true);
                 $this->sources->assertFields($reference['checked_fields'], $source['fields']);
                 if ($scope['entity_type'] === 'completed_work') {
-                    if (! $this->canReadWorkDependencies($actor, $organizationId, $scope['work_projection_dependencies'] ?? null)) {
+                    if (! $this->canReadProjectionDependencies($actor, $organizationId, $scope['work_projection_dependencies'] ?? null,
+                        array_keys(AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS))) {
                         return false;
                     }
                 } elseif (array_key_exists('work_projection_dependencies', $scope)) {
+                    return false;
+                }
+                if (array_key_exists('warehouse_projection_dependencies', $scope)) {
+                    if ($scope['entity_type'] !== 'warehouse_movement'
+                        || ! $this->canReadProjectionDependencies($actor, $organizationId, $scope['warehouse_projection_dependencies'],
+                            array_keys(AssistantWarehouseMovementReportProjection::DEPENDENCY_COLUMNS))) {
+                        return false;
+                    }
+                } elseif ($scope['entity_type'] === 'warehouse_movement' && in_array('unit', $reference['checked_fields'], true)) {
                     return false;
                 }
                 $ids = $reference['_report_ids'];
@@ -94,9 +104,8 @@ final readonly class AssistantCustomReportReference
         }
     }
 
-    private function canReadWorkDependencies(User $actor, int $organizationId, mixed $dependencies): bool
+    private function canReadProjectionDependencies(User $actor, int $organizationId, mixed $dependencies, array $types): bool
     {
-        $types = array_keys(AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS);
         if (! is_array($dependencies) || count($dependencies) !== count($types) || array_diff($types, array_keys($dependencies)) !== []) {
             return false;
         }

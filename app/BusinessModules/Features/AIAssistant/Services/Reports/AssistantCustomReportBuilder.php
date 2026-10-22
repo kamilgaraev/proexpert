@@ -110,10 +110,13 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $selected = array_values(array_unique([$model->getKeyName(), ...$fields]));
-        if ($scope['entity_type'] === 'completed_work') {
-            foreach (AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS as $dependencies) {
-                $selected = [...$selected, ...array_keys($dependencies)];
-            }
+        $projectionDependencies = match ($scope['entity_type']) {
+            'completed_work' => AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS,
+            'warehouse_movement' => AssistantWarehouseMovementReportProjection::DEPENDENCY_COLUMNS,
+            default => [],
+        };
+        foreach ($projectionDependencies as $dependencies) {
+            $selected = [...$selected, ...array_keys($dependencies)];
         }
         $assigneeProjection = $scope['entity_type'] === 'schedule_task' && in_array('assigned_user_name', $fields, true);
         if ($assigneeProjection) {
@@ -238,14 +241,19 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $scope['plan'] = $section;
-        if ($scope['entity_type'] === 'completed_work') {
-            $scope['work_projection_dependencies'] = [];
-            foreach (AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS as $entityType => $dependencies) {
+        $dependencyScope = match ($scope['entity_type']) {
+            'completed_work' => 'work_projection_dependencies',
+            'warehouse_movement' => 'warehouse_projection_dependencies',
+            default => null,
+        };
+        if ($dependencyScope !== null) {
+            $scope[$dependencyScope] = [];
+            foreach ($projectionDependencies as $entityType => $dependencies) {
                 $ids = [];
                 foreach (array_keys($dependencies) as $field) {
                     $ids = [...$ids, ...array_column($raw, $field)];
                 }
-                $scope['work_projection_dependencies'][$entityType] = array_values(array_unique(array_map('intval', array_filter($ids))));
+                $scope[$dependencyScope][$entityType] = array_values(array_unique(array_map('intval', array_filter($ids))));
             }
         }
         if ($paymentContractProjection) {
