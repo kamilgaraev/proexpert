@@ -116,7 +116,7 @@ final class AssistantStatusSnapshotFootprint
             try {
                 $planOrdinal++;
                 $selectStarted = hrtime(true);
-                $row = $connection->selectOne('EXPLAIN (FORMAT JSON, VERBOSE, SUMMARY TRUE) '.$sql, $bindings);
+                $row = $connection->selectOne('EXPLAIN (FORMAT JSON, VERBOSE, COSTS FALSE, SUMMARY TRUE) '.$sql, $bindings);
                 $selectMs = (hrtime(true) - $selectStarted) / 1_000_000;
                 $planJson = (string) ((array) $row)['QUERY PLAN'];
                 $decodeStarted = hrtime(true);
