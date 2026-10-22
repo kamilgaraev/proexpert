@@ -28,7 +28,7 @@ final readonly class OwnerSnapshotIdentityGuard
             'query_hash' => $this->watermark($snapshot, 'query_hash'),
             'definition_hash' => $snapshot->definitionHash->value,
             'formula_version' => $snapshot->formulaVersion,
-            'source_hash' => $snapshot->sourceHash->value,
+            'source_hash' => $snapshot->materializedSourceHash->value,
             'as_of' => $this->watermark($snapshot, 'as_of'),
         ];
         foreach ($versionColumns as $column => $watermark) {

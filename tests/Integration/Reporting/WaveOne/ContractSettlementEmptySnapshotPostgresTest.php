@@ -5,12 +5,17 @@ declare(strict_types=1);
 namespace Tests\Integration\Reporting\WaveOne;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureOptionsService;
@@ -23,6 +28,8 @@ use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSet
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementSourceFact;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
+use Illuminate\Support\Str;
 use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
@@ -48,7 +55,7 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
         $this->assertEmptySnapshot($snapshot->id);
         self::assertSame($snapshot->id, $projection->materialize($scope, $query)->id);
         self::assertSame(0, ContractSettlementSourceFact::query()->where('organization_id', $scope->organizationId)->count());
-        $this->assertReadableEmptySnapshot($scope, $snapshot);
+        $this->assertReadableEmptySnapshot($scope, $snapshot, $query);
     }
 
     #[Test]
@@ -69,7 +76,7 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
         self::assertNotSame($unfiltered->id, $snapshot->id);
         self::assertSame($snapshot->id, $projection->materialize($scope, $query)->id);
         self::assertSame(1, ContractSettlementSourceFact::query()->where('organization_id', $scope->organizationId)->count());
-        $this->assertReadableEmptySnapshot($scope, $snapshot);
+        $this->assertReadableEmptySnapshot($scope, $snapshot, $query);
     }
 
     #[Test]
@@ -94,12 +101,10 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
         self::assertSame(0, array_sum($checkpoint->owner_counts));
         $asOf = $checkpoint->completed_at->addSeconds(2)->toDateTimeImmutable();
         self::assertTrue($this->app->make(ContractSettlementExposureOptionsService::class)->options($scope, $asOf)['available']);
-        $snapshot = $this->app->make(ContractSettlementProjectionService::class)->materialize(
-            $scope,
-            $this->query($scope, $asOf),
-        );
+        $query = $this->query($scope, $asOf);
+        $snapshot = $this->app->make(ContractSettlementProjectionService::class)->materialize($scope, $query);
         $this->assertEmptySnapshot($snapshot->id);
-        $this->assertReadableEmptySnapshot($scope, $snapshot);
+        $this->assertReadableEmptySnapshot($scope, $snapshot, $query);
     }
 
     #[Test]
@@ -118,10 +123,13 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
         $this->app->make(ContractSettlementProjectionService::class)->materialize($scope, $this->query($scope, $asOf));
     }
 
-    private function assertReadableEmptySnapshot(ReportScope $scope, ReportSnapshotRef $snapshot): void
+    private function assertReadableEmptySnapshot(ReportScope $scope, ReportSnapshotRef $snapshot, ReportQuery $query): void
     {
-        $context = (new ReportExecutionContextBuilder)->scope($scope)->authorization(new AuthorizationDecisionContext(
-            'http', $scope->organizationId, $scope->holdingOrganizationIds, $scope->projectIds,
+        $user = User::factory()->create(['current_organization_id' => $scope->organizationId]);
+        $context = (new ReportExecutionContextBuilder)
+            ->actor(new ReportActor((int) $user->id, 'active', ['reports.view', 'reports.run']))
+            ->scope($scope)->authorization(new AuthorizationDecisionContext(
+            'queue', $scope->organizationId, $scope->holdingOrganizationIds, $scope->projectIds,
             $scope->resources, $scope->timezone, 'settlement-empty-test', null,
         ))->build();
         $service = $this->app->make(ContractSettlementQueryService::class);
@@ -133,6 +141,28 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
         $page = $service->page($context, $snapshot, new ReportWindowSort('contract_id', ReportSortDirection::ASC), null, 20);
         self::assertSame([], $page->rows);
         self::assertFalse($page->hasMore);
+
+        $runs = $this->app->make(ReportRunStore::class);
+        $run = $runs->createOrReuse($context, $query, null, new IdempotencyKey('settlement-empty-'.Str::uuid()));
+        $lease = (string) Str::uuid();
+        $now = new DateTimeImmutable;
+        $runs->claimMaterialization($context, $run->id, $lease, $now->modify('+10 minutes'), $now);
+        $hashBuilder = $this->app->make(CanonicalReportSourceHashBuilder::class);
+        $canonicalHash = $hashBuilder->build($query, $snapshot, $result);
+        self::assertNotSame($snapshot->materializedSourceHash->value, $canonicalHash->value);
+        $canonicalSnapshot = new ReportSnapshotRef(
+            $snapshot->kind, $snapshot->id, $snapshot->scope, $snapshot->definitionHash, $snapshot->formulaVersion,
+            $canonicalHash, $snapshot->generatedAt, $snapshot->staleAt, $snapshot->watermarks,
+            $snapshot->classification, $snapshot->seal, $snapshot->materializedSourceHash,
+        );
+        $canonicalResult = $service->result($context, $canonicalSnapshot);
+        self::assertSame($canonicalHash->value, $canonicalResult->provenance->sourceHash->value);
+        self::assertSame($canonicalHash->value, $hashBuilder->build($query, $canonicalSnapshot, $canonicalResult)->value);
+        self::assertSame([], $service->page($context, $canonicalSnapshot, new ReportWindowSort('contract_id', ReportSortDirection::ASC), null, 20)->rows);
+        $ready = $runs->sealReady($context, $run->id, $lease, $canonicalSnapshot, $canonicalResult, $canonicalHash, new DateTimeImmutable);
+        self::assertSame(ReportRunStatus::READY, $ready->status);
+        self::assertSame(0, $ready->rowCount);
+        self::assertSame($canonicalHash->value, $ready->sourceHash?->value);
     }
 
     private function assertEmptySnapshot(string $id): void
