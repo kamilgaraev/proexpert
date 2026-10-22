@@ -4,12 +4,19 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateCustomReportTool;
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
+use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportRenderer;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSource;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
@@ -18,7 +25,11 @@ use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Services\Modules\PackageCatalogService;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
+use App\Services\Storage\PersonalFileService;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -285,6 +296,85 @@ final class AssistantPurchaseOrderReportsTest extends TestCase
         }
         self::assertSame([$wanted->id], array_column($report['sections'][0]['rows'], 0));
         self::assertSame([$wanted->id, $virtualMismatch->id], $retrieved);
+    }
+
+    public function test_supplier_reference_survives_postgres_jsonb_storage_and_rechecks_catalog_access(): void
+    {
+        $actor = $this->authorizedMember();
+        $this->order(['supplier_snapshot' => ['display_name' => 'Снимок поставщика']]);
+        $this->order(['supplier_id' => $this->supplier('Справочник поставщиков')->id]);
+        $reference = $this->build($this->section(['columns' => ['id', 'supplier_name']]), $actor)['source_refs'][0];
+        $references = app(AssistantCustomReportReference::class);
+        self::assertTrue($references->canReadReference($actor, $this->fixture->organization->id, $reference));
+        $stored = DB::selectOne('SELECT CAST(? AS jsonb) AS payload', [json_encode([$reference], JSON_THROW_ON_ERROR)]);
+        $persisted = json_decode($stored->payload, true, 512, JSON_THROW_ON_ERROR)[0];
+        self::assertTrue($references->canReadReference($actor, $this->fixture->organization->id, $persisted));
+        $permissions = $this->fixture->memberRole->fresh()->module_permissions;
+        $permissions['catalog-management'] = [];
+        $this->fixture->memberRole->update(['module_permissions' => $permissions]);
+        self::assertFalse($references->canReadReference($actor, $this->fixture->organization->id, $persisted));
+    }
+
+    public function test_real_purchase_order_tool_publishes_two_sheet_artifact_and_rechecks_download_access(): void
+    {
+        $actor = $this->authorizedMember();
+        $permissions = $this->fixture->memberRole->fresh()->module_permissions;
+        $permissions['reports'] = ['reports.view'];
+        $this->fixture->memberRole->update(['module_permissions' => $permissions]);
+        $this->actingAs($actor);
+        $organization = $this->fixture->organization;
+        $this->order(['supplier_snapshot' => ['display_name' => 'Поставщик просроченного заказа'], 'delivery_date' => '2026-10-21']);
+        $this->order(['supplier_party_id' => $this->party('Поставщик без срока')->id]);
+        $bytes = '';
+        $files = $this->createMock(FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use (&$bytes): CurrentStoredFile {
+            $bytes = stream_get_contents($stream);
+            self::assertStringStartsWith('PK', $bytes);
+            self::assertSame(hash('sha256', $bytes), $hash);
+
+            return new CurrentStoredFile($path, 'etag', strlen($bytes), $hash, $mime);
+        });
+        $files->method('readCurrent')->willReturnCallback(static function () use (&$bytes) {
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, $bytes);
+            rewind($stream);
+
+            return $stream;
+        });
+        $common = array_map(static fn (string $status): array => ['field' => 'status', 'operator' => 'neq', 'value' => $status], ['draft', 'delivered', 'cancelled']);
+        $arguments = ['title' => 'Контроль заказов закупки', 'format' => 'xlsx', 'sections' => [
+            $this->section(['filters' => [...$common, ['field' => 'delivery_date', 'operator' => 'lt', 'value' => '2026-10-22']]]),
+            $this->section(['filters' => [...$common, ['field' => 'delivery_date', 'operator' => 'is_null', 'value' => null]]]),
+        ]];
+        $tool = new GenerateCustomReportTool(app(AssistantCustomReportBuilder::class), new AssistantCustomReportRenderer,
+            new AssistantGeneratedReportStorage(new PersonalFileService($files)), app(AIPermissionChecker::class));
+        $result = $tool->execute($arguments, $actor, $organization);
+        self::assertIsArray($result);
+        self::assertSame('success', $result['status']);
+        self::assertCount(2, $result['source_refs']);
+        $artifacts = (new AssistantReportFileService($files))->artifactsFromToolResult('generate_custom_report', $result, $organization, $actor);
+        self::assertCount(1, $artifacts);
+        self::assertSame('Контроль заказов закупки.xlsx', $artifacts[0]['filename']);
+        preg_match('#/reports/([^/]+)/download$#', $artifacts[0]['download_url'], $matches);
+        $access = app(AssistantReportAccessService::class);
+        $request = Request::create('/download');
+        $request->setUserResolver(static fn () => $actor);
+        $response = (new AiReportsDownloadController($files, $access))->download($request, $matches[1]);
+        self::assertSame(AssistantCustomReportRenderer::MIME_TYPES['xlsx'], $response->headers->get('Content-Type'));
+        ob_start();
+        try {
+            $response->sendContent();
+            $downloaded = ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+        self::assertIsString($downloaded);
+        self::assertSame(hash('sha256', $bytes), hash('sha256', $downloaded));
+        $permissions = $this->fixture->memberRole->fresh()->module_permissions;
+        $permissions['procurement'] = [];
+        $this->fixture->memberRole->update(['module_permissions' => $permissions]);
+        $this->expectException(AccessDeniedHttpException::class);
+        $access->resolve($matches[1], $actor);
     }
 
     private function build(array $section, ?User $actor = null): array

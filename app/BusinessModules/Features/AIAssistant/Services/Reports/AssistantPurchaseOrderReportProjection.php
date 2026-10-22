@@ -118,7 +118,9 @@ final readonly class AssistantPurchaseOrderReportProjection
         $current = (clone $orders)->whereKey($ids)->get()->map(fn (Model $order): array => $this->row($order))->all();
         usort($links, static fn (array $left, array $right): int => $left['order_id'] <=> $right['order_id']);
 
-        return self::links($current) === $links;
+        return self::links($current) === array_map(static fn (array $link): array => [
+            'order_id' => $link['order_id'], 'kind' => $link['kind'], 'source_id' => $link['source_id'],
+        ], $links);
     }
 
     private function firstFilledString(mixed ...$values): ?string
