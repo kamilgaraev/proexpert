@@ -23,6 +23,8 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
 
     private readonly ReportExportLimits $limits;
 
+    private bool $printLayout = false;
+
     public function __construct(
         ?ReportExportLimits $limits = null,
         private readonly ?string $definitionHash = null,
@@ -33,11 +35,15 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
 
     public function forDefinition(PublishedReportDefinition $definition): self
     {
-        return new self(
+        $renderer = new self(
             $this->limits,
             $definition->definitionHash->value,
             $definition->definition->rendererVersion,
         );
+        $renderer->printLayout = $definition->definition->code === 'contract_settlement_exposure'
+            && $definition->definition->rendererVersion === '1.1.0';
+
+        return $renderer;
     }
 
     public function render(
@@ -95,12 +101,16 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         }
 
         try {
-            $this->writeSheet($sheet, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            $opening = $this->printLayout
+                ? '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
                 .'<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'
                 .'<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
                 .'<selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews>'
-                .'<sheetFormatPr defaultRowHeight="15"/><cols>'.$columns.'</cols><sheetData>', $xmlBytes);
+                .'<sheetFormatPr defaultRowHeight="15"/><cols>'.$columns.'</cols><sheetData>'
+                : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+            $this->writeSheet($sheet, $opening, $xmlBytes);
             $this->writeSheet($sheet, $this->xmlRow($worksheetRow++, $headers, true), $xmlBytes);
 
             foreach ($chunks as $chunk) {
@@ -143,10 +153,13 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                 $this->writeSheet($sheet, $this->xmlRow($worksheetRow, $totals, true), $xmlBytes);
             }
 
-            $this->writeSheet($sheet, '</sheetData>'
+            $closing = $this->printLayout
+                ? '</sheetData>'
                 .'<pageMargins left="0.25" right="0.25" top="0.35" bottom="0.35" header="0.15" footer="0.15"/>'
                 .'<pageSetup paperSize="'.$paperSize.'" orientation="landscape" fitToWidth="'.$pagesAcross.'" fitToHeight="0"/>'
-                .'<headerFooter><oddFooter>&amp;R&amp;9&amp;P / &amp;N</oddFooter></headerFooter></worksheet>', $xmlBytes);
+                .'<headerFooter><oddFooter>&amp;R&amp;9&amp;P / &amp;N</oddFooter></headerFooter></worksheet>'
+                : '</sheetData></worksheet>';
+            $this->writeSheet($sheet, $closing, $xmlBytes);
         } finally {
             fclose($sheet);
         }
@@ -208,6 +221,18 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                 .'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>',
         ];
 
+        if (! $this->printLayout) {
+            $entries['xl/workbook.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                .'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                .'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                .'<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets></workbook>';
+            $entries['xl/styles.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                .'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                .'<fonts count="2"><font/><font><b/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+                .'<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>'
+                .'<cellXfs count="2"><xf xfId="0"/><xf xfId="0" fontId="1" applyFont="1"/></cellXfs></styleSheet>';
+        }
+
         try {
             foreach ($entries as $name => $content) {
                 if (! $zip->addFromString($name, $content)) {
@@ -257,7 +282,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
         $cells = '';
         foreach ($values as $index => $value) {
             $reference = $this->columnName($index + 1).$rowNumber;
-            $style = $bold ? ' s="1"' : ' s="2"';
+            $style = $bold ? ' s="1"' : ($this->printLayout ? ' s="2"' : '');
             if (is_int($value) || (is_float($value) && is_finite($value))) {
                 $number = is_int($value)
                     ? (string) $value

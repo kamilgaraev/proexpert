@@ -8,9 +8,11 @@ require_once __DIR__.'/CsvReportExportRendererTest.php';
 
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportLimits;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportExportStore;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionClass;
 use Throwable;
 use ZipArchive;
 
@@ -43,10 +45,10 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
             $schema[] = ['id' => $id, 'labels' => ['ru-RU' => $labels[$index] ?? 'Дополнительная колонка '.($index + 1)]];
             $row[$id] = $values[$index] ?? 'Учебное значение '.($index + 1);
         }
-        [$source] = $this->source($rowCount, rowSchema: $schema);
+        [$source, $definition] = $this->source($rowCount, rowSchema: $schema, rendererVersion: '1.1.0', reportCode: 'contract_settlement_exposure');
         $stream = new InMemoryReportArtifactStream;
         $rows = array_fill(0, $rowCount, $row);
-        (new XlsxReportExportRenderer)->render($source, $this->data('xlsx', array_column($schema, 'id')), $rows === [] ? [] : [$this->chunk($source, $rows)], $stream);
+        (new XlsxReportExportRenderer)->forDefinition($definition)->render($source, $this->data('xlsx', array_column($schema, 'id')), $rows === [] ? [] : [$this->chunk($source, $rows)], $stream);
         if ($directory = getenv('MOST_REPORT_XLSX_PRINT_QA_DIR')) {
             file_put_contents($directory.'/report-'.$columnCount.'-columns-'.$rowCount.'-rows.xlsx', $stream->bytes());
         }
@@ -81,6 +83,66 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
         } finally {
             unlink($path);
         }
+    }
+
+    public static function legacyDefinitions(): array
+    {
+        return [
+            ['contract_settlement_exposure', '1.0.0'],
+            ['other_report', '1.1.0'],
+            ['contract_settlement_exposure', 'unregistered-version'],
+        ];
+    }
+
+    public function test_renderer_transition_changes_export_identity_without_a_hidden_hash_suffix(): void
+    {
+        $store = (new ReflectionClass(EloquentReportExportStore::class))->newInstanceWithoutConstructor();
+        $identity = (new ReflectionClass(EloquentReportExportStore::class))->getMethod('identity');
+        [$old] = $this->source(0, rendererVersion: '1.0.0', reportCode: 'contract_settlement_exposure');
+        [$current] = $this->source(0, rendererVersion: '1.1.0', reportCode: 'contract_settlement_exposure');
+        $data = $this->data('xlsx');
+        $oldIdentity = $identity->invoke($store, $old, $data, $data->columns);
+        $currentIdentity = $identity->invoke($store, $current, $data, $data->columns);
+        self::assertNotSame($oldIdentity['export_hash'], $currentIdentity['export_hash']);
+        self::assertNotSame($oldIdentity['input_fingerprint'], $currentIdentity['input_fingerprint']);
+        self::assertSame($currentIdentity, $identity->invoke($store, $current, $data, $data->columns));
+    }
+
+    #[DataProvider('legacyDefinitions')]
+    public function test_existing_renderer_versions_preserve_the_original_archive_entries(string $code, string $version): void
+    {
+        [$source, $definition] = $this->source(1, rendererVersion: $version, reportCode: $code);
+        $stream = new InMemoryReportArtifactStream;
+        (new XlsxReportExportRenderer)->forDefinition($definition)->render(
+            $source,
+            $this->data('xlsx', ['name'], 'en-US'),
+            [$this->chunk($source, [['name' => 'Original value']])],
+            $stream,
+        );
+        $entries = $this->archiveEntries($stream->bytes());
+        self::assertSame(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+            .'<row r="1"><c r="A1" s="1" t="inlineStr"><is><t>Name</t></is></c></row>'
+            .'<row r="2"><c r="A2" t="inlineStr"><is><t>Original value</t></is></c></row>'
+            .'</sheetData></worksheet>',
+            $entries['xl/worksheets/sheet1.xml'],
+        );
+        self::assertSame(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            .'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            .'<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            $entries['xl/workbook.xml'],
+        );
+        self::assertSame(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            .'<fonts count="2"><font/><font><b/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+            .'<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>'
+            .'<cellXfs count="2"><xf xfId="0"/><xf xfId="0" fontId="1" applyFont="1"/></cellXfs></styleSheet>',
+            $entries['xl/styles.xml'],
+        );
     }
 
     public function test_accepted_excel_headers_are_localized_without_mutating_persisted_schema(): void
