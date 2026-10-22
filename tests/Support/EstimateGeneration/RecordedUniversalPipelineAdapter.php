@@ -52,7 +52,8 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
 
     public function __construct(private readonly Application $app, private readonly BenchmarkObjectReader $objects,
         private readonly string $recordingPath, private readonly string $recordingSha256,
-        private readonly ?\Closure $afterDocumentUnits = null) {}
+        private readonly ?\Closure $afterDocumentUnits = null,
+        private readonly ?\Closure $nativeReferenceBindings = null) {}
 
     public function id(): string
     {
@@ -80,7 +81,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             throw new BenchmarkContractException('recorded_replay_descriptor_invalid');
         }
         $initialInput = $fixture['initial_input'] ?? [];
-        if (! is_array($initialInput) || array_diff(array_keys($initialInput), ['area', 'floors', 'height']) !== []) {
+        if (! is_array($initialInput) || array_diff(array_keys($initialInput), ['area', 'floors', 'height', 'regional_context', 'price_policy']) !== []) {
             throw new BenchmarkContractException('recorded_replay_initial_input_invalid');
         }
         $source = $this->objects->read($case, 'input', $case->sourceType === BenchmarkSourceType::TextDescription ? 65536 : 1000000);
@@ -145,7 +146,9 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             if (str_contains($body, '__native_')) {
                 $responses[] = function (\Psr\Http\Message\RequestInterface $request) use ($body, $session): Response {
                     try {
-                        $resolved = strtr($body, $this->nativeBindings($session, $request));
+                        $resolved = strtr($body, $this->nativeReferenceBindings === null
+                            ? $this->nativeBindings($session, $request)
+                            : ($this->nativeReferenceBindings)($session, $request));
                     } catch (BenchmarkContractException $error) {
                         $this->lastRun['native_binding_error'] = $error->reason;
                         throw $error;
