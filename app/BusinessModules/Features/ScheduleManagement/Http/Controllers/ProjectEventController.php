@@ -58,6 +58,8 @@ class ProjectEventController extends Controller
                     'description' => $event->description,
                     'start' => $event->getStartDateTimeAttribute()->toIso8601String(),
                     'end' => $event->getEndDateTimeAttribute()->toIso8601String(),
+                    'start_local' => $event->getCalendarStartLocal(),
+                    'end_local' => $event->getCalendarEndLocal(),
                     'allDay' => $event->is_all_day,
                     'color' => $event->event_color,
                     'type' => $event->event_type,
