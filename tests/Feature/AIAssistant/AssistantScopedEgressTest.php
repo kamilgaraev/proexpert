@@ -389,7 +389,73 @@ final class AssistantScopedEgressTest extends TestCase
             self::fail('Revoked artifact admitted a model attempt');
         } catch (AssistantEgressDenied) {
             self::assertSame(0, AssistantRequest::query()->where('user_id', $this->fixture->owner->id)->count());
-            self::assertSame(0, AICreditProviderUsage::query()->count());
+            self::assertSame(0, AICreditProviderUsage::query()->where('organization_id', $this->fixture->organization->id)->count());
+        }
+    }
+
+    #[DataProvider('cohortReassignments')]
+    public function test_late_preview_cannot_survive_same_second_cohort_reassignment(bool $revokeFirst, array $newTools): void
+    {
+        $cohort = $this->enrollments->assign($this->operator, $this->fixture->organization->id, $this->fixture->owner,
+            $this->project->id, ['get_project_attention']);
+        $input = ['request_id' => (string) Str::uuid(), 'message' => 'Учебный вопрос с поздним просмотром.', 'profile' => 'normal', 'allow_actions' => false];
+        $input['quote_id'] = app(AICreditService::class)->quote($this->fixture->organization, $this->fixture->owner, $input)['quote_id'];
+        $reassigned = false;
+        DB::listen(function (\Illuminate\Database\Events\QueryExecuted $event) use (&$reassigned, $cohort, $revokeFirst, $newTools): void {
+            if (! $reassigned && str_starts_with(strtolower($event->sql), 'select') && str_contains($event->sql, '"projects"')) {
+                $reassigned = true;
+                if ($revokeFirst) {
+                    $this->enrollments->revokeCohort($this->operator, $cohort->id);
+                }
+                $this->enrollments->assign($this->operator, $cohort->organization_id, $this->fixture->owner, $this->project->id, $newTools);
+            }
+        });
+        $manifest = $this->enrollments->preview($this->fixture->owner, $cohort->organization_id, $cohort->id, $input['quote_id'], $input,
+            [['tool' => 'get_project_attention', 'arguments' => ['project_id' => $this->project->id, 'focus' => 'schedule', 'limit' => 3]]]);
+        self::assertTrue($reassigned);
+        $current = AssistantEgressCohort::query()->findOrFail($cohort->id);
+        self::assertSame($cohort->updated_at->toISOString(), $current->updated_at->toISOString());
+        self::assertNotSame($cohort->generation, $current->generation);
+        self::assertSame($cohort->generation, $manifest['cohort_generation']);
+        self::assertSame('pending_review', AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id'])->status);
+        try {
+            $this->enrollments->confirm($this->fixture->owner, $cohort->organization_id, $manifest['enrollment_id'],
+                $manifest['manifest_hash'], OrdinaryAssistantEnrollmentService::DECLARATION);
+            self::fail('Old cohort generation became approved');
+        } catch (AssistantEgressDenied) {
+            self::assertNotSame('approved', AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id'])->status);
+        }
+        $provider = $this->responses(static function (): never {
+            self::fail('Old cohort generation reached wire transport');
+        });
+        try {
+            AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id, app(OrdinaryAssistantScopedContext::class))
+                ->ask($input['message'], $cohort->organization_id, $this->fixture->owner, null, $input);
+            self::fail('Old cohort generation admitted a model attempt');
+        } catch (AssistantEgressDenied) {
+            self::assertSame(0, AssistantRequest::query()->where('user_id', $this->fixture->owner->id)->count());
+            self::assertSame(0, AICreditProviderUsage::query()->where('organization_id', $this->fixture->organization->id)->count());
+        }
+    }
+
+    public static function cohortReassignments(): array
+    {
+        return ['reduced-tool-policy' => [false, ['get_project_production_schedule_summary']],
+            'revoke-and-identical-policy' => [true, ['get_project_attention']]];
+    }
+
+    public function test_current_tool_policy_denies_a_previously_admitted_source_even_with_unchanged_generation(): void
+    {
+        [$cohort, $input] = $this->enroll();
+        $scope = app(OrdinaryAssistantScopedContext::class);
+        $scope->enter($this->fixture->owner, $cohort->organization_id, $input['message'], $input, null);
+        self::assertSame(['get_project_attention'], $scope->allowedToolNames());
+        $cohort->update(['allowed_tools' => ['get_project_production_schedule_summary']]);
+        try {
+            $scope->allowedToolNames();
+            self::fail('Current cohort policy removal was ignored');
+        } catch (AssistantEgressDenied) {
+            self::assertSame(0, AICreditProviderUsage::query()->where('organization_id', $this->fixture->organization->id)->count());
         }
     }
 

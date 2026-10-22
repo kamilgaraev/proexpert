@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 return [
+    'event_recurrence_end_required' => 'Укажите дату окончания для изменения повторения. Существующие события серии сохранены.',
+    'event_recurrence_end_before_start' => 'Окончание повторения не может быть раньше даты события.',
     'schedule_completion_requires_full_progress' => 'Нельзя завершить график с неполным прогрессом.',
     'organization_required' => 'Не определен контекст организации.',
     'validation_error' => 'Данные графика не прошли валидацию.',

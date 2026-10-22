@@ -47,7 +47,7 @@ final readonly class OrdinaryAssistantEnrollmentService
         return DB::transaction(function () use ($operator, $organizationId, $actor, $projectId, $tools, $provider, $model, $endpoint): AssistantEgressCohort {
             $existing = AssistantEgressCohort::query()->where('organization_id', $organizationId)->where('actor_id', $actor->id)->lockForUpdate()->first();
             $cohort = $existing ?? new AssistantEgressCohort(['id' => (string) Str::uuid()]);
-            $cohort->fill(['organization_id' => $organizationId, 'actor_id' => $actor->id, 'project_id' => $projectId,
+            $cohort->fill(['generation' => (string) Str::uuid(), 'organization_id' => $organizationId, 'actor_id' => $actor->id, 'project_id' => $projectId,
                 'assigned_by' => $operator->id, 'status' => 'active', 'policy_version' => OrdinaryAssistantSourceProjection::VERSION,
                 'provider' => $provider, 'model' => $model, 'endpoint' => $endpoint, 'allowed_tools' => array_values(array_unique($tools)), 'expires_at' => now()->addDay()]);
             $cohort->save();
@@ -83,14 +83,14 @@ final readonly class OrdinaryAssistantEnrollmentService
             $previews[] = ['tool' => $capture['proof']['tool'], 'arguments' => $capture['proof']['arguments'],
                 'projection_hash' => $capture['proof']['projection_hash'], 'projection' => $capture['preview']];
         }
-        $manifestHash = OrdinaryAssistantSourceProjection::hash(['cohort' => $cohort->getKey(), 'cohort_version' => $cohort->updated_at->toISOString(),
+        $manifestHash = OrdinaryAssistantSourceProjection::hash(['cohort' => $cohort->getKey(), 'cohort_generation' => $cohort->generation,
             'input_hash' => $hash, 'sources' => $proofs]);
-        $enrollment = AssistantEgressEnrollment::query()->create(['id' => (string) Str::uuid(), 'cohort_id' => $cohort->id,
+        $enrollment = AssistantEgressEnrollment::query()->create(['id' => (string) Str::uuid(), 'cohort_id' => $cohort->id, 'cohort_generation' => $cohort->generation,
             'reviewed_by' => $owner->id, 'input_hash' => $hash, 'manifest_hash' => $manifestHash,
             'sources' => $proofs, 'status' => 'pending_review', 'expires_at' => now()->addMinutes(15)]);
 
         return ['enrollment_id' => $enrollment->id, 'manifest_hash' => $manifestHash, 'input_hash' => $hash,
-            'project_id' => $cohort->project_id, 'purpose' => OrdinaryAssistantEgressRequest::PURPOSE,
+            'project_id' => $cohort->project_id, 'cohort_generation' => $cohort->generation, 'purpose' => OrdinaryAssistantEgressRequest::PURPOSE,
             'provider' => $cohort->provider, 'model' => $cohort->model, 'endpoint' => $cohort->endpoint, 'policy_version' => $cohort->policy_version,
             'declaration_version' => self::DECLARATION,
             'sources' => $previews, 'expires_at' => $enrollment->expires_at->toISOString()];
@@ -102,6 +102,8 @@ final readonly class OrdinaryAssistantEnrollmentService
         $enrollment = AssistantEgressEnrollment::query()->findOrFail($enrollmentId);
         $cohort = $this->cohort((string) $enrollment->cohort_id, $organizationId);
         if ($declaration !== self::DECLARATION || (int) $enrollment->reviewed_by !== (int) $owner->id || $enrollment->status !== 'pending_review'
+            || ! hash_equals((string) $cohort->generation, (string) $enrollment->cohort_generation)
+            || array_diff(array_column($enrollment->sources, 'tool'), $cohort->allowed_tools) !== []
             || $enrollment->expires_at->isPast() || ! hash_equals((string) $enrollment->manifest_hash, $manifestHash)) {
             throw new AssistantEgressDenied('access_denied');
         }
@@ -112,12 +114,13 @@ final readonly class OrdinaryAssistantEnrollmentService
                 throw new AssistantEgressDenied('source_stale');
             }
         }
-        $currentManifest = OrdinaryAssistantSourceProjection::hash(['cohort' => $cohort->getKey(), 'cohort_version' => $cohort->updated_at->toISOString(),
+        $currentManifest = OrdinaryAssistantSourceProjection::hash(['cohort' => $cohort->getKey(), 'cohort_generation' => $cohort->generation,
             'input_hash' => $enrollment->input_hash, 'sources' => $enrollment->sources]);
         if (! hash_equals($currentManifest, $manifestHash)) {
             throw new AssistantEgressDenied('source_stale');
         }
         $updated = AssistantEgressEnrollment::query()->whereKey($enrollmentId)->where('status', 'pending_review')
+            ->where('cohort_generation', $cohort->generation)
             ->where('reviewed_by', $owner->id)->where('manifest_hash', $manifestHash)->where('input_hash', $enrollment->input_hash)
             ->where('expires_at', '>', now())->update(['status' => 'approved', 'declaration_version' => self::DECLARATION,
                 'approved_at' => now(), 'expires_at' => min(now()->addHour(), $cohort->expires_at), 'updated_at' => now()]);
@@ -147,7 +150,7 @@ final readonly class OrdinaryAssistantEnrollmentService
     public function cohort(string $id, int $organizationId): AssistantEgressCohort
     {
         $cohort = AssistantEgressCohort::query()->whereKey($id)->where('organization_id', $organizationId)->first();
-        if ($cohort === null || (int) $cohort->project_id < 1 || $cohort->status !== 'active' || $cohort->expires_at->isPast()
+        if ($cohort === null || ! Str::isUuid($cohort->generation) || (int) $cohort->project_id < 1 || $cohort->status !== 'active' || $cohort->expires_at->isPast()
             || $cohort->policy_version !== OrdinaryAssistantSourceProjection::VERSION) {
             throw new AssistantEgressDenied('access_denied');
         }

@@ -529,6 +529,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         app()->instance(AssistantRequestExecutionContext::class, $this->execution);
         app()->instance(AssistantReadConcurrencyLimiter::class, new AssistantReadConcurrencyLimiter);
         $this->service = (new ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
+        (new ReflectionProperty(AIAssistantService::class, 'scopedContext'))->setValue($this->service, null);
         (new ReflectionProperty(AIAssistantService::class, 'toolEligibilityPolicy'))->setValue($this->service,
             new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy);
         (new ReflectionProperty(AIAssistantService::class, 'dataAccess'))->setValue($this->service, $this->policy);

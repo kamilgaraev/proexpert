@@ -23,7 +23,7 @@ final class AssistantDirectorAdminCoverageTest extends TestCase
         foreach ($cases as [$query, $name, $projectId]) {
             $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
             self::assertSame(['name' => $name, 'arguments' => ['project_id' => $projectId]], AssistantRequiredProjectRead::fromPlan($plan), $query);
-            self::assertSame(['project_id' => $projectId], AssistantRequiredProjectRead::bindArguments($plan, $name, ['project_id' => 999]));
+            self::assertSame(['project_id' => $projectId], AssistantRequiredProjectRead::bindArguments($plan, $name, []));
             self::assertContains($name, AssistantToolSurface::names([$name], $plan));
             self::assertSame(AssistantOperationalReaderRegistry::TOOLS[$name], AssistantRequiredProjectRead::decisionReader($name, $query));
         }

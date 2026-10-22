@@ -7,6 +7,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ProjectEventService
 {
@@ -133,27 +134,33 @@ class ProjectEventService
         $this->validateEventData($data, $event);
 
         DB::transaction(function () use ($event, $data) {
-            $event->update($data);
+            $event->fill($data);
+            $recurrenceChanged = $event->isDirty(['recurrence_pattern', 'recurrence_config']);
+            $rebuildRecurrence = $event->is_recurring
+                && (isset($data['recurrence_pattern']) || isset($data['recurrence_config']))
+                && ($recurrenceChanged || isset($data['recurrence_until']));
+
+            if ($rebuildRecurrence && !isset($data['recurrence_until'])) {
+                throw ValidationException::withMessages([
+                    'recurrence_until' => trans_message('schedule_management.event_recurrence_end_required'),
+                ]);
+            }
+
+            $event->save();
 
             // Если изменили дату и есть напоминание, пересоздаем его
             if (isset($data['event_date']) && $event->reminder_before_hours && !$event->reminder_sent) {
                 $event->scheduleReminder();
             }
 
-            // Если это повторяющееся событие и изменили параметры повторения
-            if ($event->is_recurring && 
-                (isset($data['recurrence_pattern']) || isset($data['recurrence_config']))) {
-                // Удаляем старые повторяющиеся события
+            if ($rebuildRecurrence) {
                 $event->recurringChildren()->delete();
-                
-                // Создаем новые
-                if (isset($data['recurrence_until'])) {
-                    $until = Carbon::parse($data['recurrence_until']);
-                    $recurringEvents = $event->generateRecurringEvents($until);
-                    
-                    foreach ($recurringEvents as $recurringEvent) {
-                        $recurringEvent->save();
-                    }
+
+                $until = Carbon::parse($data['recurrence_until']);
+                $recurringEvents = $event->generateRecurringEvents($until);
+
+                foreach ($recurringEvents as $recurringEvent) {
+                    $recurringEvent->save();
                 }
             }
         });
@@ -320,6 +327,15 @@ class ProjectEventService
         $eventDate = isset($data['event_date'])
             ? Carbon::parse($data['event_date'])
             : $event?->event_date;
+        if (isset($data['recurrence_until']) && $eventDate !== null) {
+            $recurrenceUntil = Carbon::parse($data['recurrence_until'])->startOfDay();
+            if ($recurrenceUntil->lt($eventDate->copy()->startOfDay())) {
+                throw ValidationException::withMessages([
+                    'recurrence_until' => trans_message('schedule_management.event_recurrence_end_before_start'),
+                ]);
+            }
+        }
+
         if (isset($data['end_date'])) {
             $endDate = Carbon::parse($data['end_date']);
             if ($eventDate !== null && $endDate->lt($eventDate)) {

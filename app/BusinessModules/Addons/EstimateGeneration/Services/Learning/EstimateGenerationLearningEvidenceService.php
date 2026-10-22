@@ -29,6 +29,7 @@ final class EstimateGenerationLearningEvidenceService
         private readonly WorkIntentClassifier $workIntentClassifier,
         private readonly EquipmentCountKnowledgeValidationService $equipmentKnowledge,
         private readonly ComposerSourceClaimValidationService $sourceClaims,
+        private readonly ?EstimateGenerationLearningRecorder $recorder = null,
     ) {}
 
     public function sourceClaimReferences(int $organizationId, int $projectId, int $sessionId,
@@ -88,8 +89,8 @@ final class EstimateGenerationLearningEvidenceService
             ->whereIn(DB::raw($table.".context_payload #>> '{candidate,document_fact_ids,0}'"), $documentIds)
             ->where('receipt.status', 'completed')->where('receipt.role', 'estimate_composer')
             ->where('receipt.subject_type', 'estimate_session')->where('receipt.subject_id', (string) $sessionId)
-            ->whereIn('receipt.prompt_contract_version', ['estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2'])
-            ->whereRaw("receipt.result_payload->'schema_version' = '2'::jsonb")
+            ->whereRaw("((receipt.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2') AND receipt.result_payload->'schema_version' = '2'::jsonb)
+                OR (receipt.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1') AND receipt.result_payload->'schema_version' = '3'::jsonb))")
             ->whereRaw('receipt.result_payload->\'claim_candidates\' @> jsonb_build_array('.$table.'.context_payload->\'candidate\')')
             ->whereColumn('physical.request_fingerprint', 'receipt.input_fingerprint')
             ->whereColumn('physical.logical_request_fingerprint', 'receipt.input_fingerprint')
@@ -134,6 +135,59 @@ final class EstimateGenerationLearningEvidenceService
                     'value' => $candidate['value'], 'unit' => null, 'document_fact_ids' => $candidate['document_fact_ids'],
                     'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved',
                     'source_answer_fact_id' => $candidate['source_answer_fact_id']];
+                break;
+            }
+        }
+
+        return $result;
+    }
+
+    public function cellReviewContext(array $scope, ProjectModelSnapshot $snapshot, array $decisions, Fact $source): ?array
+    {
+        return $this->sourceClaims->captureCellReview($scope, $snapshot, $decisions, $source);
+    }
+
+    public function cellReviewReferences(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $contexts = []): array
+    {
+        if ($this->recorder === null) {
+            return [];
+        }
+        $result = [];
+        $entities = array_column($snapshot->entities, null, 'id');
+        $session = EstimateGenerationSession::query()->where('organization_id', $scope[0])->where('project_id', $scope[1])->find($scope[2]);
+        if ($session === null) {
+            return [];
+        }
+        $receipts = [];
+        foreach ($snapshot->facts as $source) {
+            $entity = $entities[$source->entityId] ?? null;
+            if (! isset($entity?->attributes['properties']['document_cell_review_anchor'])) {
+                continue;
+            }
+            $current = array_key_exists($source->id, $contexts) ? $contexts[$source->id]
+                : $this->cellReviewContext($scope, $snapshot, $decisions, $source);
+            if ($current === null) {
+                continue;
+            }
+            $row = EstimateGenerationLearningExample::query()->where('organization_id', $scope[0])->where('project_id', $scope[1])
+                ->where('generation_session_id', $scope[2])->where('source_type', 'composer_source_claim')->where('source_entity_type', 'ai_role_run')
+                ->where('source_claim_key', $current['source_claim_key'])->where('decision_status', 'proposed')->where('is_positive', false)
+                ->whereNull('accepted_at')->whereNull('norm_code')->whereNull('estimate_norm_id')->whereNull('normative_dataset_version_id')
+                ->where('context_payload->origin', 'document_cell_review:v1')->first();
+            if ($row === null || CanonicalPipelineJson::encode($row->context_payload['source_claim_validation']['identity'] ?? null)
+                !== CanonicalPipelineJson::encode($current['identity'])) {
+                continue;
+            }
+            $operationId = (string) ($row->source_refs['credit_operation_id'] ?? '');
+            $receipt = $receipts[$operationId] ??= $this->recorder->cellReviewProposalsForOperation($session, $operationId);
+            $original = array_values(array_filter($receipt, static fn (array $item): bool => $item['run_id'] === (int) $row->source_entity_id
+                && $item['proposal_hash'] === ($row->context_payload['proposal_hash'] ?? null)));
+            if (count($original) !== 1) {
+                continue;
+            }
+            $result[] = ['learning_example_id' => (int) $row->id, ...$current['candidate'],
+                'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved'];
+            if (count($result) === ComposerSourceClaimValidationService::MAX_CLAIMS) {
                 break;
             }
         }

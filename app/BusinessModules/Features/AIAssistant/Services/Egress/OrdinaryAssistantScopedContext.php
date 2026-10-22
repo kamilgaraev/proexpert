@@ -53,6 +53,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             $this->queryHash = hash('sha256', $query);
             $this->inputHash = $this->credits->canonicalAssistantRequest(array_merge($payload, ['message' => $query, 'conversation_id' => $conversationId]));
             $this->enrollment = AssistantEgressEnrollment::query()->where('cohort_id', $cohort->id)->where('input_hash', $this->inputHash)
+                ->where('cohort_generation', $cohort->generation)
                 ->where('status', 'approved')->where('expires_at', '>', now())->latest('approved_at')->first();
             if ($this->enrollment === null || ! empty($payload['attachment_ids']) || ! empty($payload['attachment_manifest'])
                 || ($payload['allow_actions'] ?? false)) {
@@ -93,8 +94,9 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         if ($this->enrollment === null) {
             return [];
         }
+        $this->assertFresh();
 
-        return array_values(array_unique(array_column($this->enrollment->sources, 'tool')));
+        return array_values(array_intersect(array_unique(array_column($this->enrollment->sources, 'tool')), $this->cohort->allowed_tools));
     }
 
     public function filterToolDefinitions(array $tools): array
@@ -293,11 +295,13 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         }
         $current = $this->enrollments->cohort((string) $this->cohort->id, (int) $this->cohort->organization_id);
         $manifest = AssistantEgressEnrollment::query()->whereKey($this->enrollment->id)->where('status', 'approved')
+            ->where('cohort_generation', $current->generation)
             ->where('declaration_version', OrdinaryAssistantEnrollmentService::DECLARATION)
             ->where('expires_at', '>', now())->first();
         $expectedHash = $manifest === null ? null : OrdinaryAssistantSourceProjection::hash(['cohort' => $current->getKey(),
-            'cohort_version' => $current->updated_at->toISOString(), 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources]);
-        if ($manifest === null || $current->updated_at->toISOString() !== $this->cohort->updated_at->toISOString()
+            'cohort_generation' => $current->generation, 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources]);
+        if ($manifest === null || ! hash_equals((string) $current->generation, (string) $this->cohort->generation)
+            || array_diff(array_column($manifest->sources, 'tool'), $current->allowed_tools) !== []
             || ! hash_equals((string) $manifest->manifest_hash, (string) $this->enrollment->manifest_hash)
             || $expectedHash === null || ! hash_equals((string) $manifest->manifest_hash, $expectedHash)
             || ! hash_equals((string) $manifest->input_hash, (string) $this->inputHash)
@@ -306,5 +310,6 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             || ! $this->access->canReadEntity($this->actor, (int) $this->cohort->organization_id, 'project', (int) $this->cohort->project_id)) {
             throw new AssistantEgressDenied('access_denied');
         }
+        $this->cohort = $current;
     }
 }

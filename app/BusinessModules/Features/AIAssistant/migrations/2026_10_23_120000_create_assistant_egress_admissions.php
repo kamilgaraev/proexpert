@@ -12,6 +12,7 @@ return new class extends Migration
     {
         Schema::create('ai_assistant_egress_cohorts', function (Blueprint $table): void {
             $table->uuid('id')->primary();
+            $table->uuid('generation');
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('actor_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('project_id')->nullable()->constrained()->nullOnDelete();
@@ -29,6 +30,7 @@ return new class extends Migration
         Schema::create('ai_assistant_egress_enrollments', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->foreignUuid('cohort_id')->constrained('ai_assistant_egress_cohorts')->cascadeOnDelete();
+            $table->uuid('cohort_generation');
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->nullOnDelete();
             $table->string('input_hash', 64);
             $table->string('manifest_hash', 64);

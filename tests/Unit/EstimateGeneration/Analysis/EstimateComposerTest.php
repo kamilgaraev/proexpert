@@ -32,6 +32,56 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    public function test_cell_proposal_is_a_closed_untrusted_receipt_and_does_not_change_work_or_quantity(): void
+    {
+        $row = $this->cellContext();
+        $input = $this->sourceClaimInput()->withNativeCellContext([$row]);
+        $proposal = ['row_id' => $row['row_id'], 'identity_cell_id' => $row['cells'][0]['cell_id'],
+            'value_cell_id' => $row['cells'][1]['cell_id'], 'fact_type' => 'equipment_specification'];
+        foreach ([$proposal, [...$proposal, 'value' => ['type' => 'string', 'data' => 'model']],
+            [...$proposal, 'fact_type' => 'equipment_count'], [...$proposal, 'value_cell_id' => 'cell:'.str_repeat('f', 64)]] as $index => $candidate) {
+            $runs = new ComposerRoleRunMemoryRepository;
+            $model = new RecordedEstimateComposerModel(['work_intents' => [], 'claim_candidates' => [], 'cell_mapping_proposals' => [$candidate]]);
+            $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna');
+            $outcome = $composer->runDetailed($input);
+            self::assertSame($outcome, $composer->runDetailed($input));
+            self::assertSame(1, $model->calls);
+            self::assertSame(3, $runs->lastResult->payload['schema_version']);
+            self::assertSame($index === 0 ? [$proposal] : [], $runs->lastResult->payload['cell_mapping_proposals']);
+            self::assertSame([$row], $runs->lastResult->payload['cell_mapping_context']);
+            self::assertSame([], $outcome['intents']);
+            self::assertSame([], $input->derivedQuantities);
+        }
+        self::assertSame($this->sourceClaimInput()->canonicalPayload(), $input->withNativeCellContext([])->canonicalPayload());
+        self::assertSame($this->sourceClaimInput()->fingerprint(), $input->withNativeCellContext([])->fingerprint());
+    }
+
+    public function test_cell_context_closed_shape_and_global_bound_are_enforced_before_any_model_call(): void
+    {
+        foreach ([[...$this->cellContext(), 'verified' => true], [...$this->cellContext(), 'document_id' => '1'],
+            [...$this->cellContext(), 'cells' => [['cell_id' => 'cell:'.str_repeat('b', 64), 'address' => 'A2', 'raw_value' => '']]],
+            [...$this->cellContext(), 'cells' => array_fill(0, 2, $this->cellContext()['cells'][0])]] as $row) {
+            try {
+                $this->sourceClaimInput()->withNativeCellContext([$row]);
+                self::fail('Malformed server context must not enter the wire.');
+            } catch (InvalidArgumentException $error) {
+                self::assertSame('estimate_composer_cell_context_invalid', $error->getMessage());
+            }
+        }
+        $this->expectExceptionMessage('estimate_composer_cell_context_invalid');
+        $this->sourceClaimInput()->withNativeCellContext(array_fill(0, 9, $this->cellContext()));
+    }
+
+    private function cellContext(): array
+    {
+        return ['row_id' => 'row:'.str_repeat('a', 64), 'document_id' => 1, 'unit_id' => 2,
+            'source_version' => 'sha256:'.str_repeat('a', 64), 'artifact_sha256' => 'sha256:'.str_repeat('b', 64),
+            'sheet' => 'Лист', 'row' => 2, 'policy_hash' => str_repeat('c', 64), 'cells' => [
+                ['cell_id' => 'cell:'.str_repeat('d', 64), 'address' => 'A2', 'raw_value' => 'Изделие'],
+                ['cell_id' => 'cell:'.str_repeat('e', 64), 'address' => 'B2', 'raw_value' => 'Описание изделия'],
+            ]];
+    }
+
     public function test_answered_composer_persists_only_a_bounded_proposed_claim_and_replays_without_another_call(): void
     {
         $input = $this->sourceClaimInput();

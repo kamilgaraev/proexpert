@@ -141,7 +141,7 @@ final class AssistantToolFirstQualityTest extends TestCase
     public function test_simple_project_facts_force_only_first_native_read_and_bind_user_scope(string $query, string $name, array $expected): void
     {
         $call = $this->toolCall($name);
-        $call['function']['arguments'] = '{"project_id":999,"query":"invented","period_start":"2024-01-01"}';
+        $call['function']['arguments'] = json_encode($expected, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
         $schema = $name === 'assistant_domain_search'
             ? (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool(new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog::defaults()),
                 (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService::class))->newInstanceWithoutConstructor()))->getParametersSchema()
@@ -157,6 +157,28 @@ final class AssistantToolFirstQualityTest extends TestCase
         self::assertArrayNotHasKey('tool_choice', $this->providerCalls[1]['options']);
         self::assertSame([$expected], $this->executedArguments, json_encode($service->providerSourceResults, JSON_UNESCAPED_UNICODE));
         self::assertSame(1, $this->toolExecutions);
+    }
+
+    #[DataProvider('requiredProjectReads')]
+    public function test_model_requested_other_project_is_denied_before_the_forced_native_read(string $query, string $name, array $expected): void
+    {
+        $call = $this->toolCall($name);
+        $call['function']['arguments'] = json_encode(array_replace($expected, ['project_id' => 999]), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $schema = $name === 'assistant_domain_search'
+            ? (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool(new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog::defaults()),
+                (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService::class))->newInstanceWithoutConstructor()))->getParametersSchema()
+            : (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool(
+                (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantLiveProjectFinanceReader::class))->newInstanceWithoutConstructor()))->getParametersSchema();
+        $service = $this->service([$name => ['status' => 'success']],
+            [['content' => '', 'tool_calls' => [$call]], ['content' => 'Нет подтверждённых данных выбранного проекта.']],
+            requestContext: ['entity_refs' => [['type' => 'project', 'id' => 52]]], toolSchemas: [$name => $schema]);
+
+        $service->ask($query, 15, $this->actor(), 7);
+
+        self::assertSame([], $this->executedArguments);
+        self::assertSame(0, $this->toolExecutions);
+        self::assertSame('current_project_scope_mismatch', $service->providerSourceResults[0]['reason']);
+        self::assertSame([], $service->providerSourceResults[0]['source_refs']);
     }
 
     public static function requiredProjectReads(): array

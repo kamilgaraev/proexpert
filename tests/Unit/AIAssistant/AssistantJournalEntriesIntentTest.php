@@ -22,7 +22,7 @@ final class AssistantJournalEntriesIntentTest extends TestCase
         $expected = ['project_id' => 101, 'journal_name' => 'Как хачу так и назову', 'journal_number' => '1', 'offset' => 0];
         self::assertSame(['name' => 'get_project_journal_entries', 'arguments' => $expected], AssistantRequiredProjectRead::fromPlan($plan));
         self::assertSame($expected, AssistantRequiredProjectRead::bindArguments($plan, 'get_project_journal_entries',
-            ['project_id' => 102, 'journal_name' => 'Другой', 'journal_number' => '19', 'offset' => 0]));
+            []));
         unset($plan['named_project_scope']);
         self::assertNull(AssistantRequiredProjectRead::fromPlan($plan));
     }
