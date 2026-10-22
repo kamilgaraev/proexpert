@@ -42,7 +42,7 @@ final class EstimateGenerationLearningEvidenceService
             ->whereKey($sessionId)->whereHas('project', static fn (Builder $query) => $query->where('organization_id', $organizationId))->first();
         $serverInput = static fn (array $value): array => ['evaluation_mode' => $value['evaluation_mode'] ?? 'legacy',
             'profile_id' => $value['profile_id'] ?? 'construction', 'selected_sections' => $value['selected_sections'] ?? [],
-            'description' => $value['description'] ?? null];
+            'description' => is_string($value['description'] ?? null) ? trim($value['description']) : null];
         if ($session === null || CanonicalPipelineJson::encode($serverInput($input))
             !== CanonicalPipelineJson::encode($serverInput($session->input_payload ?? []))) {
             return [];
@@ -59,7 +59,8 @@ final class EstimateGenerationLearningEvidenceService
                 && $fact->unit === null && isset($entities[$fact->entityId]) && GeometryInventory::type($entities[$fact->entityId]) === 'equipment') {
                 $documentIds[] = $fact->id;
             }
-            if ($fact->type !== 'evaluation_answer' || count($answerIds) >= ComposerSourceClaimValidationService::MAX_CLAIMS) {
+            if ($fact->type !== 'evaluation_answer' || ! is_array($fact->value) || ($fact->value['kind'] ?? null) !== 'composer_answer'
+                || count($answerIds) >= ComposerSourceClaimValidationService::MAX_CLAIMS) {
                 continue;
             }
             $context = ResolveCurrentEstimateClarification::composerAnswerContext($fact, $snapshot, $decisions, $input, $checked);

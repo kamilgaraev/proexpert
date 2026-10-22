@@ -26,6 +26,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningSourceTrustPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
@@ -36,8 +38,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorCreditAttemptAdmission;
+use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\SystemAdmin;
 use App\Models\User;
 use App\Services\Credits\AICreditService;
 use Illuminate\Database\QueryException;
@@ -94,7 +99,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
 
     public function test_terminal_source_info_fixture_records_one_normless_claim_and_reader_rechecks_the_current_scoped_source(): void
     {
-        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture();
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture('  Монтаж неизвестной установки  ');
         $candidate = ['source_answer_fact_id' => $answer->id, 'entity_id' => $documents[0]->entityId,
             'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'Монтаж стендов'],
             'unit' => null, 'document_fact_ids' => [$documents[0]->id]];
@@ -127,6 +132,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame('passed', $refs[0]['source_correspondence']);
         self::assertSame('proposed', $refs[0]['interpretation_status']);
         self::assertSame('unresolved', $refs[0]['engineering_applicability']);
+        self::assertSame($refs, $reader->sourceClaimReferences(...[...$scope, $snapshot, $decisions,
+            [...$session->input_payload, 'description' => trim($session->input_payload['description'])]]));
         self::assertSame(0, DB::transaction(fn () => app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId])));
         self::assertSame($refs, $reader->sourceClaimReferences(...[...$scope, $snapshot, $decisions, $session->input_payload]));
         self::assertSame([], $reader->sourceClaimReferences($scope[0] + 10000, $scope[1], $scope[2], $snapshot, $decisions, $session->input_payload));
@@ -136,7 +143,164 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame($capture['token'], $models->snapshotForPlanning(...[...$scope, 10001])['token']);
         self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('organization_id', $organization->id)->count());
         Queue::assertNothingPushed();
+        $document = EstimateGenerationDocument::query()->where('session_id', $session->id)->sole();
+        self::assertContains((string) $document->status, ['ready', 'needs_review']);
+        app(Documents\IgnoreEstimateGenerationDocument::class)->handle($session, $document, (int) $session->state_version,
+            'Источник исключён после проверки ссылки.');
+        self::assertSame('ignored', $document->fresh()->status);
+        self::assertSame([], $reader->sourceClaimReferences(...[...$scope, $snapshot, $decisions, $session->input_payload]));
+        $current = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $currentDecisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($current->facts, 'id')]);
+        self::assertSame([], $reader->sourceClaimReferences(...[...$scope, $current, $currentDecisions, $session->fresh()->input_payload]));
+        self::assertSame(1, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
         Http::assertNothingSent();
+    }
+
+    public function test_reader_distinguishes_two_current_conflicts_from_a_rejected_historical_source_after_public_ignore(): void
+    {
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture();
+        $organization = Organization::query()->findOrFail($session->organization_id);
+        $project = Project::query()->findOrFail($session->project_id);
+        $firstDocument = EstimateGenerationDocument::query()->where('session_id', $session->id)->sole();
+        $models = app(ProjectModelRepository::class);
+        $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
+        $firstCandidate = ['source_answer_fact_id' => $answer->id, 'entity_id' => $documents[0]->entityId,
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'Монтаж стендов'],
+            'unit' => null, 'document_fact_ids' => [$documents[0]->id]];
+        $this->publishBinarySource($session);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $newSources = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'equipment_specification'
+            && ! in_array($fact->id, array_column($documents, 'id'), true)));
+        self::assertCount(2, $newSources);
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        self::assertNotNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, $decisions, $session->input_payload));
+        [$session, $operationId] = $this->paidReceipt('estimate-composer:answers:v2', [$firstCandidate], true,
+            [$organization, $project, $actor, $session->fresh()], false);
+        [$claim, $result] = $this->terminalFixture($actor, $session, $operationId);
+        DB::transaction(fn () => app(Pipeline\PublishValidatedDraft::class)->beforeComplete($claim, $result, new \DateTimeImmutable));
+        $session = $session->fresh();
+        $secondCandidate = [...$firstCandidate, 'entity_id' => $newSources[0]->entityId, 'document_fact_ids' => [$newSources[0]->id]];
+        [$session, $operationId] = $this->paidReceipt('estimate-composer:answers:v2', [$secondCandidate], true,
+            [$organization, $project, $actor, $session], false);
+        [$claim, $result] = $this->terminalFixture($actor, $session, $operationId);
+        DB::transaction(fn () => app(Pipeline\PublishValidatedDraft::class)->beforeComplete($claim, $result, new \DateTimeImmutable));
+        $session = $session->fresh();
+        $reader = app(EstimateGenerationLearningEvidenceService::class);
+        self::assertSame([], $reader->sourceClaimReferences(...[...$scope, $snapshot, $decisions, $session->input_payload]));
+        self::assertSame(2, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
+        app(Documents\IgnoreEstimateGenerationDocument::class)->handle($session, $firstDocument, (int) $session->state_version,
+            'Первый документ больше не используется.');
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        self::assertNotContains($documents[0]->id, array_column($snapshot->facts, 'id'));
+        self::assertNotNull(ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, $decisions, $session->fresh()->input_payload));
+        $refs = $reader->sourceClaimReferences(...[...$scope, $snapshot, $decisions, $session->fresh()->input_payload]);
+        self::assertCount(1, $refs);
+        self::assertSame($newSources[0]->entityId, $refs[0]['entity_id']);
+        self::assertSame([$newSources[0]->id], $refs[0]['document_fact_ids']);
+        self::assertSame(2, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_terminal_checkpoint_rolls_back_local_settlement_on_learning_database_error_and_retries_without_another_paid_attempt(): void
+    {
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture();
+        $candidate = ['source_answer_fact_id' => $answer->id, 'entity_id' => $documents[0]->entityId,
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'Монтаж стендов'],
+            'unit' => null, 'document_fact_ids' => [$documents[0]->id]];
+        $organization = Organization::query()->findOrFail($session->organization_id);
+        $project = Project::query()->findOrFail($session->project_id);
+        [$session, $operationId, $runId] = $this->paidReceipt('estimate-composer:answers:v2', [$candidate], true,
+            [$organization, $project, $actor, $session], false);
+        [$fixtureClaim, $result] = $this->terminalFixture($actor, $session, $operationId);
+        $context = $fixtureClaim->context;
+        $now = new \DateTimeImmutable;
+        DB::table('estimate_generation_pipeline_checkpoints')->insert([
+            'organization_id' => $context->organizationId, 'project_id' => $context->projectId, 'session_id' => $context->sessionId,
+            'generation_attempt_id' => $operationId, 'base_input_version' => $context->baseInputVersion,
+            'stage' => Pipeline\ProcessingStage::BuildDraft->value, 'input_version' => $context->baseInputVersion,
+            'dependency_versions' => '{}', 'output_version' => $context->dependencyVersions[Pipeline\ProcessingStage::BuildDraft->value],
+            'output_payload' => '{}', 'artifact_bytes' => 2, 'status' => 'completed', 'metrics' => '{}', 'warnings' => '[]',
+            'attempt_count' => 1, 'started_at' => $now, 'completed_at' => $now, 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        $store = app(Pipeline\PipelineCheckpointStore::class);
+        $claim = $store->claim($context, Pipeline\ProcessingStage::ValidateDraft, $now, $now->modify('+5 minutes'));
+        self::assertSame(Pipeline\CheckpointClaimStatus::Acquired, $claim->status);
+        $before = $this->localCreditState((int) $organization->id);
+        $sessionBefore = $session->fresh()->getAttributes();
+        $roleBefore = DB::table('estimate_generation_ai_role_runs')->where('id', $runId)->sole();
+        $usageBefore = DB::table('estimate_generation_ai_usage')->where('organization_id', $organization->id)->get()->all();
+        $indexing = app(AssistantIndexingState::class);
+        $indexing->endMigration();
+        self::assertFalse($indexing->paused());
+        \Tests\Support\AssistantRagTestSchema::create();
+        $ragRunsBefore = RagIndexRun::query()->count();
+        Queue::fake();
+        DB::unprepared("CREATE FUNCTION pg_temp.reject_source_claim_fixture() RETURNS trigger LANGUAGE plpgsql AS \$\$
+            BEGIN
+                IF NEW.source_type = 'composer_source_claim' AND NEW.organization_id = ".(int) $organization->id." THEN
+                    IF NOT EXISTS (SELECT 1 FROM estimate_generation_credit_operations WHERE operation_id = '".$operationId."' AND status = 'settled') THEN
+                        RAISE EXCEPTION 'source_claim_fixture_failed_before_settlement';
+                    END IF;
+                    RAISE EXCEPTION 'source_claim_fixture_insert_failure_after_settlement' USING ERRCODE = '23514';
+                END IF;
+                RETURN NEW;
+            END \$\$;
+            CREATE TRIGGER reject_source_claim_fixture BEFORE INSERT ON estimate_generation_learning_examples
+            FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_source_claim_fixture()");
+        try {
+            try {
+                $store->complete($claim, $result, $now->modify('+1 second'));
+                self::fail('A rejected Learning INSERT did not abort terminal completion.');
+            } catch (QueryException $exception) {
+                self::assertSame('23514', $exception->errorInfo[0]);
+                self::assertStringContainsString('source_claim_fixture_insert_failure_after_settlement', $exception->getMessage());
+            }
+        } finally {
+            DB::unprepared('DROP TRIGGER reject_source_claim_fixture ON estimate_generation_learning_examples; DROP FUNCTION pg_temp.reject_source_claim_fixture()');
+        }
+        self::assertSame($before, $this->localCreditState((int) $organization->id));
+        self::assertSame($sessionBefore, $session->fresh()->getAttributes());
+        self::assertEquals($roleBefore, DB::table('estimate_generation_ai_role_runs')->where('id', $runId)->sole());
+        self::assertEquals($usageBefore, DB::table('estimate_generation_ai_usage')->where('organization_id', $organization->id)->get()->all());
+        self::assertSame('running', DB::table('estimate_generation_pipeline_checkpoints')->where('id', $claim->checkpointId)->value('status'));
+        self::assertSame(0, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
+        self::assertTrue($store->complete($claim, $result, $now->modify('+2 seconds')));
+        self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
+        self::assertSame('completed', DB::table('estimate_generation_pipeline_checkpoints')->where('id', $claim->checkpointId)->value('status'));
+        self::assertSame(1, EstimateGenerationLearningExample::query()->where('organization_id', $organization->id)->count());
+        $settled = $this->localCreditState((int) $organization->id);
+        self::assertFalse($store->complete($claim, $result, $now->modify('+3 seconds')));
+        self::assertSame($settled, $this->localCreditState((int) $organization->id));
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('organization_id', $organization->id)->count());
+        self::assertEquals($roleBefore, DB::table('estimate_generation_ai_role_runs')->where('id', $runId)->sole());
+        self::assertSame($ragRunsBefore, RagIndexRun::query()->count());
+        Queue::assertNothingPushed();
+        Http::assertNothingSent();
+        $indexing->beginMigration();
+    }
+
+    private function localCreditState(int $organizationId): array
+    {
+        $result = [];
+        foreach (['estimate_generation_credit_operations', 'estimate_generation_credit_attempts', 'ai_credit_provider_usages',
+            'ai_credit_reservations', 'ai_credit_wallets', 'ai_credit_lots', 'ai_credit_ledger_entries',
+            'ai_credit_provider_cost_allocations', 'ai_credit_reservation_allocations'] as $table) {
+            $query = DB::table($table);
+            if ($table === 'ai_credit_reservation_allocations') {
+                $query->whereIn('ai_credit_reservation_id', DB::table('ai_credit_reservations')->select('id')->where('organization_id', $organizationId));
+            } elseif ($table === 'ai_credit_provider_cost_allocations') {
+                $query->whereIn('source_provider_usage_id', DB::table('ai_credit_provider_usages')->select('id')->where('organization_id', $organizationId));
+            } else {
+                $query->where('organization_id', $organizationId);
+            }
+            $rows = $query->get()
+                ->map(static fn ($row): string => CanonicalPipelineJson::encode(get_object_vars($row)))->all();
+            sort($rows, SORT_STRING);
+            $result[$table] = $rows;
+        }
+
+        return $result;
     }
 
     public function test_norm_optional_shape_preserves_old_norm_requirement_and_denies_existing_trust_channels(): void
@@ -316,7 +480,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [$organization, $project, $actor, $session];
     }
 
-    private function answeredSourceFixture(): array
+    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки'): array
     {
         Http::fake();
         Http::preventStrayRequests();
@@ -330,7 +494,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
         config(['estimate-generation.universal_enabled' => true]);
         $input = ['evaluation_mode' => 'universal', 'profile_id' => 'construction', 'building_type' => 'bridge',
-            'selected_sections' => ['equipment'], 'generation_mode' => 'ai_assisted', 'description' => 'Монтаж неизвестной установки'];
+            'selected_sections' => ['equipment'], 'generation_mode' => 'ai_assisted', 'description' => $description];
         $session = app(CreateEstimateGenerationSession::class)->handle(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'input_payload' => $input], $actor);
         $this->publishBinarySource($session);
@@ -415,6 +579,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             };
             $this->app->instance(Documents\DocumentSourceManifestStorage::class, $storage);
             $this->app->instance(Documents\DocumentUnitContentReader::class, $storage);
+            $this->app->forgetInstance(Documents\DocumentUnitDetector::class);
+            $this->app->forgetInstance(Documents\DocumentUnitProcessor::class);
             $snapshot = ['schema_version' => 2, 'models' => ['vision' => 'openai/gpt-6-luna', 'classification' => 'openai/gpt-6-luna', 'normative_matching' => 'openai/gpt-6-luna'],
                 'limits' => ['max_files' => 10, 'max_pages_per_file' => 200, 'max_total_pages' => 1000],
                 'timeouts' => ['vision' => 60, 'classification' => 60, 'normative_matching' => 60],
@@ -422,6 +588,13 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 'confidence' => ['classification' => '0.7000', 'geometry' => '0.7000', 'normative_matching' => '0.7000'],
                 'enabled_formats' => ['xlsx'], 'manual_review' => ['low_confidence' => true],
                 'budgets' => ['daily' => '100.00', 'monthly' => '1000.00', 'currency' => 'RUB']];
+            if (app(EstimateGenerationSettingsService::class)->currentSnapshot('global', null) === null) {
+                app(EstimateGenerationSettingsService::class)->change((int) SystemAdmin::factory()->create()->id,
+                    EstimateGenerationSettingsData::fromArray([
+                        ...array_diff_key($snapshot, ['schema_version' => true]), 'scope' => 'global', 'organization_id' => null,
+                        'expected_version' => 0, 'idempotency_key' => (string) Str::uuid(),
+                    ]));
+            }
             (new Documents\DocumentFileAdmission)->stored($document, EffectiveEstimateGenerationSettings::fromRecord([
                 'snapshot_id' => 1, 'scope' => 'organization', 'organization_id' => (int) $session->organization_id, 'version' => 1,
                 'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
