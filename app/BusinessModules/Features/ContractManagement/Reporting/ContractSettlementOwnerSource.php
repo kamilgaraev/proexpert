@@ -16,6 +16,7 @@ use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSet
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerVersion;
 use App\Enums\Contract\ContractAllocationTypeEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
+use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\CurrencyCode;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -113,7 +114,9 @@ final readonly class ContractSettlementOwnerSource
             'contract_side_type' => $contract->contract_side_type instanceof ContractSideTypeEnum
                 ? $contract->contract_side_type->value
                 : (string) $contract->contract_side_type,
-            'status' => (string) $contract->status,
+            'status' => $contract->status instanceof ContractStatusEnum
+                ? $contract->status->value
+                : (string) $contract->status,
         ]);
         $refs = [];
         foreach ($allocations as $allocation) {
