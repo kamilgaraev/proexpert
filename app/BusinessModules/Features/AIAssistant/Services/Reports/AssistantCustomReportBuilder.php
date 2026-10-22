@@ -128,6 +128,10 @@ final readonly class AssistantCustomReportBuilder
         if ($assigneeProjection) {
             $selected[] = 'assigned_user_id';
         }
+        $crmLabels = $scope['entity_type'] === 'crm_deal' && array_intersect(AssistantCrmDealReportProjection::LABEL_FIELDS, $fields) !== [];
+        if ($crmLabels) {
+            $selected = [...$selected, ...AssistantCrmDealReportProjection::HIDDEN_FIELDS];
+        }
         $paymentContractProjection = $scope['entity_type'] === 'payment_document'
             && array_intersect(['contract_id', 'contract_number'], $fields) !== [];
         if ($paymentContractProjection) {
@@ -264,6 +268,9 @@ final readonly class AssistantCustomReportBuilder
         }
         if ($purchaseOrderSupplierProjection) {
             $scope['purchase_order_supplier_links'] = AssistantPurchaseOrderReportProjection::links($raw);
+        }
+        if ($crmLabels) {
+            $scope['crm_label_links'] = AssistantCrmDealReportProjection::links($raw, $fields);
         }
         if ($paymentContractProjection) {
             $scope['contract_links'] = array_map(static fn (array $row): array => ['document_id' => (int) $row['id'],

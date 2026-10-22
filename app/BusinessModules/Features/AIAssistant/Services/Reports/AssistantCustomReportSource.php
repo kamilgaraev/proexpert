@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
+use App\BusinessModules\Features\Crm\Services\CrmDealReportReadService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -119,6 +120,12 @@ final readonly class AssistantCustomReportSource
         }
         if ($members !== null) {
             $fields = array_replace($fields, $members->fields());
+        }
+        if ($entityType === 'crm_deal') {
+            foreach (AssistantCrmDealReportProjection::LABEL_FIELDS as $field) {
+                $fields[$field] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.crm_'.$field)];
+            }
+            $query = app(CrmDealReportReadService::class)->query($actor, $organizationId, $query);
         }
         if ($entityType === 'site_request' && isset($fields['request_type'])) {
             $query = (new AssistantSiteRequestReportProjection)->apply($query, array_keys($columnTypes));
