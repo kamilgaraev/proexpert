@@ -72,12 +72,12 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     #[DataProvider('initialQuestionModes')]
-    public function test_actual_composer_claim_receipt_reaches_terminal_learning_and_the_next_explicit_composer_wire(bool $naturalInitial): void
+    public function test_actual_composer_claim_receipt_reaches_terminal_learning_and_the_next_explicit_composer_wire(bool $naturalInitial, ?string $uploadMoment = null): void
     {
         Queue::fake();
-        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture(naturalInitial: $naturalInitial);
+        [$actor, $session, $answer, $documents] = $this->answeredSourceFixture(naturalInitial: $naturalInitial, uploadMoment: $uploadMoment);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
-        $priorCalls = $naturalInitial ? 1 : 0;
+        $priorCalls = ($naturalInitial ? 1 : 0) + ($uploadMoment === 'before_answer' ? 1 : 0);
         self::assertSame($priorCalls, DB::table('estimate_generation_ai_usage')->where('organization_id', $scope[0])->count());
         $models = app(ProjectModelRepository::class);
         $originals = array_map(static fn ($fact): array => get_object_vars($fact), [$answer, ...$documents]);
@@ -169,13 +169,19 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame($priorCalls + 2, DB::table('estimate_generation_credit_attempts')->where('organization_id', $scope[0])->count());
         self::assertArrayNotHasKey('source_claim_refs', $inputs[0]->canonicalPayload());
         self::assertArrayHasKey('source_claim_refs', $inputs[1]->canonicalPayload());
-        Queue::assertNothingPushed();
+        if ($uploadMoment === null) {
+            Queue::assertNothingPushed();
+        } else {
+            Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob::class, 1);
+            Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob::class, 1);
+        }
         Http::assertNothingSent();
     }
 
     public static function initialQuestionModes(): array
     {
-        return ['signed_fixture' => [false], 'natural_initial_question' => [true]];
+        return ['signed_fixture' => [false], 'natural_initial_question' => [true],
+            'answer_then_document' => [true, 'after_answer'], 'document_then_answer' => [true, 'before_answer']];
     }
 
     public function test_source_info_request_fixture_real_answer_and_independent_binary_literal_support_only_the_exact_document_entity(): void
@@ -720,7 +726,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [$organization, $project, $actor, $session];
     }
 
-    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false): array
+    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false, ?string $uploadMoment = null): array
     {
         Http::fake();
         Http::preventStrayRequests();
@@ -744,7 +750,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $documents = array_values(array_filter($capture['snapshot']->facts, static fn ($fact): bool => $fact->type === 'equipment_specification'));
         self::assertCount(2, $documents);
         if ($naturalInitial) {
-            return $this->naturallyAnsweredSourceFixture($actor, $session, $documents);
+            return $this->naturallyAnsweredSourceFixture($actor, $session, $documents, $uploadMoment);
         }
         $artifact = (new BuildMostEstimateDraft)->seal([
             'generation_contract' => UniversalDraftProjector::CONTRACT, 'source_info_only' => true, 'is_complete' => false,
@@ -818,13 +824,9 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [Pipeline\CheckpointClaim::acquired($validateContext, Pipeline\ProcessingStage::ValidateDraft, (string) Str::uuid()), $validated];
     }
 
-    private function naturallyAnsweredSourceFixture(User $actor, EstimateGenerationSession $session, array $documents): array
+    private function publishNaturalQuestion(User $actor, EstimateGenerationSession $session, array $documents): EstimateGenerationSession
     {
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
-        $models = app(ProjectModelRepository::class);
-        $initial = array_values(array_filter($models->snapshot(...$scope)->facts,
-            static fn (Fact $fact): bool => ($fact->value['kind'] ?? null) === 'initial_description'))[0];
-        $original = get_object_vars($initial);
         [$session, $operationId] = $this->paidReceipt(RunEstimateComposer::PROMPT_CONTRACT, [], true,
             [Organization::query()->findOrFail($scope[0]), Project::query()->findOrFail($scope[1]), $actor, $session], false,
             function (EstimateGenerationSession $current, string $operationId) use ($actor, $documents, $scope): int {
@@ -848,11 +850,24 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 self::assertSame('estimate_composer_work_definition_unverified', $result->transientData['draft']['estimate_composition']['request_info'][0]['reason']);
                 DB::transaction(fn () => app(Pipeline\PublishValidatedDraft::class)->beforeComplete($claim, $result, new \DateTimeImmutable));
                 return (int) DB::table('estimate_generation_ai_role_runs')->where('organization_id', $scope[0])
-                    ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('status', 'completed')->sole()->id;
+                    ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('status', 'completed')
+                    ->whereIn('physical_attempt_id', DB::table('estimate_generation_vision_physical_attempts')
+                        ->where('credit_operation_id', $operationId)->where('credit_role', 'estimate_composition')->select('attempt_id'))->sole()->id;
             });
         $session = $session->fresh();
         self::assertSame('input_review_required', $session->status->value);
         self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
+        return $session;
+    }
+
+    private function naturallyAnsweredSourceFixture(User $actor, EstimateGenerationSession $session, array $documents, ?string $uploadMoment = null): array
+    {
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $initial = array_values(array_filter($models->snapshot(...$scope)->facts,
+            static fn (Fact $fact): bool => ($fact->value['kind'] ?? null) === 'initial_description'))[0];
+        $original = get_object_vars($initial);
+        $session = $this->publishNaturalQuestion($actor, $session, $documents);
         $evaluation = app(GetCurrentEvaluation::class)->handle($actor, $scope[1], $scope[2]);
         self::assertNull($evaluation['result']);
         self::assertCount(1, $evaluation['request_info']);
@@ -866,6 +881,46 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $items = $catalog->getData(true)['data']['items'];
         self::assertCount(1, $items);
         $card = $items[0];
+        if ($uploadMoment === 'before_answer') {
+            [$session, $newSource] = $this->uploadIndependentSpecification($actor, $project, $session);
+            self::assertContains($this->answerComposerCard($actor, $project, $session, $card), [404, 409]);
+            $session = $this->publishNaturalQuestion($actor, $session, [$newSource, $documents[1]]);
+            $catalog = $controller->index($request, $project, $session);
+            self::assertSame(200, $catalog->getStatusCode());
+            $items = $catalog->getData(true)['data']['items'];
+            self::assertCount(1, $items);
+            self::assertNotSame($card['answer_fingerprint'], $items[0]['answer_fingerprint']);
+            $card = $items[0];
+            $documents = [$newSource, $documents[1]];
+        }
+        self::assertSame(200, $this->answerComposerCard($actor, $project, $session, $card));
+        $answers = array_values(array_filter($models->snapshot(...$scope)->facts,
+            static fn (Fact $fact): bool => ($fact->value['kind'] ?? null) === 'composer_answer'));
+        self::assertCount(1, $answers);
+        self::assertSame('evaluation_answer', $answers[0]->type);
+        self::assertSame('user_assumption', $answers[0]->origin);
+        self::assertNull($answers[0]->unit);
+        self::assertFalse($answers[0]->value['numeric_parameters_confirmed']);
+        if ($uploadMoment === 'after_answer') {
+            $saved = get_object_vars($answers[0]);
+            [$session, $newSource] = $this->uploadIndependentSpecification($actor, $project, $session->fresh());
+            self::assertSame($saved, get_object_vars($models->fact(...[...$scope, $answers[0]->id])));
+            $documents = [$newSource, $documents[1]];
+        }
+        if ($uploadMoment !== null) {
+            $captured = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->input_payload]);
+            $capturedAnswers = array_column($captured->facts, null, 'id');
+            self::assertArrayHasKey($answers[0]->id, $capturedAnswers);
+            self::assertSame($initial->entityId, $capturedAnswers[$answers[0]->id]['context_entity_id']);
+            self::assertNotSame($initial->entityId, $documents[0]->entityId);
+        }
+        self::assertSame($original, get_object_vars($models->fact(...[...$scope, $initial->id])));
+        self::assertSame($uploadMoment === 'before_answer' ? 2 : 1, DB::table('estimate_generation_ai_usage')->where('organization_id', $scope[0])->count());
+        return [$actor, $session->fresh(), $answers[0], $documents];
+    }
+
+    private function answerComposerCard(User $actor, Project $project, EstimateGenerationSession $session, array $card): int
+    {
         $request = AnswerEstimateClarificationRequest::create('/', 'POST', ['response' => 'other',
             'other' => 'Требуется установить оборудование согласно проекту.', 'idempotency_key' => 'natural-answer-'.Str::uuid(),
             'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint']]);
@@ -876,17 +931,84 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $route->setParameter('project', $project);
         $request->setRouteResolver(static fn (): Route => $route);
         $request->validateResolved();
-        self::assertSame(200, $controller->answer($request, $project, $session, $card['code'])->getStatusCode());
-        $answers = array_values(array_filter($models->snapshot(...$scope)->facts,
-            static fn (Fact $fact): bool => ($fact->value['kind'] ?? null) === 'composer_answer'));
-        self::assertCount(1, $answers);
-        self::assertSame('evaluation_answer', $answers[0]->type);
-        self::assertSame('user_assumption', $answers[0]->origin);
-        self::assertNull($answers[0]->unit);
-        self::assertFalse($answers[0]->value['numeric_parameters_confirmed']);
-        self::assertSame($original, get_object_vars($models->fact(...[...$scope, $initial->id])));
-        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('organization_id', $scope[0])->count());
-        return [$actor, $session->fresh(), $answers[0], $documents];
+        return app(EstimateGenerationQuestionController::class)->answer($request, $project, $session, $card['code'])->getStatusCode();
+    }
+
+    private function uploadIndependentSpecification(User $actor, Project $project, EstimateGenerationSession $session): array
+    {
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $originals = array_column(array_map(static fn (Fact $fact): array => get_object_vars($fact), $models->snapshot(...$scope)->facts), null, 'id');
+        $credits = app(EstimatorCreditOperations::class);
+        $oldState = (int) $session->state_version;
+        $oldOperation = (string) Str::uuid();
+        $oldQuote = $credits->quote($actor, (int) $project->id, (int) $session->id, $oldState, $oldOperation, 'generation');
+        (new \Tests\Support\EstimateGeneration\InMemoryS3HttpStorage)->install();
+        foreach ([Documents\DocumentSourceManifestStorage::class, Documents\DocumentUnitContentReader::class,
+            Documents\DocumentUnitDetector::class, Documents\DocumentUnitProcessor::class] as $service) {
+            $this->app->forgetInstance($service);
+        }
+        $spreadsheet = new Spreadsheet;
+        $spreadsheet->getActiveSheet()->setTitle('Оборудование')->fromArray([
+            ['entity_key', 'parameter', 'value', 'unit'],
+            ['equipment:after', 'equipment_specification', 'Монтаж стендов', ''],
+        ]);
+        $path = tempnam(sys_get_temp_dir(), 'most-after-question-');
+        self::assertIsString($path);
+        try {
+            (new Xlsx($spreadsheet))->save($path);
+            $digest = hash_file('sha256', $path);
+            $request = \App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest::create('/', 'POST',
+                ['state_version' => $session->state_version, 'request_id' => (string) Str::uuid()], [],
+                ['files' => [\Illuminate\Http\UploadedFile::fake()->createWithContent('after-question.xlsx', file_get_contents($path))]]);
+            $request->setContainer($this->app)->setRedirector($this->app['redirect']);
+            $request->setUserResolver(static fn (): User => $actor);
+            $route = new Route('POST', 'projects/{project}/documents', []);
+            $route->bind($request);
+            $route->setParameter('project', $project);
+            $request->setRouteResolver(static fn (): Route => $route);
+            $request->validateResolved();
+            $response = app(\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController::class)
+                ->upload($request, $project, $session);
+            self::assertSame(200, $response->getStatusCode(), $response->getContent());
+            $document = $session->documents()->where('filename', 'after-question.xlsx')->sole();
+            self::assertSame('sha256:'.$digest, $document->source_version);
+            self::assertSame($digest, $document->checksum_sha256);
+            self::assertSame('processing_documents', $session->fresh()->status->value);
+            self::assertNull($session->fresh()->input_payload['generation_attempt_id']);
+            $this->app->call([Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob::class)->sole(), 'handle']);
+            $this->app->call([Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob::class)->sole(), 'handle']);
+            $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+            foreach ($originals as $id => $original) {
+                self::assertSame($original, get_object_vars($models->fact(...[...$scope, $id])));
+            }
+            $facts = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_specification'
+                && $fact->sourceVersion === $document->source_version));
+            self::assertCount(1, $facts);
+            self::assertSame('document', $facts[0]->origin);
+            self::assertSame('confirmed', $facts[0]->status);
+            self::assertNull($facts[0]->unit);
+            self::assertSame([], $facts[0]->nativeNumericProofs);
+            $proofs = array_values(array_filter($snapshot->evidence, static fn ($proof): bool => in_array($proof->id, $facts[0]->evidenceIds, true)));
+            self::assertCount(1, $proofs);
+            self::assertSame('document:'.$document->id, $proofs[0]->sourceArtifactId);
+            self::assertSame('xlsx:sheet:Оборудование!C2', $proofs[0]->nativeReference);
+            self::assertSame($document->source_version, $proofs[0]->sourceVersion);
+            $entity = array_column($snapshot->entities, null, 'id')[$facts[0]->entityId];
+            self::assertSame('equipment:after', $entity->attributes['properties']['source_entity_key']);
+            self::assertContains($session->fresh()->status->value, ['ready_to_generate', 'input_review_required']);
+            try {
+                DB::transaction(fn () => $credits->begin($actor, $session->fresh(), $oldState, $oldOperation, $oldQuote['quote_id'], 'generation'));
+                self::fail('The uploaded document reused the old approval.');
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState) {
+                self::assertGreaterThan($oldState, (int) $session->fresh()->state_version);
+            }
+
+            return [$session->fresh(), $facts[0]];
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+            unlink($path);
+        }
     }
 
     private function composerWireResponse(array $scope, string $operationId, array $options, array $response, string $model): array
