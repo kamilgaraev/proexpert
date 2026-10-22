@@ -102,7 +102,9 @@ final readonly class AssistantCustomReportSource
                 $label = trans_message('ai_custom_reports.current_project');
             }
             $fields[$field] = ['type' => $type, 'label' => str_starts_with($label, 'ai_assistant_facts.') ? ($labels[$field] ?? $field) : $label];
-            $cast = $model->getCasts()[$aliases[$field] ?? $field] ?? null;
+            $cast = $entityType === 'site_request' && $field === 'request_type'
+                ? \App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum::class
+                : ($model->getCasts()[$aliases[$field] ?? $field] ?? null);
             $values = $entityType === 'project' && $field === 'status' ? ['draft', 'active', 'completed', 'paused', 'cancelled'] : [];
             if ($entityType === 'machinery_asset' && $field === 'status') {
                 $values = ['available', 'assigned', 'in_operation', 'maintenance', 'unavailable', 'archived', 'under_maintenance', 'out_of_service'];
@@ -117,6 +119,9 @@ final readonly class AssistantCustomReportSource
         }
         if ($members !== null) {
             $fields = array_replace($fields, $members->fields());
+        }
+        if ($entityType === 'site_request' && isset($fields['request_type'])) {
+            $query = (new AssistantSiteRequestReportProjection)->apply($query, array_keys($columnTypes));
         }
         if ($entityType === 'time_entry' && isset($fields['hours_worked'])) {
             $query = (new AssistantTimeEntryReportProjection)->apply($query, array_keys($columnTypes));

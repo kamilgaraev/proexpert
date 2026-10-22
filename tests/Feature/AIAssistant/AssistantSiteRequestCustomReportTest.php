@@ -90,6 +90,52 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         });
     }
 
+    public function test_request_type_descriptor_and_filters_use_canonical_values_for_legacy_rows(): void
+    {
+        $source = app(AssistantCustomReportSource::class)->resolve($this->actor, $this->fixture->organization->id, 'site_requests', 'site_request', null);
+        $enum = \App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum::class;
+        self::assertArrayHasKey('choices', $source['fields']['request_type']);
+        self::assertSame(array_map(static fn ($type): array => ['value' => $type->value, 'label' => $type->label()], $enum::cases()), $source['fields']['request_type']['choices']);
+        $canonical = $this->request($this->firstProject);
+        $ids = ['material_request' => [$canonical->id]];
+        foreach (['material', 'personnel', 'equipment', 'info', 'issue'] as $legacy) {
+            $request = $this->request($this->secondProject);
+            DB::table('site_requests')->where('id', $request->id)->update(['request_type' => $legacy]);
+            $type = $enum::fromStoredValue($legacy)->value;
+            $ids[$type][] = $request->id;
+        }
+        $unknown = $this->request($this->firstProject);
+        DB::table('site_requests')->where('id', $unknown->id)->update(['request_type' => 'future_type']);
+        $foreignProject = Model::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id, 'is_archived' => false]));
+        $this->request($foreignProject, ['user_id' => $this->fixture->foreignOwner->id, 'title' => 'SECRET другая организация']);
+        $private = $this->project('SECRET неназначенный проект');
+        $this->request($private, ['title' => 'SECRET неназначенная заявка']);
+        $sections = [];
+        foreach (['eq' => 'material_request', 'neq' => 'material_request', 'in' => ['material_request', 'personnel_request']] as $operator => $value) {
+            $section = $this->section($operator, [['field' => 'request_type', 'operator' => $operator, 'value' => $value]]);
+            $section['columns'] = ['id', 'request_type'];
+            $sections[] = $section;
+        }
+        $report = app(AssistantCustomReportBuilder::class)->build(['title' => 'Типы заявок', 'format' => 'xlsx', 'sections' => $sections], $this->actor, $this->fixture->organization->id);
+        self::assertSame($ids['material_request'], array_column($report['sections'][0]['rows'], 0));
+        self::assertSame(array_merge($ids['personnel_request'], $ids['equipment_request'], $ids['info_request'], $ids['issue_report'], [$unknown->id]), array_column($report['sections'][1]['rows'], 0));
+        self::assertSame(array_merge($ids['material_request'], $ids['personnel_request']), array_column($report['sections'][2]['rows'], 0));
+        self::assertStringNotContainsString('SECRET', json_encode($report['sections'], JSON_THROW_ON_ERROR));
+        $reference = $report['source_refs'][0];
+        self::assertTrue(app(AssistantCustomReportReference::class)->canReadReference($this->actor, $this->fixture->organization->id, $reference));
+        $this->actor->assignedProjects()->updateExistingPivot($this->secondProject->id, ['is_active' => false]);
+        self::assertFalse(app(AssistantCustomReportReference::class)->canReadReference($this->actor, $this->fixture->organization->id, $reference));
+    }
+
+    public function test_request_type_filters_reject_legacy_input_instead_of_verifying_empty_results(): void
+    {
+        $this->request($this->firstProject);
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        app(AssistantCustomReportBuilder::class)->build(['title' => 'Некорректный тип', 'format' => 'xlsx',
+            'sections' => [$this->section('Материалы', [['field' => 'request_type', 'operator' => 'eq', 'value' => 'material']])]],
+            $this->actor, $this->fixture->organization->id);
+    }
+
     public function test_two_sheet_workbook_preserves_request_filters_labels_and_organization_scope(): void
     {
         $overdue = $this->request($this->firstProject, ['title' => 'Материалы без ответственного', 'required_date' => '2026-10-20']);
