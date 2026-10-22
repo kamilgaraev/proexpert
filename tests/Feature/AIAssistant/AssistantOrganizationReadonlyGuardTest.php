@@ -51,12 +51,17 @@ final class AssistantOrganizationReadonlyGuardTest extends TestCase
                 app(ContractOrganizationViewService::class)->synchronizeNewContract($contract);
             });
             self::assertSame(0, DB::transactionLevel());
-            $lifecycle = (new \ReflectionClass(AssistantRequestLifecycle::class))->newInstanceWithoutConstructor();
-            $context = new AssistantRequestExecutionContext($lifecycle, new AssistantRequest, $actor, 30000);
+            $request = AssistantRequest::withoutEvents(fn () => AssistantRequest::query()->create([
+                'request_id' => (string) \Illuminate\Support\Str::uuid(), 'request_hash' => str_repeat('a', 64),
+                'organization_id' => $org, 'user_id' => (int) $actor->id, 'profile' => 'normal', 'status' => 'running',
+                'stage' => 'reading', 'surface' => 'admin', 'max_calls' => 3, 'approved_max_minor' => 0,
+                'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(8)]));
+            $lifecycle = app(AssistantRequestLifecycle::class);
+            $context = new AssistantRequestExecutionContext($lifecycle, $request, $actor, 30000);
             app()->instance(AssistantRequestExecutionContext::class, $context); $context->activate();
             DB::transaction(function () use ($org, $actor, $project): void {
                 DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-                foreach ([AssistantOrganizationProjectsReader::class, AssistantOrganizationSuppliersReader::class,
+                foreach ([\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationQualityDefectControlReader::class, AssistantOrganizationProjectsReader::class, AssistantOrganizationSuppliersReader::class,
                     AssistantOrganizationActivityReader::class, AssistantOrganizationNotificationsReader::class, AssistantContractSupplementaryReader::class,
                     AssistantCatalogLookupReader::class, AssistantOwnProjectAccessReader::class, AssistantOrganizationPurchaseOrdersReader::class,
                     AssistantProjectDailyStaffReader::class, AssistantProjectDeliveriesReader::class, AssistantDocumentReadinessReader::class,
