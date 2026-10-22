@@ -17,6 +17,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessD
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StoredDocumentArtifact;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationCsvExporter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\SelectNormativeCandidate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmEvaluationScenario;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
@@ -97,6 +99,107 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
         $this->assertPersistedMoney($estimate, $source, $catalog);
         app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
         $this->assertPersistedMoney($estimate->fresh(), $source, $catalog);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_scaled_fractional_labor_and_four_decimal_price_keep_money_through_export_apply_and_recalculation(): void
+    {
+        [$actor, $session, $catalog, $source] = $this->fixture(counts: ['equipment:boiler' => '10000'],
+            laborRate: '1.111111', laborPrice: '123456.7891');
+        $workKey = $this->installation($session)['key'];
+        app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $session->organization_id, (int) $session->project_id,
+            $actor, $session->fresh()->state_version, $workKey, $catalog['norm_id'], true);
+        $revision = $this->prepareInstallationScope($actor, $session, $source, $workKey);
+        $item = $this->installation($session);
+        self::assertSame('10000', $item['quantity']);
+        self::assertSame('count', $item['unit']);
+        self::assertSame('100 шт', $item['normative_match']['unit']);
+        self::assertSame('0.01', NormativeUnitNormalizer::safeQuantityFactorDecimal($item['unit'], $item['normative_match']['unit']));
+        self::assertSame('100', (string) BigDecimal::of($item['quantity'])->multipliedBy('0.01')->strippedOfTrailingZeros());
+        self::assertSame($source->id, $item['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+        self::assertSame('1.111111', (string) BigDecimal::of($item['labor'][0]['quantity_per_unit'])->strippedOfTrailingZeros());
+        self::assertSame('0.01111111', (string) BigDecimal::of($item['labor'][0]['quantity_per_work_unit'])->strippedOfTrailingZeros());
+        self::assertSame('111.1111', (string) BigDecimal::of($item['labor'][0]['quantity'])->strippedOfTrailingZeros());
+        self::assertSame('123456.7891', (string) BigDecimal::of($item['labor'][0]['unit_price'])->strippedOfTrailingZeros());
+        self::assertSame('13717419.64', $item['total_cost']);
+        self::assertSame('13717419.64', $revision['result']['scenarios'][0]['known_subtotals']['RUB']);
+        self::assertSame('16735251.96', $revision['result']['scenarios'][0]['gross_subtotals']['RUB']);
+        self::assertTrue($revision['result']['can_confirm_for_apply']);
+        $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id,
+            $this->confirmationInput($session, $revision));
+        $export = app(ReadConfirmedEvaluationExport::class)->read($actor, (int) $session->project_id, (int) $session->id);
+        $json = json_decode(json_encode($export->draft_payload, JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
+        $exportItems = $json['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(1, $exportItems);
+        self::assertSame('10000', $exportItems[0]['quantity']);
+        self::assertSame('13717419.64', $exportItems[0]['total_cost']);
+        self::assertCount(1, $exportItems[0]['labor']);
+        $exportLabor = $exportItems[0]['labor'][0];
+        self::assertSame('1.111111', (string) BigDecimal::of($exportLabor['quantity_per_unit'])->strippedOfTrailingZeros());
+        self::assertSame('0.01111111', (string) BigDecimal::of($exportLabor['quantity_per_work_unit'])->strippedOfTrailingZeros());
+        self::assertSame('111.1111', (string) BigDecimal::of($exportLabor['quantity'])->strippedOfTrailingZeros());
+        self::assertSame('123456.7891', (string) BigDecimal::of($exportLabor['unit_price'])->strippedOfTrailingZeros());
+        self::assertSame('h', $exportLabor['unit']);
+        self::assertSame($catalog['norm_id'], $exportLabor['normative_ref']['norm_id']);
+        self::assertSame($catalog['resource_id'], $exportLabor['normative_ref']['norm_resource_id']);
+        self::assertSame($catalog['price_id'], $exportLabor['normative_ref']['price_id']);
+        self::assertSame($source->id, $exportItems[0]['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+        ob_start();
+        try {
+            app(EstimateGenerationCsvExporter::class)->stream($export->draft_payload);
+            $content = (string) ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+        $csv = fopen('php://temp', 'w+');
+        try {
+            fwrite($csv, $content);
+            rewind($csv);
+            self::assertCount(7, fgetcsv($csv, escape: ''));
+            $row = fgetcsv($csv, escape: '');
+            self::assertIsArray($row);
+            self::assertCount(7, $row);
+            self::assertSame('10000', $row[4]);
+            self::assertSame('13717419.64', $row[5]);
+            self::assertFalse(fgetcsv($csv, escape: ''));
+        } finally {
+            fclose($csv);
+        }
+        $published = app(ApplyGeneratedEstimate::class)->handle(new ApplyGeneratedEstimateCommand((int) $session->id,
+            (int) $session->organization_id, (int) $session->project_id, $confirmation['state_version'],
+            idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor));
+        $estimate = Estimate::query()->findOrFail($published->estimateId);
+        $assertPersisted = static function (Estimate $estimate) use ($source, $catalog): array {
+            self::assertSame('13717419.64', $estimate->total_amount);
+            self::assertSame('16735251.96', $estimate->total_amount_with_vat);
+            $parent = $estimate->items()->whereNull('parent_work_id')->sole();
+            $child = $estimate->items()->where('parent_work_id', $parent->id)->sole();
+            $resource = $parent->resources()->sole();
+            self::assertSame('10000', (string) BigDecimal::of($parent->quantity)->strippedOfTrailingZeros());
+            self::assertSame('111.1111', (string) BigDecimal::of($parent->labor_hours)->strippedOfTrailingZeros());
+            self::assertSame('0', (string) BigDecimal::of($parent->machinery_hours)->strippedOfTrailingZeros());
+            self::assertSame('13717419.64', $parent->total_amount);
+            self::assertSame('111.1111', (string) BigDecimal::of($child->quantity)->strippedOfTrailingZeros());
+            self::assertSame('13717419.64', $child->total_amount);
+            self::assertSame('0.01111111', (string) BigDecimal::of($child->metadata['quantity_per_unit'])->strippedOfTrailingZeros());
+            self::assertSame('0.01111111', (string) BigDecimal::of($resource->quantity_per_unit)->strippedOfTrailingZeros());
+            self::assertSame('111.1111', (string) BigDecimal::of($resource->total_quantity)->strippedOfTrailingZeros());
+            self::assertSame('123456.7891', (string) BigDecimal::of($resource->unit_price)->strippedOfTrailingZeros());
+            self::assertSame('13717419.64', $resource->total_amount);
+            self::assertSame($catalog['norm_id'], $child->metadata['normative_ref']['norm_id']);
+            self::assertSame($catalog['resource_id'], $child->metadata['normative_ref']['norm_resource_id']);
+            self::assertSame($catalog['price_id'], $child->metadata['normative_ref']['price_id']);
+            self::assertSame('3017832.32', $parent->metadata['generated_source_money']['money']['vat_amount']);
+            self::assertSame($source->id, $parent->metadata['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+
+            return [$parent->id, $child->id, $resource->id];
+        };
+        $identities = $assertPersisted($estimate);
+        for ($iteration = 0; $iteration < 2; $iteration++) {
+            app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+            self::assertSame($identities, $assertPersisted($estimate->fresh()));
+        }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         Http::assertNothingSent();
     }
@@ -324,7 +427,8 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
         return $identities;
     }
 
-    private function fixture(bool $withNorm = true, bool $withPrice = true, array $counts = ['equipment:boiler' => '3']): array
+    private function fixture(bool $withNorm = true, bool $withPrice = true, array $counts = ['equipment:boiler' => '3'],
+        string $laborRate = '10.000000', string $laborPrice = '100.0000'): array
     {
         Queue::fake();
         Http::preventStrayRequests();
@@ -340,7 +444,7 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
         foreach ([['Штука', 'шт', 'piece'], ['Час', 'ч', 'time']] as [$name, $unit, $type]) {
             MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => $name, 'short_name' => $unit, 'type' => $type]);
         }
-        $catalog = $this->catalog($withNorm, $withPrice);
+        $catalog = $this->catalog($withNorm, $withPrice, $laborRate, $laborPrice);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'status' => 'draft', 'processing_stage' => 'draft', 'processing_progress' => 0,
             'state_version' => 0, 'input_payload' => ['evaluation_mode' => 'universal',
@@ -515,7 +619,7 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
         }
     }
 
-    private function catalog(bool $withNorm, bool $withPrice): array
+    private function catalog(bool $withNorm, bool $withPrice, string $laborRate, string $laborPrice): array
     {
         $now = now();
         $suffix = strtolower((string) Str::ulid());
@@ -535,7 +639,7 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
             'unit' => '100 шт', 'valid_from' => '2026-10-01', 'valid_to' => '2026-12-31', 'created_at' => $now, 'updated_at' => $now]) : null;
         $resourceCode = 'R08-LABOR-'.$suffix;
         $resource = $withNorm ? DB::table('estimate_norm_resources')->insertGetId(['estimate_norm_id' => $norm,
-            'resource_code' => $resourceCode, 'resource_name' => 'Труд рабочих', 'unit' => 'h', 'quantity' => '10.000000',
+            'resource_code' => $resourceCode, 'resource_name' => 'Труд рабочих', 'unit' => 'h', 'quantity' => $laborRate,
             'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now]) : null;
         $region = DB::table('estimate_regions')->insertGetId(['code' => 'R08-'.substr($suffix, -10), 'name' => 'Synthetic region',
             'fgiscs_subject_id' => random_int(100000, 999999), 'created_at' => $now, 'updated_at' => $now]);
@@ -548,7 +652,7 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
             'price_zone_id' => $zone, 'period_id' => $period, 'version_key' => $key, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
         $price = $withPrice ? DB::table('estimate_resource_prices')->insertGetId(['dataset_version_id' => $prices,
             'regional_price_version_id' => $version, 'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period,
-            'resource_code' => $resourceCode, 'resource_name' => 'Труд рабочих', 'unit' => 'h', 'base_price' => '100.0000',
+            'resource_code' => $resourceCode, 'resource_name' => 'Труд рабочих', 'unit' => 'h', 'base_price' => $laborPrice,
             'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]) : null;
         DB::table('estimate_regional_price_versions')->where('id', $version)->update(['status' => 'active']);
 
