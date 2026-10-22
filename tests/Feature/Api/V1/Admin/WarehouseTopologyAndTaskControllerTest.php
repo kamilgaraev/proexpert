@@ -470,6 +470,52 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         ]);
     }
 
+    public function test_task_datetimes_preserve_the_instant_across_create_read_update_and_workflow(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Task dates', 'TASK-DATES');
+        $this->allowAdminAccess();
+        $this->freezeTime();
+        $baseUrl = "/api/v1/admin/warehouses/{$warehouse->id}/tasks";
+        $payload = [
+            'title' => 'Inspect task dates',
+            'task_type' => WarehouseTask::TYPE_INSPECTION,
+            'due_at' => '2026-10-23T07:00:00.000Z',
+        ];
+        $created = $this->withHeaders($context->authHeaders())->postJson($baseUrl, $payload);
+        $created->assertCreated()->assertJsonPath('data.due_at', '2026-10-23T07:00:00+00:00');
+        $taskId = $created->json('data.id');
+        $instant = now()->toIso8601String();
+        $created->assertJsonPath('data.created_at', $instant)
+            ->assertJsonPath('data.updated_at', $instant)
+            ->assertJsonPath('data.started_at', null)
+            ->assertJsonPath('data.completed_at', null);
+        $this->assertSame('2026-10-23 10:00', \Carbon\Carbon::parse($created->json('data.due_at'))->setTimezone('Europe/Moscow')->format('Y-m-d H:i'));
+
+        $this->withHeaders($context->authHeaders())->getJson($baseUrl)
+            ->assertOk()->assertJsonPath('data.0.due_at', '2026-10-23T07:00:00+00:00');
+        $this->withHeaders($context->authHeaders())->getJson("{$baseUrl}/{$taskId}")
+            ->assertOk()->assertJsonPath('data.due_at', '2026-10-23T07:00:00+00:00');
+        $this->withHeaders($context->authHeaders())->putJson("{$baseUrl}/{$taskId}", $payload)
+            ->assertOk()->assertJsonPath('data.due_at', '2026-10-23T07:00:00+00:00');
+        $this->withHeaders($context->authHeaders())->postJson("{$baseUrl}/{$taskId}/status", ['status' => WarehouseTask::STATUS_IN_PROGRESS])
+            ->assertOk()->assertJsonPath('data.started_at', $instant)->assertJsonPath('data.completed_at', null);
+        $this->withHeaders($context->authHeaders())->postJson("{$baseUrl}/{$taskId}/status", ['status' => WarehouseTask::STATUS_COMPLETED])
+            ->assertOk()->assertJsonPath('data.completed_at', $instant)->assertJsonPath('data.started_at', $instant);
+    }
+
+    public function test_task_datetimes_keep_unset_dates_null(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'No task dates', 'NO-TASK-DATES');
+        $this->allowAdminAccess();
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks", [
+            'title' => 'No planned deadline',
+            'task_type' => WarehouseTask::TYPE_INSPECTION,
+        ])->assertCreated()->assertJsonPath('data.due_at', null)
+            ->assertJsonPath('data.started_at', null)->assertJsonPath('data.completed_at', null);
+    }
+
     public function test_task_relations_must_belong_to_current_organization(): void
     {
         $context = AdminApiTestContext::create();
