@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
-use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 
 final class AssistantOrganizationQualityControlIntent
 {
@@ -24,8 +24,7 @@ final class AssistantOrganizationQualityControlIntent
         if (AssistantTemporalIntent::hasExplicitWindow($periodQuery) || AssistantTemporalIntent::hasNonCurrentScope($periodQuery)) {
             return false;
         }
-        if (preg_match('/excel|xlsx|csv|pdf|файл|выгруз|создай|закрой|удали|измени|обнови|переназначь|отправь|стоим|бюджет|сумм|затрат|сгрупп|разбивк|по\s+кажд|только|лишь|исключительно|\b\d{4}\b|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/iu', $query) === 1
-            || preg_match('/(?<!\pL)(?:устрани(?:те)?|исправь(?:те)?)(?!\pL)/iu', $query) === 1) {
+        if (AssistantMutationIntent::containsRequest($query)) {
             return false;
         }
         $scope = preg_replace('/не\s+ограничивай(?:ся|тесь)\s+(?:выбранным|текущим)\s+(?:проектом|объектом)/iu', '', $query) ?? $query;
@@ -47,9 +46,10 @@ final class AssistantOrganizationQualityControlIntent
         }
         $scope = preg_replace('/(?:отдельно\s+(?:отметь|выдели|покажи)|отметь|выдели)\s+критическ[а-яё]*(?:\s+(?:замечан|дефект)[а-яё]*)?(?=\s*(?:[.!?;,]|$))/iu', '', $scope) ?? $scope;
 
-        $statusCodes = implode('|', array_map(static fn (QualityDefectStatusEnum $status): string => preg_quote($status->value, '/'), QualityDefectStatusEnum::cases()));
+        $readTerms = 'пожалуйста|прошу|покажи(?:те)?|перечисли(?:те)?|выведи(?:те)?|отобрази(?:те)?|назови(?:те)?|дай(?:те)?|какие|есть|нужн[ао]?|спис(?:ок|ка|ку|ке|ком|ки|ков)|сводк[а-яё]*|по|во?|со?|до|на|для|раньше|все|всех|всем|всей|нашей|организац[а-яё]*|незакрыт[а-яё]*|просроч[а-яё]*|замечан[а-яё]*|дефект[а-яё]*|качеств[а-яё]*|у|котор[а-яё]*|срок[а-яё]*|устранения|исправления|сегодняшн[а-яё]*|сегодня|дня|состоянию';
+        $remaining = preg_replace('/(?<![\pL\pN_])(?:'.$readTerms.')(?![\pL\pN_])/iu', '', $scope) ?? $scope;
 
-        return preg_match('/(?<!\pL)(?:проект|объект)[а-яё]*|критическ|существен|незначительн|ответствен|назначен|открыт|в\s+работе|на\s+проверк[а-яё]*|возвращ[её]н[а-яё]*|(?<!\pL)статус(?:а|е|ом|у|ы|ов)?(?!\pL)|(?<![\pL\d_])(?:'.$statusCodes.')(?![\pL\d_])|не\s*просроч|не\s+раньше|отмени|'.$excludedStatus.'/iu', $scope) !== 1;
+        return preg_match('/^[\s.,;:!?()—–-]*$/uD', $remaining) === 1;
     }
 
     private static function supportedColumns(string $clause): bool
