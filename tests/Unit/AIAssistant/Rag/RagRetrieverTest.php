@@ -504,6 +504,57 @@ class RagRetrieverTest extends TestCase
         self::assertCount(2, $currentExampleReads);
     }
 
+    public function test_hybrid_lexical_refill_uses_the_fusion_rank_limit_after_stale_candidates(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        $currentIds = [];
+        foreach (range(1, 8) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'rankneedle current '.$index);
+            $this->indexLearning($example, [0.0, 1.0, 0.0]);
+            $currentIds[] = (string) $example->id;
+        }
+        foreach (range(1, 88) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'rankneedle stale '.$index);
+            $this->indexLearning($example, [0.0, 1.0, 0.0]);
+            $example->update(['quality_flags' => ['do_not_index']]);
+        }
+        $late = $this->learningExample($organization->id, $project->id, 'rankneedle late');
+        $this->indexLearning($late);
+        $provider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = $this->retriever($provider)->search('rankneedle', $organization->id, $user,
+                ['project_id' => $project->id, 'source_types' => ['estimate_generation_learning'], 'limit' => 8]);
+            $queries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        $lexicalQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "ai_rag_chunks" as "c"')));
+        self::assertCount(2, $lexicalQueries);
+        self::assertStringContainsString('limit 96', $lexicalQueries[0]['query']);
+        self::assertStringContainsString('limit 192', $lexicalQueries[1]['query']);
+        self::assertCount(8, $results);
+        self::assertSame((string) $late->id, $results[0]->entityId);
+        self::assertSame([], array_diff(array_column($results, 'entityId'), [...$currentIds, (string) $late->id]));
+        self::assertSame(1, $provider->queryCalls);
+
+        $lexicalProvider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $lexicalResults = $this->retriever($lexicalProvider)->search('rankneedle', $organization->id, $user,
+                ['project_id' => $project->id, 'source_types' => ['estimate_generation_learning'], 'limit' => 8, 'retrieval_mode' => 'lexical']);
+            $lexicalQueries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        self::assertSame($currentIds, array_column($lexicalResults, 'entityId'));
+        self::assertCount(1, $lexicalQueries);
+        self::assertStringContainsString('limit 96', $lexicalQueries[0]['query']);
+        self::assertSame(0, $lexicalProvider->queryCalls);
+    }
+
     public static function learningCandidatePools(): iterable
     {
         yield 'semantic' => ['semantic', 32];
