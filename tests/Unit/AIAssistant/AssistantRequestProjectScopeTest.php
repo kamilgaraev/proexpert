@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbi
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComparisonSpecification;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 use PHPUnit\Framework\TestCase;
@@ -15,6 +16,30 @@ use PHPUnit\Framework\TestCase;
 final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
+
+    public function test_organization_handover_short_predicates_do_not_inherit_the_ui_project(): void
+    {
+        self::assertTrue(AssistantRequestProjectScope::organizationWide('Какие приёмки по всей организации?'));
+        $question = 'Какие приёмки по всей организации ещё не приняты и не переданы? По каждой укажи проект, название, текущий статус, плановую дату и число открытых замечаний. Закрытые замечания не считай. Не ограничивайся выбранным проектом.';
+        $plan = ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 102]]]]];
+        $scope = AssistantRequestProjectScope::fromPlan($plan);
+        self::assertSame([true, false, null], [AssistantRequestProjectScope::organizationWide($question), $scope->requested, $scope->projectId]);
+        self::assertNotSame('get_project_handover_summary', AssistantRequiredProjectRead::fromPlan($plan)['name'] ?? null);
+        self::assertSame(['name' => 'get_organization_handover_control', 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan));
+        foreach (['ещё не приняты', 'пока не переданы', 'частично выполнены', 'полностью закрыты'] as $predicate) {
+            self::assertTrue(AssistantRequestProjectScope::organizationWide('Какие приёмки по всей организации '.$predicate.'?'));
+        }
+        self::assertFalse(AssistantRequestProjectScope::organizationWide('Какие приёмки в проекте «По всей организации ещё не приняты»?'));
+    }
+
+    public function test_organization_handover_control_does_not_drop_additional_requested_constraints(): void
+    {
+        $base = 'Какие приёмки по всей организации ещё не приняты и не переданы?';
+        foreach ([' Только с открытыми замечаниями.', ' За октябрь.', ' Только проекта 100.',
+            ' Прими все зоны.', ' Сделай CSV.', ' Укажи ответственного.', ' Сравни с оплатами.'] as $extra) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($base.$extra)), $extra);
+        }
+    }
 
     public function test_colon_report_columns_accept_registered_project_identifier_inflections(): void
     {
