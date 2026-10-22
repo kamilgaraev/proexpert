@@ -21,7 +21,15 @@ final readonly class AssistantCustomReportSourceHints
         if (! AssistantCustomReportIntent::matches($query, $understanding)) {
             return [];
         }
-        $domains = preg_match('/выполненн[а-яё]*\s+работ|фактическ[а-яё]*\s+работ|объ[её]м[а-яё]*\s+работ/iu', $query) === 1 ? ['works'] : [];
+        $domains = [];
+        if (preg_match('/закупочн[а-яё]*\s+заяв(?:к[а-яё]*|ок)|заяв(?:к[а-яё]*|ок)\s+на\s+закупк/iu', $query) === 1) {
+            $domains[] = 'procurement';
+        } elseif (preg_match('/заяв(?:к[а-яё]*|ок)\s+на\s+(?:материал|техник|персонал)|заяв(?:к[а-яё]*|ок)[\s\S]{0,60}(?:объект|стройплощад)/iu', $query) === 1) {
+            $domains[] = 'site_requests';
+        }
+        if (preg_match('/выполненн[а-яё]*\s+работ|фактическ[а-яё]*\s+работ|объ[её]м[а-яё]*\s+работ/iu', $query) === 1) {
+            $domains[] = 'works';
+        }
         foreach (['project' => 'projects', 'contract' => 'contracts', 'estimate' => 'estimates', 'warehouse' => 'warehouse',
             'payment' => 'finance', 'schedule' => 'schedule', 'work' => 'works', 'completed_work' => 'works'] as $entity => $domain) {
             if (in_array($entity, $understanding->requestedEntities, true)) {
