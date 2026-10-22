@@ -59,7 +59,8 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         $this->mock(AuthorizationService::class)
             ->shouldReceive('can')->andReturnUsing(fn (User $actor, string $permission, ?array $context = null): bool => $this->permission($permission, $context))
             ->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission, ?array $context = null): bool => $this->permission($permission, $context))
-            ->shouldReceive('forCurrentChecks')->andReturnSelf();
+            ->shouldReceive('forCurrentChecks')->andReturnSelf()
+            ->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $moduleEntitlements = $this->mock(OrganizationEntitlementService::class);
         $moduleEntitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $moduleEntitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
         $moduleEntitlements->shouldReceive('getEffectiveModules')

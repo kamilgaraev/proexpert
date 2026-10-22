@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -62,6 +63,152 @@ final class RagCoverageRefreshDiagnosticsTest extends TestCase
         self::assertTrue($records[0]['generation_present']);
         self::assertSame(RuntimeException::class, $records[0]['exception_class']);
         self::assertStringNotContainsString('private_', json_encode($records, JSON_THROW_ON_ERROR));
+    }
+
+    #[DataProvider('projectionQueries')]
+    public function test_expected_projection_query_events_export_only_mode_and_bounded_numeric_metadata(bool $proof, bool $completed, int $ordinal, float $elapsed, string $mode, float $expectedElapsed): void
+    {
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery($proof, $ordinal, $elapsed, $completed);
+        self::assertIsArray($record);
+        self::assertSame(['projection_mode', 'query_ordinal', 'query_elapsed_ms', 'query_completed', 'release_sha',
+            'source_type_filters', 'source_type_filters_complete', 'entity_type_filters', 'entity_type_filters_complete'], array_keys($record));
+        self::assertSame($mode, $record['projection_mode']);
+        self::assertSame($ordinal, $record['query_ordinal']);
+        self::assertSame($expectedElapsed, $record['query_elapsed_ms']);
+        self::assertSame($completed, $record['query_completed']);
+        self::assertSame(str_repeat('a', 40), $record['release_sha']);
+        self::assertNull($record['source_type_filters']);
+        self::assertNull($record['entity_type_filters']);
+        self::assertFalse($record['source_type_filters_complete']);
+        self::assertFalse($record['entity_type_filters_complete']);
+    }
+
+    #[DataProvider('filterCases')]
+    public function test_projection_filters_export_only_closed_catalog_labels(bool $proof, ?array $sources, ?array $entities, ?array $expectedSources, bool $sourcesComplete, ?array $expectedEntities, bool $entitiesComplete): void
+    {
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery($proof, 1, 600, true, $sources, $entities);
+        self::assertIsArray($record);
+        self::assertSame($expectedSources, $record['source_type_filters']);
+        self::assertSame($sourcesComplete, $record['source_type_filters_complete']);
+        self::assertSame($expectedEntities, $record['entity_type_filters']);
+        self::assertSame($entitiesComplete, $record['entity_type_filters_complete']);
+        self::assertStringNotContainsString('private_', json_encode($record, JSON_THROW_ON_ERROR));
+    }
+
+    public static function filterCases(): array
+    {
+        $unprintable = new class implements \Stringable {
+            public function __toString(): string { throw new RuntimeException('private_stringable_fixture'); }
+        };
+
+        return [
+            [false, ['project', 'project', 'file_document', 'estimate_reference'], ['project', 'assistant_document', 'estimate_template'], ['project', 'file_document', 'estimate_reference'], true, ['project', 'assistant_document', 'estimate_template'], true],
+            [false, [], [], [], true, [], true],
+            [false, null, null, null, false, null, false],
+            [false, ['private_source_fixture', 42, $unprintable, 'project'], ['private_entity_fixture', null, ['private_nested'], 'project'], ['project'], false, ['project'], false],
+            [true, ['project'], ['project'], null, false, null, false],
+            [false, array_fill(0, 128, 'project'), array_fill(0, 128, 'project'), ['project'], true, ['project'], true],
+            [false, array_fill(0, 129, 'project'), array_fill(0, 129, 'project'), ['project'], false, ['project'], false],
+        ];
+    }
+
+    public function test_projection_filters_cap_unique_labels_and_report_truncation(): void
+    {
+        $definitions = AssistantEntityAccessCatalog::entityDefinitions();
+        $entities = array_keys($definitions);
+        $sources = ['file_document'];
+        foreach ($definitions as $entity => $definition) {
+            array_push($sources, ...AssistantEntityAccessCatalog::indexedSourceTypes($entity, $definition[0]));
+        }
+        $sources = array_values(array_unique($sources));
+        self::assertGreaterThan(32, count($entities));
+        self::assertGreaterThan(32, count($sources));
+        $records = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->twice()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->twice()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$records): bool {
+            $records[] = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        foreach ([32, 33] as $limit) {
+            AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, 1, 600, true, array_slice($sources, 0, $limit), array_slice($entities, 0, $limit));
+        }
+        foreach ($records as $record) {
+            self::assertSame(array_slice($sources, 0, 32), $record['source_type_filters']);
+            self::assertSame(array_slice($entities, 0, 32), $record['entity_type_filters']);
+        }
+        self::assertTrue($records[0]['source_type_filters_complete']);
+        self::assertTrue($records[0]['entity_type_filters_complete']);
+        self::assertFalse($records[1]['source_type_filters_complete']);
+        self::assertFalse($records[1]['entity_type_filters_complete']);
+    }
+
+    public static function projectionQueries(): array
+    {
+        return [[true, true, 1, 500.125, 'proof', 500.13], [false, true, 32, 500.0, 'counts', 500.0],
+            [true, false, 32, 991.124, 'proof', 991.12], [false, false, 1, 705.0, 'counts', 705.0]];
+    }
+
+    #[DataProvider('excludedProjectionQueries')]
+    public function test_expected_projection_query_diagnostics_skip_fast_invalid_and_over_limit_queries(int $ordinal, float $elapsed): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldNotReceive('channel');
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, $ordinal, $elapsed, true);
+        self::assertTrue(true);
+    }
+
+    public static function excludedProjectionQueries(): array
+    {
+        return [[0, 500.0], [-1, 500.0], [33, 500.0], [1, 499.99], [1, -1.0], [1, NAN], [1, INF], [1, -INF]];
+    }
+
+    public function test_expected_projection_query_logger_failure_does_not_escape(): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andThrow(new RuntimeException('private_logger_failure_fixture'));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(true, 1, 600.0, false);
+        self::assertTrue(true);
+    }
+
+    public function test_expected_projection_query_diagnostics_do_not_export_invalid_release(): void
+    {
+        config(['ai-assistant.status_snapshot_release' => 'private_release_fixture']);
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, 1, 600.0, true);
+        self::assertIsArray($record);
+        self::assertNull($record['release_sha']);
+        self::assertStringNotContainsString('private_', json_encode($record, JSON_THROW_ON_ERROR));
     }
 
     public static function phases(): array

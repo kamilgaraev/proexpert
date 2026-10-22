@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\JoinClause;
@@ -68,7 +69,9 @@ final class RagExpectedSourceProjection
         $proofColumns = array_map(static fn (string $column): string => "COALESCE(CAST(expected.".$column." AS TEXT), '')",
             ['source_type', 'entity_type', 'entity_id', 'project_id', 'identity_project_id', 'identity_part_key', 'checksum']);
         $counts = [];
-        $aggregate = static function (\Illuminate\Database\Query\Builder $visible, ?array $batchTypes = null, ?array $entityTypes = null) use ($matched, $collectProof, $proofColumns, $organizationId, $types): \Illuminate\Database\Query\Builder {
+        $batchFilters = null;
+        $aggregate = static function (\Illuminate\Database\Query\Builder $visible, ?array $batchTypes = null, ?array $entityTypes = null) use ($matched, $collectProof, $proofColumns, $organizationId, $types, &$batchFilters): \Illuminate\Database\Query\Builder {
+            if (! $collectProof) { $batchFilters = ['source_types' => $batchTypes ?? $types, 'entity_types' => $entityTypes]; }
             $query = DB::query()->fromSub($visible, 'expected');
             $joinIdentity = static function (JoinClause $join): void {
                 foreach (['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'] as $column) {
@@ -100,9 +103,21 @@ final class RagExpectedSourceProjection
 
             return $query;
         };
-        $consume = static function (\Illuminate\Database\Query\Builder $batch) use ($checkpoint, $collectProof, &$proof, &$counts): void {
+        $batchOrdinal = 0;
+        $consume = static function (\Illuminate\Database\Query\Builder $batch) use ($checkpoint, $collectProof, &$proof, &$counts, &$batchOrdinal, &$batchFilters): void {
+            $filters = $collectProof ? null : $batchFilters;
+            $batchFilters = null;
             if ($checkpoint !== null) { $checkpoint(); }
-            $rows = $batch->get();
+            $ordinal = ++$batchOrdinal;
+            $started = hrtime(true);
+            $completed = false;
+            try {
+                $rows = $batch->get();
+                $completed = true;
+            } finally {
+                AssistantStatusSnapshotDiagnostics::expectedProjectionQuery($collectProof, $ordinal, (hrtime(true) - $started) / 1_000_000, $completed,
+                    $filters['source_types'] ?? null, $filters['entity_types'] ?? null);
+            }
             foreach ($rows as $row) {
                 if ($collectProof) {
                     $proof += json_decode((string) $row->identity_proof, true, 512, JSON_THROW_ON_ERROR);

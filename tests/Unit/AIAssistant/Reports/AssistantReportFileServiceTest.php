@@ -30,6 +30,7 @@ final class AssistantReportFileServiceTest extends TestCase
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());

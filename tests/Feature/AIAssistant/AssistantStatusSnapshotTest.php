@@ -878,6 +878,7 @@ final class AssistantStatusSnapshotTest extends TestCase
                 return in_array($permission, ['projects.view', 'contracts.view', 'finance.view', 'ai_assistant.chat', 'admin.ai_assistant.rag.manage'], true)
                 && ! in_array($permission, $this->permissions->denied, true); }
             public function forCurrentChecks(bool $memoizeReads = false): AuthorizationService { return clone $this; }
+            public function memoizedCurrentModuleSlugs(int $organizationId, OrganizationEntitlementService $source): ?array { return null; }
         };
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());

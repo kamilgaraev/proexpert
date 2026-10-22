@@ -437,7 +437,10 @@ final class EstimateGenerationLearningRecorder
             return 0;
         }
         $scope = [$organizationId, $projectId, $sessionId];
-        $capture = $this->models->snapshotForPlanning(...[...$scope, 10001]);
+        $capture = $this->sourceClaimPlanningSnapshot($scope);
+        if ($capture === null) {
+            return 0;
+        }
         $snapshot = $capture['snapshot'];
         if (count($snapshot->facts) > 10000) {
             return 0;
@@ -452,8 +455,8 @@ final class EstimateGenerationLearningRecorder
                 $validated[] = [...$receipt, 'validation' => $result];
             }
         }
-        $verified = $this->models->snapshotForPlanning(...[...$scope, 10001]);
-        if (! hash_equals($capture['token'], $verified['token'])) {
+        $verified = $this->sourceClaimPlanningSnapshot($scope);
+        if ($verified === null || ! hash_equals($capture['token'], $verified['token'])) {
             return 0;
         }
         $created = 0;
@@ -485,6 +488,19 @@ final class EstimateGenerationLearningRecorder
         }
 
         return $created;
+    }
+
+    private function sourceClaimPlanningSnapshot(array $scope): ?array
+    {
+        try {
+            return $this->models->snapshotForPlanning(...[...$scope, 10001]);
+        } catch (\InvalidArgumentException $exception) {
+            if ($exception->getMessage() !== 'planning_source_filter_budget_exceeded') {
+                throw $exception;
+            }
+
+            return null;
+        }
     }
 
     public function sourceClaimCandidatesForOperation(EstimateGenerationSession $session, string $operationId): array

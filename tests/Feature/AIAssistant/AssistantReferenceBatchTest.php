@@ -48,6 +48,7 @@ final class AssistantReferenceBatchTest extends TestCase
             return true;
         });
         $authorization->shouldReceive('forCurrentChecks')->andReturnUsing(fn () => clone $authorization);
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
