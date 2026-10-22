@@ -53,25 +53,32 @@ final readonly class AssistantCustomReportSourceHints
                 if ($definition === null) {
                     continue;
                 }
-                try {
-                    $source = $this->sources->resolve($actor, $organizationId, $domain, $definition->entityType, null);
-                    $fields = array_slice($source['fields'], 0, 40, true);
-                    $hints[] = ['domain' => $domain, 'entity_type' => $definition->entityType,
-                        'fields' => array_map(static fn (array $field): string => $field['type'], $fields),
-                        'preferred_fields' => array_filter(['counterparty' => isset($fields['counterparty_name']) ? 'counterparty_name' : null,
-                            'project' => isset($fields['project_id']) ? 'project_id' : null,
-                            'responsible' => isset($fields['assigned_user_name']) ? 'assigned_user_name' : (isset($fields['assigned_user_id']) ? 'assigned_user_id' : null),
-                            'overdue' => isset($fields['is_overdue']) ? 'is_overdue' : null,
-                            'role' => isset($fields['primary_role_label']) ? 'primary_role_label' : null,
-                            'approval' => isset($fields['is_approved']) ? 'is_approved' : null]),
-                        'choices' => array_map(static fn (array $field): array => $field['choices'],
-                            array_filter($fields, static fn (array $field): bool => isset($field['choices']))),
-                        'metrics' => array_map(static fn (array $field): array => $field['aggregations'],
-                            array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1)),
-                        'dimensions' => array_map(static fn (array $field): array => $field['dimensions'],
-                            array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1 && $field['dimensions'] !== []))];
-                } catch (AccessDeniedHttpException|ValidationException) {
-                    continue;
+                $entityTypes = [$definition->entityType];
+                if ($domain === 'procurement' && in_array('purchase_order', $definition->entityTypes, true)) {
+                    $entityTypes[] = 'purchase_order';
+                }
+                foreach (array_unique($entityTypes) as $entityType) {
+                    try {
+                        $source = $this->sources->resolve($actor, $organizationId, $domain, $entityType, null);
+                        $fields = array_slice($source['fields'], 0, 40, true);
+                        $hints[] = ['domain' => $domain, 'entity_type' => $entityType,
+                            'fields' => array_map(static fn (array $field): string => $field['type'], $fields),
+                            'preferred_fields' => array_filter(['counterparty' => isset($fields['counterparty_name']) ? 'counterparty_name' : null,
+                                'supplier' => isset($fields['supplier_name']) ? 'supplier_name' : null,
+                                'project' => isset($fields['project_id']) ? 'project_id' : null,
+                                'responsible' => isset($fields['assigned_user_name']) ? 'assigned_user_name' : (isset($fields['assigned_user_id']) ? 'assigned_user_id' : null),
+                                'overdue' => isset($fields['is_overdue']) ? 'is_overdue' : null,
+                                'role' => isset($fields['primary_role_label']) ? 'primary_role_label' : null,
+                                'approval' => isset($fields['is_approved']) ? 'is_approved' : null]),
+                            'choices' => array_map(static fn (array $field): array => $field['choices'],
+                                array_filter($fields, static fn (array $field): bool => isset($field['choices']))),
+                            'metrics' => array_map(static fn (array $field): array => $field['aggregations'],
+                                array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1)),
+                            'dimensions' => array_map(static fn (array $field): array => $field['dimensions'],
+                                array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1 && $field['dimensions'] !== []))];
+                    } catch (AccessDeniedHttpException|ValidationException) {
+                        continue;
+                    }
                 }
             }
 

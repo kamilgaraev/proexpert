@@ -78,15 +78,16 @@ final readonly class AssistantCustomReportBuilder
     private function section(array $section, User $actor, int $organizationId, string $fetchedAt): array
     {
         $scope = ['domain' => $section['domain'], 'entity_type' => $section['entity_type'], 'project_id' => isset($section['project_id']) ? (int) $section['project_id'] : null];
-        $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id'], requireCompleteScope: true);
-        if (count(array_unique($section['columns'])) !== count($section['columns'])
-            || count(array_unique($section['group_by'])) !== count($section['group_by'])) {
-            throw ValidationException::withMessages(['columns' => trans_message('ai_custom_reports.unsupported_fields')]);
-        }
         $metricAliases = array_map(static fn (int $index): string => 'metric_'.($index + 1), array_keys($section['metrics']));
         $orderFields = array_column($section['order_by'], 'field');
         $fields = array_values(array_unique(array_merge($section['columns'], $section['group_by'], array_column($section['filters'], 'field'),
             array_filter(array_column($section['metrics'], 'field'), 'is_string'), array_diff($orderFields, $metricAliases))));
+        $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id'], requireCompleteScope: true,
+            referenceFields: $scope['entity_type'] === 'purchase_order' ? $fields : null);
+        if (count(array_unique($section['columns'])) !== count($section['columns'])
+            || count(array_unique($section['group_by'])) !== count($section['group_by'])) {
+            throw ValidationException::withMessages(['columns' => trans_message('ai_custom_reports.unsupported_fields')]);
+        }
         if ($fields === [] && $section['metrics'] !== []) {
             $fields = [$source['query']->getModel()->getKeyName()];
         }
@@ -117,6 +118,10 @@ final readonly class AssistantCustomReportBuilder
         };
         foreach ($projectionDependencies as $dependencies) {
             $selected = [...$selected, ...array_keys($dependencies)];
+        }
+        $purchaseOrderSupplierProjection = $projection instanceof AssistantPurchaseOrderReportProjection && in_array('supplier_name', $fields, true);
+        if ($purchaseOrderSupplierProjection) {
+            $selected = [...$selected, ...AssistantPurchaseOrderReportProjection::HIDDEN_FIELDS];
         }
         $assigneeProjection = $scope['entity_type'] === 'schedule_task' && in_array('assigned_user_name', $fields, true);
         if ($assigneeProjection) {
@@ -255,6 +260,9 @@ final readonly class AssistantCustomReportBuilder
                 }
                 $scope[$dependencyScope][$entityType] = array_values(array_unique(array_map('intval', array_filter($ids))));
             }
+        }
+        if ($purchaseOrderSupplierProjection) {
+            $scope['purchase_order_supplier_links'] = AssistantPurchaseOrderReportProjection::links($raw);
         }
         if ($paymentContractProjection) {
             $scope['contract_links'] = array_map(static fn (array $row): array => ['document_id' => (int) $row['id'],

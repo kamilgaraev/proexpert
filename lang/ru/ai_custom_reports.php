@@ -26,6 +26,8 @@ return [
     'assignee_id' => 'Идентификатор ответственного',
     'work_unit' => 'Единица измерения',
     'movement_datetime_msk' => 'Дата и время движения (МСК)',
+    'supplier_name' => 'Поставщик',
+    'external_supplier' => 'Внешний поставщик',
     'member_position' => 'Должность',
     'member_active' => 'Активен',
     'member_roles' => 'Роли в организации',

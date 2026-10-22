@@ -146,6 +146,13 @@ final readonly class AssistantCustomReportSource
             }
             $query = (new AssistantCompletedWorkReportProjection)->apply($query, $organizationId, array_keys($columnTypes), $related);
         }
+        if ($entityType === 'purchase_order') {
+            $fields['supplier_name'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.supplier_name')];
+            if ($referenceFields === null || in_array('supplier_name', $referenceFields, true)) {
+                $projection = new AssistantPurchaseOrderReportProjection($this->policy);
+                $query = $projection->apply($query, $actor, $organizationId);
+            }
+        }
         $permittedAliases = array_intersect_key($aliases, $fields);
         if ($permittedAliases !== []) {
             $grammar = $query->getQuery()->getGrammar();
