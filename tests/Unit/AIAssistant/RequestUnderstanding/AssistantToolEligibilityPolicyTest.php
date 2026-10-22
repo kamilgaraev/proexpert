@@ -38,6 +38,7 @@ final class AssistantToolEligibilityPolicyTest extends TestCase
 
         $this->assertTrue($policy->canExposeTool('get_project_snapshot', $understanding)->allowed);
         $this->assertTrue($policy->canExposeTool('search_projects', $understanding)->allowed);
+        $this->assertTrue($policy->canExposeTool('get_organization_quality_defect_control', $understanding)->allowed);
     }
 
     public function test_report_tools_are_blocked_without_explicit_report_generation_intent(): void

@@ -46,6 +46,7 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_quality_defect_control' => AssistantOrganizationQualityDefectControlReader::class,
         'get_rag_index_status' => AssistantRagIndexStatusReader::class,
         'get_organization_calculation_health' => AssistantOrganizationCalculationHealthReader::class,
         'get_organization_advance_settings' => AssistantAdvanceSettingsReader::class,
