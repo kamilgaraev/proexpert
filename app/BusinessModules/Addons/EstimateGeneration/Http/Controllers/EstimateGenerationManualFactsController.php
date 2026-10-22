@@ -44,8 +44,11 @@ final class EstimateGenerationManualFactsController extends Controller
     {
         $input = $request->validated();
         try {
-            return AdminResponse::success($save->handle($request->user(), (int) $project->id, (int) $session->id,
-                (int) $input['state_version'], $input['request_id'], ['entities' => $input['entities']]));
+            $result = $save->handle($request->user(), (int) $project->id, (int) $session->id,
+                (int) $input['state_version'], $input['request_id'], ['entities' => $input['entities']]);
+            $result['quantities'] = (object) $result['quantities'];
+
+            return AdminResponse::success($result);
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error('Данные оценки изменились. Обновите их перед сохранением.', 409);
         } catch (AuthorizationException) {
