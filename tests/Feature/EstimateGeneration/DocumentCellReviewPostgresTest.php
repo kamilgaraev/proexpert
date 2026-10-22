@@ -185,6 +185,28 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame([], app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null, ['equipment'], 'universal', $session->fresh()->input_payload])->sourceClaimReferences);
     }
 
+    public function test_public_review_reason_uses_the_same_unicode_byte_limit_as_the_existing_choice_contract(): void
+    {
+        [$session, $actor, $document] = $this->ordinaryWorkbook();
+        app(InitialProjectFactsWriter::class)->write($session, $actor);
+        $this->composeCells($session, $actor, publish: true);
+        $session = $session->fresh();
+        $reviews = app(ReviewSpreadsheetCellInterpretation::class);
+        $row = $reviews->rows($actor, $session, (int) $document->id)[0];
+        $input = [...$this->reviewRequest($session, $row), 'reason' => str_repeat('Я', 500)];
+        self::assertSame(1000, strlen($input['reason']));
+        self::assertSame(200, $this->postReview($actor, $session, $document, $input)->getStatusCode());
+        self::assertSame(200, $this->postReview($actor, $session, $document, $input)->getStatusCode());
+        try {
+            $this->postReview($actor, $session->fresh(), $document, [...$input, 'request_id' => (string) Str::uuid(), 'reason' => str_repeat('Я', 501)]);
+            self::fail('The public byte limit must reject 1002 UTF-8 bytes.');
+        } catch (\Illuminate\Validation\ValidationException $error) {
+            self::assertArrayHasKey('reason', $error->errors());
+        }
+        self::assertSame(1, EstimateGenerationLearningExample::query()->where('generation_session_id', $session->id)->count());
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_known_typed_native_sheet_keeps_its_previous_composer_wire_and_fingerprint(): void
     {
         [$session, $actor] = $this->ordinaryWorkbook(typed: true);
