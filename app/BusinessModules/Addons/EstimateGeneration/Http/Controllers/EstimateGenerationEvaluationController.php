@@ -138,7 +138,7 @@ final class EstimateGenerationEvaluationController extends Controller
     public function sources(Request $request, Project $project, EstimateGenerationSession $session, GetEvaluationPriceSources $sources): JsonResponse
     {
         $input = $request->validate(['work_item_key' => ['required', 'string', 'max:160'], 'source_type' => ['sometimes', 'in:catalog,work_type,supplier'],
-            'search' => ['sometimes', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'min:1', 'max:50']]);
+            'search' => ['sometimes', 'nullable', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'min:1', 'max:50']]);
 
         return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id, $input['work_item_key'],
             $input['source_type'] ?? 'catalog', $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25)))->header('Cache-Control', 'private, no-store');

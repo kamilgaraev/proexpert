@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvalua
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationPriceSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader;
@@ -19,7 +20,10 @@ use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Mockery;
@@ -27,6 +31,47 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_http_price_sources_accept_an_empty_optional_search_without_changing_the_session(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake();
+        [$actor, $session, $catalog, $item] = $this->fixture();
+        $url = $this->priceSourcesHttpRoute($actor, $session);
+        $before = $session->fresh()->getRawOriginal();
+        $outbound = count(Http::recorded());
+        foreach ([[], ['search' => ''], ['search' => '  '], ['search' => '  Отделка  '], ['search' => 'несовпадающее название']] as $search) {
+            $response = $this->getJson($url.'?'.http_build_query(['work_item_key' => $item['key'], 'source_type' => 'catalog',
+                'page' => 1, 'per_page' => 25, ...$search]))->assertOk()->assertJsonPath('success', true)
+                ->assertJsonPath('data.cost_units', '0')->assertJsonPath('data.work_item_key', $item['key'])
+                ->assertJsonPath('data.state_version', 0);
+            $matched = ($search['search'] ?? '') !== 'несовпадающее название';
+            $response->assertJsonCount($matched ? 1 : 0, 'data.sources')->assertJsonPath('data.pagination.total', $matched ? 1 : 0);
+            if ($matched) {
+                $response->assertJsonPath('data.sources.0.source_reference', 'catalog:'.$catalog->id)
+                    ->assertJsonPath('data.sources.0.compatible', true)->assertJsonPath('data.sources.0.unit_price', '10.0000');
+                self::assertMatchesRegularExpression('/\A[a-f0-9]{64}\z/', $response->json('data.sources.0.source_hash'));
+            }
+        }
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        self::assertSame(0, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($outbound, count(Http::recorded()));
+    }
+
+    public function test_http_price_sources_still_reject_a_nonstring_or_oversized_search(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake();
+        [$actor, $session, , $item] = $this->fixture();
+        $url = $this->priceSourcesHttpRoute($actor, $session);
+        $before = $session->fresh()->getRawOriginal();
+        foreach ([['unexpected' => 'Отделка'], str_repeat('x', 101)] as $search) {
+            $this->getJson($url.'?'.http_build_query(['work_item_key' => $item['key'], 'source_type' => 'catalog', 'search' => $search]))
+                ->assertUnprocessable()->assertJsonValidationErrors('search');
+        }
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+    }
+
     public function test_a_price_for_100_square_metres_is_selected_with_real_proof_and_no_fictitious_volume(): void
     {
         [$actor, $session, $catalog, $item] = $this->fixture();
@@ -328,6 +373,20 @@ final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanon
         self::assertNotSame($material['source_hash'], $otherSku['source_hash']);
         $catalog->update(['metadata' => [...$catalog->metadata, 'product_specification' => ['grade' => 'other']]]);
         self::assertNotSame($otherSku['source_hash'], $reader->readMaterialPrices((int) $session->organization_id, [$reference])[$reference]['source_hash']);
+    }
+
+    private function priceSourcesHttpRoute(User $actor, EstimateGenerationSession $session): string
+    {
+        config(['jwt.secret' => str_repeat('test-key', 8), 'jwt.blacklist_enabled' => false]);
+        $project = Project::query()->findOrFail($session->project_id);
+        Route::bind('project', static fn (): Project => $project);
+        Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
+        $route = '/_contract/price-search/projects/{project}/sessions/{session}/price-sources';
+        Route::get($route, [EstimateGenerationEvaluationController::class, 'sources'])
+            ->middleware(['auth:api_admin', SubstituteBindings::class]);
+        $this->withToken(auth('api_admin')->login($actor));
+
+        return str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route);
     }
 
     private function fixture(): array
