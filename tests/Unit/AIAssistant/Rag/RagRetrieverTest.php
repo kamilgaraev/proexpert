@@ -555,6 +555,59 @@ class RagRetrieverTest extends TestCase
         self::assertSame(0, $lexicalProvider->queryCalls);
     }
 
+    public function test_hybrid_lexical_refill_counts_unique_candidates_across_embedding_profiles(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        foreach (range(1, 16) as $index) {
+            $title = 'mirrorneedle current '.$index;
+            $this->indexChunk($organization->id, $project->id, $title, $title, [0.0, 1.0, 0.0]);
+            $source = RagSource::query()->where('title', $title)->firstOrFail();
+            $mirror = $source->replicate();
+            $mirror->identity_part_key = 'profile-mirror-'.$index;
+            $mirror->save();
+            foreach ($source->chunks as $chunk) {
+                $copy = $chunk->replicate();
+                $copy->source_id = $mirror->id;
+                $copy->embedding_provider = 'openai';
+                $copy->embedding_model = 'text-embedding-3-small';
+                $copy->save();
+            }
+        }
+        foreach (range(1, 64) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'mirrorneedle stale '.$index);
+            $this->indexLearning($example, [0.0, 1.0, 0.0]);
+            $example->update(['quality_flags' => ['do_not_index']]);
+        }
+        $this->indexChunk($organization->id, $project->id, 'mirrorneedle late', 'mirrorneedle late', [1.0, 0.0, 0.0]);
+        $first = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        $second = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0], 'openai', 'text-embedding-3-small');
+        $registry = new RagEmbeddingProviderRegistry($first);
+        (new \ReflectionProperty($registry, 'providers'))->setValue($registry, [
+            'openai|text-embedding-3-small|'.RagTestEmbedding::DIMENSIONS => $second,
+        ]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = (new RagRetriever($first, app(UserProjectAccessService::class), embeddingProviderRegistry: $registry))
+                ->search('mirrorneedle', $organization->id, $user,
+                    ['project_id' => $project->id, 'source_types' => ['project', 'estimate_generation_learning'], 'limit' => 8]);
+            $queries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        $lexicalQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "ai_rag_chunks" as "c"')));
+        self::assertCount(2, $lexicalQueries);
+        self::assertStringContainsString('limit 96', $lexicalQueries[0]['query']);
+        self::assertStringContainsString('limit 192', $lexicalQueries[1]['query']);
+        self::assertCount(8, $results);
+        self::assertSame('mirrorneedle late', $results[0]->title);
+        self::assertCount(8, array_unique(array_column($results, 'title')));
+        self::assertSame(['project'], array_values(array_unique(array_column($results, 'sourceType'))));
+        self::assertSame([$project->id], array_values(array_unique(array_column($results, 'projectId'))));
+        self::assertSame(1, $first->queryCalls);
+        self::assertSame(1, $second->queryCalls);
+    }
+
     public static function learningCandidatePools(): iterable
     {
         yield 'semantic' => ['semantic', 32];

@@ -897,7 +897,8 @@ final class RagRetriever
         $checkpoint?->__invoke();
         $learningRejected = false;
         $rows = $this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
-        if ($learningRejected && count(array_filter($rows, fn (object $row): bool => $this->lexicalScore($row, $terms) > 0)) < ($rankLimit ?? $limit)) {
+        $eligible = array_filter($rows, fn (object $row): bool => $this->lexicalScore($row, $terms) > 0);
+        if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < ($rankLimit ?? $limit)) {
             $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(
                 fn () => (clone $candidates)->limit($candidateLimit * 2)->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
             $rows = $this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
