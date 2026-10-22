@@ -134,6 +134,17 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
         self::assertCount(1, $exportItems);
         self::assertSame('10000', $exportItems[0]['quantity']);
         self::assertSame('13717419.64', $exportItems[0]['total_cost']);
+        self::assertCount(1, $exportItems[0]['labor']);
+        $exportLabor = $exportItems[0]['labor'][0];
+        self::assertSame('1.111111', (string) BigDecimal::of($exportLabor['quantity_per_unit'])->strippedOfTrailingZeros());
+        self::assertSame('0.01111111', (string) BigDecimal::of($exportLabor['quantity_per_work_unit'])->strippedOfTrailingZeros());
+        self::assertSame('111.1111', (string) BigDecimal::of($exportLabor['quantity'])->strippedOfTrailingZeros());
+        self::assertSame('123456.7891', (string) BigDecimal::of($exportLabor['unit_price'])->strippedOfTrailingZeros());
+        self::assertSame('h', $exportLabor['unit']);
+        self::assertSame($catalog['norm_id'], $exportLabor['normative_ref']['norm_id']);
+        self::assertSame($catalog['resource_id'], $exportLabor['normative_ref']['norm_resource_id']);
+        self::assertSame($catalog['price_id'], $exportLabor['normative_ref']['price_id']);
+        self::assertSame($source->id, $exportItems[0]['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
         ob_start();
         try {
             app(EstimateGenerationCsvExporter::class)->stream($export->draft_payload);
