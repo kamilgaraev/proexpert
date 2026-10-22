@@ -131,7 +131,24 @@ final class OfficialFormsExcelLayoutTest extends TestCase
         }
     }
 
-    private function render(string $form, int $count = 1, bool $certificate = false, bool $large = false): Worksheet
+    public function test_short_three_work_act_keeps_both_signatures_within_landscape_height(): void
+    {
+        $sheet = $this->render('KS2', 3, false, false, true);
+        $height = 0;
+        foreach ($sheet->getRowIterator() as $row) {
+            $height += $sheet->getRowDimension($row->getRowIndex())->getRowHeight();
+        }
+
+        self::assertLessThanOrEqual(535, $height);
+        self::assertSame('Arial', $sheet->getParent()->getDefaultStyle()->getFont()->getName());
+        self::assertSame(10.0, $sheet->getParent()->getDefaultStyle()->getFont()->getSize());
+        self::assertSame(2, substr_count($this->text($sheet), '(подпись)'));
+        self::assertStringContainsString('Окраска стен водно-дисперсионной краской в два слоя', $this->text($sheet));
+        self::assertEquals(900, $sheet->getCell('H'.$this->findRow($sheet, 'Всего по Акту', 'C'))->getValue());
+        self::assertEquals(0, $sheet->getPageSetup()->getFitToHeight());
+    }
+
+    private function render(string $form, int $count = 1, bool $certificate = false, bool $large = false, bool $shortAct = false): Worksheet
     {
         $contract = new Contract;
         $contract->setRawAttributes(['id' => 1, 'number' => 'Д-УЧ/2026', 'date' => '2026-01-01', 'is_fixed_amount' => true, 'total_amount' => 100000]);
@@ -139,6 +156,9 @@ final class OfficialFormsExcelLayoutTest extends TestCase
         $first->setRawAttributes(['name' => 'Заказчик', 'legal_name' => 'ООО Заказчик договора', 'inn' => '7700000001', 'legal_address' => 'Адрес заказчика']);
         if ($large) {
             $first->legal_name = str_repeat('Полное наименование организации ', 7);
+        }
+        if ($shortAct) {
+            $first->legal_address = str_repeat('Учебный адрес, ', 8);
         }
         $second = new ContractParty;
         $second->setRawAttributes(['name' => 'Подрядчик', 'legal_name' => 'ИП Подрядчик договора', 'inn' => '7700000002', 'legal_address' => 'Адрес подрядчика']);
@@ -156,6 +176,9 @@ final class OfficialFormsExcelLayoutTest extends TestCase
         for ($index = 1; $index <= $count; $index++) {
             $line = new PerformanceActLine;
             $line->setRawAttributes(['id' => $index, 'title' => 'Работа '.$index.($count > 1 ? ' — '.str_repeat('подготовка поверхности и устройство покрытия ', 4) : ''), 'unit' => 'м²', 'quantity' => 2.5, 'unit_price' => 120, 'amount' => 300, 'manual_reason' => 'Учебное примечание', 'basis_snapshot' => json_encode(['estimate_item' => ['position_number' => '02.01', 'normative_rate_code' => 'ГЭСН-15-02-001-01']])]);
+            if ($shortAct) {
+                $line->title = ['Подготовка поверхности стен под штукатурку', 'Штукатурка стен гипсовой смесью', 'Окраска стен водно-дисперсионной краской в два слоя'][$index - 1];
+            }
             if ($large) {
                 $line->amount = $act->amount;
                 $line->unit_price = (float) $act->amount / 2.5;
