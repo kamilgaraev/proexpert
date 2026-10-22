@@ -931,7 +931,7 @@ class AIAssistantService
                     if (! $organization instanceof Organization) {
                         $organization = $this->resolveOrganization($organizationId);
                     }
-                    $this->handleToolCall(
+                    $toolResult = $this->handleToolCall(
                         $toolCall,
                         $organization,
                         $user,
@@ -944,6 +944,10 @@ class AIAssistantService
                         $proposedActions,
                         $trustedDownloadUrls
                     );
+                    if ($toolName === 'generate_custom_report') {
+                        $reportClarification = is_array($toolResult) && ($toolResult['needs_clarification'] ?? false) === true
+                            ? $toolResult : null;
+                    }
                 }
 
                 $response['content'] = trans_message('ai_assistant_facts.live_proof_required');

@@ -553,6 +553,55 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         self::assertSame([], $response['message']['metadata']['source_refs']);
     }
 
+    public function test_last_provider_call_preserves_the_generator_current_project_clarification(): void
+    {
+        config(['ai-assistant-credits.profiles.normal.max_calls' => 4]);
+        $this->actor = $this->fixture->owner;
+        $this->actingAs($this->actor);
+        $report = ['title' => 'Учебные заявки', 'format' => 'csv', 'sections' => [$this->section('Заявки', [])]];
+        $provider = $this->createMock(SiteRequestReportResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->method('isAvailable')->willReturn(true);
+        $provider->method('countTokens')->willReturn(100);
+        $provider->expects(self::never())->method('chat');
+        $calls = 0;
+        $provider->expects(self::exactly(4))->method('responses')->willReturnCallback(static function () use (&$calls, $report): array {
+            $last = ++$calls === 4;
+            $id = 'last-project-report-'.$calls;
+            $call = ['type' => 'function_call', 'id' => $id, 'status' => 'completed', 'call_id' => $id,
+                'name' => $last ? 'generate_custom_report' : 'describe_custom_report_source',
+                'arguments' => json_encode($last ? $report : ['domain' => 'site_requests', 'entity_type' => 'site_request', 'project_id' => null], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
+
+            return ['content' => '', 'output' => [$call], 'function_calls' => [$call], 'input_tokens' => 100,
+                'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        });
+        $clarifications = 0;
+        $logging = $this->createMock(LoggingService::class);
+        $logging->method('technical')->willReturnCallback(static function (string $event, array $context) use (&$clarifications): void {
+            if ($event === 'ai.assistant.current_project_scope_unavailable') {
+                self::assertSame('current_project_required', $context['reason']);
+                $clarifications++;
+            }
+        });
+        $this->app->instance(LoggingService::class, $logging);
+        $files = $this->createMock(FileService::class);
+        $files->expects(self::never())->method('putPrivate');
+        $this->app->instance(FileService::class, $files);
+        $org = $this->fixture->organization;
+        app(AICreditService::class)->grant($org, 100000, 'purchase', null, 'last-project-report-'.Str::uuid());
+        $query = 'Собери CSV по заявкам текущего проекта с полями название и статус.';
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false];
+        $payload['quote_id'] = app(AICreditService::class)->quote($org, $this->actor, $payload)['quote_id'];
+        $service = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null]);
+        $response = $service->ask($query, (int) $org->id, $this->actor, null, $payload);
+        self::assertSame(4, $clarifications);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame(trans_message('ai_assistant_facts.live_proof_required'), $response['message']['content']);
+        self::assertSame('partial', $response['message']['metadata']['validation_status']);
+        self::assertSame([], $response['message']['metadata']['artifacts']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
     public static function reportFailures(): array
     {
         return ['row limit' => ['row_limit'], 'unavailable source' => ['unavailable'], 'internal failure' => ['internal']];
