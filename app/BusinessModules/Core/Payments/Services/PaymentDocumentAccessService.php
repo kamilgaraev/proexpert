@@ -10,6 +10,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractAccessService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -46,14 +47,18 @@ final class PaymentDocumentAccessService
         $query->useWritePdo()->whereExists($this->membership($actor, $organizationId));
         $projectQuery = $this->projects->queryAccessibleProjects($actor, $organizationId, true)
             ->useWritePdo()->select('projects.id');
-        $organizationPermission = $this->hasPermission($actor, $permission, ['organization_id' => $organizationId]);
+        $organizationPermission = ApiQueryMetrics::measureProcessingPhase('payment_scope_org_permission',
+            fn (): bool => $this->hasPermission($actor, $permission, ['organization_id' => $organizationId]));
         if (! $organizationPermission) {
             $permitted = [];
             foreach ((clone $projectQuery)->pluck('projects.id') as $projectId) {
-                AuthorizationContext::getProjectContext((int) $projectId, $organizationId);
-                if ($this->hasPermission($actor, $permission, [
-                    'organization_id' => $organizationId, 'project_id' => (int) $projectId, 'strict_project_scope' => true,
-                ])) {
+                if (ApiQueryMetrics::measureProcessingPhase('payment_scope_project_permission', function () use ($actor, $permission, $organizationId, $projectId): bool {
+                    AuthorizationContext::getProjectContext((int) $projectId, $organizationId);
+
+                    return $this->hasPermission($actor, $permission, [
+                        'organization_id' => $organizationId, 'project_id' => (int) $projectId, 'strict_project_scope' => true,
+                    ]);
+                })) {
                     $permitted[] = (int) $projectId;
                 }
             }

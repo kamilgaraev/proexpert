@@ -28,13 +28,97 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\UserAuthSession;
 use App\Services\Auth\WebAuthTokenService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
 final class PaymentCalendarProjectScopeSecurityTest extends TestCase
 {
+    #[\PHPUnit\Framework\Attributes\DataProvider('calendarPermissionModes')]
+    public function test_calendar_scope_profile_distinguishes_callback_calls_and_permission_evaluations(bool $organizationPermission): void
+    {
+        [$fixture, $actor, $allowed] = $this->context($organizationPermission ? ['payments.schedule.view'] : []);
+        $this->budget($fixture->organization->id, [[$allowed->id, 100]]);
+        $request = Request::create('/api/v1/admin/payments/documents/calendar', 'GET');
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $originalRequest = app('request');
+        $documentCalls = 0;
+        $projectCalls = 0;
+        $access = app(PaymentDocumentAccessService::class);
+        app()->instance('request', $request);
+        try {
+            $items = app(PaymentCalendarSourceService::class)->collect($this->filters($fixture->organization->id),
+                scopeDocument: function (Builder $query) use ($access, $fixture, $actor, &$documentCalls): Builder {
+                    $documentCalls++;
+
+                    return $access->scope($query, $fixture->organization->id, $actor, 'payments.schedule.view');
+                },
+                scopeProjects: function (Builder $query) use ($access, $fixture, $actor, &$projectCalls): Builder {
+                    $projectCalls++;
+
+                    return $access->scopeProjects($query, $fixture->organization->id, $actor, 'payments.schedule.view');
+                });
+        } finally {
+            app()->instance('request', $originalRequest);
+        }
+
+        self::assertCount($organizationPermission ? 1 : 0, $items);
+        self::assertGreaterThan(0, $documentCalls);
+        self::assertGreaterThan(0, $projectCalls);
+        $phases = $metrics->summary()['processing_phases'];
+        self::assertSame($documentCalls, $phases['calendar_document_scope']['count']);
+        self::assertSame($projectCalls, $phases['calendar_project_scope']['count']);
+        self::assertSame($documentCalls + $projectCalls, $phases['payment_scope_org_permission']['count']);
+        if ($organizationPermission) {
+            self::assertArrayNotHasKey('payment_scope_project_permission', $phases);
+        } else {
+            self::assertGreaterThan(0, $phases['payment_scope_project_permission']['count']);
+        }
+        foreach (['calendar_document_scope', 'calendar_project_scope', 'payment_scope_org_permission', 'payment_scope_project_permission'] as $name) {
+            foreach ($phases[$name] ?? [] as $key => $value) {
+                self::assertContains($key, ['count', 'total_ms', 'max_ms', 'sql_count', 'sql_total_ms', 'process_cpu_ms']);
+                self::assertTrue(is_int($value) || is_float($value));
+                self::assertGreaterThanOrEqual(0, $value);
+            }
+        }
+    }
+
+    public static function calendarPermissionModes(): array
+    {
+        return [[true], [false]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('calendarCollectionMethods')]
+    public function test_calendar_scope_profile_preserves_the_original_callback_exception(string $method): void
+    {
+        $request = Request::create('/api/v1/admin/payments/documents/calendar', 'GET');
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $originalRequest = app('request');
+        $failure = new \RuntimeException('calendar scope fixture');
+        app()->instance('request', $request);
+        try {
+            app(PaymentCalendarSourceService::class)->{$method}($this->filters(1),
+                scopeDocument: static function (Builder $query) use ($failure): never { throw $failure; });
+            self::fail('The original scope exception must propagate.');
+        } catch (\RuntimeException $actual) {
+            self::assertSame($failure, $actual);
+        } finally {
+            app()->instance('request', $originalRequest);
+        }
+        self::assertSame(1, $metrics->summary()['processing_phases']['calendar_document_scope']['count']);
+        self::assertArrayNotHasKey('calendar_project_scope', $metrics->summary()['processing_phases']);
+    }
+
+    public static function calendarCollectionMethods(): array
+    {
+        return [['collect'], ['collectUndated']];
+    }
+
     public function test_calendar_budget_plans_hide_unassigned_projects_before_totals(): void
     {
         [$fixture, $actor, $allowed, $restricted] = $this->context();
