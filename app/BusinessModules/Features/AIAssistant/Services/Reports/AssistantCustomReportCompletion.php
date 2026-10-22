@@ -19,7 +19,7 @@ final class AssistantCustomReportCompletion
             && ! AssistantPublishedReportIntent::readinessMatches($message, $understanding);
     }
 
-    public static function toolChoice(array $plan, array $tools, array $results, array $attemptedTools = []): ?array
+    public static function toolChoice(array $plan, array $tools, array $results, array $attemptedTools = [], array $sourceHints = []): ?array
     {
         if (! self::requiresFile($plan)) {
             return null;
@@ -28,9 +28,11 @@ final class AssistantCustomReportCompletion
         if (! in_array('generate_custom_report', $advertised, true)) {
             return null;
         }
-        if (array_intersect(['generate_custom_report', 'generate_published_report', 'check_published_report_readiness'],
-            [...$attemptedTools, ...array_column($results, '_tool_name')]) !== []) {
-            return null;
+        foreach ([...$attemptedTools, ...array_column($results, '_tool_name')] as $toolName) {
+            if ($toolName === 'check_published_report_readiness'
+                || (str_starts_with($toolName, 'generate_') && str_ends_with($toolName, '_report'))) {
+                return null;
+            }
         }
         foreach ($results as $result) {
             if (($result['needs_clarification'] ?? false) === true) {
@@ -38,11 +40,11 @@ final class AssistantCustomReportCompletion
             }
         }
 
-        return self::hasSource($results, $plan['request_understanding']['output_format'])
+        return self::hasSource($results, $plan['request_understanding']['output_format'], $sourceHints)
             ? ['type' => 'function', 'function' => ['name' => 'generate_custom_report']] : null;
     }
 
-    public static function missingFile(array $plan, bool $terminal, array $results, array $artifacts, array $controls, array $attemptedTools = []): bool
+    public static function missingFile(array $plan, array $results, array $artifacts, array $controls): bool
     {
         if (! self::requiresFile($plan) || $artifacts !== [] || $controls !== []) {
             return false;
@@ -53,22 +55,31 @@ final class AssistantCustomReportCompletion
             }
         }
 
-        return $terminal || self::hasSource($results, $plan['request_understanding']['output_format'])
-            || in_array('generate_custom_report', [...$attemptedTools, ...array_column($results, '_tool_name')], true);
+        return true;
     }
 
-    private static function hasSource(array $results, string $format): bool
+    private static function hasSource(array $results, string $format, array $sourceHints): bool
     {
         foreach ($results as $result) {
             if (($result['_tool_name'] ?? null) === 'describe_custom_report_source' && ($result['status'] ?? null) === 'success'
-                && is_string($result['domain'] ?? null) && $result['domain'] !== ''
-                && is_string($result['entity_type'] ?? null) && $result['entity_type'] !== ''
-                && is_array($result['fields'] ?? null) && $result['fields'] !== []
+                && self::hasFields($result)
                 && in_array($format, $result['formats'] ?? [], true)) {
+                return true;
+            }
+        }
+        foreach ($sourceHints as $hint) {
+            if (self::hasFields($hint)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static function hasFields(array $source): bool
+    {
+        return is_string($source['domain'] ?? null) && $source['domain'] !== ''
+            && is_string($source['entity_type'] ?? null) && $source['entity_type'] !== ''
+            && is_array($source['fields'] ?? null) && $source['fields'] !== [];
     }
 }

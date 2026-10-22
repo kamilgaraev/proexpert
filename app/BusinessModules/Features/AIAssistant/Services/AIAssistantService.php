@@ -122,6 +122,8 @@ class AIAssistantService
 
     private array $activeToolResults = [];
 
+    private array $activeCustomReportSources = [];
+
     private array $providerUsageAttempts = [];
 
     private ?array $pendingSummary = null;
@@ -203,6 +205,7 @@ class AIAssistantService
         $this->activeActor = $user;
         $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
         $this->activeToolResults = [];
+        $this->activeCustomReportSources = [];
         $this->documentContextBlocked = false;
         $this->pendingSummary = null;
         $this->requestOutcome = null;
@@ -218,6 +221,7 @@ class AIAssistantService
             } finally {
                 $this->activeActor = null;
                 $this->activeToolResults = [];
+                $this->activeCustomReportSources = [];
                 $this->documentContextBlocked = false;
             }
         }
@@ -242,6 +246,7 @@ class AIAssistantService
             $this->activeRequest = null;
             $this->activeActor = null;
             $this->activeToolResults = [];
+            $this->activeCustomReportSources = [];
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
@@ -264,6 +269,7 @@ class AIAssistantService
         $this->activeActor = $user;
         $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
         $this->activeToolResults = [];
+        $this->activeCustomReportSources = [];
         $this->documentContextBlocked = false;
         $this->pendingSummary = null;
         $this->requestOutcome = null;
@@ -294,6 +300,7 @@ class AIAssistantService
             $this->activeRequest = null;
             $this->activeActor = null;
             $this->activeToolResults = [];
+            $this->activeCustomReportSources = [];
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
@@ -661,7 +668,7 @@ class AIAssistantService
 
             while ($loopCount < $maxLoops) {
                 if (empty($response['function_calls'])) {
-                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools);
+                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools, $this->activeCustomReportSources);
                     if ($reportToolChoice === null) {
                         break;
                     }
@@ -857,7 +864,7 @@ class AIAssistantService
                 }
 
                 if ($loopCount === $maxLoops - 1) {
-                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools);
+                    $reportToolChoice = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::toolChoice($taskPlan, $tools, $this->activeToolResults, $attemptedTools, $this->activeCustomReportSources);
                     if ($reportToolChoice !== null) {
                         $options['tool_choice'] = $reportToolChoice;
                     }
@@ -1212,18 +1219,21 @@ class AIAssistantService
 
                     continue;
                 }
-                if (($activeResult['_tool_name'] ?? null) !== 'generate_custom_report' || ($activeResult['status'] ?? null) !== 'success') {
+                $reportTool = (string) ($activeResult['_tool_name'] ?? '');
+                if (! str_starts_with($reportTool, 'generate_') || ! str_ends_with($reportTool, '_report')
+                    || ($activeResult['status'] ?? null) !== 'success') {
                     continue;
                 }
                 $artifacts = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService::class)
-                    ->artifactsFromToolResult('generate_custom_report', $activeResult, $this->resolveOrganization($organizationId), $user);
+                    ->artifactsFromToolResult($reportTool, $activeResult, $this->resolveOrganization($organizationId), $user);
                 $reportArtifacts = [...$reportArtifacts, ...$this->filterAgentArtifactsForOrganization($organizationId, $artifacts, (int) $user->id)];
                 $reportReferences = [...$reportReferences, ...($activeResult['source_refs'] ?? [])];
             }
             if ($reportArtifacts !== [] && $requestProjectScope->allowsReferences($reportReferences, $verificationToolResults)) {
                 $hasPublishedTask = array_filter($reportArtifacts, static fn (array $artifact): bool => ($artifact['artifact_type'] ?? null) === 'core_report_task') !== [];
+                $hasLegacyReport = array_filter($reportArtifacts, static fn (array $artifact): bool => isset($artifact['source_tool']) && $artifact['source_tool'] !== 'generate_custom_report') !== [];
                 $assistantContent = $reportPresentation->artifacts($reportArtifacts);
-                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $hasPublishedTask ? 'partial' : 'verified',
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $hasPublishedTask || $hasLegacyReport ? 'partial' : 'verified',
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = false;
             } else {
@@ -1238,7 +1248,7 @@ class AIAssistantService
                 $degradedMode = ! $validated;
             }
             $missingCustomReport = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::missingFile(
-                $taskPlan, $terminalToolResponse, $this->activeToolResults, $reportArtifacts, $reportControls, $attemptedTools
+                $taskPlan, $this->activeToolResults, $reportArtifacts, $reportControls
             );
             if ($missingCustomReport) {
                 if ($this->requestOutcome === null) {
@@ -3725,6 +3735,7 @@ class AIAssistantService
                 && \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($currentQuery, $understanding)) {
                 $reportSources = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints::class)
                     ->forRequest($this->activeActor, (int) $this->activeActor->current_organization_id, $currentQuery, $understanding);
+                $this->activeCustomReportSources = $reportSources;
                 $messages[] = ['role' => 'system', 'content' => json_encode(['kind' => 'custom_report_sources', 'sources' => $reportSources],
                     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
             }

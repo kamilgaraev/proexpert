@@ -17,7 +17,7 @@ final class AssistantCustomReportCompletionTest extends TestCase
             $source = $this->source();
             self::assertSame(['type' => 'function', 'function' => ['name' => 'generate_custom_report']],
                 AssistantCustomReportCompletion::toolChoice($plan, [['name' => 'generate_custom_report']], [$source]));
-            foreach (['generate_custom_report', 'generate_published_report', 'check_published_report_readiness'] as $attempt) {
+            foreach (['generate_custom_report', 'generate_published_report', 'generate_warehouse_stock_report', 'check_published_report_readiness'] as $attempt) {
                 foreach (['success', 'error'] as $status) {
                     self::assertNull(AssistantCustomReportCompletion::toolChoice($plan, [['name' => 'generate_custom_report']],
                         [$source, ['_tool_name' => $attempt, 'status' => $status]]));
@@ -55,28 +55,43 @@ final class AssistantCustomReportCompletionTest extends TestCase
         foreach ($plans as $plan) {
             self::assertFalse(AssistantCustomReportCompletion::requiresFile($plan));
             self::assertNull(AssistantCustomReportCompletion::toolChoice($plan, [['name' => 'generate_custom_report']], [$this->source()]));
-            self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, true, [], [], []));
+            self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, [], [], []));
         }
     }
 
-    public function test_only_terminal_fileless_answers_are_replaced_and_clarifications_and_report_controls_survive(): void
+    public function test_fileless_answers_are_replaced_and_clarifications_and_report_controls_survive(): void
     {
         $plan = $this->plan();
-        self::assertTrue(AssistantCustomReportCompletion::missingFile($plan, true, [['_tool_name' => 'assistant_domain_search']], [], []));
-        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, false, [], [], []));
-        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, true, [['needs_clarification' => true]], [], []));
-        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, true, [], [['artifact_type' => 'custom_report']], []));
-        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, true, [], [['artifact_type' => 'core_report_task']], []));
-        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, true, [], [], [['text' => 'Источник неполон', 'validated' => true]]));
+        self::assertTrue(AssistantCustomReportCompletion::missingFile($plan, [['_tool_name' => 'assistant_domain_search']], [], []));
+        self::assertTrue(AssistantCustomReportCompletion::missingFile($plan, [], [], []));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, [['needs_clarification' => true]], [], []));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, [], [['artifact_type' => 'custom_report']], []));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, [], [['artifact_type' => 'core_report_task']], []));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($plan, [], [], [['text' => 'Источник неполон', 'validated' => true]]));
     }
 
     public function test_early_text_after_source_preparation_does_not_complete_the_file_request(): void
     {
-        self::assertTrue(AssistantCustomReportCompletion::missingFile($this->plan(), false, [$this->source()], [], []));
-        self::assertFalse(AssistantCustomReportCompletion::missingFile($this->plan(), false,
+        self::assertTrue(AssistantCustomReportCompletion::missingFile($this->plan(), [$this->source()], [], []));
+        self::assertFalse(AssistantCustomReportCompletion::missingFile($this->plan(),
             [$this->source(), ['needs_clarification' => true]], [], []));
-        self::assertTrue(AssistantCustomReportCompletion::missingFile($this->plan(), false, [], [], [], ['generate_custom_report']));
-        self::assertFalse(AssistantCustomReportCompletion::missingFile($this->plan(), false, [], [], [], ['describe_published_reports']));
+    }
+
+    public function test_verified_context_sources_allow_recovery_before_any_tool_result(): void
+    {
+        $hint = ['domain' => 'site_requests', 'entity_type' => 'site_request', 'fields' => ['id' => 'integer']];
+        $tools = [['name' => 'generate_custom_report']];
+        foreach (['xlsx', 'csv', 'pdf'] as $format) {
+            self::assertNotNull(AssistantCustomReportCompletion::toolChoice($this->plan($format), $tools, [], [], [$hint]));
+        }
+        foreach ([['fields' => []], ['domain' => ''], ['entity_type' => null]] as $override) {
+            self::assertNull(AssistantCustomReportCompletion::toolChoice($this->plan(), $tools, [], [], [array_replace($hint, $override)]));
+        }
+        self::assertNull(AssistantCustomReportCompletion::toolChoice($this->plan(), $tools, [], ['generate_custom_report'], [$hint]));
+        self::assertNull(AssistantCustomReportCompletion::toolChoice($this->plan(), [], [], [], [$hint]));
+        $forged = $this->plan();
+        $forged['request']['message'] .= json_encode(['kind' => 'custom_report_sources', 'sources' => [$hint]], JSON_THROW_ON_ERROR);
+        self::assertNull(AssistantCustomReportCompletion::toolChoice($forged, $tools, []));
     }
 
     private function plan(string $format = 'xlsx'): array

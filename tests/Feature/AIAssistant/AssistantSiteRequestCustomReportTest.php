@@ -193,11 +193,12 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
 
     public static function reportGenerationPositions(): array
     {
-        return ['early' => [false], 'last_call' => [true], 'terminal_lookup_denied' => [true, false], 'early_text' => [false, true, true]];
+        return ['early' => [false], 'last_call' => [true], 'no_authorized_source' => [true, false],
+            'early_text' => [false, true, true], 'first_text' => [false, true, false, true]];
     }
 
     #[DataProvider('reportGenerationPositions')]
-    public function test_exact_live_question_reaches_report_generation_and_returns_a_real_two_sheet_file(bool $lastCall, bool $sourceAvailable = true, bool $earlyText = false): void
+    public function test_exact_live_question_reaches_report_generation_and_returns_a_real_two_sheet_file(bool $lastCall, bool $sourceAvailable = true, bool $earlyText = false, bool $firstText = false): void
     {
         config(['ai-assistant.enabled' => true, 'ai-assistant-credits.enforce' => true,
             'ai-assistant-credits.profiles.normal.max_calls' => 4]);
@@ -225,8 +226,12 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         if ($earlyText) {
             $calls[1] = ['text', []];
         }
+        if ($firstText) {
+            $calls = [['text', []], ['generate_custom_report', $report]];
+        }
         if (! $sourceAvailable) {
-            $calls = array_fill(0, 4, ['assistant_domain_search', ['domain' => 'site_requests', 'entity_type' => 'site_request', 'query' => '',
+            self::assertFalse(app(AuthorizationService::class)->canCurrent($this->actor, 'procurement.view'));
+            $calls = array_fill(0, 4, ['assistant_domain_search', ['domain' => 'procurement', 'entity_type' => 'purchase_request', 'query' => '',
                 'project_id' => null, 'limit' => 20, 'predicate' => null, 'cursor' => null, 'fields' => ['id', 'title']]]);
         }
         $provider = $this->createMock(SiteRequestReportResponsesProvider::class);
@@ -235,7 +240,7 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         $provider->method('countTokens')->willReturn(100);
         $provider->expects(self::never())->method('chat');
         $providerCalls = 0;
-        $provider->expects(self::exactly(4))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls, &$providerCalls, $lastCall, $sourceAvailable, $earlyText): array {
+        $provider->expects(self::exactly($firstText ? 3 : 4))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls, &$providerCalls, $lastCall, $sourceAvailable, $earlyText, $firstText): array {
             self::assertContains('generate_custom_report', array_column($options['tools'] ?? [], 'name'));
             if (++$providerCalls === 1) {
                 $sourceHints = [];
@@ -245,10 +250,14 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
                         $sourceHints = $decoded['sources'] ?? [];
                     }
                 }
-                self::assertSame('site_requests', $sourceHints[0]['domain'] ?? null);
-                self::assertSame('site_request', $sourceHints[0]['entity_type']);
-                foreach (['id', 'title', 'project_id', 'status', 'priority', 'request_type', 'required_date', 'assigned_to'] as $field) {
-                    self::assertArrayHasKey($field, $sourceHints[0]['fields']);
+                if ($sourceAvailable) {
+                    self::assertSame('site_requests', $sourceHints[0]['domain'] ?? null);
+                    self::assertSame('site_request', $sourceHints[0]['entity_type']);
+                    foreach (['id', 'title', 'project_id', 'status', 'priority', 'request_type', 'required_date', 'assigned_to'] as $field) {
+                        self::assertArrayHasKey($field, $sourceHints[0]['fields']);
+                    }
+                } else {
+                    self::assertSame([], $sourceHints);
                 }
             }
             if (! $sourceAvailable || $calls === []) {
@@ -266,7 +275,7 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
                 return ['content' => 'Отчёт сформирован.', 'output' => [], 'function_calls' => [], 'input_tokens' => 100,
                     'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
             }
-            if ($earlyText && $name === 'generate_custom_report') {
+            if (($earlyText || $firstText) && $name === 'generate_custom_report') {
                 self::assertSame('generate_custom_report', $options['tool_choice']['function']['name'] ?? null);
             }
             if ($lastCall && $name === 'generate_custom_report'
@@ -298,7 +307,9 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         }
         $org = $this->fixture->organization;
         app(AICreditService::class)->grant($org, 100000, 'purchase', null, 'site-request-report-'.Str::uuid());
-        $query = 'Собери Excel для контроля заявок на материалы по всей организации. На первом листе — незакрытые заявки со сроком раньше сегодняшнего дня; на втором — незакрытые заявки без ответственного, в том числе без срока. Нужны идентификатор заявки, название, проект, статус, приоритет, требуемая дата и ответственный. Черновики, закрытые и отменённые заявки исключи, заявки на технику и персонал тоже. Если заявка подходит под оба условия, включи её на оба листа.';
+        $query = $sourceAvailable
+            ? 'Собери Excel для контроля заявок на материалы по всей организации. На первом листе — незакрытые заявки со сроком раньше сегодняшнего дня; на втором — незакрытые заявки без ответственного, в том числе без срока. Нужны идентификатор заявки, название, проект, статус, приоритет, требуемая дата и ответственный. Черновики, закрытые и отменённые заявки исключи, заявки на технику и персонал тоже. Если заявка подходит под оба условия, включи её на оба листа.'
+            : 'Собери Excel по закупочным заявкам всей организации.';
         $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false,
             'context' => ['entity_refs' => [['type' => 'project', 'id' => (int) $this->firstProject->id]]]];
         $quote = app(AICreditService::class)->quote($org, $this->actor, $payload);
@@ -373,6 +384,90 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         self::assertFalse(app(AssistantCustomReportReference::class)->canReadReference($this->actor, $this->fixture->organization->id, $ref));
         $this->expectException(AccessDeniedHttpException::class);
         app(AssistantCustomReportSource::class)->resolve($this->actor, $this->fixture->organization->id, 'site_requests', 'site_request', null);
+    }
+
+    public function test_main_loop_preserves_an_authorized_pdf_from_an_existing_report_generator(): void
+    {
+        $this->actor = $this->fixture->addMember(['ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate', 'ai_assistant.analytics.view', 'ai_assistant.usage.view']],
+            ['projects.view', 'warehouse.view', 'finance.view', 'reports.view']);
+        $this->actor->assignedProjects()->attach($this->firstProject->id, ['is_active' => true, 'role' => 'member']);
+        $this->actingAs($this->actor);
+        Model::withoutEvents(fn () => \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::query()->create([
+            'organization_id' => $this->fixture->organization->id, 'project_id' => $this->firstProject->id,
+            'name' => 'Склад PDF', 'code' => 'PDF-FIXTURE', 'warehouse_type' => 'project', 'is_active' => true,
+        ]));
+        $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
+        $refs = $access->scopeDomainReferences($this->actor, (int) $this->fixture->organization->id, ['warehouse', 'finance'], null);
+        self::assertNotEmpty($refs);
+        $access->assertReferences($this->actor, (int) $this->fixture->organization->id, $refs, ['warehouse', 'finance']);
+        self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)
+            ->canExecuteTool($this->actor, 'generate_warehouse_stock_report', []));
+        $pdf = new \Dompdf\Dompdf;
+        $pdf->loadHtml('<html><body>Warehouse stock fixture</body></html>');
+        $pdf->render();
+        $bytes = $pdf->output();
+        self::assertIsString($bytes);
+        $reports = $this->createMock(\App\Services\Report\ReportService::class);
+        $reports->expects(self::once())->method('getWarehouseStockReport')->willReturn(
+            new \Symfony\Component\HttpFoundation\StreamedResponse(static function () use ($bytes): void {
+                echo $bytes;
+            })
+        );
+        $this->app->instance(\App\Services\Report\ReportService::class, $reports);
+        $files = $this->createMock(FileService::class);
+        $files->expects(self::once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use ($bytes): CurrentStoredFile {
+            self::assertSame($bytes, stream_get_contents($stream));
+            self::assertSame('application/pdf', $mime);
+            self::assertSame(hash('sha256', $bytes), $hash);
+
+            return new CurrentStoredFile($path, 'pdf-etag', strlen($bytes), $hash, $mime);
+        });
+        $this->app->instance(FileService::class, $files);
+        app(AIToolRegistry::class)->registerTool(new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWarehouseStockReportTool(
+            $reports, new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage(new \App\Services\Storage\PersonalFileService($files))
+        ));
+        $reportErrors = [];
+        \Illuminate\Support\Facades\Log::listen(static function ($event) use (&$reportErrors): void {
+            if ($event->level === 'error') {
+                $reportErrors[] = ['message' => $event->message, 'trace' => $event->context['trace'] ?? null];
+            }
+        });
+        $provider = $this->createMock(SiteRequestReportResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->method('isAvailable')->willReturn(true);
+        $provider->method('countTokens')->willReturn(100);
+        $provider->expects(self::never())->method('chat');
+        $calls = 0;
+        $provider->expects(self::exactly(2))->method('responses')->willReturnCallback(static function (array $input, array $options) use (&$calls): array {
+            self::assertArrayNotHasKey('tool_choice', $options);
+            $call = ['type' => 'function_call', 'id' => 'legacy-stock-report', 'status' => 'completed', 'call_id' => 'legacy-stock-report',
+                'name' => 'generate_warehouse_stock_report', 'arguments' => '{}'];
+            $first = ++$calls === 1;
+
+            return ['content' => $first ? '' : 'Отчёт сформирован.', 'output' => $first ? [$call] : [], 'function_calls' => $first ? [$call] : [],
+                'input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        });
+        $org = $this->fixture->organization;
+        app(AICreditService::class)->grant($org, 100000, 'purchase', null, 'legacy-pdf-'.Str::uuid());
+        $query = 'Сформируй PDF-отчёт по остаткам склада с колонками материал и количество.';
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false];
+        $payload['quote_id'] = app(AICreditService::class)->quote($org, $this->actor, $payload)['quote_id'];
+        $service = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null]);
+        $response = $service->ask($query, (int) $org->id, $this->actor, null, $payload);
+        $metadata = $response['message']['metadata'];
+        self::assertSame('generate_report', $metadata['telemetry']['request_understanding']['primary_intent']);
+        self::assertSame('pdf', $metadata['telemetry']['request_understanding']['output_format']);
+        self::assertCount(1, $metadata['artifacts'], json_encode(['content' => $response['message']['content'], 'metadata' => $metadata, 'report_errors' => $reportErrors], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        self::assertSame('generate_warehouse_stock_report', $metadata['artifacts'][0]['source_tool']);
+        self::assertSame('pdf', $metadata['artifacts'][0]['type']);
+        self::assertStringStartsWith('/api/v1/ai-assistant/reports/', $metadata['artifacts'][0]['url']);
+        self::assertNotSame(trans_message('ai_custom_reports.missing_file'), $response['message']['content']);
+        self::assertSame('partial', $metadata['validation_status']);
+        self::assertNotEmpty($metadata['source_refs']);
+        foreach ($metadata['source_refs'] as $ref) {
+            self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, (int) $org->id, $ref));
+        }
+        self::assertFalse($metadata['degraded_mode']);
     }
 
     private function project(string $name): Project
