@@ -32,6 +32,10 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
     {
         if (! $this->enabled()) { return []; }
         foreach ($this->entities() as $type => $definition) {
+            if ($this::class === ProcurementBusinessRagSource::class && $type === 'supply_reliability_row') {
+                $candidates = $definition['model']::query()->where('organization_id', $organizationId);
+                if (! $candidates->exists()) { continue; }
+            }
             $query = $this->collectionQuery($type, $organizationId, $projectId);
             $batchSize = array_intersect($definition['fields'], ['payload', 'source_snapshot', 'source_manifest', 'totals', 'preview_summary']) === [] ? 50 : 1;
             foreach ((new RagCollectorQueryContext($this->sourceType(), $type))->iterate($query->lazyById($batchSize)) as $model) {
