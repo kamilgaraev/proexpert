@@ -194,6 +194,55 @@ class ProjectEventCoreExperienceControllerTest extends TestCase
         $this->assertSame(['2026-10-21', '2026-10-22', '2026-10-23'], $dates);
     }
 
+    public function test_calendar_preserves_wall_clock_fields_and_legacy_iso_values(): void
+    {
+        $previousTimezone = date_default_timezone_get();
+        date_default_timezone_set('Europe/Berlin');
+
+        try {
+            $context = AdminApiTestContext::create();
+            $project = Project::withoutEvents(static fn () => Project::factory()->create([
+                'organization_id' => $context->organization->id,
+            ]));
+            $cases = [
+                [['event_date' => '2026-03-29', 'event_time' => '10:00', 'duration_minutes' => 60],
+                    '2026-03-29T10:00:00', '2026-03-29T11:00:00', '2026-03-29T10:00:00+02:00'],
+                [['event_date' => '2026-03-29', 'event_time' => '02:30', 'duration_minutes' => 60],
+                    '2026-03-29T02:30:00', '2026-03-29T03:30:00', '2026-03-29T03:30:00+02:00'],
+                [['event_date' => '2026-03-30', 'event_time' => '23:30', 'duration_minutes' => 120],
+                    '2026-03-30T23:30:00', '2026-03-31T01:30:00', '2026-03-30T23:30:00+02:00'],
+                [['event_date' => '2026-03-29', 'event_time' => null, 'is_all_day' => true],
+                    '2026-03-29', '2026-03-30', '2026-03-29T00:00:00+01:00'],
+                [['event_date' => '2026-10-24', 'event_time' => null, 'is_all_day' => true, 'end_date' => '2026-10-26'],
+                    '2026-10-24', '2026-10-27', '2026-10-24T00:00:00+02:00'],
+                [['event_date' => '2026-03-29', 'event_time' => '10:00', 'end_date' => '2026-03-30'],
+                    '2026-03-29T10:00:00', '2026-03-30T23:59:59', '2026-03-29T10:00:00+02:00'],
+            ];
+            $events = [];
+            foreach ($cases as [$attributes, $start, $end, $legacyStart]) {
+                $event = $this->createProjectEvent($project->id, $context->organization->id, $context->user->id, $attributes);
+                $events[] = [$event, $start, $end, $legacyStart];
+            }
+            $this->allowAdminAccess();
+
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/projects/{$project->id}/events/calendar?start_date=2026-03-01&end_date=2026-10-31");
+
+            $response->assertOk();
+            $rows = collect($response->json('data'))->keyBy('id');
+            $this->assertCount(count($cases), $rows);
+            foreach ($events as [$event, $start, $end, $legacyStart]) {
+                $row = $rows->get($event->id);
+                $this->assertSame($start, $row['start_local'] ?? null);
+                $this->assertSame($end, $row['end_local'] ?? null);
+                $this->assertSame($legacyStart, $row['start']);
+                $this->assertSame($event->getEndDateTimeAttribute()->toIso8601String(), $row['end']);
+            }
+        } finally {
+            date_default_timezone_set($previousTimezone);
+        }
+    }
+
     private function createProjectEvent(int $projectId, int $organizationId, int $userId, array $overrides = []): ProjectEvent
     {
         return ProjectEvent::query()->create(array_merge([

@@ -135,10 +135,10 @@ final class AssistantToolFirstQualityTest extends TestCase
     }
 
     #[DataProvider('requiredProjectReads')]
-    public function test_simple_project_facts_force_only_first_native_read_and_bind_user_scope(string $query, string $name, array $expected): void
+    public function test_simple_project_facts_force_only_first_native_read_and_default_missing_arguments(string $query, string $name, array $expected): void
     {
         $call = $this->toolCall($name);
-        $call['function']['arguments'] = '{"project_id":999,"query":"invented","period_start":"2024-01-01"}';
+        $call['function']['arguments'] = '{}';
         $schema = $name === 'assistant_domain_search'
             ? (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool(new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog::defaults()),
                 (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService::class))->newInstanceWithoutConstructor()))->getParametersSchema()
