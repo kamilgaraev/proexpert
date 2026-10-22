@@ -581,7 +581,7 @@ final class AssistantDataAccessPolicy
             ApiQueryMetrics::recordAccessRead('policy_module_load', $this, null, $organizationId);
             $source = $this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class);
 
-            if ($this->batchIdentity === [(int) $user->id, $organizationId] && $this->aclCompiler === null) {
+            if ($this->batchIdentity === [(int) $user->id, $organizationId]) {
                 $modules = $this->currentAuthorization()->memoizedCurrentModuleSlugs($organizationId, $source);
                 if ($modules !== null) {
                     return $modules;

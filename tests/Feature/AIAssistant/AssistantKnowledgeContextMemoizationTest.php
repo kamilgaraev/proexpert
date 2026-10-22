@@ -52,6 +52,7 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
         $moduleCalls = [];
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->zeroOrMoreTimes()->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('getUserPermissions')->zeroOrMoreTimes()->andReturnUsing(
             static function (User $user) use (&$permissions, &$permissionCalls): array {
                 $permissionCalls[$user->id] = ($permissionCalls[$user->id] ?? 0) + 1;

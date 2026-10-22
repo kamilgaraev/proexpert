@@ -36,6 +36,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $user, string $permission): bool => ! in_array($permission, $this->deniedPermissions, true));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());

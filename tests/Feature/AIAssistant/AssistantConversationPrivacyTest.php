@@ -85,6 +85,7 @@ final class AssistantConversationPrivacyTest extends TestCase
         $authorization->shouldReceive('can')->andReturn(true);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->financeAllowed || (! str_starts_with($permission, 'finance.') && ! str_starts_with($permission, 'payments.')));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $permissions = Mockery::mock(AIPermissionChecker::class);
         $permissions->shouldReceive('canUseAssistant')->andReturnUsing(fn (User $actor, int $organizationId): bool => $this->assistantEnabled);
         $this->app->instance(AIPermissionChecker::class, $permissions);

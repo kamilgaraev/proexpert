@@ -119,6 +119,7 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $registry = new RagSourceRegistry($collectors);
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
@@ -422,6 +423,7 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         [$organization, $actor] = $this->scope();
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());

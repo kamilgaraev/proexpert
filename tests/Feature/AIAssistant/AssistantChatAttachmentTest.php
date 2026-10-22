@@ -58,6 +58,7 @@ final class AssistantChatAttachmentTest extends TestCase
         $authorization->shouldReceive('can')->andReturn(true);
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $projects = Mockery::mock(UserProjectAccessService::class);
         $projects->shouldReceive('canAccessProject')->andReturn(true);
         $projects->shouldReceive('queryAccessibleProjects')->andReturnUsing(fn () => \App\Models\Project::query());

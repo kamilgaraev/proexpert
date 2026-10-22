@@ -50,6 +50,7 @@ final class AssistantPeopleReportsTest extends TestCase
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => ! in_array($permission, $this->denied, true));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
         $modules = collect(array_map(static fn (string $slug): object => (object) ['slug' => $slug], ['users', 'reports', 'ai-assistant', 'project-management']));
         $entitlements->shouldReceive('getEffectiveModules')->andReturn($modules);
