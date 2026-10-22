@@ -1062,6 +1062,14 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                         self::assertSame('estimate_composer_work_source_unrelated', $exception->getMessage());
                     }
                 }
+                foreach ([$documents[1]->id => $documents[1]->entityId, $initial->id => $initial->entityId] as $sourceId => $entityId) {
+                    foreach ([[$answers[0]->id, $sourceId], [$sourceId, $answers[0]->id]] as $sources) {
+                        $independent = $classifier->binding(['work_key' => 'equipment.install', 'work_section' => 'equipment',
+                            'source_fact_ids' => $sources, 'entity_id' => $entityId], $captured->facts);
+                        self::assertSame($entityId, $independent['entity_id']);
+                        self::assertSame([$sourceId], $independent['basis_fact_ids']);
+                    }
+                }
                 $candidate = ['source_answer_fact_id' => $answers[0]->id, 'entity_id' => $documents[1]->entityId,
                     'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => $documents[1]->value],
                     'unit' => null, 'document_fact_ids' => [$documents[1]->id]];
