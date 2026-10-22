@@ -24,6 +24,62 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_http_impossible_opening_returns_an_empty_quantity_map_and_replays_without_another_write(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake();
+        config(['estimate-generation.universal_enabled' => true, 'jwt.secret' => str_repeat('test-key', 8), 'jwt.blacklist_enabled' => false]);
+        [$actor, $session] = $this->fixture();
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
+        $project = Project::query()->findOrFail($session->project_id);
+        app(AuthorizationService::class)->allows('can')->with(Mockery::type(User::class), 'estimate_generation.review',
+            Mockery::on(static fn (array $context): bool => $context['project_id'] === (int) $project->id && is_int($context['organization_id'])))
+            ->andReturnTrue();
+        Route::bind('project', static fn (): Project => $project);
+        Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
+        $route = '/_contract/empty-geometry/projects/{project}/sessions/{session}/initial-facts';
+        Route::post($route, [EstimateGenerationManualFactsController::class, 'store'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        $url = str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route);
+        $this->withToken(auth('api_admin')->login($actor));
+        $outboundBeforeWrites = count(Http::recorded());
+        $input = ['state_version' => 0, 'request_id' => (string) Str::uuid(), 'entities' => [
+            ['key' => 'wall-1', 'name' => 'С-01', 'type' => 'wall', 'parameters' => [
+                'length' => ['value' => '10', 'unit' => 'm', 'basis' => 'input'],
+                'height' => ['value' => '3', 'unit' => 'm', 'basis' => 'input'],
+            ], 'coverage' => ['wall_openings' => 'covered_with_entities']],
+            ['key' => 'opening-1', 'name' => 'П-01', 'type' => 'opening', 'parent_key' => 'wall-1', 'parameters' => [
+                'width' => ['value' => '4', 'unit' => 'm', 'basis' => 'input'],
+                'height' => ['value' => '4', 'unit' => 'm', 'basis' => 'input'],
+            ]],
+        ]];
+        $response = $this->postJson($url, $input)->assertOk()->assertJsonPath('data.cost_units', '0')
+            ->assertJsonPath('data.state_version', 1)->assertJsonPath('data.recalculation_required', false);
+        $result = $response->json('data');
+        self::assertCount(7, $result['fact_ids']);
+        $questions = array_merge(...array_column($result['warnings'], 'questions'));
+        self::assertContains('opening_exceeds_wall', array_column($questions, 'code'));
+        self::assertContains('estimate_generation.quantity.opening_exceeds_wall', array_column($questions, 'message_key'));
+        $assertions = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
+        $evidence = DB::table('estimate_generation_evidence')->where('session_id', $session->id)->count();
+        $sessionBeforeReplay = $session->fresh()->getAttributes();
+        $stored = $session->fresh()->input_payload['manual_fact_receipts'][$input['request_id']]['result'];
+        self::assertSame([], $stored['quantities']);
+        $replay = $this->postJson($url, $input)->assertOk();
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($replay->json('data')));
+        self::assertSame($sessionBeforeReplay, $session->fresh()->getAttributes());
+        self::assertSame($assertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+        self::assertSame($evidence, DB::table('estimate_generation_evidence')->where('session_id', $session->id)->count());
+        self::assertCount(1, $session->fresh()->input_payload['manual_fact_receipts']);
+        self::assertSame('input_review_required', $session->fresh()->status->value);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($outboundBeforeWrites, count(Http::recorded()));
+        $wire = json_decode($response->getContent(), false, 512, JSON_THROW_ON_ERROR);
+        self::assertInstanceOf(\stdClass::class, $wire->data->quantities, $response->getContent());
+        self::assertSame([], get_object_vars($wire->data->quantities));
+        self::assertInstanceOf(\stdClass::class, json_decode($replay->getContent(), false, 512, JSON_THROW_ON_ERROR)->data->quantities);
+    }
+
     public function test_http_wall_batch_allows_shared_surface_names_but_rejects_duplicates_within_one_wall(): void
     {
         Http::preventStrayRequests();
