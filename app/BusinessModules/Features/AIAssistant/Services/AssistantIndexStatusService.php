@@ -291,7 +291,7 @@ final class AssistantIndexStatusService
 
         return $this->access->withCurrentChecks($currentActor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $currentActor, $section, $surface, $ip, $inputs): ?string {
             if (! $this->access->canReadDomain($currentActor, $organizationId, 'assistant')) { throw new AuthorizationException; }
-            $fingerprint = $inputs->fingerprint($currentActor, $organizationId, $surface, $section, $ip, $authorization);
+            $fingerprint = $inputs->fingerprintForLookup($currentActor, $organizationId, $surface, $section, $ip, $authorization, $this->access);
             if ($fingerprint === null) {
                 AssistantStatusSnapshotDiagnostics::request('missing_release', $section);
 

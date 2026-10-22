@@ -10,8 +10,17 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantOperationsBusinessMetadata;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotInputs;
+use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Services\Entitlements\OrganizationEntitlementService;
@@ -26,6 +35,103 @@ use Tests\TestCase;
 final class AssistantAuthorizationBatchTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_snapshot_fingerprint_preliminary_lookup_reuses_the_current_frame_module_read(): void
+    {
+        $this->freezeTime();
+        config(['ai-assistant.status_snapshot_release' => str_repeat('a', 40)]);
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $access = app(AssistantDataAccessPolicy::class);
+        $inputs = app(AssistantStatusSnapshotInputs::class);
+        $registry = new RagSourceRegistry([]);
+        $indexer = new RagIndexer(\Mockery::mock(RagEmbeddingProviderInterface::class), $registry);
+        $coverage = new RagCoverageService($registry, $indexer, $access);
+        $service = new AssistantIndexStatusService($coverage, app(AssistantDocumentCoverageService::class), new RagIndexingCoordinator($indexer), $access, app(AuthorizationService::class), snapshotInputs: $inputs);
+        $actor = $fixture->member;
+        $organizationId = (int) $fixture->organization->id;
+        $reference = $access->withCurrentChecks($actor, $organizationId,
+            fn (AuthorizationService $authorization): ?string => $inputs->fingerprint($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization), fresh: true);
+        self::assertNotNull($reference);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $actual = (new \ReflectionMethod($service, 'snapshotLookupKey'))->invoke($service, $organizationId, $actor, 'sources', KnowledgeSurface::ADMIN, null, $inputs);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertIsString($actual);
+        self::assertStringEndsWith(':'.$reference, $actual);
+        $subscriptions = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'organization_package_subscriptions'));
+        self::assertCount(1, $subscriptions, 'Preliminary snapshot lookup must reuse the compatible module read after its access gate.');
+    }
+
+    public function test_snapshot_fingerprint_lookup_rejects_other_identities_and_replaced_authorization_frames(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $access = app(AssistantDataAccessPolicy::class);
+        $source = app(OrganizationEntitlementService::class);
+        $actor = $fixture->member;
+        $organizationId = (int) $fixture->organization->id;
+        $stale = null;
+        $access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($access, $source, $actor, $organizationId, $fixture, &$stale): void {
+            $stale = $authorization;
+            self::assertTrue($access->canReadDomain($actor, $organizationId, 'assistant'));
+            self::assertContains('ai-assistant', $access->moduleSlugsForSnapshotLookup($actor, $organizationId, $authorization, $source));
+            self::assertNull($access->moduleSlugsForSnapshotLookup($fixture->owner, $organizationId, $authorization, $source));
+            self::assertNull($access->moduleSlugsForSnapshotLookup($actor, (int) $fixture->foreignOrganization->id, $authorization, $source));
+            $failure = new RuntimeException('snapshot_lookup_nested_frame');
+            try {
+                $access->withCurrentChecks($actor, $organizationId, static function () use ($failure): never { throw $failure; }, fresh: true);
+                self::fail('Expected the original nested scope exception');
+            } catch (RuntimeException $exception) {
+                self::assertSame($failure, $exception);
+            }
+            self::assertNull($access->moduleSlugsForSnapshotLookup($actor, $organizationId, $authorization, $source));
+            $access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $restored) use ($access, $source, $actor, $organizationId, $authorization): void {
+                self::assertNotSame($authorization, $restored);
+                self::assertContains('ai-assistant', $access->moduleSlugsForSnapshotLookup($actor, $organizationId, $restored, $source));
+            });
+        }, fresh: true);
+        self::assertInstanceOf(AuthorizationService::class, $stale);
+        self::assertNull($access->moduleSlugsForSnapshotLookup($actor, $organizationId, $stale, $source));
+    }
+
+    public function test_snapshot_fingerprint_lookup_keeps_custom_sources_separate_and_final_reads_fresh(): void
+    {
+        $this->freezeTime();
+        config(['ai-assistant.status_snapshot_release' => str_repeat('a', 40)]);
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $access = app(AssistantDataAccessPolicy::class);
+        $inputs = app(AssistantStatusSnapshotInputs::class);
+        $actor = $fixture->member;
+        $organizationId = (int) $fixture->organization->id;
+        $source = new class(app(PackageCatalogService::class)) extends OrganizationEntitlementService {
+            public int $reads = 0;
+            public function getEffectiveModuleSlugs(int $organizationId): array { $this->reads++; return []; }
+        };
+        $separateInputs = new AssistantStatusSnapshotInputs($source);
+        $access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($access, $inputs, $separateInputs, $source, $actor, $organizationId, $fixture): void {
+            self::assertTrue($access->canReadDomain($actor, $organizationId, 'assistant'));
+            $before = $inputs->fingerprintForLookup($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization, $access);
+            self::assertSame([], $access->moduleSlugsForSnapshotLookup($actor, $organizationId, $authorization, $source));
+            $empty = $separateInputs->fingerprintForLookup($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization, $access);
+            self::assertSame(1, $source->reads);
+            self::assertSame($empty, $separateInputs->fingerprint($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization));
+            self::assertSame(2, $source->reads);
+            self::assertNotSame($before, $empty);
+            $fixture->subscription->update(['status' => 'expired']);
+            self::assertSame($before, $inputs->fingerprintForLookup($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization, $access));
+            self::assertNotSame($before, $inputs->fingerprint($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization));
+        }, fresh: true);
+        $access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($access, $inputs, $actor, $organizationId): void {
+            self::assertFalse($access->canReadDomain($actor, $organizationId, 'assistant'));
+            self::assertNotContains('ai-assistant', $access->moduleSlugsForSnapshotLookup($actor, $organizationId, $authorization, app(OrganizationEntitlementService::class)));
+            self::assertSame($inputs->fingerprint($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization),
+                $inputs->fingerprintForLookup($actor, $organizationId, KnowledgeSurface::ADMIN, 'sources', null, $authorization, $access));
+        }, fresh: true);
+    }
 
     public function test_catalogue_permission_queries_do_not_grow_with_repeated_protected_fields(): void
     {
