@@ -760,6 +760,88 @@ final class AssistantCustomReportsTest extends TestCase
         return (int) $id;
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('contractReferenceProjectionCases')]
+    public function test_contract_number_reference_skips_unrequested_counterparty_lookups(bool $counterpartyFilter): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $section = $this->contractsSection(['columns' => ['number']]);
+        if ($counterpartyFilter) {
+            $contract->parties()->delete();
+            foreach (['first' => [$org->id, $org->name], 'second' => [null, 'Reference counterparty']] as $side => [$linked, $name]) {
+                \App\Models\ContractParty::withoutEvents(static fn () => \App\Models\ContractParty::query()->create([
+                    'contract_id' => $contract->id, 'side' => $side, 'party_key' => $side,
+                    'role' => 'contractor', 'linked_organization_id' => $linked, 'name' => $name, 'snapshot' => [],
+                ]));
+            }
+            $section['filters'] = [['field' => 'counterparty_name', 'operator' => 'contains', 'value' => 'Reference counterparty']];
+        }
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        $reference = $report['source_refs'][0];
+        self::assertContains('number', $reference['checked_fields']);
+        if ($counterpartyFilter) {
+            self::assertContains('counterparty_name', $reference['checked_fields']);
+        } else {
+            self::assertNotContains('counterparty_name', $reference['checked_fields']);
+        }
+        self::assertSame([(string) $contract->id], $reference['_report_ids']);
+        $watch = false;
+        $counts = ['all' => 0, 'projected' => 0];
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$watch, &$counts): void {
+            if (! $watch || ! str_contains($query->sql, 'count(*) as aggregate') || ! str_contains($query->sql, '"contracts"')) { return; }
+            $counts['all']++;
+            if (str_contains($query->sql, 'report_first_party')) { $counts['projected']++; }
+        });
+        $watch = true;
+        try {
+            self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        } finally {
+            $watch = false;
+        }
+        self::assertSame(1, $counts['all']);
+        self::assertSame($counterpartyFilter ? 1 : 0, $counts['projected']);
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $reference));
+    }
+
+    public static function contractReferenceProjectionCases(): array
+    {
+        return ['number_only' => [false], 'counterparty_filter_only' => [true]];
+    }
+
+    public function test_contract_number_reference_scope_matches_full_projection_with_missing_related_rows(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $own = $this->contract($org, $project, '100.00');
+        $own->organizationViews()->delete();
+        $foreign = Organization::factory()->create();
+        $shared = $this->contract($foreign, $project, '200.00');
+        $view = \App\Models\ContractOrganizationView::query()->updateOrCreate(
+            ['contract_id' => $shared->id, 'organization_id' => $org->id], ['visibility' => 'active', 'version' => 1]);
+        $missing = $this->contract($org, $project, '300.00');
+        $missing->contractor->delete();
+        $archived = $this->contract($org, $project, '400.00');
+        \App\Models\ContractOrganizationView::query()->updateOrCreate(
+            ['contract_id' => $archived->id, 'organization_id' => $org->id], ['visibility' => 'archived', 'version' => 1]);
+        $revoked = $this->contract($org, $project, '500.00');
+        \App\Models\ContractOrganizationView::query()->updateOrCreate(
+            ['contract_id' => $revoked->id, 'organization_id' => $org->id], ['visibility' => 'active', 'version' => 1, 'access_revoked_at' => now()]);
+        $this->contract($foreign, $project, '600.00');
+        $hiddenProject = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $this->contract($org, $hiddenProject, '700.00');
+        foreach ([false, true] as $revokeShared) {
+            if ($revokeShared) { $view->update(['access_revoked_at' => now()]); }
+            $full = $this->sources->resolve($actor, $org->id, 'contracts', 'contract', null);
+            $narrow = $this->sources->resolve($actor, $org->id, 'contracts', 'contract', null, referenceFields: ['number']);
+            $expected = $revokeShared ? [$own->id, $missing->id] : [$own->id, $shared->id, $missing->id];
+            self::assertSame($expected, (clone $full['query'])->orderBy('contracts.id')->pluck('contracts.id')->all());
+            self::assertSame($expected, (clone $narrow['query'])->orderBy('contracts.id')->pluck('contracts.id')->all());
+            self::assertSame(count($expected), (clone $full['query'])->count());
+            self::assertSame(count($expected), (clone $narrow['query'])->count());
+            self::assertSame($full['fields'], $narrow['fields']);
+        }
+    }
+
     public function test_contract_source_matches_active_organization_placement_with_shared_and_revoked_access(): void
     {
         [$org, $actor, $project] = $this->fixture();

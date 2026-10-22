@@ -42,6 +42,31 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         }
     }
 
+    public function test_literal_all_project_names_keep_exact_lookup_before_organization_scope(): void
+    {
+        foreach (['Все проекты организации', 'Все наши объекты', 'Все активные проекты организации',
+            'Вся техника организации', 'Всё оборудование организации', 'Вся проектная документация организации'] as $name) {
+            $query = 'Сверь выполненные работы с графиком проекта '.$name;
+            self::assertSame($name, AssistantNamedProjectReadScope::name($this->plan($query)), $query);
+            $calls = 0;
+            $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name, &$calls): array {
+                $calls++;
+                self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(1, $calls);
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($bound)->projectId);
+            self::assertSame(102, AssistantRequiredProjectRead::fromPlan($bound)['arguments']['project_id']);
+            foreach ([$this->projectSearchResult([], false), $this->projectSearchResult([], true),
+                $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $failure) {
+                $failed = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $failure);
+                self::assertNull(AssistantRequestProjectScope::fromPlan($failed)->projectId, $query);
+                self::assertNull(AssistantRequiredProjectRead::fromPlan($failed), $query);
+            }
+        }
+    }
+
     public function test_pure_service_words_use_ui_only_after_a_complete_empty_exact_lookup(): void
     {
         foreach (['текущий', 'весь', 'этот', 'выполненные работы'] as $phrase) {

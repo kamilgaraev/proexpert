@@ -1,0 +1,708 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\AIAssistant;
+
+use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
+use App\Services\Modules\PackageCatalogService;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\TestCase;
+
+final class AssistantOrganizationActReportScopeTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private const QUESTION = 'Нужна сводка по всем актам организации в CSV: по каждому статусу и каждой валюте — количество актов и общая сумма. Валюты не смешивай, черновики тоже посчитай. Не ограничивайся выбранным проектом.';
+
+    public static function reportCases(): array
+    {
+        return [
+            'search rejects postfix PDF exclusion' => [true, true, false, 4, 4, true, '', 'search_postfix_pdf'],
+            'section project' => [true, false, false, 7, 5],
+            'nested project filter' => [false, true, false, 7, 5],
+            'both with date and status filters' => [true, true, true, 5, 3],
+            'organization except selected project' => [false, true, false, 4, 4, true],
+            'organization except stale section project' => [true, true, false, 4, 4, true],
+            'organization not in selected project' => [true, true, false, 4, 4, true, 'Не в выбранном проекте.'],
+            'organization without selected project' => [true, true, false, 4, 4, true, 'Без выбранного проекта.'],
+            'organization except current project' => [true, true, false, 4, 4, true, 'За исключением текущего проекта.'],
+            'organization excludes postfix project ID' => [true, true, false, 4, 4, true, '', 'postfix_id'],
+            'organization excludes postfix current project' => [true, true, false, 4, 4, true, '', 'postfix_current'],
+            'organization excludes postfix exact project name' => [true, true, false, 4, 4, true, '', 'postfix_name'],
+            'organization excludes postfix project directive' => [true, true, false, 4, 4, true, '', 'postfix_exclude'],
+            'organization excludes prefix project command' => [true, true, false, 4, 4, true, '', 'prefix_id'],
+            'organization excludes prefix current project command' => [true, true, false, 4, 4, true, '', 'prefix_current'],
+            'organization excludes prefix exact project name command' => [true, true, false, 4, 4, true, '', 'prefix_name'],
+            'nominative organization' => [true, true, false, 7, 5, false, '', 'nominative'],
+            'organization wording restricted by project ID' => [true, true, false, 4, 4, false, '', 'restricted_id'],
+            'organization wording restricted by project name' => [true, true, false, 4, 4, false, '', 'restricted_name'],
+            'compare statuses restricted by project ID' => [true, true, false, 4, 4, false, '', 'restricted_compare_id'],
+            'compare amounts restricted by project name' => [true, true, false, 4, 4, false, '', 'restricted_compare_name'],
+            'organization rejects invented exclusion' => [true, true, false, 7, 5, false, '', 'invented_neq'],
+            'organization rejects invented projectless filter' => [true, true, false, 7, 5, false, '', 'invented_is_null'],
+            'organization rejects invented assigned project filter' => [true, true, false, 7, 5, false, '', 'invented_is_not_null'],
+            'organization rejects wrong excluded project' => [true, true, false, 4, 4, true, '', 'wrong_exclusion'],
+            'organization rejects omitted exclusion' => [true, true, false, 4, 4, true, '', 'missing_exclusion'],
+            'organization excludes fresh exact project name' => [true, true, false, 4, 4, true, '', 'named_exclusion'],
+            'organization cannot resolve private excluded project name' => [true, true, false, 7, 5, false, '', 'named_exclusion_denied'],
+            'organization not including project' => [true, true, false, 4, 4, true, '', 'not_including'],
+            'organization and current project' => [true, true, false, 7, 5, false, '', 'current'],
+            'organization and explicit project' => [true, true, false, 7, 5, false, '', 'explicit'],
+            'organization and named selected project' => [true, true, false, 7, 5, false, '', 'named'],
+            'mixed scope without section metadata' => [true, true, false, 7, 5, false, '', 'ambiguous'],
+            'mixed scope missing compared project' => [true, true, false, 7, 5, false, '', 'missing_project'],
+            'mixed scope missing organization section' => [true, true, false, 7, 5, false, '', 'missing_org'],
+            'organization section with positive project filter' => [true, true, false, 7, 5, false, '', 'org_project_filter'],
+            'project section with excluding greater than id' => [true, true, false, 7, 5, false, '', 'project_range_gt'],
+            'project section with excluding upper id bound' => [true, true, false, 7, 5, false, '', 'project_range_lte'],
+            'organization without metadata and unrequested project' => [true, false, false, 7, 5, false, '', 'org_non_ui'],
+            'organization without metadata and unrequested project filter' => [false, false, false, 7, 5, false, '', 'org_non_ui_filter'],
+            'named comparison with unsupported final period clarifies' => [true, true, true, 5, 3, false, '', 'named_period'],
+            'comparison with different requested years clarifies' => [true, false, false, 7, 5, false, '', 'unbound_period'],
+            'comparison without all qualifier and different years clarifies' => [true, false, false, 7, 5, false, '', 'unbound_plain_period'],
+            'comparison with different requested amounts clarifies' => [true, false, false, 7, 5, false, '', 'unbound_amount'],
+            'comparison with different requested currencies clarifies' => [true, false, false, 7, 5, false, '', 'unbound_currency'],
+            'comparison cannot invent equal conditions' => [true, false, false, 7, 5, false, '', 'unbound_invented'],
+            'named comparison with final grouping' => [true, true, false, 7, 5, false, '', 'named_grouping'],
+            'project exclusion and another compared project' => [true, true, false, 4, 4, true, '', 'explicit_exclusion'],
+            'negated draft filter keeps organization scope' => [true, true, false, 5, 4, false, '', 'without_drafts'],
+            'record definition keeps organization scope' => [true, true, false, 3, 2, false, '', 'defined_records'],
+            'work organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_organization'],
+            'project organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_project'],
+            'document flow organization phrase keeps selected project' => [true, false, false, 3, 3, false, '', 'process_document_flow'],
+            'project status adjective keeps selected project' => [true, false, false, 3, 3, false, '', 'project_adjective'],
+            'object status adjective keeps selected project' => [true, false, false, 3, 3, false, '', 'object_adjective'],
+            'comparison different entities is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_entity'],
+            'comparison different filters is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_filter'],
+            'comparison different groups is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_group'],
+            'comparison different metrics is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_metric'],
+            'comparison different metric labels remains valid' => [true, false, false, 7, 5, false, '', 'compare_equivalent'],
+            'project column list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_columns'],
+            'project grouping list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_grouping'],
+            'project breakdown list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_breakdown'],
+            'project detail list keeps organization scope' => [true, false, false, 7, 5, false, '', 'field_detail'],
+            'difference noun preserves comparable workbook sheets' => [true, false, false, 7, 5, false, '', 'compare_noun_difference'],
+            'distinctions noun preserves comparable workbook sheets' => [true, false, false, 7, 5, false, '', 'compare_noun_distinctions'],
+            'difference noun rejects different subjects' => [true, false, false, 7, 5, false, '', 'compare_subject_noun_difference'],
+            'distinctions noun rejects different subjects' => [true, false, false, 7, 5, false, '', 'compare_subject_noun_distinctions'],
+            'reconcile explicit project preserves both subjects' => [true, false, false, 7, 5, false, '', 'reconcile_explicit'],
+            'reconcile different entities is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_reconcile_entity'],
+            'repeated entity preserves both comparison subjects' => [true, false, false, 7, 5, false, '', 'repeated_entity_explicit'],
+            'repeated entity different subjects is rejected' => [true, false, false, 7, 5, false, '', 'compare_subject_repeated_entity'],
+            'entity preposition preserves both comparison subjects' => [true, false, false, 7, 5, false, '', 'preposition_entity_explicit'],
+            'comparison rejects organization subject without project counterpart' => [true, false, false, 7, 5, false, '', 'compare_subject_organization_only'],
+            'project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_explicit'],
+            'against relation preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'relation_against_explicit'],
+            'relative relation preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'relation_relative_explicit'],
+            'wrapped entity preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'wrapped_entity_explicit'],
+            'wrapped current entity preserves both comparison sheets' => [true, false, false, 7, 5, false, '', 'wrapped_entity_current'],
+            'postpositive negation allows heterogeneous workbook' => [true, false, false, 7, 5, false, '', 'composition_negative'],
+            'independent sections cannot swap subjects' => [true, false, false, 7, 5, false, '', 'composition_swapped'],
+            'above placement keeps independent workbook subjects' => [true, false, false, 7, 5, false, '', 'composition_above'],
+            'together connector keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_together'],
+            'named exclusion preserves next independent workbook source' => [true, true, false, 4, 4, true, '', 'composition_named_exclusion'],
+            'private named exclusion rejects next independent workbook' => [true, true, false, 4, 4, true, '', 'composition_private_exclusion'],
+            'whole organization qualifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_whole_organization'],
+            'overall organization qualifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_overall_organization'],
+            'separate section modifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_separate'],
+            'also section modifier keeps independent workbook sources' => [true, false, false, 7, 5, false, '', 'composition_also'],
+            'separate section modifier keeps both search scopes' => [false, false, false, 7, 5, false, '', 'search_separate'],
+            'quoted project first command preserves both report sheets' => [true, false, false, 7, 5, false, '', 'project_first_named'],
+            'mixed domain search current project first' => [false, false, false, 7, 5, false, '', 'search_current'],
+            'mixed domain search explicit project' => [false, false, false, 7, 5, false, '', 'search_numeric'],
+            'mixed domain search named project' => [false, false, false, 7, 5, false, '', 'search_named'],
+            'multiple exact project names produce all comparison sheets' => [true, false, false, 7, 5, false, '', 'multiple_named'],
+            'multiple quoted project names produce all comparison sheets' => [true, false, false, 7, 5, false, '', 'multiple_named_quoted'],
+            'private second project name rejects the entire comparison' => [true, false, false, 7, 5, false, '', 'multiple_named_private'],
+            'mixed domain search unrequested ID clarification' => [false, false, false, 7, 5, false, '', 'search_unrequested'],
+        ];
+    }
+
+    #[DataProvider('reportCases')]
+    public function test_real_dispatch_keeps_organization_scope_and_current_permissions(bool $sectionProject, bool $nestedProject, bool $filtered, int $sourceRows, int $outputRows, bool $excludeFirst = false, string $projectExclusion = '', string $variant = ''): void
+    {
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(
+            array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $actor = Model::withoutEvents(fn () => $fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate'],
+            'project-management' => ['projects.view'],
+            'contract-management' => ['contracts.view', 'contracts.performance_acts.view'],
+        ], ['reports.view', 'finance.view']));
+        $org = $fixture->organization;
+        $projects = Model::withoutEvents(fn () => Project::factory()->count(3)->create(['organization_id' => $org->id, 'is_archived' => false]));
+        [$first, $second, $private] = $projects->all();
+        $first->updateQuietly(['name' => 'СевГУ '.bin2hex(random_bytes(4))]);
+        foreach ([$first, $second] as $project) {
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        }
+        $foreign = Model::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id, 'is_archived' => false]));
+        foreach ([[$first, 'approved', 'RUB', '10.00', '2026-10-10'], [$first, 'approved', 'USD', '1.00', '2026-10-10'],
+            [$first, 'draft', 'USD', '3.00', '2026-10-10'], [$second, 'approved', 'RUB', '20.00', '2026-10-10'],
+            [$second, 'draft', 'USD', '7.00', '2026-10-10'], [$second, 'annulled', 'RUB', '5.00', '2026-09-10'],
+            [$second, 'rejected', 'EUR', '9.00', '2026-10-10'], [$private, 'approved', 'EUR', '9000.00', '2026-10-10'],
+            [$foreign, 'approved', 'EUR', '8000.00', '2026-10-10']] as [$project, $status, $currency, $amount, $date]) {
+            $this->act($project, $status, $currency, $amount, $date);
+        }
+        $policy = app(AssistantDataAccessPolicy::class);
+        self::assertTrue($policy->canReadDomain($actor, $org->id, 'contracts'));
+        self::assertTrue($policy->canReadEntity($actor, $org->id, 'project', $second->id));
+        self::assertFalse($policy->canReadEntity($actor, $org->id, 'project', $private->id));
+        self::assertFalse($policy->canReadEntity($actor, $org->id, 'project', $foreign->id));
+        $csv = null;
+        $files = $this->createMock(FileService::class);
+        $rejectedScope = in_array($variant, ['ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'org_non_ui', 'org_non_ui_filter', 'project_range_gt', 'project_range_lte',
+            'invented_neq', 'invented_is_null', 'invented_is_not_null', 'wrong_exclusion', 'missing_exclusion', 'named_exclusion_denied', 'multiple_named_private'], true)
+            || $variant === 'named_period' || str_starts_with($variant, 'unbound_') || str_starts_with($variant, 'compare_subject_') || in_array($variant, ['composition_swapped', 'composition_private_exclusion'], true);
+        $files->expects($rejectedScope || str_starts_with($variant, 'search_') ? $this->never() : $this->once())->method('putPrivate')->willReturnCallback(function (string $path, $stream, string $mime, string $hash) use (&$csv): CurrentStoredFile {
+            $csv = stream_get_contents($stream);
+            self::assertSame(hash('sha256', $csv), $hash);
+
+            return new CurrentStoredFile($path, 'etag', strlen($csv), $hash, $mime);
+        });
+        $this->app->instance(FileService::class, $files);
+        if (str_starts_with($variant, 'search_')) {
+            $technicalErrors = [];
+            $logging = $this->createMock(\App\Services\Logging\LoggingService::class);
+            $logging->method('technical')->willReturnCallback(static function (string $event, array $context = [], string $level = 'info') use (&$technicalErrors): void {
+                if ($event === 'ai.tool.error') {
+                    $technicalErrors[] = $context;
+                }
+            });
+            $this->app->instance(\App\Services\Logging\LoggingService::class, $logging);
+            $question = match ($variant) {
+                'search_postfix_pdf' => 'Покажи все акты организации, проект '.$first->id.' не включай в PDF',
+                'search_numeric', 'search_unrequested' => 'Сравни все акты организации с проектом '.$second->id,
+                'search_separate' => 'Покажи все акты организации и отдельно акты по проекту '.$second->id,
+                'search_named' => 'Сравни все акты организации с проектом '.$first->name,
+                default => 'Сравни акты выбранного проекта и во всех проектах',
+            };
+            $searchArguments = ['domain' => 'acts', 'entity_type' => 'performance_act', 'query' => '', 'project_id' => null,
+                'limit' => 20, 'predicate' => null, 'cursor' => null, 'fields' => ['id', 'project_id', 'status', 'currency']];
+            $all = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
+            if ($variant === 'search_postfix_pdf') {
+                self::assertSame('insufficient_data', $all['status'] ?? null, json_encode($all, JSON_UNESCAPED_UNICODE));
+                self::assertTrue($all['needs_clarification'] ?? false);
+                self::assertSame([], $all['source_refs'] ?? []);
+                self::assertSame([], $all['results'] ?? []);
+                self::assertNull($csv);
+
+                return;
+            }
+            self::assertArrayHasKey('result_window', $all, json_encode($all, JSON_UNESCAPED_UNICODE));
+            self::assertSame(7, $all['result_window']['total']);
+            $project = in_array($variant, ['search_numeric', 'search_separate'], true) ? $second : $first;
+            $searchArguments['project_id'] = $project->id;
+            $result = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
+            if ($variant === 'search_unrequested') {
+                self::assertSame('insufficient_data', $result['status']);
+                self::assertSame('current_project_scope_mismatch', $result['reason']);
+                self::assertTrue($result['needs_clarification']);
+                self::assertSame([], $result['source_refs']);
+            } else {
+                self::assertArrayHasKey('result_window', $result, json_encode($result, JSON_UNESCAPED_UNICODE));
+                self::assertSame(in_array($variant, ['search_numeric', 'search_separate'], true) ? 4 : 3, $result['result_window']['total']);
+                foreach ($result['source_refs'] as $reference) {
+                    self::assertSame($project->id, $reference['project_id']);
+                }
+                $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+                $denied = $this->dispatch($searchArguments, $question, $first, $org, $actor, 'assistant_domain_search');
+                if ($variant === 'search_named') {
+                    self::assertSame('current_project_scope_mismatch', $denied['reason']);
+                } else {
+                    self::assertContains($technicalErrors[array_key_last($technicalErrors)]['exception_class'] ?? null,
+                        [\Illuminate\Auth\Access\AuthorizationException::class, \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException::class],
+                        json_encode($technicalErrors, JSON_UNESCAPED_UNICODE));
+                    self::assertSame(trans_message('ai_assistant.tool_execute_failed'), $denied['error'] ?? null,
+                        json_encode($denied, JSON_UNESCAPED_UNICODE));
+                }
+                self::assertSame([], $denied['results'] ?? []);
+                self::assertSame([], $denied['source_refs'] ?? []);
+            }
+            self::assertNull($csv);
+
+            return;
+        }
+        $filters = $nestedProject ? [['field' => 'project_id', 'operator' => $excludeFirst ? 'neq' : 'eq', 'value' => $first->id]] : [];
+        if ($filtered) {
+            $filters = [...$filters, ['field' => 'date', 'operator' => 'gte', 'value' => '2026-10-01'],
+                ['field' => 'date', 'operator' => 'lte', 'value' => '2026-10-31'], ['field' => 'status', 'operator' => 'neq', 'value' => 'rejected']];
+        }
+        if ($variant === 'without_drafts') {
+            $filters[] = ['field' => 'status', 'operator' => 'neq', 'value' => 'draft'];
+        }
+        if ($variant === 'defined_records') {
+            $filters[] = ['field' => 'status', 'operator' => 'eq', 'value' => 'approved'];
+        }
+        $arguments = ['title' => 'Акты организации', 'format' => 'csv', 'sections' => [[
+            'title' => 'По статусам и валютам', 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'project_id' => $sectionProject ? $first->id : null, 'columns' => ['status', 'currency'], 'filters' => $filters,
+            'group_by' => ['status', 'currency'], 'metrics' => [['field' => 'id', 'operation' => 'count', 'label' => 'Количество актов'],
+                ['field' => 'total_amount', 'operation' => 'sum', 'label' => 'Общая сумма']],
+            'order_by' => [['field' => 'status', 'direction' => 'asc'], ['field' => 'currency', 'direction' => 'asc']], 'row_limit' => 100,
+        ]]];
+        $question = self::QUESTION.($filtered ? ' Только за октябрь 2026 года, без отклонённых актов.' : '');
+        if ($excludeFirst) {
+            $question .= ' '.($projectExclusion !== '' ? $projectExclusion : 'Кроме проекта '.$first->id.'.');
+        }
+        $comparison = in_array($variant, ['current', 'explicit', 'named', 'ambiguous', 'missing_project', 'missing_org', 'org_project_filter', 'named_period', 'named_grouping', 'explicit_exclusion', 'project_range_gt', 'project_range_lte'], true)
+            || str_starts_with($variant, 'unbound_') || str_starts_with($variant, 'compare_') || str_starts_with($variant, 'multiple_named') || str_starts_with($variant, 'project_first_') || str_starts_with($variant, 'relation_') || str_starts_with($variant, 'wrapped_entity_') || str_starts_with($variant, 'composition_') || in_array($variant, ['reconcile_explicit', 'repeated_entity_explicit', 'preposition_entity_explicit'], true);
+        $secondProject = in_array($variant, ['explicit', 'missing_org', 'org_project_filter', 'explicit_exclusion', 'project_range_gt', 'project_range_lte', 'reconcile_explicit', 'compare_subject_reconcile_entity', 'repeated_entity_explicit', 'compare_subject_repeated_entity', 'preposition_entity_explicit', 'compare_subject_organization_only', 'project_first_explicit', 'relation_against_explicit', 'relation_relative_explicit', 'wrapped_entity_explicit'], true);
+        if ($variant === 'org_non_ui') {
+            $arguments['sections'][0]['project_id'] = $second->id;
+        }
+        if ($variant === 'org_non_ui_filter') {
+            $arguments['sections'][0]['filters'] = [['field' => 'project_id', 'operator' => 'in', 'value' => [$first->id, $second->id]]];
+        }
+        if ($variant === 'nominative') {
+            $question = 'Сделай CSV: все акты организации по статусам и валютам, включая черновики.';
+        }
+        if (in_array($variant, ['restricted_id', 'restricted_name', 'restricted_compare_id', 'restricted_compare_name'], true)) {
+            $second->updateQuietly(['name' => 'СевГУ ограничение '.bin2hex(random_bytes(4))]);
+            $target = in_array($variant, ['restricted_id', 'restricted_compare_id'], true) ? $second->id : $second->name;
+            $question = (str_contains($variant, 'compare') ? 'Сформируй CSV: сравни статусы всех актов организации по проекту ' : 'Сформируй CSV по всем актам организации по проекту ').$target;
+        }
+        if (str_starts_with($variant, 'invented_')) {
+            $operator = substr($variant, strlen('invented_'));
+            $arguments['sections'][0]['filters'] = [['field' => 'project_id', 'operator' => $operator, 'value' => $operator === 'neq' ? $first->id : null]];
+        }
+        if (in_array($variant, ['wrong_exclusion', 'missing_exclusion'], true)) {
+            $arguments['sections'][0]['filters'] = $variant === 'missing_exclusion' ? []
+                : [['field' => 'project_id', 'operator' => 'neq', 'value' => $second->id]];
+        }
+        if (in_array($variant, ['named_exclusion', 'named_exclusion_denied'], true)) {
+            $question = 'Сформируй CSV по всем актам организации, кроме проекта «'.($variant === 'named_exclusion' ? $first->name : $private->name).'»';
+        }
+        if ($variant === 'not_including') {
+            $question = 'Сформируй CSV по всем актам организации, не включая проект '.$first->id;
+        }
+        if (str_starts_with($variant, 'postfix_')) {
+            $project = match ($variant) {
+                'postfix_current' => 'выбранный проект', 'postfix_name' => 'проект «'.$first->name.'»',
+                default => 'проект '.$first->id,
+            };
+            $question = 'Сформируй CSV по всем актам организации. '.$project.' '.($variant === 'postfix_exclude' ? 'исключить из отчёта' : 'не включай');
+        }
+        if (str_starts_with($variant, 'prefix_')) {
+            $clause = match ($variant) {
+                'prefix_current' => 'Исключи выбранный проект', 'prefix_name' => 'Не учитывай проект «'.$first->name.'»',
+                default => 'Не включай проект '.$first->id,
+            };
+            $question = 'Сформируй CSV по всем актам организации. '.$clause;
+        }
+        if ($variant === 'without_drafts') {
+            $question = 'Сформируй CSV. Не включай черновики в отчет по всем актам организации, группируй по статусам и валютам.';
+        }
+        if ($variant === 'defined_records') {
+            $question = 'Сформируй CSV по всем утверждённым актам организации с группировкой по статусам и валютам.';
+        }
+        if (in_array($variant, ['process_organization', 'process_project', 'process_document_flow'], true)) {
+            $process = match ($variant) {
+                'process_project' => 'проекта', 'process_document_flow' => 'документооборота', default => 'работ',
+            };
+            $question = 'Сформируй CSV: все акты организации '.$process.' по статусам и валютам.';
+        }
+        if (in_array($variant, ['project_adjective', 'object_adjective'], true)) {
+            $question = 'Сформируй CSV: сгруппируй акты по всем '.($variant === 'project_adjective' ? 'проектным' : 'объектным').' статусам и валютам.';
+        }
+        if (in_array($variant, ['field_columns', 'field_grouping', 'field_breakdown', 'field_detail'], true)) {
+            $question = match ($variant) {
+                'field_columns' => 'Сделай CSV по всем актам организации с колонками проект и статус',
+                'field_breakdown' => 'Сделай CSV по всем актам организации в разрезе проекта и статуса.',
+                'field_detail' => 'Сделай CSV по всем актам организации с детализацией по проекту и статусу.',
+                default => 'Сделай CSV по всем актам организации; сгруппируй по полям проект и статус.',
+            };
+        }
+        if ($comparison) {
+            $question = match ($variant) {
+                'composition_swapped' => 'Сделай Excel: все акты организации, а также договоры проекта '.$first->id,
+                'composition_above' => 'Расположи все акты организации сверху, а договоры проекта '.$first->id.' снизу. Сделай Excel.',
+                'composition_together' => 'Сделай Excel: все акты организации вместе с договорами проекта '.$first->id,
+                'composition_named_exclusion', 'composition_private_exclusion' => 'Сделай Excel: все акты организации без проекта '.($variant === 'composition_named_exclusion' ? $first->name : $private->name).' и договоры проекта '.$first->id,
+                'composition_whole_organization' => 'Сделай Excel: покажи акты всей нашей организации, а также договоры проекта '.$first->id,
+                'composition_overall_organization' => 'Сделай Excel: покажи акты в целом по нашей организации, а также договоры проекта '.$first->id,
+                'composition_separate' => 'Сделай Excel: покажи все акты организации и отдельно договоры по проекту '.$first->id,
+                'composition_also' => 'Сделай Excel: покажи все акты организации и также договоры проекта '.$first->id,
+                'compare_noun_difference', 'compare_subject_noun_difference' => 'Сделай Excel: покажи разницу между всеми актами организации и актами проекта '.$first->id,
+                'compare_noun_distinctions', 'compare_subject_noun_distinctions' => 'Сделай Excel: покажи различия между всеми актами организации и актами проекта '.$first->id,
+                'wrapped_entity_explicit' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам проекта '.$second->id,
+                'wrapped_entity_current' => 'Сделай Excel из двух листов: сравни все акты организации с данными по актам выбранного проекта',
+                'composition_negative' => 'Сделай Excel: все акты организации, а также договоры проекта '.$first->id.'. Сравнивать их не нужно',
+                'relation_against_explicit' => 'Сделай Excel из двух листов: сравни все акты организации против проекта '.$second->id,
+                'relation_relative_explicit' => 'Сделай Excel из двух листов: сравни все акты организации относительно проекта '.$second->id,
+                'project_first_explicit' => 'Сделай Excel из двух листов: все акты проекта '.$second->id.' сравни со всеми актами организации',
+                'project_first_named' => 'Сделай Excel из двух листов: все акты проекта «'.$first->name.'» сравни со всеми актами организации',
+                'preposition_entity_explicit' => 'Сравни все акты организации с актами по проекту '.$second->id.'. Сделай Excel из двух листов.',
+                'compare_subject_organization_only' => 'Сравни все акты организации и все договоры организации с проектом '.$second->id.'. Сделай Excel.',
+                'repeated_entity_explicit', 'compare_subject_repeated_entity' => 'Сравни все акты организации с актами проекта '.$second->id.'. Сделай Excel из двух листов.',
+                'reconcile_explicit', 'compare_subject_reconcile_entity' => 'Сверь все акты организации с проектом '.$second->id.'. Сделай Excel из двух листов.',
+                'explicit', 'missing_org', 'org_project_filter', 'project_range_gt', 'project_range_lte' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$second->id,
+                'missing_project' => 'Сделай Excel: сравни все акты организации с проектами '.$first->id.' и '.$second->id,
+                'named' => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с проектом '.$first->name,
+                'unbound_period' => 'Сделай Excel: сравни все акты организации за 2025 год с актами проекта '.$first->id.' за 2026 год',
+                'unbound_plain_period' => 'Сделай Excel: сравни акты организации за 2025 год с актами проекта '.$first->id.' за 2026 год',
+                'unbound_amount' => 'Сделай Excel: сравни все акты организации дороже 1000 рублей с актами проекта '.$first->id.' дешевле 2000 рублей',
+                'unbound_currency' => 'Сделай Excel: сравни все акты организации в рублях с актами проекта '.$first->id.' в долларах',
+                'unbound_invented' => 'Сделай Excel: сравни все акты организации с актами проекта '.$first->id,
+                'named_period' => 'Сделай Excel из двух листов: сравни все акты организации без отклонённых с проектом '.$first->name.' за октябрь 2026 года',
+                'named_grouping' => 'Сделай Excel из двух листов: сравни все акты организации с проектом '.$first->name.' по статусам и валютам',
+                'explicit_exclusion' => 'Сделай Excel из двух листов: сравни все акты организации без проекта '.$first->id.' с проектом '.$second->id,
+                default => 'Сделай Excel из двух листов: сравни отчёт по всем актам организации с выбранным проектом',
+            };
+            $organizationSection = $arguments['sections'][0];
+            $organizationSection['title'] = 'Организация';
+            $organizationSection['scope'] = 'organization';
+            $projectSection = $organizationSection;
+            $projectSection['title'] = 'Проект';
+            $projectSection['scope'] = 'project';
+            $projectSection['project_id'] = $secondProject ? $second->id : $first->id;
+            $projectSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $projectSection['project_id']],
+                ...($filtered ? array_slice($filters, $nestedProject ? 1 : 0) : [])];
+            if (str_starts_with($variant, 'unbound_')) {
+                $conditions = match ($variant) {
+                    'unbound_period', 'unbound_plain_period' => [['field' => 'date', 'operator' => 'gte', 'value' => '2025-01-01'], ['field' => 'date', 'operator' => 'lte', 'value' => '2025-12-31']],
+                    'unbound_amount' => [['field' => 'total_amount', 'operator' => 'gt', 'value' => 1000]],
+                    'unbound_currency' => [['field' => 'currency', 'operator' => 'eq', 'value' => 'RUB']],
+                    default => [['field' => 'status', 'operator' => 'neq', 'value' => 'rejected']],
+                };
+                $organizationSection['filters'] = $conditions;
+                $projectSection['filters'] = $conditions;
+            }
+            if (str_starts_with($variant, 'composition_')) {
+                $projectSection['domain'] = 'contracts';
+                $projectSection['entity_type'] = 'contract';
+                $projectSection['columns'] = ['id', 'number'];
+                $projectSection['group_by'] = [];
+                $projectSection['metrics'] = [];
+                $projectSection['order_by'] = [['field' => 'id', 'direction' => 'asc']];
+                if ($variant === 'composition_swapped') {
+                    $organizationSection['domain'] = 'contracts';
+                    $organizationSection['entity_type'] = 'contract';
+                    $projectSection['domain'] = 'acts';
+                    $projectSection['entity_type'] = 'performance_act';
+                }
+            }
+            if (in_array($variant, ['compare_subject_entity', 'compare_subject_reconcile_entity', 'compare_subject_repeated_entity', 'compare_subject_noun_difference', 'compare_subject_noun_distinctions'], true)) {
+                $projectSection['domain'] = 'contracts';
+                $projectSection['entity_type'] = 'contract';
+            }
+            if ($variant === 'compare_subject_filter') {
+                $projectSection['filters'][] = ['field' => 'status', 'operator' => 'eq', 'value' => 'approved'];
+            }
+            if ($variant === 'compare_subject_group') {
+                $projectSection['group_by'] = ['status'];
+                $projectSection['columns'] = ['status'];
+                $projectSection['order_by'] = [['field' => 'status', 'direction' => 'asc']];
+            }
+            if ($variant === 'compare_subject_metric') {
+                $projectSection['metrics'][1]['operation'] = 'avg';
+            }
+            if ($variant === 'compare_equivalent') {
+                $projectSection['metrics'][0]['label'] = 'Количество проекта';
+                $projectSection['metrics'][1]['label'] = 'Сумма проекта';
+            }
+            if (in_array($variant, ['project_range_gt', 'project_range_lte'], true)) {
+                $projectSection['filters'] = [['field' => 'project_id', 'operator' => $variant === 'project_range_gt' ? 'gt' : 'lte',
+                    'value' => $projectSection['project_id'] - ($variant === 'project_range_lte' ? 1 : 0)]];
+            }
+            if ($variant === 'ambiguous') {
+                unset($organizationSection['scope'], $projectSection['scope']);
+            }
+            if ($variant === 'org_project_filter') {
+                $organizationSection['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $second->id]];
+            }
+            $arguments['format'] = 'xlsx';
+            $arguments['sections'] = $variant === 'missing_org' ? [$projectSection] : [$organizationSection, $projectSection];
+            if ($variant === 'compare_subject_organization_only') {
+                $extraOrganization = array_replace($organizationSection, ['domain' => 'contracts', 'entity_type' => 'contract', 'title' => 'Договоры организации']);
+                $arguments['sections'][] = $extraOrganization;
+            }
+        }
+        if (str_starts_with($variant, 'multiple_named')) {
+            $target = $variant === 'multiple_named_private' ? $private : $second;
+            $target->updateQuietly(['name' => 'Бета '.bin2hex(random_bytes(4))]);
+            $quote = static fn (string $name): string => $variant === 'multiple_named_quoted' ? '«'.$name.'»' : $name;
+            $question = 'Сделай Excel из трёх листов: сравни все акты организации с проектом '.$quote($first->name).' и проектом '.$quote($target->name);
+            $extraProject = $arguments['sections'][1];
+            $extraProject['title'] = 'Второй проект';
+            $extraProject['project_id'] = $target->id;
+            $extraProject['filters'] = [['field' => 'project_id', 'operator' => 'eq', 'value' => $target->id]];
+            $arguments['sections'][] = $extraProject;
+        }
+        $result = $this->dispatch($arguments, $question, $first, $org, $actor);
+        if ($rejectedScope) {
+            self::assertSame('error', $result['status']);
+            self::assertTrue($result['needs_clarification']);
+            self::assertArrayHasKey('sections.scope', $result['validation_errors']);
+            self::assertSame([], $result['source_refs']);
+            self::assertNull($csv);
+
+            return;
+        }
+        self::assertSame('success', $result['status'], json_encode($result, JSON_UNESCAPED_UNICODE));
+        $expectedSections = $comparison ? [['title' => 'Организация', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows],
+            ['title' => 'Проект', 'source_row_count' => $secondProject ? 4 : 3, 'output_rows' => $secondProject ? 4 : 3]]
+            : [['title' => 'По статусам и валютам', 'source_row_count' => $sourceRows, 'output_rows' => $outputRows]];
+        if (str_starts_with($variant, 'multiple_named')) {
+            $expectedSections[] = ['title' => 'Второй проект', 'source_row_count' => 4, 'output_rows' => 4];
+        }
+        self::assertSame($expectedSections, $result['sections']);
+        self::assertIsString($csv);
+        if ($comparison) {
+            self::assertStringStartsWith('PK', $csv);
+            $temporary = tempnam(sys_get_temp_dir(), 'most-scope-');
+            self::assertIsString($temporary);
+            file_put_contents($temporary, $csv);
+            $workbook = null;
+            try {
+                $workbook = \PhpOffice\PhpSpreadsheet\IOFactory::load($temporary);
+                self::assertSame(str_starts_with($variant, 'multiple_named') ? 3 : 2, $workbook->getSheetCount());
+                $sheetRows = [];
+                foreach ($workbook->getAllSheets() as $sheet) {
+                    $sheetRows[] = array_values(array_filter($sheet->toArray(), static fn (array $row): bool => in_array($row[1] ?? null, ['RUB', 'USD', 'EUR'], true)));
+                }
+                $rows = $sheetRows[0];
+                if (str_starts_with($variant, 'composition_')) {
+                    $contractIds = array_map(static fn (array $row): int => (int) $row[0],
+                        array_values(array_filter($workbook->getSheet(1)->toArray(), static fn (array $row): bool => is_numeric($row[0] ?? null))));
+                    self::assertEqualsCanonicalizing(Contract::query()->where('project_id', $first->id)->pluck('id')->all(), $contractIds);
+                } else {
+                    $projectGroups = array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $sheetRows[1]);
+                    self::assertEqualsCanonicalizing($secondProject
+                        ? [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']]
+                        : [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']], $projectGroups);
+                }
+                if (str_starts_with($variant, 'multiple_named')) {
+                    self::assertEqualsCanonicalizing([['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']],
+                        array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $sheetRows[2]));
+                }
+            } finally {
+                $workbook?->disconnectWorksheets();
+                unlink($temporary);
+            }
+        } else {
+            self::assertStringStartsWith("\xEF\xBB\xBF", $csv);
+            self::assertStringNotContainsString('9000', $csv);
+            self::assertStringNotContainsString('8000', $csv);
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, substr($csv, 3));
+            rewind($stream);
+            $rows = [];
+            while (($row = fgetcsv($stream, null, ';', '"', '')) !== false) {
+                $rows[] = $row;
+            }
+            fclose($stream);
+            self::assertSame(['Статус', 'Валюта', 'Количество актов', 'Общая сумма'], array_shift($rows));
+        }
+        $groups = array_map(static fn (array $row): array => [$row[1], (int) $row[2], number_format((float) $row[3], 2, '.', '')], $rows);
+        $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00'], ['USD', 2, '10.00']];
+        if (! $filtered) {
+            $expected = [...$expected, ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
+        }
+        if ($excludeFirst || in_array($variant, ['restricted_id', 'restricted_name', 'restricted_compare_id', 'restricted_compare_name'], true)) {
+            $expected = [['RUB', 1, '20.00'], ['USD', 1, '7.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
+        }
+        if ($variant === 'without_drafts') {
+            $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00'], ['RUB', 1, '5.00'], ['EUR', 1, '9.00']];
+        }
+        if ($variant === 'defined_records') {
+            $expected = [['RUB', 2, '30.00'], ['USD', 1, '1.00']];
+        }
+        if (in_array($variant, ['process_organization', 'process_project', 'process_document_flow', 'project_adjective', 'object_adjective'], true)) {
+            $expected = [['RUB', 1, '10.00'], ['USD', 1, '1.00'], ['USD', 1, '3.00']];
+        }
+        self::assertEqualsCanonicalizing($expected, $groups);
+        $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
+        OrganizationCustomRole::query()->findOrFail($assignment->custom_role_id)->updateQuietly(['system_permissions' => ['reports.view']]);
+        $denied = $this->dispatch($arguments, $question, $first, $org, $actor);
+        self::assertNotSame('success', $denied['status'] ?? null);
+    }
+
+    public static function actConditionQuestions(): array
+    {
+        return ['independent' => [false], 'comparison' => [true], 'noun command' => [true, 'найди различия между'],
+            'reconciliation command' => [true, 'проведи сверку между']];
+    }
+
+    #[DataProvider('actConditionQuestions')]
+    public function test_independent_act_filters_bind_to_each_scope_before_writing_the_workbook(bool $comparison, string $directive = ''): void
+    {
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(
+            array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $actor = Model::withoutEvents(fn () => $fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate'],
+            'project-management' => ['projects.view'],
+            'contract-management' => ['contracts.view', 'contracts.performance_acts.view'],
+        ], ['reports.view', 'finance.view']));
+        $projects = Model::withoutEvents(fn () => Project::factory()->count(2)->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]));
+        foreach ($projects as $project) {
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+            foreach (['approved', 'draft'] as $status) {
+                $this->act($project, $status, 'RUB', '10.00', '2026-10-10');
+            }
+        }
+        $project = $projects->first();
+        $question = $comparison ? 'Сделай Excel: сравни все утверждённые акты организации с черновыми актами проекта '.$project->id
+            : 'Сделай Excel: все утверждённые акты организации, а также черновики актов проекта '.$project->id;
+        if ($directive !== '') {
+            $question = 'Сделай Excel: '.$directive.' всеми утверждёнными актами организации и черновыми актами проекта '.$project->id;
+        }
+        $section = ['title' => 'Организация', 'scope' => 'organization', 'project_id' => null, 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'columns' => ['id', 'status'], 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'approved']],
+            'group_by' => [], 'metrics' => [], 'order_by' => [], 'row_limit' => 100];
+        $projectSection = array_replace($section, ['title' => 'Проект', 'scope' => 'project', 'project_id' => $project->id,
+            'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => $project->id], ['field' => 'status', 'operator' => 'eq', 'value' => 'draft']]]);
+        $arguments = ['title' => 'Статусы актов', 'format' => 'xlsx', 'sections' => [$section, $projectSection]];
+        $bytes = null;
+        $files = $this->createMock(FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use (&$bytes): CurrentStoredFile {
+            $bytes = stream_get_contents($stream);
+
+            return new CurrentStoredFile($path, 'etag', strlen($bytes), $hash, $mime);
+        });
+        $this->app->instance(FileService::class, $files);
+        $swapped = $arguments;
+        $swapped['sections'][0]['filters'][0]['value'] = 'draft';
+        $swapped['sections'][1]['filters'][1]['value'] = 'approved';
+        foreach ([$swapped, array_replace($arguments, ['sections' => [$section, array_replace($projectSection, ['filters' => []])]])] as $wrong) {
+            $result = $this->dispatch($wrong, $question, $project, $fixture->organization, $actor);
+            self::assertTrue($result['needs_clarification']);
+            self::assertSame([], $result['source_refs']);
+            self::assertNull($bytes);
+        }
+        $result = $this->dispatch($arguments, $question, $project, $fixture->organization, $actor);
+        self::assertSame('success', $result['status'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame([2, 1], array_column($result['sections'], 'source_row_count'));
+        $temporary = tempnam(sys_get_temp_dir(), 'most-conditions-');
+        file_put_contents($temporary, $bytes);
+        $workbook = null;
+        try {
+            $workbook = \PhpOffice\PhpSpreadsheet\IOFactory::load($temporary);
+            self::assertSame(2, $workbook->getSheetCount());
+            foreach (['approved', 'draft'] as $index => $status) {
+                $ids = array_map(static fn (array $row): int => (int) $row[0], array_values(array_filter($workbook->getSheet($index)->toArray(), static fn (array $row): bool => is_numeric($row[0] ?? null))));
+                $expected = ContractPerformanceAct::query()->whereIn('project_id', $index === 0 ? $projects->modelKeys() : [$project->id])->where('status', $status)->pluck('id')->all();
+                self::assertEqualsCanonicalizing($expected, $ids);
+            }
+        } finally {
+            $workbook?->disconnectWorksheets();
+            unlink($temporary);
+        }
+    }
+
+    public function test_counterparty_grouping_keeps_all_organization_projects_even_when_a_project_is_named_i(): void
+    {
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(
+            array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $actor = Model::withoutEvents(fn () => $fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate'],
+            'project-management' => ['projects.view'],
+            'contract-management' => ['contracts.view', 'contractors.view'],
+        ], ['reports.view', 'finance.view']));
+        $projects = Model::withoutEvents(fn () => Project::factory()->count(3)->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]));
+        foreach ($projects as $project) {
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        }
+        $selected = $projects[2];
+        $selected->updateQuietly(['name' => 'и']);
+        $contractor = Model::withoutEvents(fn () => Contractor::query()->create(['organization_id' => $fixture->organization->id, 'name' => 'Подрядчик сводки']));
+        foreach ([$projects[0], $projects[1]] as $project) {
+            $contract = Model::withoutEvents(fn () => Contract::query()->create(['organization_id' => $fixture->organization->id,
+                'project_id' => $project->id, 'contractor_id' => $contractor->id, 'number' => 'GROUP-'.bin2hex(random_bytes(5)),
+                'date' => '2026-10-01', 'total_amount' => '100.00', 'currency' => 'RUB', 'contract_side_type' => 'contract', 'is_self_execution' => false]));
+            $contract->parties()->delete();
+            foreach (['first' => [$fixture->organization->id, $fixture->organization->name],
+                'second' => [$fixture->foreignOrganization->id, $contractor->name]] as $side => [$linked, $name]) {
+                Model::withoutEvents(static fn () => \App\Models\ContractParty::query()->create([
+                    'contract_id' => $contract->id, 'side' => $side, 'party_key' => $side,
+                    'role' => 'contractor', 'linked_organization_id' => $linked, 'name' => $name, 'snapshot' => [],
+                ]));
+            }
+        }
+        $bytes = null;
+        $files = $this->createMock(FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) use (&$bytes): CurrentStoredFile {
+            $bytes = stream_get_contents($stream);
+
+            return new CurrentStoredFile($path, 'etag', strlen($bytes), $hash, $mime);
+        });
+        $this->app->instance(FileService::class, $files);
+        $arguments = ['title' => 'Договоры по проектам и контрагентам', 'format' => 'csv', 'sections' => [[
+            'title' => 'Договоры', 'domain' => 'contracts', 'entity_type' => 'contract', 'project_id' => $selected->id,
+            'columns' => ['project_id', 'counterparty_name'], 'filters' => [['field' => 'project_id', 'operator' => 'eq', 'value' => $selected->id]],
+            'group_by' => ['project_id', 'counterparty_name'], 'metrics' => [['field' => 'id', 'operation' => 'count', 'label' => 'Количество']],
+            'order_by' => [], 'row_limit' => 100,
+        ]]];
+        $result = $this->dispatch($arguments, 'Все договоры организации в разрезе проекта и подрядчика. Сделай CSV.', $selected, $fixture->organization, $actor);
+        self::assertSame('success', $result['status'] ?? null, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertSame(2, $result['sections'][0]['source_row_count']);
+        self::assertSame(2, $result['sections'][0]['output_rows']);
+        self::assertStringStartsWith("\xEF\xBB\xBF", $bytes);
+        $stream = fopen('php://temp', 'w+b');
+        fwrite($stream, substr($bytes, 3));
+        rewind($stream);
+        $rows = [];
+        while (($row = fgetcsv($stream, null, ';', '"', '')) !== false) {
+            $rows[] = $row;
+        }
+        fclose($stream);
+        self::assertCount(3, array_shift($rows));
+        self::assertEqualsCanonicalizing([['#'.$projects[0]->id.' — '.$projects[0]->name, $contractor->name, '1'],
+            ['#'.$projects[1]->id.' — '.$projects[1]->name, $contractor->name, '1']], $rows);
+    }
+
+    private function act(Project $project, string $status, string $currency, string $amount, string $date): void
+    {
+        Model::withoutEvents(function () use ($project, $status, $currency, $amount, $date): void {
+            $contractor = Contractor::query()->create(['organization_id' => $project->organization_id, 'name' => 'Подрядчик акта']);
+            $contract = Contract::query()->create(['organization_id' => $project->organization_id, 'project_id' => $project->id,
+                'contractor_id' => $contractor->id, 'number' => 'C-'.bin2hex(random_bytes(5)), 'date' => '2026-09-01', 'total_amount' => '10000.00', 'currency' => $currency]);
+            ContractPerformanceAct::query()->create(['contract_id' => $contract->id, 'project_id' => $project->id,
+                'act_document_number' => 'ACT-'.bin2hex(random_bytes(5)), 'act_date' => $date, 'period_start' => $date, 'period_end' => $date,
+                'amount' => $amount, 'currency' => $currency, 'status' => $status, 'is_approved' => $status === 'approved']);
+        });
+    }
+
+    private function dispatch(array $arguments, string $question, Project $project, Organization $organization, User $actor, string $toolName = 'generate_custom_report'): array
+    {
+        $service = app(AIAssistantService::class);
+        $plan = ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => $project->id]]]],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($question)->toArray()];
+        $call = ['name' => $toolName, 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)];
+        $executed = null;
+        $evidence = [];
+        $failures = [];
+        $proposed = [];
+        $urls = [];
+        $method = new \ReflectionMethod($service, 'handleToolCall');
+        $result = $method->invokeArgs($service, [$call, $organization, $actor, (int) $organization->id, $plan, false,
+            &$executed, &$evidence, &$failures, &$proposed, &$urls]);
+        self::assertNull($executed);
+        self::assertSame([], $proposed);
+        self::assertIsArray($result);
+
+        return $result;
+    }
+}

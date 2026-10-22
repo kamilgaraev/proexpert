@@ -104,6 +104,23 @@ final class AssistantCustomReportCompletionTest extends TestCase
         self::assertTrue(AssistantCustomReportCompletion::missingFile($plan, [], [], [], false));
     }
 
+    public function test_failed_generation_uses_only_the_executed_custom_tool_message_and_validation_details(): void
+    {
+        $failure = ['_tool_name' => 'generate_custom_report', 'status' => 'error', 'message' => 'Ошибка формирования',
+            'validation_errors' => ['filters' => ['Уточните период', 'Уточните период'], 'columns' => ['Сократите число полей']]];
+        self::assertSame("Ошибка формирования\nУточните период\nСократите число полей",
+            AssistantCustomReportCompletion::failureMessage([$failure]));
+        self::assertSame('Источник недоступен', AssistantCustomReportCompletion::failureMessage([
+            array_replace($failure, ['status' => 'unavailable', 'message' => 'Источник недоступен', 'validation_errors' => []]),
+        ]));
+        foreach ([['_tool_name' => 'assistant_domain_search'], ['status' => 'success'], ['status' => 'pending'], ['message' => null]] as $override) {
+            self::assertNull(AssistantCustomReportCompletion::failureMessage([array_replace($failure, $override)]));
+        }
+        self::assertNull(AssistantCustomReportCompletion::failureMessage([]));
+        self::assertNull(AssistantCustomReportCompletion::failureMessage([$failure,
+            ['_tool_name' => 'generate_custom_report', 'status' => 'success', 'message' => 'Готово']]));
+    }
+
     private function plan(string $format = 'xlsx'): array
     {
         return ['request' => ['message' => 'Собери отчёт с полями название и статус'],

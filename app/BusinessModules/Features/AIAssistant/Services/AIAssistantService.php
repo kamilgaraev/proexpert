@@ -124,6 +124,8 @@ class AIAssistantService
 
     private array $activeCustomReportSources = [];
 
+    private array $activeSearchScopeAttempts = [];
+
     private array $providerUsageAttempts = [];
 
     private ?array $pendingSummary = null;
@@ -206,6 +208,7 @@ class AIAssistantService
         $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
         $this->activeToolResults = [];
         $this->activeCustomReportSources = [];
+        $this->activeSearchScopeAttempts = [];
         $this->documentContextBlocked = false;
         $this->pendingSummary = null;
         $this->requestOutcome = null;
@@ -222,6 +225,7 @@ class AIAssistantService
                 $this->activeActor = null;
                 $this->activeToolResults = [];
                 $this->activeCustomReportSources = [];
+                $this->activeSearchScopeAttempts = [];
                 $this->documentContextBlocked = false;
             }
         }
@@ -247,6 +251,7 @@ class AIAssistantService
             $this->activeActor = null;
             $this->activeToolResults = [];
             $this->activeCustomReportSources = [];
+            $this->activeSearchScopeAttempts = [];
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
@@ -270,6 +275,7 @@ class AIAssistantService
         $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
         $this->activeToolResults = [];
         $this->activeCustomReportSources = [];
+        $this->activeSearchScopeAttempts = [];
         $this->documentContextBlocked = false;
         $this->pendingSummary = null;
         $this->requestOutcome = null;
@@ -301,6 +307,7 @@ class AIAssistantService
             $this->activeActor = null;
             $this->activeToolResults = [];
             $this->activeCustomReportSources = [];
+            $this->activeSearchScopeAttempts = [];
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
@@ -1202,6 +1209,7 @@ class AIAssistantService
                     'source_refs' => [], 'needs_clarification' => true];
             }
             $reportArtifacts = [];
+            $customReportPublished = false;
             $reportReferences = [];
             $reportControls = [];
             $reportPresentation = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportPresentation::class);
@@ -1228,7 +1236,9 @@ class AIAssistantService
                 }
                 $artifacts = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService::class)
                     ->artifactsFromToolResult($reportTool, $activeResult, $this->resolveOrganization($organizationId), $user);
-                $reportArtifacts = [...$reportArtifacts, ...$this->filterAgentArtifactsForOrganization($organizationId, $artifacts, (int) $user->id)];
+                $artifacts = $this->filterAgentArtifactsForOrganization($organizationId, $artifacts, (int) $user->id);
+                $reportArtifacts = [...$reportArtifacts, ...$artifacts];
+                $customReportPublished = $customReportPublished || ($reportTool === 'generate_custom_report' && $artifacts !== []);
                 $reportReferences = [...$reportReferences, ...($activeResult['source_refs'] ?? [])];
             }
             if ($reportArtifacts !== [] && $requestProjectScope->allowsReferences($reportReferences, $verificationToolResults)) {
@@ -1249,6 +1259,16 @@ class AIAssistantService
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = ! $validated;
             }
+            if ((! $customReportPublished || $reportArtifacts === []) && ! $this->hasCompleteSearchScope($requestProjectScope,
+                (string) ($taskPlan['request']['message'] ?? ''), $user, $organizationId)) {
+                $reportServerClarification = true;
+                $assistantContent = trans_message('ai_assistant_facts.comparison_scope_incomplete');
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
+                    'source_refs' => [], 'needs_clarification' => true];
+                $degradedMode = true;
+                $reportArtifacts = [];
+                $this->recordRequestOutcome('insufficient_data');
+            }
             $missingCustomReport = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::missingFile(
                 $taskPlan, $this->activeToolResults, $reportArtifacts, $reportControls, $reportServerClarification
             );
@@ -1256,7 +1276,8 @@ class AIAssistantService
                 if ($this->requestOutcome === null) {
                     $this->recordRequestOutcome('insufficient_data');
                 }
-                $assistantContent = trans_message('ai_custom_reports.missing_file');
+                $assistantContent = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportCompletion::failureMessage($this->activeToolResults)
+                    ?? trans_message('ai_custom_reports.missing_file');
                 $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'unverified',
                     'source_refs' => [], 'needs_clarification' => false];
                 $degradedMode = true;
@@ -1971,6 +1992,23 @@ class AIAssistantService
             : null;
     }
 
+    private function hasCompleteSearchScope(AssistantRequestProjectScope $scope, string $question, User $actor, int $organizationId): bool
+    {
+        try {
+            $requirements = $scope->searchCoverageRequirements($question,
+                fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $actor, $organizationId));
+        } catch (\App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous) {
+            return false;
+        }
+        if ($requirements === null) {
+            return true;
+        }
+        $references = AssistantSearchScopeCoverage::references($this->activeSearchScopeAttempts, $requirements['project_ids'], $actor, $organizationId, $requirements['pairwise'], $requirements['subjects'] ?? []);
+
+        return $references !== null && $this->readPhase(
+            fn (): bool => app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, $references), $actor, $organizationId);
+    }
+
     private function savePendingSummary(User $actor): void
     {
         $pending = $this->pendingSummary;
@@ -2376,12 +2414,6 @@ class AIAssistantService
                 || AssistantBimModelSelector::isProjectQuestion(is_string($args['model_query'] ?? null) ? $args['model_query'] : null, $requestQuery);
         }
         $requestProjectScope = AssistantRequestProjectScope::fromPlan($taskPlan);
-        if ($toolName === 'assistant_domain_search') {
-            $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
-            $args = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
-                $this->resolveRagProjectId($taskPlan['request']['context'] ?? []),
-                $definition !== null && in_array('project_id', $definition->fields, true));
-        }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
         $tool = $this->toolRegistry->getTool($toolName);
 
@@ -2394,22 +2426,22 @@ class AIAssistantService
         }
 
         $toolFailureStage = 'argument_validation';
+        $searchScopeAttempt = null;
         try {
             $schema = $tool->getParametersSchema();
+            if ($toolName === 'assistant_domain_search') {
+                $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
+                $args = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
+                    $this->resolveRagProjectId($taskPlan['request']['context'] ?? []),
+                    $definition !== null && in_array('project_id', $definition->fields, true),
+                    fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+            }
             if ($toolName === 'search_projects') {
                 unset($args['project_id']);
             }
             if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
                 if ($requestProjectScope->projectId === null) {
                     return $this->currentProjectScopeUnavailable('current_project_required');
-                }
-                if ($toolName === 'generate_custom_report') {
-                    foreach ($args['sections'] ?? [] as $index => $section) {
-                        if (! is_array($section)) {
-                            continue;
-                        }
-                        $args['sections'][$index]['project_id'] = $requestProjectScope->projectId;
-                    }
                 }
                 if (isset($schema['properties']['project_id'])) {
                     $args['project_id'] = $requestProjectScope->projectId;
@@ -2419,7 +2451,15 @@ class AIAssistantService
                     $args['id'] = $requestProjectScope->projectId;
                 }
             }
+            if ($toolName === 'generate_custom_report') {
+                $args = $requestProjectScope->bindReportScope($requestQuery, $args,
+                    fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+            }
             $this->toolArguments->validate($args, $schema);
+            if ($toolName === 'assistant_domain_search') {
+                $searchScopeAttempt = count($this->activeSearchScopeAttempts);
+                $this->activeSearchScopeAttempts[] = ['arguments' => $args, 'evidence' => null];
+            }
             $toolFailureStage = 'request_policy';
             $isMutationTool = $this->permissionChecker->isMutationTool($toolName);
             if ($isMutationTool && (! $allowActions || ! $requestUnderstanding instanceof AssistantRequestUnderstanding)) {
@@ -2565,6 +2605,9 @@ class AIAssistantService
 
                 return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
             }
+            if ($searchScopeAttempt !== null && is_array($toolResult)) {
+                $this->activeSearchScopeAttempts[$searchScopeAttempt]['evidence'] = $toolResult['domain_search_count_evidence'] ?? null;
+            }
             foreach ($liveReads as $liveRead) {
                 $this->activeToolResults[] = $liveRead;
             }
@@ -2612,6 +2655,14 @@ class AIAssistantService
                 throw $exception;
             }
             $this->executionCheckpoint();
+            if ($exception instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantReportScopeAmbiguous) {
+                if ($toolName === 'assistant_domain_search') {
+                    return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                }
+
+                return ['status' => 'error', 'message' => trans_message('ai_custom_reports.failed'), 'needs_clarification' => true,
+                    'validation_errors' => ['sections.scope' => [trans_message('ai_custom_reports.scope_clarification')]], 'source_refs' => []];
+            }
             if ($exception instanceof \Illuminate\Validation\ValidationException) {
                 $allowedCodes = ['unsupported_domain', 'unsupported_entity', 'unsupported_field', 'unsupported_predicate', 'unsupported_project_filter', 'unsupported_parent_projection'];
                 $errors = [];

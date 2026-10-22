@@ -69,6 +69,7 @@ final class ProjectPulseCurrentAccessTest extends TestCase
         $flags = (object) ['denied' => [], 'revokeReportsOnFinance' => false];
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(static function (User $user, string $permission) use ($flags): bool {
             if ($permission === 'finance.view' && $flags->revokeReportsOnFinance) { $flags->denied = ['reports.view']; }
 

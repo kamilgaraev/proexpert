@@ -39,6 +39,7 @@ try {
     $authorization = Mockery::mock(AuthorizationService::class);
     $authorization->shouldReceive('canCurrent')->andReturn(true);
     $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+    $authorization->shouldReceive('memoizedCurrentModuleSlugs')->andReturn(null);
     $entitlements = Mockery::mock(OrganizationEntitlementService::class);
     $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $entitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
     $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'ai-assistant'])]));
@@ -59,7 +60,8 @@ try {
     if (!$started['created'] || $replayed['created'] || $replayed['request']->id !== $started['request']->id) { throw new RuntimeException('submit_idempotency_failed'); }
     $result = ['status' => 'queued', 'jobs' => Queue::getFacadeRoot()->pushed(ExecuteAssistantChatJob::class)->count(), 'duration_ms' => round($duration, 2), 'peak_memory_bytes' => memory_get_peak_usage(true)];
 } catch (Throwable $exception) {
-    $result = ['status' => 'error', 'exception_class' => get_class($exception)];
+    $result = ['status' => 'error', 'exception_class' => get_class($exception),
+        'exception_file' => basename($exception->getFile()), 'exception_line' => $exception->getLine()];
 }
 file_put_contents($payloadPath.'.result', json_encode($result, JSON_THROW_ON_ERROR));
 exit($result['status'] === 'queued' ? 0 : 1);

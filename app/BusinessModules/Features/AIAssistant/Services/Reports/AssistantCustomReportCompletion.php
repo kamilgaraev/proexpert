@@ -58,6 +58,31 @@ final class AssistantCustomReportCompletion
         return true;
     }
 
+    public static function failureMessage(array $results): ?string
+    {
+        foreach (array_reverse($results) as $result) {
+            if (($result['_tool_name'] ?? null) !== 'generate_custom_report') {
+                continue;
+            }
+            if (! in_array($result['status'] ?? null, ['error', 'unavailable'], true)
+                || ! is_string($result['message'] ?? null) || trim($result['message']) === '') {
+                return null;
+            }
+            $messages = [trim($result['message'])];
+            foreach (is_array($result['validation_errors'] ?? null) ? $result['validation_errors'] : [] as $errors) {
+                foreach (is_array($errors) ? $errors : [] as $error) {
+                    if (is_string($error) && trim($error) !== '') {
+                        $messages[] = trim($error);
+                    }
+                }
+            }
+
+            return implode("\n", array_unique($messages));
+        }
+
+        return null;
+    }
+
     private static function hasSource(array $results, string $format, array $sourceHints): bool
     {
         foreach ($results as $result) {

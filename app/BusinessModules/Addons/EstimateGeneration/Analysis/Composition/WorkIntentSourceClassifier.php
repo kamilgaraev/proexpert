@@ -78,7 +78,7 @@ final class WorkIntentSourceClassifier
             // An unknown model work has no server definition. A categorical
             // document fact cannot verify it merely by matching a claimed section.
             // A user's description can still provide a bounded preliminary outline.
-            if ($registered === null && ! (($fact['type'] ?? null) === 'evaluation_answer'
+            if ($registered === null && ! $this->isComposerAnswer($fact) && ! (($fact['type'] ?? null) === 'evaluation_answer'
                 && ($fact['origin'] ?? null) === 'user_input'
                 && ((($fact['context_kind'] ?? null) === 'initial_description'
                     && is_array($fact['declared_work_sections'] ?? null))
@@ -104,6 +104,9 @@ final class WorkIntentSourceClassifier
                     $domains = $fact['semantic_work_sections'];
                 }
             }
+            if ($this->isComposerAnswer($fact)) {
+                $domains = $fact['answer_work_sections'];
+            }
             if (! in_array($section, $domains, true)) {
                 continue;
             }
@@ -113,7 +116,7 @@ final class WorkIntentSourceClassifier
 
                 continue;
             }
-            $entityId = $fact['entity_id'] ?? null;
+            $entityId = $this->isComposerAnswer($fact) ? ($fact['context_entity_id'] ?? null) : ($fact['entity_id'] ?? null);
             if (! is_string($entityId) || $entityId === '') {
                 continue;
             }
@@ -144,6 +147,14 @@ final class WorkIntentSourceClassifier
             && ($fact['type'] ?? null) === 'evaluation_answer' && ($fact['origin'] ?? null) === 'user_input'
             && ($fact['status'] ?? null) === 'confirmed' && ($fact['value']['kind'] ?? null) === 'initial_description'
             && ($fact['value']['numeric_parameters_confirmed'] ?? null) === false;
+    }
+
+    private function isComposerAnswer(array $fact): bool
+    {
+        return ($fact['context_kind'] ?? null) === 'composer_answer' && ($fact['type'] ?? null) === 'evaluation_answer'
+            && ($fact['origin'] ?? null) === 'user_assumption' && ($fact['status'] ?? null) === 'confirmed'
+            && ($fact['value']['kind'] ?? null) === 'composer_answer' && ($fact['value']['numeric_parameters_confirmed'] ?? null) === false
+            && is_array($fact['answer_work_sections'] ?? null) && is_string($fact['context_entity_id'] ?? null);
     }
 
     private function domains(string $type, string $entityType): array

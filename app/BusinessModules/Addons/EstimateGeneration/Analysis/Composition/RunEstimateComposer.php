@@ -22,6 +22,10 @@ final readonly class RunEstimateComposer
 
     public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v1';
 
+    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v1';
+
+    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v1';
+
     public function __construct(
         private AiRoleRunRepository $runs,
         private EstimateComposerModel $model,

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
@@ -503,6 +505,63 @@ final class AssistantSiteRequestCustomReportTest extends TestCase
         self::assertTrue($metadata['needs_clarification']);
         self::assertSame('partial', $metadata['validation_status']);
         self::assertSame([], $metadata['artifacts']);
+    }
+
+    public static function reportFailures(): array
+    {
+        return ['row limit' => ['row_limit'], 'unavailable source' => ['unavailable'], 'internal failure' => ['internal']];
+    }
+
+    #[DataProvider('reportFailures')]
+    public function test_file_request_preserves_safe_generator_failure_instead_of_model_success(string $failure): void
+    {
+        $request = $this->request($this->firstProject);
+        if ($failure === 'row_limit') {
+            $attributes = $request->getAttributes();
+            unset($attributes['id']);
+            SiteRequest::query()->insert(array_fill(0, 1000, $attributes));
+        }
+        $report = ['title' => 'Учебный отчёт', 'format' => 'xlsx', 'sections' => [$this->section('Материалы', [])]];
+        $provider = $this->createMock(SiteRequestReportResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->method('isAvailable')->willReturn(true);
+        $provider->method('countTokens')->willReturn(100);
+        $provider->expects(self::never())->method('chat');
+        $calls = 0;
+        $provider->expects(self::atLeast(2))->method('responses')->willReturnCallback(static function () use (&$calls, $report): array {
+            $call = ['type' => 'function_call', 'id' => 'failed-report', 'status' => 'completed', 'call_id' => 'failed-report',
+                'name' => 'generate_custom_report', 'arguments' => json_encode($report, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
+            $first = ++$calls === 1;
+
+            return ['content' => $first ? '' : 'Отчёт сформирован.', 'output' => $first ? [$call] : [], 'function_calls' => $first ? [$call] : [],
+                'input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'openai', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        });
+        $files = $this->createMock(FileService::class);
+        if ($failure === 'row_limit') {
+            $files->expects(self::never())->method('putPrivate');
+        } else {
+            $files->expects(self::once())->method('putPrivate')->willThrowException($failure === 'unavailable'
+                ? new ReportContractException(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE)
+                : new \RuntimeException('PRIVATE_STORAGE_EXCEPTION_DO_NOT_SHOW'));
+        }
+        $this->app->instance(FileService::class, $files);
+        $org = $this->fixture->organization;
+        app(AICreditService::class)->grant($org, 100000, 'purchase', null, 'failed-report-'.Str::uuid());
+        $query = 'Собери Excel по всем заявкам на материалы организации с названием, статусом и проектом.';
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false];
+        $payload['quote_id'] = app(AICreditService::class)->quote($org, $this->actor, $payload)['quote_id'];
+        $service = $this->app->makeWith(AIAssistantService::class, ['llmProvider' => $provider, 'ragRetriever' => null]);
+        $response = $service->ask($query, (int) $org->id, $this->actor, null, $payload);
+        $expected = $failure === 'unavailable' ? trans_message('reports.errors.report_source_unavailable') : trans_message('ai_custom_reports.failed');
+        if ($failure === 'row_limit') {
+            $expected .= "\n".trans_message('ai_custom_reports.too_many_rows');
+        }
+        self::assertSame($expected, $response['message']['content']);
+        self::assertStringNotContainsString('PRIVATE_STORAGE_EXCEPTION_DO_NOT_SHOW', json_encode($response, JSON_THROW_ON_ERROR));
+        self::assertSame([], $response['message']['metadata']['artifacts']);
+        self::assertSame('unverified', $response['message']['metadata']['validation_status']);
+        self::assertTrue($response['message']['metadata']['degraded_mode']);
+        self::assertFalse($response['message']['metadata']['needs_clarification']);
     }
 
     private function project(string $name): Project

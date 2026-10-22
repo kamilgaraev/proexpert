@@ -159,6 +159,10 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
         self::assertSame($sortedProvisionedModule, $provisionedModule);
         self::assertSame(count($registered), count(array_unique($registered, SORT_STRING)));
         self::assertContains(
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_21_000200_allow_composer_source_claim_learning.php',
+            $registered,
+        );
+        self::assertContains(
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001200_close_truthful_settings_schema.php',
             $registered,
         );
