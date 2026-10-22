@@ -521,6 +521,32 @@ final class EstimateExportReadbackTest extends TestCase
         }
     }
 
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    public function test_excel_unit_column_fits_the_full_word_in_both_price_modes(bool $showPrices): void
+    {
+        $estimate = $this->fixture();
+        $item = $estimate->sections->first()->items->first();
+        $item->setRelation('measurementUnit', new MeasurementUnit(['name' => 'Квадратный метр']));
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, ['show_prices' => $showPrices]);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-unit-label-');
+        try {
+            file_put_contents($path, $result['content']);
+            $sheet = IOFactory::load($path)->getSheetByName('Смета');
+            $row = $this->rowContaining($sheet, 'C', $item->name);
+            self::assertSame('Квадратный метр', $sheet->getCell('D'.$row)->getValue());
+            self::assertGreaterThanOrEqual(mb_strwidth('Квадратный', 'UTF-8') + 1, $sheet->getColumnDimension('D')->getWidth());
+            self::assertEquals(20, $sheet->getCell('E'.$row)->getValue());
+            self::assertSame($showPrices, $sheet->getColumnDimension('G')->getVisible());
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-unit-label'.($showPrices ? '' : '-without-prices').'.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
     private function rowContaining(Worksheet $sheet, string $column, string $value): int
     {
         for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
