@@ -22,9 +22,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessD
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReviewSpreadsheetCellInterpretation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StoredDocumentArtifact;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialProjectFactsWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
@@ -491,7 +493,31 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         Http::assertNothingSent();
     }
 
-    private function ordinaryWorkbook(bool $multiple = false, bool $typed = false, bool $neighbors = false, bool $alternate = false): array
+    public function test_cell_context_scans_past_typed_units_and_caps_eligible_rows_without_another_composer_wire(): void
+    {
+        [$session, $actor, $document] = $this->ordinaryWorkbook(leadingTypedSheets: 8, extraLiteralRows: 8);
+        app(InitialProjectFactsWriter::class)->write($session, $actor);
+        $units = EstimateGenerationProcessingUnit::query()->where('organization_id', $session->organization_id)
+            ->where('project_id', $session->project_id)->where('session_id', $session->id)->where('document_id', $document->id)->orderBy('id')->get();
+        self::assertCount(9, $units);
+        $input = app(EstimateComposerInputFactory::class)->capture((int) $session->organization_id, (int) $session->project_id,
+            (int) $session->id, [], [], [], allowedWorkSections: ['equipment'], evaluationMode: 'universal');
+        self::assertCount(8, $input->nativeCellContext);
+        self::assertSame(['Перечень'], array_values(array_unique(array_column($input->nativeCellContext, 'sheet'))));
+        self::assertSame([(int) $units[8]->id], array_values(array_unique(array_column($input->nativeCellContext, 'unit_id'))));
+        self::assertSame([$document->source_version], array_values(array_unique(array_column($input->nativeCellContext, 'source_version'))));
+        foreach ($input->nativeCellContext as $row) {
+            self::assertEquals($row, SpreadsheetCellReviewSource::wire([
+                app(SpreadsheetCellReviewSource::class)
+                    ->resolve($session, (int) $document->id, $row['unit_id'], $row['row_id']),
+            ])[0]);
+        }
+        [$operationId] = $this->composeCells($session, $actor);
+        self::assertCount(7, app(EstimateGenerationLearningRecorder::class)->cellReviewProposalsForOperation($session->fresh(), $operationId));
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    private function ordinaryWorkbook(bool $multiple = false, bool $typed = false, bool $neighbors = false, bool $alternate = false, int $leadingTypedSheets = 0, int $extraLiteralRows = 0): array
     {
         Http::fake([]);
         Http::preventStrayRequests();
@@ -505,6 +531,9 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
             ['QA-U1', 'Готовое выставочное оборудование.', 3, 'шт'],
             ...($multiple ? [['QA-U2', 'Отдельная витрина.', 2, 'шт']] : []),
         ];
+        for ($index = 0; $index < $extraLiteralRows; $index++) {
+            $data[] = ['QA-U'.($index + 3), 'Отдельное выставочное изделие '.($index + 3).'.', 1, 'шт'];
+        }
         if ($typed) {
             $data = [['entity_key', 'parameter', 'value', 'unit'],
                 ['equipment:known', 'equipment_specification', 'Готовое оборудование.', ''],
@@ -517,6 +546,13 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
             $data[1][] = 'QA-U1 alternate';
         }
         $spreadsheet->getActiveSheet()->setTitle('Перечень')->fromArray($data);
+        for ($index = 0; $index < $leadingTypedSheets; $index++) {
+            $spreadsheet->createSheet($index)->setTitle('Исходные данные '.($index + 1))->fromArray([
+                ['entity_key', 'parameter', 'value', 'unit'],
+                ['equipment:known'.($index + 1), 'equipment_specification', 'Готовое оборудование.', ''],
+                ['equipment:known'.($index + 1), 'equipment_count', 3, 'count'],
+            ]);
+        }
         if ($neighbors) {
             $spreadsheet->createSheet()->setTitle('Подтвержденные данные')->fromArray([
                 ['entity_key', 'parameter', 'value', 'unit'], ['equipment:neighbor', 'equipment_count', 4, 'count'],
@@ -588,7 +624,7 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
                 'scope' => 'organization', 'organization_id' => $organization->id, 'version' => 1,
                 'snapshot_hash' => SettingsSnapshotHash::calculate($settings), 'snapshot' => $settings], (int) $organization->id));
             $descriptors = app(DocumentUnitDetector::class)->detect($document, $version);
-            self::assertCount($neighbors ? 2 : 1, $descriptors);
+            self::assertCount(($neighbors ? 2 : 1) + $leadingTypedSheets, $descriptors);
             $units = [];
             foreach ($descriptors as $descriptor) {
                 $current = app(DocumentProcessingUnitStore::class)->create((int) $organization->id, (int) $project->id, (int) $session->id, (int) $document->id, $descriptor);

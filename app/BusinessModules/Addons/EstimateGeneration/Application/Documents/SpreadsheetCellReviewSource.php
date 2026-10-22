@@ -23,7 +23,7 @@ final readonly class SpreadsheetCellReviewSource
         }
         $units = EstimateGenerationProcessingUnit::query()->with('document', 'page')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
-            ->where('unit_type', 'spreadsheet_sheet')->where('status', 'completed')->orderBy('id')->limit(self::MAX_ROWS)->get();
+            ->where('unit_type', 'spreadsheet_sheet')->where('status', 'completed')->lazyById(self::MAX_ROWS);
         $rows = [];
         foreach ($units as $unit) {
             foreach ($this->unitRows($session, $unit, array_fill_keys($reviewedRows, true)) as $row) {
