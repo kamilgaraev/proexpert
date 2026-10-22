@@ -12,12 +12,94 @@ use Illuminate\Container\Container;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ZipArchive;
 
 final class SpreadsheetDocumentExtractorTest extends TestCase
 {
     private Container $previousContainer;
+
+    #[Test]
+    public function package_root_relationships_preserve_native_cells_and_merge_metadata(): void
+    {
+        $workbook = new Spreadsheet;
+        $sheet = $workbook->getActiveSheet()->setTitle('Спецификация');
+        $sheet->fromArray([['Код', 'Наименование', 'Количество', 'Единица'], ['СТ-01', 'Выставочный стенд', 3, 'шт']]);
+        $sheet->mergeCells('A3:B3');
+        $path = tempnam(sys_get_temp_dir(), 'package-root-xlsx-');
+        try {
+            self::assertIsString($path);
+            (new Xlsx($workbook))->save($path);
+            $this->replaceRelationshipTargets($path, static fn (string $target): string => '/'.(str_starts_with($target, 'xl/') ? $target : 'xl/'.$target));
+            $page = (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path)->pages[0];
+            $native = $page->rawPayload['native_structure'];
+            $cells = array_column($native['cells'], null, 'address');
+            self::assertSame('СТ-01', $cells['A2']['raw_value']);
+            self::assertSame(3, $cells['C2']['raw_value']);
+            self::assertSame('literal_number', $cells['C2']['numeric_status']);
+            self::assertSame('шт', $cells['D2']['raw_value']);
+            self::assertContains('A3:B3', $native['merges']);
+        } finally {
+            $workbook->disconnectWorksheets();
+            if (is_string($path) && is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    #[Test]
+    #[DataProvider('unsafeRelationshipTargets')]
+    public function relationship_targets_cannot_escape_the_package(string $target): void
+    {
+        $workbook = new Spreadsheet;
+        $workbook->getActiveSheet()->setCellValue('A1', 'Не читать вне пакета');
+        $path = tempnam(sys_get_temp_dir(), 'unsafe-target-xlsx-');
+        try {
+            self::assertIsString($path);
+            (new Xlsx($workbook))->save($path);
+            $this->replaceRelationshipTargets($path, static fn (string $original): string => $target);
+            if (str_contains($target, '%')) {
+                $zip = new ZipArchive;
+                self::assertTrue($zip->open($path));
+                self::assertTrue($zip->addFromString(ltrim($target, '/'), $zip->getFromName('xl/worksheets/sheet1.xml')));
+                self::assertTrue($zip->close());
+            }
+            try {
+                (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path);
+                self::fail('An unsafe relationship target passed package preflight.');
+            } catch (OcrProviderException $exception) {
+                self::assertSame('spreadsheet_container_invalid', $exception->providerCode);
+            }
+        } finally {
+            $workbook->disconnectWorksheets();
+            if (is_string($path) && is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    public static function unsafeRelationshipTargets(): array
+    {
+        return array_map(static fn (string $target): array => [$target], [
+            '//host/worksheets/sheet1.xml', 'https://host/sheet1.xml', 'file:///xl/worksheets/sheet1.xml',
+            '/xl/../worksheets/sheet1.xml', '../worksheets/sheet1.xml', '/xl/worksheets%2fsheet1.xml',
+            '/xl/%2e%2e/worksheets/sheet1.xml', '/xl/worksheets%5csheet1.xml', '/other/sheet1.xml',
+        ]);
+    }
+
+    private function replaceRelationshipTargets(string $path, callable $replace): void
+    {
+        $zip = new ZipArchive;
+        self::assertTrue($zip->open($path));
+        $xml = new \DOMDocument;
+        self::assertTrue($xml->loadXML($zip->getFromName('xl/_rels/workbook.xml.rels')));
+        foreach ($xml->getElementsByTagName('Relationship') as $relationship) {
+            $relationship->setAttribute('Target', $replace($relationship->getAttribute('Target')));
+        }
+        self::assertTrue($zip->addFromString('xl/_rels/workbook.xml.rels', $xml->saveXML()));
+        self::assertTrue($zip->close());
+    }
 
     #[Test]
     public function typed_cells_preserve_saved_cache_literal_formula_text_and_false_without_recalculation(): void
