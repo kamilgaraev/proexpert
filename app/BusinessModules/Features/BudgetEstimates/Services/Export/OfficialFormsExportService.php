@@ -372,118 +372,15 @@ class OfficialFormsExportService
 
     protected function setKS2Header($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
-        $row = 1;
-
-        // Заголовок формы
-        $sheet->setCellValue("A{$row}", 'Унифицированная форма № КС-2');
-        $sheet->mergeCells("A{$row}:H{$row}");
-        $row++;
-
-        $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
-        $sheet->mergeCells("A{$row}:H{$row}");
-        $row++;
-
-        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 0322005');
-        $sheet->mergeCells("A{$row}:H{$row}");
-        $row += 2;
-
-        // Секции сторон
-        [$customerOrg, $contractor] = $this->exportParties($contract);
-
-        // Инвестор (пусто)
-        $sheet->setCellValue("A{$row}", 'Инвестор');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row++;
-
-        // Заказчик
-        $customerName = $customerOrg?->legal_name ?? $customerOrg?->name ?? '';
-        $customerInn = $customerOrg?->tax_number ?? '';
-        $customerAddress = $this->formatAddress($customerOrg);
-        $sheet->setCellValue("A{$row}", 'Заказчик');
-        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row++;
-
-        // Заказчик (Генподрядчик)
-        $sheet->setCellValue("A{$row}", 'Заказчик (Генподрядчик)');
-        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row++;
-
-        // Подрядчик (Субподрядчик)
-        $contractorName = $contractor?->name ?? '';
-        $contractorInn = $contractor?->inn ?? '';
-        $contractorAddress = $contractor?->legal_address ?? '';
-        $sheet->setCellValue("A{$row}", 'Подрядчик (Субподрядчик)');
-        $sheet->setCellValue("B{$row}", $contractorName.($contractorInn ? ', ИНН '.$contractorInn : '').($contractorAddress ? ', '.$contractorAddress : ''));
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row += 2;
-
-        // Стройка и Объект
-        $projectName = $contract->project?->name ?? '';
-        $sheet->setCellValue("A{$row}", 'Стройка');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row++;
-
-        $sheet->setCellValue("A{$row}", 'Объект');
-        $sheet->setCellValue("B{$row}", $projectName);
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row++;
-
-        $sheet->setCellValue("A{$row}", 'Вид деятельности по ОКВЭД');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row += 2;
-
-        // Договор подряда
-        $sheet->setCellValue("A{$row}", 'Договор подряда (контракт)');
-        $row++;
-        $sheet->setCellValue("A{$row}", 'номер');
-        $sheet->setCellValue("B{$row}", $contract->number);
-        $sheet->setCellValue("D{$row}", 'дата');
-        $sheet->setCellValue("E{$row}", $contract->date->format('d.m.Y'));
-        $row++;
-        $sheet->setCellValue("A{$row}", 'Вид операции');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row += 2;
-
-        // Отчетный период
-        $periodStart = $act->period_start ?? $act->act_date->copy()->startOfMonth();
-        $periodEnd = $act->period_end ?? $act->act_date->copy()->endOfMonth();
-        $sheet->setCellValue("A{$row}", 'Отчетный период');
-        $sheet->setCellValue("B{$row}", 'с '.$periodStart->format('d.m.Y').' по '.$periodEnd->format('d.m.Y'));
-        $sheet->mergeCells("B{$row}:H{$row}");
-        $row += 2;
-
-        // Номер документа и дата составления
-        $actNumber = $act->act_document_number ?? str_pad($act->id, 10, '0', STR_PAD_LEFT);
-        $sheet->setCellValue("A{$row}", 'Номер документа');
-        $sheet->setCellValue("B{$row}", $actNumber);
-        $sheet->setCellValue("D{$row}", 'Дата составления');
-        $sheet->setCellValue("E{$row}", $act->act_date->format('d.m.Y'));
-        $row += 2;
-
-        // Сметная стоимость
-        $estimate = $contract->estimate ?? null;
+        $row = $this->setOfficialFormExcelHeader($sheet, $act, $contract, 'КС-2', 'I');
+        $estimate = $contract->estimate;
         $contractAmount = $contract->is_fixed_amount ? ($contract->total_amount ?? 0) : ($estimate?->total_amount ?? 0);
-        $sheet->setCellValue("A{$row}", 'Сметная (договорная) стоимость в соответствии с договором подряда (субподряда)');
-        $sheet->mergeCells("A{$row}:D{$row}");
-        $sheet->setCellValue("E{$row}", number_format($contractAmount, 2, ',', ' ').' руб.');
-        $sheet->mergeCells("E{$row}:H{$row}");
+        $sheet->setCellValue("A{$row}", 'Сметная (договорная) стоимость: '.number_format($contractAmount, 2, ',', ' ').' руб.');
+        $sheet->mergeCells("A{$row}:I{$row}");
         $row += 2;
-
-        // Заголовок таблицы
-        $sheet->setCellValue("A{$row}", '№ п/п');
-        $sheet->setCellValue("B{$row}", 'по смете');
-        $sheet->setCellValue("C{$row}", 'Наименование работ');
-        $sheet->setCellValue("D{$row}", 'Единица измерения');
-        $sheet->setCellValue("E{$row}", 'Количество');
-        $sheet->setCellValue("F{$row}", 'Цена за единицу, руб.');
-        $sheet->setCellValue("G{$row}", 'Стоимость, руб.');
-        $sheet->setCellValue("H{$row}", 'Примечание');
+        foreach (['№ п/п', 'Номер позиции по смете', 'Наименование работ', 'Номер единичной расценки', 'Единица измерения', 'Количество', 'Цена за единицу, руб.', 'Стоимость, руб.', 'Примечание'] as $index => $title) {
+            $sheet->setCellValue([$index + 1, $row], $title);
+        }
     }
 
     protected function setKS2Items($sheet, ContractPerformanceAct $act): void
@@ -503,11 +400,12 @@ class OfficialFormsExportService
             $sheet->setCellValue("A{$row}", $index + 1);
             $sheet->setCellValueExplicit("B{$row}", (string) ($line['estimate_position'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
             $sheet->setCellValue("C{$row}", $line['title'] ?? '');
-            $sheet->setCellValue("D{$row}", $line['unit'] ?? '');
-            $sheet->setCellValue("E{$row}", $includedQuantity);
-            $sheet->setCellValue("F{$row}", $unitPrice);
-            $sheet->setCellValue("G{$row}", $includedAmount);
-            $sheet->setCellValue("H{$row}", $line['notes'] ?? '');
+            $sheet->setCellValueExplicit("D{$row}", (string) ($line['code'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $sheet->setCellValue("E{$row}", $line['unit'] ?? '');
+            $sheet->setCellValue("F{$row}", $includedQuantity);
+            $sheet->setCellValue("G{$row}", $unitPrice);
+            $sheet->setCellValue("H{$row}", $includedAmount);
+            $sheet->setCellValue("I{$row}", $line['notes'] ?? '');
 
             $totalAmount += $includedAmount;
             $row++;
@@ -517,169 +415,100 @@ class OfficialFormsExportService
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", '');
         $sheet->setCellValue("C{$row}", 'Итого по расценкам');
-        $sheet->mergeCells("C{$row}:F{$row}");
-        $sheet->setCellValue("G{$row}", $totalAmount);
+        $sheet->mergeCells("C{$row}:G{$row}");
+        $sheet->setCellValue("H{$row}", $totalAmount);
         $row++;
 
         $vatAmount = $this->storedActVatAmount($act);
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", '');
         $sheet->setCellValue("C{$row}", 'В том числе НДС');
-        $sheet->mergeCells("C{$row}:F{$row}");
-        $sheet->setCellValue("G{$row}", $vatAmount);
+        $sheet->mergeCells("C{$row}:G{$row}");
+        $sheet->setCellValue("H{$row}", $vatAmount);
         $row++;
 
         // Всего по Акту
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", '');
         $sheet->setCellValue("C{$row}", 'Всего по Акту');
-        $sheet->mergeCells("C{$row}:F{$row}");
-        $sheet->setCellValue("G{$row}", $totalAmount);
+        $sheet->mergeCells("C{$row}:G{$row}");
+        $sheet->setCellValue("H{$row}", $totalAmount);
         $row += 2;
 
         // Сумма прописью
         $amountInWords = NumberToWordsHelper::amountToWords($totalAmount);
         $sheet->setCellValue("A{$row}", 'Сумма прописью по акту: '.$amountInWords);
-        $sheet->mergeCells("A{$row}:H{$row}");
+        $sheet->mergeCells("A{$row}:I{$row}");
     }
 
     protected function setKS2Footer($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
-        $lastRow = $sheet->getHighestRow();
-        $row = $lastRow + 3;
-
-        $sheet->setCellValue("A{$row}", 'Сдал');
-        $row++;
-        $sheet->setCellValue("A{$row}", 'Генеральный Директор');
-        $sheet->setCellValue("B{$row}", '_____________');
-        $sheet->setCellValue("C{$row}", '/');
-        $sheet->setCellValue("D{$row}", '_______________');
-        $sheet->setCellValue("E{$row}", '/');
-        $row++;
-        $sheet->setCellValue("B{$row}", '(подпись)');
-        $sheet->setCellValue("D{$row}", '(расшифровка подписи)');
-        $row += 2;
-
-        $sheet->setCellValue("A{$row}", 'Принял');
-        $row++;
-        $sheet->setCellValue("A{$row}", 'Генеральный Директор');
-        $sheet->setCellValue("B{$row}", '_____________');
-        $sheet->setCellValue("C{$row}", '/');
-        $sheet->setCellValue("D{$row}", '_______________');
-        $sheet->setCellValue("E{$row}", '/');
-        $row++;
-        $sheet->setCellValue("B{$row}", '(подпись)');
-        $sheet->setCellValue("D{$row}", '(расшифровка подписи)');
+        $this->setOfficialFormExcelSignatures($sheet, 'I', ['Сдал', 'Принял']);
     }
 
     protected function setKS3Header($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
-        $row = 1;
-
-        // Заголовок формы
-        $sheet->setCellValue("A{$row}", 'Унифицированная форма № КС-3');
-        $sheet->mergeCells("A{$row}:G{$row}");
+        $row = $this->setOfficialFormExcelHeader($sheet, $act, $contract, 'КС-3', 'G');
+        foreach (['A' => '№ по порядку', 'B' => 'Наименование пусковых комплексов, объектов, видов работ, оборудования, затрат', 'C' => 'Код', 'D' => 'Стоимость выполненных работ и затрат, руб.', 'G' => 'Примечание'] as $column => $title) {
+            $sheet->setCellValue($column.$row, $title);
+            if ($column !== 'D') {
+                $sheet->mergeCells($column.$row.':'.$column.($row + 1));
+            }
+        }
+        $sheet->mergeCells("D{$row}:F{$row}");
         $row++;
-
-        $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
-        $sheet->mergeCells("A{$row}:G{$row}");
-        $row++;
-
-        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 0322001');
-        $sheet->mergeCells("A{$row}:G{$row}");
-        $row += 2;
-
-        // Секции сторон
-        [$customerOrg, $contractor] = $this->exportParties($contract);
-
-        // Инвестор (пусто)
-        $sheet->setCellValue("A{$row}", 'Инвестор');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row++;
-
-        // Заказчик
-        $customerName = $customerOrg?->legal_name ?? $customerOrg?->name ?? '';
-        $customerInn = $customerOrg?->tax_number ?? '';
-        $customerAddress = $this->formatAddress($customerOrg);
-        $sheet->setCellValue("A{$row}", 'Заказчик');
-        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row++;
-
-        // Заказчик (Генподрядчик)
-        $sheet->setCellValue("A{$row}", 'Заказчик (Генподрядчик)');
-        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row++;
-
-        // Подрядчик (Субподрядчик)
-        $contractorName = $contractor?->name ?? '';
-        $contractorInn = $contractor?->inn ?? '';
-        $contractorAddress = $contractor?->legal_address ?? '';
-        $sheet->setCellValue("A{$row}", 'Подрядчик (Субподрядчик)');
-        $sheet->setCellValue("B{$row}", $contractorName.($contractorInn ? ', ИНН '.$contractorInn : '').($contractorAddress ? ', '.$contractorAddress : ''));
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row += 2;
-
-        // Стройка и Объект
-        $projectName = $contract->project?->name ?? '';
-        $sheet->setCellValue("A{$row}", 'Стройка');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row++;
-
-        $sheet->setCellValue("A{$row}", 'Объект');
-        $sheet->setCellValue("B{$row}", $projectName);
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row++;
-
-        $sheet->setCellValue("A{$row}", 'Вид деятельности по ОКВЭД');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row += 2;
-
-        // Договор подряда
-        $sheet->setCellValue("A{$row}", 'Договор подряда (контракт)');
-        $row++;
-        $sheet->setCellValue("A{$row}", 'номер');
-        $sheet->setCellValue("B{$row}", $contract->number);
-        $sheet->setCellValue("D{$row}", 'дата');
-        $sheet->setCellValue("E{$row}", $contract->date->format('d.m.Y'));
-        $row++;
-        $sheet->setCellValue("A{$row}", 'Вид операции');
-        $sheet->setCellValue("B{$row}", '');
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row += 2;
-
-        // Отчетный период
-        $periodStart = $act->period_start ?? $act->act_date->copy()->startOfMonth();
-        $periodEnd = $act->period_end ?? $act->act_date->copy()->endOfMonth();
-        $sheet->setCellValue("A{$row}", 'Отчетный период');
-        $sheet->setCellValue("B{$row}", 'с '.$periodStart->format('d.m.Y').' по '.$periodEnd->format('d.m.Y'));
-        $sheet->mergeCells("B{$row}:G{$row}");
-        $row += 2;
-
-        // Номер документа и дата составления
-        $actNumber = $act->act_document_number ?? str_pad($act->id, 10, '0', STR_PAD_LEFT);
-        $sheet->setCellValue("A{$row}", 'Номер документа');
-        $sheet->setCellValue("B{$row}", $actNumber);
-        $sheet->setCellValue("D{$row}", 'Дата составления');
-        $sheet->setCellValue("E{$row}", $act->act_date->format('d.m.Y'));
-        $row += 2;
-
-        // Заголовок таблицы
-        $sheet->setCellValue("A{$row}", '№ по порядку');
-        $sheet->setCellValue("B{$row}", 'Наименование пусковых комплексов, объектов, видов работ, оборудования, затрат');
-        $sheet->setCellValue("C{$row}", 'Код');
-        $sheet->setCellValue("D{$row}", 'Стоимость выполненных работ и затрат, руб.');
-        $row++;
-
-        // Подзаголовки колонок стоимости
         $sheet->setCellValue("D{$row}", 'с начала проведения работ');
         $sheet->setCellValue("E{$row}", 'с начала года');
         $sheet->setCellValue("F{$row}", 'в том числе за отчетный период');
-        $sheet->setCellValue("G{$row}", 'Примечание');
+    }
+
+    private function setOfficialFormExcelHeader(Worksheet $sheet, ContractPerformanceAct $act, Contract $contract, string $form, string $lastColumn): int
+    {
+        [$customer, $contractor] = $this->exportParties($contract);
+        $customerName = $customer?->legal_name ?? $customer?->name ?? '';
+        $customerInn = $customer?->tax_number ?? '';
+        $customerAddress = $this->formatAddress($customer);
+        $contractorName = $contractor?->name ?? '';
+        $contractorInn = $contractor?->inn ?? '';
+        $contractorAddress = $contractor?->legal_address ?? '';
+        $periodStart = $act->period_start ?? $act->act_date->copy()->startOfMonth();
+        $periodEnd = $act->period_end ?? $act->act_date->copy()->endOfMonth();
+        $actNumber = $act->act_document_number ?? str_pad($act->id, 10, '0', STR_PAD_LEFT);
+        $values = [
+            1 => 'Унифицированная форма № '.$form,
+            2 => 'Утверждена постановлением Госкомстата России от 11.11.1999 № 100',
+            3 => 'Форма по ОКУД '.($form === 'КС-2' ? '0322005' : '0322001'),
+            5 => 'Инвестор: ______________________________________________________________________',
+            6 => 'Заказчик (Генподрядчик): '.$customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''),
+            7 => 'Подрядчик (Субподрядчик): '.$contractorName.($contractorInn ? ', ИНН '.$contractorInn : '').($contractorAddress ? ', '.$contractorAddress : ''),
+            8 => 'Стройка: ______________________________________________________________________',
+            9 => 'Объект: '.($contract->project?->name ?? ''),
+            10 => 'Вид деятельности по ОКДП: ____________________    Вид операции: ____________________',
+            11 => 'Договор подряда (контракт) № '.$contract->number.' от '.($contract->date?->format('d.m.Y') ?? ''),
+            12 => 'Отчетный период: с '.$periodStart->format('d.m.Y').' по '.$periodEnd->format('d.m.Y'),
+            13 => 'Номер документа: '.$actNumber.'    Дата составления: '.$act->act_date->format('d.m.Y'),
+            15 => $form === 'КС-2' ? 'АКТ О ПРИЕМКЕ ВЫПОЛНЕННЫХ РАБОТ' : 'СПРАВКА О СТОИМОСТИ ВЫПОЛНЕННЫХ РАБОТ И ЗАТРАТ',
+        ];
+        foreach ($values as $row => $value) {
+            $sheet->setCellValue("A{$row}", $value);
+            $sheet->mergeCells("A{$row}:{$lastColumn}{$row}");
+        }
+        $sheet->getStyle("A15:{$lastColumn}15")->getFont()->setBold(true)->setSize(12);
+        $sheet->getStyle("A15:{$lastColumn}15")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+        return 17;
+    }
+
+    private function setOfficialFormExcelSignatures(Worksheet $sheet, string $lastColumn, array $labels): void
+    {
+        $row = $sheet->getHighestRow() + 2;
+        foreach ($labels as $label) {
+            $sheet->setCellValue("A{$row}", $label."\n"
+                .'________________________    ____________________    ________________________________________'."\n"
+                .'(должность)                         (подпись)                         (расшифровка подписи)');
+            $sheet->mergeCells("A{$row}:{$lastColumn}{$row}");
+            $row += 2;
+        }
     }
 
     protected function setKS3Items($sheet, ContractPerformanceAct $act): void
@@ -687,10 +516,7 @@ class OfficialFormsExportService
         $startRow = $sheet->getHighestRow() + 1;
         $row = $startRow;
 
-        $contract = $act->contract;
-        $estimate = $contract->estimate ?? null;
         $actAmount = (float) ($act->amount ?? 0);
-        $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
 
         $aggregates = $this->ks3LineAggregates($act);
         $yearTotal = $aggregates['year_total'];
@@ -799,169 +625,103 @@ class OfficialFormsExportService
         $row++;
         $sheet->setCellValue("B{$row}", 'В том числе НДС');
         $sheet->setCellValue("F{$row}", $vatAmount);
+        $row++;
+        $sheet->setCellValue("B{$row}", 'Всего с учетом НДС');
+        $sheet->setCellValue("F{$row}", $periodTotal);
         if (! empty($data['is_draft'])) {
             $row += 2;
             $sheet->setCellValue("B{$row}", 'ЧЕРНОВИК');
         }
+        $this->setOfficialFormExcelSignatures($sheet, 'G', ['Заказчик (Генподрядчик)', 'Подрядчик (Субподрядчик)']);
     }
 
     protected function setKS3Footer($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
-        $lastRow = $sheet->getHighestRow();
-        $row = $lastRow + 3;
-
-        $actAmount = (float) ($act->amount ?? 0);
-        $sheet->setCellValue("A{$row}", 'Итого стоимость выполненных работ: '.number_format($actAmount, 2, ',', ' ').' руб.');
-        $sheet->mergeCells("A{$row}:G{$row}");
-        $row += 3;
-
-        $sheet->setCellValue("A{$row}", 'Генеральный Директор');
-        $sheet->setCellValue("B{$row}", '_____________');
-        $sheet->setCellValue("C{$row}", '/');
-        $sheet->setCellValue("D{$row}", '_______________');
-        $sheet->setCellValue("E{$row}", '/');
-        $row++;
-        $sheet->setCellValue("B{$row}", '(подпись)');
-        $sheet->setCellValue("D{$row}", '(расшифровка подписи)');
+        $this->setOfficialFormExcelSignatures($sheet, 'G', ['Заказчик (Генподрядчик)', 'Подрядчик (Субподрядчик)']);
     }
 
     protected function applyKS2Styles($sheet): void
     {
-        $highestRow = $sheet->getHighestRow();
-
-        // Заголовок формы
-        $sheet->getStyle('A1:H1')->getFont()->setBold(true)->setSize(12);
-        $sheet->getStyle('A1:H1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-
-        // Заголовок таблицы
+        $this->applyOfficialFormExcelLayout($sheet, 'I', '№ п/п', [5, 10, 42, 16, 12, 12, 16, 18, 20], 1);
         $headerRow = $this->findHeaderRow($sheet, '№ п/п');
-        if ($headerRow) {
-            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getFont()->setBold(true)->setSize(9);
-            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
-            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getFill()
-                ->setFillType(Fill::FILL_SOLID)
-                ->getStartColor()->setRGB('E0E0E0');
-        }
-
-        // Границы для всех ячеек с данными
-        $dataStartRow = $headerRow ? $headerRow + 1 : 11;
-        for ($row = $dataStartRow; $row <= $highestRow; $row++) {
-            $sheet->getStyle("A{$row}:H{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-        }
-
-        // Выравнивание числовых колонок
-        $sheet->getStyle("E{$dataStartRow}:G{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-
-        // Ширина колонок
-        $sheet->getColumnDimension('A')->setWidth(16);
-        $sheet->getColumnDimension('B')->setWidth(12);
-        $sheet->getColumnDimension('C')->setWidth(40);
-        $sheet->getColumnDimension('D')->setWidth(15);
-        $sheet->getColumnDimension('E')->setWidth(12);
-        $sheet->getColumnDimension('F')->setWidth(18);
-        $sheet->getColumnDimension('G')->setWidth(18);
-        $sheet->getColumnDimension('H')->setWidth(20);
-
-        // Перенос текста для длинных ячеек
-        $this->applyExcelHeaderLayout($sheet, 'H');
-        $sheet->getStyle("G{$dataStartRow}:G{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00');
-        $sheet->getStyle("E{$dataStartRow}:F{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00##');
-        $sheet->getRowDimension(22)->setRowHeight(32);
-        if ($headerRow) {
-            $sheet->getRowDimension($headerRow)->setRowHeight(36);
-        }
-        $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
-            ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A4)
-            ->setFitToWidth(1)->setFitToHeight(0)->setPrintArea("A1:H{$highestRow}");
-        if ($headerRow) {
-            $sheet->getPageSetup()->setRowsToRepeatAtTop([$headerRow, $headerRow]);
-        }
+        $dataStartRow = ($headerRow ?? 0) + 1;
+        $lastRow = $sheet->getHighestRow();
+        $sheet->getStyle("F{$dataStartRow}:H{$lastRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->getStyle("F{$dataStartRow}:G{$lastRow}")->getNumberFormat()->setFormatCode('#,##0.00##');
+        $sheet->getStyle("H{$dataStartRow}:H{$lastRow}")->getNumberFormat()->setFormatCode('#,##0.00');
     }
 
     protected function applyKS3Styles($sheet): void
     {
-        $highestRow = $sheet->getHighestRow();
-
-        // Заголовок формы
-        $sheet->getStyle('A1:G1')->getFont()->setBold(true)->setSize(12);
-        $sheet->getStyle('A1:G1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-
-        // Заголовок таблицы
+        $this->applyOfficialFormExcelLayout($sheet, 'G', '№ по порядку', [10, 53, 16, 21, 21, 21, 16], 2);
         $headerRow = $this->findHeaderRow($sheet, '№ по порядку');
-        if ($headerRow) {
-            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getFont()->setBold(true)->setSize(9);
-            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
-            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getFill()
-                ->setFillType(Fill::FILL_SOLID)
-                ->getStartColor()->setRGB('E0E0E0');
-
-            // Подзаголовки на следующей строке
-            $subHeaderRow = $headerRow + 1;
-            $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getFont()->setBold(true)->setSize(8);
-            $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-        }
-
-        // Границы для всех ячеек с данными
-        $dataStartRow = $headerRow ? $headerRow + 2 : 10;
-        for ($row = $dataStartRow; $row <= $highestRow; $row++) {
-            $sheet->getStyle("A{$row}:G{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-        }
-
-        // Выравнивание числовых колонок
-        $sheet->getStyle("D{$dataStartRow}:F{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-
-        // Ширина колонок
-        $sheet->getColumnDimension('A')->setWidth(16);
-        $sheet->getColumnDimension('B')->setWidth(50);
-        $sheet->getColumnDimension('C')->setWidth(12);
-        $sheet->getColumnDimension('D')->setWidth(20);
-        $sheet->getColumnDimension('E')->setWidth(20);
-        $sheet->getColumnDimension('F')->setWidth(20);
-        $sheet->getColumnDimension('G')->setWidth(15);
-
-        // Перенос текста
-        $this->applyExcelHeaderLayout($sheet, 'G');
-        $sheet->getStyle("D{$dataStartRow}:F{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00');
-        if ($headerRow) {
-            $sheet->getRowDimension($headerRow)->setRowHeight(36);
-            $sheet->getRowDimension($headerRow + 1)->setRowHeight(36);
-        }
-        $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
-            ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A4)
-            ->setFitToWidth(1)->setFitToHeight(0)->setPrintArea("A1:G{$highestRow}");
-        if ($headerRow) {
-            $sheet->getPageSetup()->setRowsToRepeatAtTop([$headerRow, $headerRow + 1]);
-        }
+        $dataStartRow = ($headerRow ?? 0) + 2;
+        $lastRow = $sheet->getHighestRow();
+        $sheet->getStyle("D{$dataStartRow}:F{$lastRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->getStyle("D{$dataStartRow}:F{$lastRow}")->getNumberFormat()->setFormatCode('#,##0.00');
     }
 
-    private function applyExcelHeaderLayout(Worksheet $sheet, string $lastColumn): void
+    private function applyOfficialFormExcelLayout(Worksheet $sheet, string $lastColumn, string $headerText, array $widths, int $headerRows): void
     {
         $highestRow = $sheet->getHighestRow();
+        $sheet->getParent()->getDefaultStyle()->getFont()->setName('Arial')->setSize(10)->getColor()->setRGB('000000');
         $sheet->setShowGridlines(false);
+        foreach ($widths as $index => $width) {
+            $sheet->getColumnDimension(\PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($index + 1))->setWidth($width);
+        }
         $sheet->getStyle("A1:{$lastColumn}{$highestRow}")->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_CENTER);
-        $sheet->mergeCells("A14:{$lastColumn}14");
-        foreach ([15, 20] as $row) {
-            $sheet->mergeCells("B{$row}:C{$row}");
-            $sheet->mergeCells("E{$row}:{$lastColumn}{$row}");
-            $sheet->getRowDimension($row)->setRowHeight(32);
-        }
-        foreach ([5, 6, 7, 8, 10, 11, 12, 16, 18] as $row) {
-            $value = (string) $sheet->getCell("B{$row}")->getValue();
-            $height = max(18, (int) ceil(mb_strlen($value) / 100) * 16);
-            $sheet->getRowDimension($row)->setRowHeight(min(409, max(in_array($row, [7, 8, 12], true) ? 36 : 18, $height)));
-        }
-        for ($row = 24; $row <= $highestRow; $row++) {
-            if ($sheet->getCell("A{$row}")->getValue() === 'Генеральный Директор') {
-                $sheet->getRowDimension($row)->setRowHeight(32);
-                $sheet->getRowDimension($row + 1)->setRowHeight(32);
-                $sheet->getStyle("B{$row}:E{$row}")->getAlignment()->setWrapText(false);
+        $sheet->getStyle("A1:{$lastColumn}1")->getFont()->setBold(true)->setSize(11);
+        $headerRow = $this->findHeaderRow($sheet, $headerText);
+        if ($headerRow !== null) {
+            $headerEnd = $headerRow + $headerRows - 1;
+            $sheet->getStyle("A{$headerRow}:{$lastColumn}{$headerEnd}")->getFont()->setBold(true)->setSize(9);
+            $sheet->getStyle("A{$headerRow}:{$lastColumn}{$headerEnd}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle("A{$headerRow}:{$lastColumn}{$headerEnd}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('EEEEEE');
+            $tableEnd = $headerEnd;
+            for ($row = $headerEnd + 1; $row <= $highestRow; $row++) {
+                if (in_array($sheet->getCell("C{$row}")->getValue(), ['Всего по Акту'], true) || $sheet->getCell("B{$row}")->getValue() === 'Всего с учетом НДС') {
+                    $tableEnd = $row;
+                    break;
+                }
             }
+            $sheet->getStyle("A{$headerRow}:{$lastColumn}{$tableEnd}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+            $sheet->getPageSetup()->setRowsToRepeatAtTop([$headerRow, $headerEnd]);
+            $sheet->freezePane('C'.($headerEnd + 1));
         }
+        foreach ($sheet->getRowIterator() as $row) {
+            $height = 8;
+            foreach ($row->getCellIterator() as $cell) {
+                $value = (string) $cell->getValue();
+                if ($value === '') {
+                    continue;
+                }
+                if ($cell->getDataType() === \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC) {
+                    $cell->getStyle()->getAlignment()->setWrapText(false)->setShrinkToFit(true);
+                    $height = max($height, 18);
+
+                    continue;
+                }
+                $range = $cell->getMergeRange();
+                if ($range !== false) {
+                    $bounds = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::rangeBoundaries($range);
+                    $width = array_sum(array_slice($widths, $bounds[0][0] - 1, $bounds[1][0] - $bounds[0][0] + 1));
+                    $span = $bounds[1][1] - $bounds[0][1] + 1;
+                } else {
+                    $width = $widths[\PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($cell->getColumn()) - 1];
+                    $span = 1;
+                }
+                $lines = 0;
+                foreach (explode("\n", $value) as $line) {
+                    $lines += max(1, (int) ceil(mb_strlen($line) / max(1, $width * 0.85)));
+                }
+                $height = max($height, 18, (int) ceil(($lines * 12 + 6) / $span));
+            }
+            $sheet->getRowDimension($row->getRowIndex())->setRowHeight(min(409, $height));
+        }
+        $sheet->getPageMargins()->setLeft(0.35)->setRight(0.35)->setTop(0.35)->setBottom(0.35)->setHeader(0.1)->setFooter(0.15);
+        $sheet->getHeaderFooter()->setOddFooter('&RСтраница &P из &N');
+        $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)->setPaperSize(PageSetup::PAPERSIZE_A4)
+            ->setFitToWidth(1)->setFitToHeight(0)->setPrintArea("A1:{$lastColumn}{$highestRow}");
     }
 
     protected function findHeaderRow($sheet, string $searchText): ?int
