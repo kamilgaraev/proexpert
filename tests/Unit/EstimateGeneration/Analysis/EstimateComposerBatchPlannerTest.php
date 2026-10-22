@@ -18,6 +18,148 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateComposerBatchPlannerTest extends TestCase
 {
+    public function test_split_equipment_context_keeps_the_current_root_answer_and_reuses_its_reference_without_more_batches(): void
+    {
+        [$source, $reference] = $this->sourceClaims();
+        $answer = $source->facts[0];
+        $document = $source->facts[9];
+        $facts = [$answer, $document, ['id' => 'fact:unrelated', 'entity_id' => 'room:unrelated',
+            'value' => str_repeat('context ', 350), 'status' => 'confirmed']];
+        $candidates = $source->candidates;
+        $candidates[0]['source_fact_ids'] = [$answer['id']];
+        $candidates[1]['source_fact_ids'] = [$document['id']];
+        $decision = ['id' => 'decision:answer', 'selected_fact_id' => $answer['id'], 'target_id' => $answer['id']];
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [$decision], $candidates, [],
+            RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']);
+        $bytes = strlen(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['project' => $input->canonicalPayload()]));
+        $planner = new EstimateComposerBatchPlanner(maxInputBytes: $bytes - 1, candidatesPerBatch: 1);
+        $plain = $planner->plan($input);
+        $parts = $planner->plan($input->withSourceClaimReferences([$reference]));
+        self::assertCount(3, $plain);
+        self::assertCount(count($plain), $parts);
+        $documentParts = array_values(array_filter($parts, static fn (EstimateComposerInput $part): bool => in_array($document['id'], array_column($part->facts, 'id'), true)));
+        self::assertCount(1, $documentParts);
+        $part = $documentParts[0];
+        self::assertContains($answer['id'], $part->claimAnswerFactIds);
+        $partFacts = array_column($part->facts, null, 'id');
+        self::assertSame($answer, $partFacts[$answer['id']]);
+        self::assertSame('project:root', $partFacts[$answer['id']]['entity_id']);
+        self::assertSame('equipment:child', $partFacts[$document['id']]['entity_id']);
+        self::assertSame([$decision], $part->decisions);
+        self::assertSame([$reference], $part->sourceClaimReferences);
+        self::assertSame(1, array_sum(array_map(static fn (EstimateComposerInput $part): int => count($part->sourceClaimReferences), $parts)));
+        $seen = [];
+        foreach ($parts as $batch) {
+            self::assertLessThanOrEqual($bytes - 1, strlen(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['project' => $batch->canonicalPayload()])));
+            foreach ($batch->facts as $fact) {
+                $seen[$fact['id']] = true;
+            }
+        }
+        self::assertCount(count($facts), $seen);
+        $claim = ['source_answer_fact_id' => $answer['id'], 'entity_id' => $document['entity_id'],
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'AISI 316'],
+            'unit' => null, 'document_fact_ids' => [$document['id']]];
+        self::assertTrue(EstimateComposerInput::sourceClaimCandidate($claim, $part->facts, $part->claimAnswerFactIds));
+        $plainDocument = array_values(array_filter($plain, static fn (EstimateComposerInput $part): bool => in_array($document['id'], array_column($part->facts, 'id'), true)))[0];
+        self::assertTrue(EstimateComposerInput::sourceClaimCandidate($claim, $plainDocument->facts, $plainDocument->claimAnswerFactIds));
+        $model = new class($claim) implements EstimateComposerModel
+        {
+            public int $calls = 0;
+
+            public function __construct(private array $claim) {}
+
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->calls++;
+                $onPhysicalAttemptReserved(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext::deterministicId($input->fingerprint()));
+
+                return ['work_intents' => [], 'claim_candidates' => EstimateComposerInput::sourceClaimCandidate($this->claim, $input->facts, $input->claimAnswerFactIds) ? [$this->claim] : []];
+            }
+        };
+        $runs = new BatchComposerMemoryRepository;
+        $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna', $planner);
+        $outcome = $composer->runDetailed($input->withSourceClaimReferences([$reference]));
+        self::assertSame($outcome, $composer->runDetailed($input->withSourceClaimReferences([$reference])));
+        self::assertSame(count($parts), $model->calls);
+        self::assertSame(1, array_sum(array_map(static fn (AiRoleRunResult $result): int => count($result->payload['claim_candidates']), $runs->results)));
+    }
+
+    public function test_missing_or_revoked_answers_are_not_admitted_to_split_equipment_context(): void
+    {
+        [$source] = $this->sourceClaims();
+        foreach (['missing', 'revoked'] as $state) {
+            $facts = [$source->facts[0], $source->facts[9]];
+            $facts[0]['status'] = 'unresolved';
+            if ($state === 'missing') {
+                array_shift($facts);
+            }
+            $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], $source->candidates, [],
+                RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']);
+            self::assertSame([], $input->claimAnswerFactIds);
+            foreach ((new EstimateComposerBatchPlanner(candidatesPerBatch: 1))->plan($input) as $part) {
+                self::assertSame([], $part->claimAnswerFactIds);
+                self::assertSame([], $part->sourceClaimReferences);
+            }
+        }
+    }
+
+    public function test_split_context_prioritizes_the_saved_reference_anchor_within_the_global_eight_answer_limit(): void
+    {
+        [$source, $reference] = $this->sourceClaims();
+        $facts = $source->facts;
+        $facts[9]['value'] = $reference['value']['data'] = str_repeat('Б', 500);
+        $facts[] = ['id' => 'fact:unrelated', 'entity_id' => 'room:unrelated', 'value' => str_repeat('C', 1000), 'status' => 'confirmed'];
+        $reference['source_answer_fact_id'] = 'answer:08';
+        $candidates = $source->candidates;
+        $candidates[0]['source_fact_ids'] = ['answer:01'];
+        $candidates[1]['source_fact_ids'] = ['fact:document'];
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], $candidates, [],
+            RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']);
+        $parts = (new EstimateComposerBatchPlanner(maxInputBytes: 5000, candidatesPerBatch: 1))->plan($input->withSourceClaimReferences([$reference]));
+        self::assertCount(3, $parts);
+        $part = array_values(array_filter($parts, static fn (EstimateComposerInput $part): bool => in_array('fact:document', array_column($part->facts, 'id'), true)))[0];
+        self::assertContains('answer:08', $part->claimAnswerFactIds);
+        self::assertNotContains('answer:09', array_column($part->facts, 'id'));
+        self::assertLessThanOrEqual(8, count($part->claimAnswerFactIds));
+        self::assertSame([$reference], $part->sourceClaimReferences);
+        self::assertLessThanOrEqual(5000, strlen(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['project' => $part->canonicalPayload()])));
+    }
+
+    public function test_nonfitting_answer_anchor_neither_creates_a_part_nor_removes_mandatory_context(): void
+    {
+        [$source, $reference] = $this->sourceClaims();
+        $facts = [$source->facts[0], $source->facts[9]];
+        $facts[0]['value']['answer'] = str_repeat('A', 500);
+        $facts[1]['value'] = $reference['value']['data'] = str_repeat('B', 500);
+        foreach (range(1, 8) as $index) {
+            $facts[] = ['id' => 'fact:other:'.$index, 'entity_id' => 'room:'.$index,
+                'value' => str_repeat('C', 500), 'status' => 'confirmed'];
+        }
+        $candidates = $source->candidates;
+        $candidates[0]['source_fact_ids'] = [$facts[0]['id']];
+        $candidates[1]['source_fact_ids'] = [$facts[1]['id']];
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], $candidates, [],
+            RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']);
+        $withoutClaims = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], $candidates, [],
+            RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment'], claimAnswerFactIds: []);
+        $planner = new EstimateComposerBatchPlanner(maxInputBytes: 1800, candidatesPerBatch: 1);
+        $baseline = $planner->plan($withoutClaims);
+        $parts = $planner->plan($input->withSourceClaimReferences([$reference]));
+        self::assertCount(count($baseline), $parts);
+        $seen = [];
+        foreach ($parts as $part) {
+            self::assertLessThanOrEqual(1800, strlen(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['project' => $part->canonicalPayload()])));
+            self::assertSame([], $part->sourceClaimReferences);
+            if (in_array('fact:document', array_column($part->facts, 'id'), true)) {
+                self::assertSame([], $part->claimAnswerFactIds);
+            }
+            foreach ($part->facts as $fact) {
+                $seen[$fact['id']] = true;
+            }
+        }
+        self::assertCount(count($facts), $seen);
+    }
+
     public function test_global_eight_answer_ids_bound_every_batch_and_refs_are_sent_only_once_without_more_calls(): void
     {
         [$input, $reference] = $this->sourceClaims();

@@ -163,9 +163,14 @@ final readonly class EstimateComposerInput
 
         return isset($byId[$candidate['source_answer_fact_id']])
             && $candidate['document_fact_ids'][0] !== $candidate['source_answer_fact_id']
-            && ($document['origin'] ?? null) === 'document' && ($document['status'] ?? null) === 'confirmed'
+            && self::sourceClaimDocument($document) && $document['entity_id'] === $candidate['entity_id'];
+    }
+
+    public static function sourceClaimDocument(mixed $document): bool
+    {
+        return is_array($document) && ($document['origin'] ?? null) === 'document' && ($document['status'] ?? null) === 'confirmed'
             && ($document['type'] ?? null) === 'equipment_specification' && ($document['entity_type'] ?? null) === 'equipment'
-            && ($document['entity_id'] ?? null) === $candidate['entity_id'] && ($document['unit'] ?? null) === null;
+            && self::identifier($document['entity_id'] ?? null) && ($document['unit'] ?? null) === null;
     }
 
     public function fingerprint(): string

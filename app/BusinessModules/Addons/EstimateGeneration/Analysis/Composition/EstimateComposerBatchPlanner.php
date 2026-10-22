@@ -83,7 +83,7 @@ final readonly class EstimateComposerBatchPlanner
             $this->append($batches, $coveredFacts, $coveredQuantities, $batch);
         }
 
-        return $this->withReferences($batches, $input);
+        return $this->withReferences($this->withAnswerContext($batches, $input), $input);
     }
 
     private function context(EstimateComposerInput $input, array $candidates, array $facts, array $quantities): EstimateComposerInput
@@ -163,6 +163,49 @@ final readonly class EstimateComposerBatchPlanner
                 'parent_counts' => ['facts' => count($input->facts), 'quantities' => count($input->derivedQuantities),
                     'decisions' => count($input->decisions), 'candidates' => count($input->candidates), 'missing_documents' => count($input->missingDocuments)]],
             $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, array_column($facts, 'id'))));
+    }
+
+    private function withAnswerContext(array $batches, EstimateComposerInput $input): array
+    {
+        if ($input->claimAnswerFactIds === []) {
+            return $batches;
+        }
+        $answers = array_column(array_filter($input->facts,
+            static fn (array $fact): bool => in_array($fact['id'], $input->claimAnswerFactIds, true)), null, 'id');
+        foreach ($batches as $index => $batch) {
+            if (array_filter($batch->facts, EstimateComposerInput::sourceClaimDocument(...)) === []) {
+                continue;
+            }
+            $factIds = array_column($batch->facts, 'id');
+            $preferred = [];
+            foreach ($input->sourceClaimReferences as $reference) {
+                if (array_intersect($reference['document_fact_ids'], $factIds) !== []) {
+                    $preferred[] = $reference['source_answer_fact_id'];
+                }
+            }
+            foreach (array_unique([...$preferred, ...$input->claimAnswerFactIds]) as $id) {
+                if (in_array($id, $factIds, true)) {
+                    continue;
+                }
+                $decisions = $batch->decisions;
+                foreach ($input->decisions as $decision) {
+                    if ((($decision['selected_fact_id'] ?? null) === $id || ($decision['target_id'] ?? null) === $id)
+                        && ! in_array($decision, $decisions, true)) {
+                        $decisions[] = $decision;
+                    }
+                }
+                $candidate = $this->batch($input, $batch->candidates, [...$batch->facts, $answers[$id]], $decisions, $batch->derivedQuantities);
+                $reserved = array_values(array_filter($input->sourceClaimReferences,
+                    static fn (array $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $batch->facts, $batch->claimAnswerFactIds)));
+                if ($this->fits($candidate->withSourceClaimReferences($reserved))) {
+                    $batch = $candidate;
+                    $factIds[] = $id;
+                }
+            }
+            $batches[$index] = $batch;
+        }
+
+        return $batches;
     }
 
     private function withReferences(array $batches, EstimateComposerInput $input): array
