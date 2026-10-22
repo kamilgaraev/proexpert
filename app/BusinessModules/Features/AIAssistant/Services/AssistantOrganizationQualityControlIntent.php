@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
+
 final class AssistantOrganizationQualityControlIntent
 {
     public static function matches(string $query): bool
@@ -17,7 +19,11 @@ final class AssistantOrganizationQualityControlIntent
             || preg_match('/просроч|(?:раньше|до)\s+сегодняшн[а-яё]*\s+дня/iu', $query) !== 1) {
             return false;
         }
-        if (preg_match('/excel|xlsx|csv|pdf|файл|выгруз|создай|закрой|удали|измени|обнови|переназначь|отправь|стоим|бюджет|сумм|затрат|сгрупп|разбивк|по\s+кажд|только|лишь|исключительно|вчера|завтра|за\s+(?:\d|[а-яё]*\s*(?:недел|месяц|год))|\b\d{4}\b|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/iu', $query) === 1
+        $periodQuery = preg_replace('/(?:раньше|до)\s+сегодняшн[а-яё]*\s+дня/iu', '', $query) ?? $query;
+        if (AssistantTemporalIntent::hasExplicitWindow($periodQuery) || AssistantTemporalIntent::hasNonCurrentScope($periodQuery)) {
+            return false;
+        }
+        if (preg_match('/excel|xlsx|csv|pdf|файл|выгруз|создай|закрой|удали|измени|обнови|переназначь|отправь|стоим|бюджет|сумм|затрат|сгрупп|разбивк|по\s+кажд|только|лишь|исключительно|\b\d{4}\b|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/iu', $query) === 1
             || preg_match('/(?<!\pL)(?:устрани(?:те)?|исправь(?:те)?)(?!\pL)/iu', $query) === 1) {
             return false;
         }
