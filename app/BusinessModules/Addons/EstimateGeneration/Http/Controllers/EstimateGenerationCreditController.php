@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -45,7 +46,9 @@ final class EstimateGenerationCreditController extends Controller
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
             'operation_kind' => ['required', 'in:generation,analysis,rebuild,dialogue,documents'],
-            'operation_parameters' => ['sometimes', 'array:local_estimate_key,command,idempotency_key'],
+            'operation_parameters' => ['sometimes', 'array:local_estimate_key,command,idempotency_key,max_work_items'],
+            'operation_parameters.max_work_items' => ['sometimes', 'required', 'prohibited_unless:operation_kind,generation',
+                'integer:strict', 'min:1', 'max:'.FrozenWorkItemLimit::MAX_WORK_ITEMS],
             'operation_parameters.local_estimate_key' => ['required_if:operation_kind,rebuild', 'string', 'max:255'],
             'operation_parameters.command' => ['required_if:operation_kind,dialogue', 'string', 'max:4000'],
             'operation_parameters.idempotency_key' => ['required_if:operation_kind,dialogue', 'string', 'min:8', 'max:128']]);
@@ -63,6 +66,7 @@ final class EstimateGenerationCreditController extends Controller
                 'estimator_credit_documents_processing_active' => 'Дождитесь завершения текущего распознавания или остановите его перед новым запуском.',
                 'estimator_credit_quote_expired' => 'Предложение стоимости истекло. Получите новое перед запуском.',
                 'estimator_credit_request_id_conflict', 'estimator_credit_quote_invalid' => 'Этот запрос относится к другой версии исходных данных. Получите новое предложение.',
+                'estimator_credit_work_capacity_invalid' => trans_message('estimate_generation.credit_quote_work_capacity_invalid'),
                 'estimator_known_context_changed', 'estimator_credit_manifest_changed', 'estimator_credit_document_costs_changed' => 'Исходные данные или состав изменились. Обновите оценку и получите новое предложение стоимости.',
                 'estimator_processing_plan_requires_section_split' => trans_message('estimate_generation.credit_quote_requires_section_split'),
                 'estimator_known_context_requires_source_split' => 'Объём данных превышает предел одного запуска. Выберите отдельный раздел или разделите документы и повторите расчёт стоимости.',
