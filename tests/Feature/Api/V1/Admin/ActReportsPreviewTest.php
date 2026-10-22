@@ -56,6 +56,70 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.summary.current_approved_amount', 0);
     }
 
+    public function test_preview_summary_uses_reporting_dates_for_late_acts_across_year_boundary(): void
+    {
+        [, $user, $contract, $project] = $this->createContractFixture('PREVIEW-REPORTING-DATE');
+        $contract->update(['date' => '2025-01-01']);
+        foreach ([
+            ['2026-01-20', '2025-11-01', '2025-11-30', 11.11, true],
+            ['2026-02-10', '2025-12-01', '2025-12-31', 22.22, true],
+            ['2026-02-11', '2026-01-01', '2026-01-31', 33.33, true],
+            ['2026-03-10', '2026-02-01', '2026-02-28', 44.44, true],
+            ['2025-12-15', null, null, 4.44, true],
+            ['2026-02-10', '2025-12-01', '2025-12-31', 99.99, false],
+        ] as $index => [$date, $start, $end, $amount, $approved]) {
+            ContractPerformanceAct::create([
+                'contract_id' => $contract->id,
+                'project_id' => $project->id,
+                'act_document_number' => 'LATE-'.$index,
+                'act_date' => $date,
+                'period_start' => $start,
+                'period_end' => $end,
+                'amount' => $amount,
+                'currency' => 'RUB',
+                'status' => $approved ? ContractPerformanceAct::STATUS_APPROVED : ContractPerformanceAct::STATUS_DRAFT,
+                'is_approved' => $approved,
+                'created_by_user_id' => $user->id,
+            ]);
+        }
+        $otherContract = $contract->replicate();
+        $otherContract->number = 'PREVIEW-OTHER-CONTRACT';
+        $otherContract->save();
+        [, $otherUser, $foreignContract, $foreignProject] = $this->createContractFixture('PREVIEW-FOREIGN');
+        foreach ([[$otherContract, $project, $user, 777], [$foreignContract, $foreignProject, $otherUser, 888]] as [$excludedContract, $excludedProject, $author, $amount]) {
+            ContractPerformanceAct::create([
+                'contract_id' => $excludedContract->id,
+                'project_id' => $excludedProject->id,
+                'act_document_number' => 'EXCLUDED-'.$excludedContract->id,
+                'act_date' => '2025-12-31',
+                'period_end' => '2025-12-31',
+                'amount' => $amount,
+                'currency' => 'RUB',
+                'status' => ContractPerformanceAct::STATUS_APPROVED,
+                'is_approved' => true,
+                'created_by_user_id' => $author->id,
+            ]);
+        }
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        foreach ([
+            ['2025-12-01', '2025-12-31', 11.11, 26.66, 37.77],
+            ['2026-01-01', '2026-01-31', 37.77, 33.33, 71.10],
+            ['2026-02-01', '2026-02-28', 71.10, 44.44, 115.54],
+        ] as [$start, $end, $previous, $current, $cumulative]) {
+            $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/preview', [
+                'contract_id' => $contract->id,
+                'period_start' => $start,
+                'period_end' => $end,
+            ]);
+            $response->assertOk()->assertJsonPath('success', true);
+            self::assertEquals($previous, $response->json('data.summary.previous_approved_amount'));
+            self::assertEquals($current, $response->json('data.summary.current_approved_amount'));
+            self::assertEquals($cumulative, $response->json('data.summary.cumulative_approved_amount'));
+        }
+        self::assertSame(8, ContractPerformanceAct::query()->count());
+    }
+
     public function test_unpriced_confirmed_work_is_blocked_before_wizard_creates_an_act(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('UNPRICED-WORK');
