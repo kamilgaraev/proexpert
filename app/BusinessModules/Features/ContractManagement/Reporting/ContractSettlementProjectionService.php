@@ -59,10 +59,6 @@ final readonly class ContractSettlementProjectionService
                 self::SOURCE_RESOURCE_TYPES,
             ),
         ));
-        if ($inputs === []) {
-            throw new DomainException('report_mandatory_source_unavailable');
-        }
-
         $rows = [];
         $selectedInputs = [];
         foreach ($inputs as $input) {
@@ -103,10 +99,6 @@ final readonly class ContractSettlementProjectionService
                 'source_refs' => $result->sourceRefs,
             ];
         }
-        if ($rows === []) {
-            throw new DomainException('report_mandatory_source_unavailable');
-        }
-
         $generatedAt = $query->asOf;
         $staleAt = $generatedAt->add(new DateInterval('PT10M'));
         $snapshotId = (string) Str::ulid();
@@ -216,7 +208,7 @@ final readonly class ContractSettlementProjectionService
                 'stale_at' => $staleAt,
                 'source_watermark_id' => $sourceWatermarkId,
                 'row_count' => count($rows),
-                'totals' => $totals,
+                'totals' => json_encode($totals, JSON_THROW_ON_ERROR),
                 'coverage_numerator' => count($rows),
                 'coverage_denominator' => count($rows),
                 'quality_status' => 'complete',
