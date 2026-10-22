@@ -91,6 +91,61 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
         $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
     }
 
+    public function test_m7_leaves_document_quantity_and_discrepancies_blank_without_valid_source_data(): void
+    {
+        [, , $movements] = $this->fixture(false, 1);
+        $movement = $movements->first();
+        $metadataCases = [
+            'missing' => [],
+            'null' => ['supplier_quantity' => null],
+            'empty' => ['supplier_quantity' => ''],
+            'text' => ['supplier_quantity' => 'не указано'],
+            'negative' => ['supplier_quantity' => -1],
+            'array' => ['supplier_quantity' => [1]],
+            'boolean' => ['supplier_quantity' => true],
+            'infinite' => ['supplier_quantity' => '1e309'],
+        ];
+
+        foreach ($metadataCases as $case => $metadata) {
+            $movement->metadata = $metadata;
+            $sheet = $this->sheet(app(M7ExportStrategy::class)->export($movements));
+
+            $this->assertNull($sheet->getCell('F18')->getValue(), $case);
+            $this->assertSame(1.25, (float) $sheet->getCell('G18')->getValue(), $case);
+            $this->assertEmpty($sheet->getCell('H18')->getValue(), $case);
+            $this->assertEmpty($sheet->getCell('I18')->getValue(), $case);
+        }
+    }
+
+    public function test_m7_preserves_known_document_quantities_including_zero_and_calculates_differences(): void
+    {
+        [, , $movements] = $this->fixture(false, 1);
+        $movement = $movements->first();
+        $cases = [
+            [0, 0.0, null, 1.25],
+            ['0', 0.0, null, 1.25],
+            ['1.00', 1.0, null, 0.25],
+            [1.25, 1.25, null, null],
+            [2, 2.0, 0.75, null],
+        ];
+
+        foreach ($cases as [$source, $quantity, $shortage, $surplus]) {
+            $movement->metadata = ['supplier_quantity' => $source];
+            $sheet = $this->sheet(app(M7ExportStrategy::class)->export($movements));
+
+            $this->assertSame($quantity, (float) $sheet->getCell('F18')->getValue());
+            $this->assertSame(1.25, (float) $sheet->getCell('G18')->getValue());
+            foreach (['H18' => $shortage, 'I18' => $surplus] as $coordinate => $expected) {
+                $value = $sheet->getCell($coordinate)->getValue();
+                if ($expected === null) {
+                    $this->assertEmpty($value);
+                } else {
+                    $this->assertSame($expected, (float) $value);
+                }
+            }
+        }
+    }
+
     private function fixture(bool $long, int $count): array
     {
         Storage::fake('s3');
