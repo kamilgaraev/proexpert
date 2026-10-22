@@ -26,12 +26,7 @@ final class EstimateComposerBatchPlannerTest extends TestCase
         $planner = new EstimateComposerBatchPlanner(3000);
         $baseline = $planner->plan($input);
         self::assertGreaterThan(1, count($baseline));
-        $row = ['row_id' => 'row:'.str_repeat('a', 64), 'document_id' => 1, 'unit_id' => 2,
-            'source_version' => 'sha256:'.str_repeat('a', 64), 'artifact_sha256' => 'sha256:'.str_repeat('b', 64),
-            'sheet' => 'Лист', 'row' => 2, 'policy_hash' => str_repeat('c', 64), 'cells' => [
-                ['cell_id' => 'cell:'.str_repeat('d', 64), 'address' => 'A2', 'raw_value' => 'Изделие'],
-                ['cell_id' => 'cell:'.str_repeat('e', 64), 'address' => 'B2', 'raw_value' => 'Описание изделия'],
-            ]];
+        $row = $this->cellRow();
         $parts = $planner->plan($input->withNativeCellContext([$row]));
         self::assertCount(count($baseline), $parts);
         self::assertSame(1, array_sum(array_map(static fn ($part): int => count($part->nativeCellContext), $parts)));
@@ -44,6 +39,90 @@ final class EstimateComposerBatchPlannerTest extends TestCase
         $omitted = $planner->plan($input->withNativeCellContext([$row]));
         self::assertCount(count($baseline), $omitted);
         self::assertSame(array_map(static fn ($part) => $part->canonicalPayload(), $baseline), array_map(static fn ($part) => $part->canonicalPayload(), $omitted));
+    }
+
+    #[\PHPUnit\Framework\Attributes\TestWith([RunEstimateComposer::PROMPT_CONTRACT])]
+    #[\PHPUnit\Framework\Attributes\TestWith([RunEstimateComposer::LEGACY_PROMPT_CONTRACT])]
+    public function test_a_near_maximum_mandatory_part_omits_optional_cells_without_changing_wire_receipt_or_quote_cost(string $contract): void
+    {
+        $facts = [['id' => 'fact:spec', 'entity_id' => 'equipment:known', 'type' => 'equipment_specification',
+            'value' => str_repeat('Equipment specification ', 80), 'status' => 'confirmed'],
+            ['id' => 'fact:count', 'entity_id' => 'equipment:known', 'type' => 'equipment_count', 'value' => '3', 'unit' => 'count', 'status' => 'confirmed']];
+        $quantities = [['id' => 'quantity:known', 'entity_id' => 'equipment:known', 'value' => '3', 'unit' => 'count', 'operand_fact_ids' => ['fact:count']]];
+        $decisions = [['id' => 'decision:known', 'selected_fact_id' => 'fact:spec', 'target_id' => 'fact:spec']];
+        $candidates = [['candidate_id' => 'candidate:known', 'work_key' => 'equipment.install', 'name' => 'Equipment installation',
+            'unit' => 'count', 'quantity' => '3', 'quantity_formula' => 'quantity:known', 'source_fact_ids' => ['fact:spec', 'fact:count'], 'technology_package_candidate' => null]];
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, $quantities, $decisions, $candidates, [], $contract);
+        $content = static fn (EstimateComposerInput $part): string => \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['project' => $part->canonicalPayload()]);
+        $bytes = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::serializedInputUpper([
+            ['role' => 'system', 'content' => str_repeat('context ', 1024)], ['role' => 'user', 'content' => $content($input)],
+        ]) - \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::SYSTEM_HEADROOM_BYTES;
+        $row = $this->cellRow();
+        self::assertTrue(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::isWireRow($row));
+        $withCells = $input->withNativeCellContext([$row]);
+        self::assertGreaterThan($bytes, strlen($content($withCells)));
+        self::assertNotSame($input->fingerprint(), $withCells->fingerprint());
+        $planner = new EstimateComposerBatchPlanner(maxInputBytes: $bytes);
+        $baseline = $planner->plan($input);
+        $actual = $planner->plan($withCells);
+        self::assertCount(1, $baseline);
+        self::assertCount(count($baseline), $actual);
+        self::assertSame($content($baseline[0]), $content($actual[0]));
+        self::assertSame($baseline[0]->fingerprint(), $actual[0]->fingerprint());
+        self::assertSame($facts, $actual[0]->facts);
+        self::assertSame($quantities, $actual[0]->derivedQuantities);
+        self::assertSame($decisions, $actual[0]->decisions);
+        self::assertSame($candidates, $actual[0]->candidates);
+        self::assertSame([], $actual[0]->nativeCellContext);
+        self::assertSame($contract, $actual[0]->contractVersion);
+        self::assertLessThan(1024, $bytes - strlen($content($actual[0])));
+        $previous = \Illuminate\Container\Container::getInstance();
+        $container = new \Illuminate\Container\Container;
+        $container->instance('config', new \Illuminate\Config\Repository(['estimate-generation' => ['estimate_composer' => ['max_input_bytes' => $bytes]]]));
+        \Illuminate\Container\Container::setInstance($container);
+        try {
+            $measure = new \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorKnownContextParts;
+            $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::capture();
+            $before = $measure->measure($input, null, null, [], [], $policy);
+            $after = $measure->measure($withCells, null, null, [], [], $policy, $before['role_limits']);
+            self::assertSame(['composer' => 1, 'audit' => 0, 'synthesis' => 0], $before['part_limits']);
+            self::assertSame($before['part_limits'], $after['part_limits']);
+            self::assertSame($before['role_limits'], $after['role_limits']);
+            self::assertNotSame($before['fingerprint'], $after['fingerprint']);
+            self::assertSame($after, $measure->measure($withCells, null, null, [], [], $policy, $after['role_limits']));
+            $tariff = \App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot::fromArray([
+                'input_per_million' => '13.5', 'cached_input_per_million' => '13.5', 'output_per_million' => '67.5',
+                'reasoning_mode' => 'included_in_output', 'currency' => 'RUB', 'image_unit' => '0', 'page_unit' => '0',
+                'source' => 'fixture', 'version' => 'luna-test-v1', 'effective_at' => '2026-10-10T00:00:00+00:00']);
+            $plans = new \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorProcessingPlan;
+            self::assertSame($plans->build('generation', 0, 32, false, $tariff, knownPartLimits: $before['part_limits']),
+                $plans->build('generation', 0, 32, false, $tariff, knownPartLimits: $after['part_limits']));
+        } finally {
+            \Illuminate\Container\Container::setInstance($previous);
+        }
+        $model = new class implements EstimateComposerModel
+        {
+            public array $inputs = [];
+
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->inputs[] = $input->canonicalPayload();
+                $onPhysicalAttemptReserved(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext::deterministicId($input->fingerprint()));
+
+                return ['work_intents' => []];
+            }
+        };
+        $runs = new BatchComposerMemoryRepository;
+        $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna', $planner);
+        $result = $composer->runDetailed($withCells);
+        self::assertSame($result, $composer->runDetailed($withCells));
+        self::assertSame($result, $composer->runDetailed($input));
+        self::assertSame([$baseline[0]->canonicalPayload()], $model->inputs);
+        self::assertCount(1, $runs->results);
+        $receipt = array_values($runs->results)[0]->payload;
+        self::assertSame(1, $receipt['schema_version']);
+        self::assertArrayNotHasKey('cell_mapping_proposals', $receipt);
+        self::assertArrayNotHasKey('cell_mapping_context', $receipt);
     }
 
     public function test_split_equipment_context_keeps_the_current_root_answer_and_reuses_its_reference_without_more_batches(): void
@@ -240,6 +319,16 @@ final class EstimateComposerBatchPlannerTest extends TestCase
         self::assertCount(1, $withRef);
         self::assertSame($plain[0]->canonicalPayload(), $withRef[0]->canonicalPayload());
         self::assertArrayNotHasKey('source_claim_refs', $withRef[0]->canonicalPayload());
+    }
+
+    private function cellRow(): array
+    {
+        return ['row_id' => 'row:'.str_repeat('a', 64), 'document_id' => 1, 'unit_id' => 2,
+            'source_version' => 'sha256:'.str_repeat('a', 64), 'artifact_sha256' => 'sha256:'.str_repeat('b', 64),
+            'sheet' => 'Лист', 'row' => 2, 'policy_hash' => str_repeat('c', 64), 'cells' => [
+                ['cell_id' => 'cell:'.str_repeat('d', 64), 'address' => 'A2', 'raw_value' => 'Изделие'],
+                ['cell_id' => 'cell:'.str_repeat('e', 64), 'address' => 'B2', 'raw_value' => 'Описание изделия'],
+            ]];
     }
 
     private function sourceClaims(): array
