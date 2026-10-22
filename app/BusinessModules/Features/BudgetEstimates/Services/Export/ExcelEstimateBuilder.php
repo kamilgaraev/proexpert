@@ -476,7 +476,7 @@ class ExcelEstimateBuilder
 
     protected function applyColumnWidths(Worksheet $sheet, bool $showPrices = true): void
     {
-        foreach (['A' => 5, 'B' => 20, 'C' => 50, 'D' => 8, 'E' => 12, 'F' => 16, 'G' => 18, 'H' => 26] as $column => $width) {
+        foreach (['A' => 5, 'B' => 20, 'C' => 44, 'D' => 14, 'E' => 12, 'F' => 16, 'G' => 18, 'H' => 26] as $column => $width) {
             $sheet->getColumnDimension($column)->setWidth($width);
         }
         if (! $showPrices) {
