@@ -550,6 +550,15 @@ final class AssistantDataAccessPolicy
         return $this->currentEffectiveModuleSlugs($user, $organizationId);
     }
 
+    public function moduleSlugsForSnapshotLookup(User $actor, int $organizationId, AuthorizationService $authorization, \App\Services\Entitlements\OrganizationEntitlementService $source): ?array
+    {
+        if ($this->batchIdentity !== [(int) $actor->id, $organizationId] || $this->batchAuthorization !== $authorization) {
+            return null;
+        }
+
+        return $authorization->memoizedCurrentModuleSlugs($organizationId, $source);
+    }
+
     public function allowedReportCodes(User $actor, int $organizationId, AuthorizationService $authorization): array
     {
         if (! $this->belongsToOrganization($actor, $organizationId)) { return []; }

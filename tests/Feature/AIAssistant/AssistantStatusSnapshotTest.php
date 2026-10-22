@@ -63,6 +63,81 @@ final class AssistantStatusSnapshotTest extends TestCase
         Cache::flush();
     }
 
+    public function test_snapshot_lookup_never_accepts_a_bank_proof_expiring_during_final_validation(): void
+    {
+        $this->freezeTime();
+        $fixture = \Tests\Support\AssistantRealAuthorizationFixture::create([]);
+        $organizationId = (int) $fixture->organization->id;
+        $account = \App\Models\OrganizationCommercialAccount::query()->where('organization_id', $organizationId)->sole();
+        $order = \App\Models\CommercialOrder::query()->create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(), 'organization_id' => $organizationId, 'commercial_account_id' => $account->id,
+            'user_id' => $fixture->owner->id, 'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 4,
+            'billing_period' => '30_days', 'renew_subscription' => true, 'selected_package_slugs' => ['working-entry'],
+            'current_package_slugs' => [], 'selected_resource_addons' => [], 'amount_minor' => 10000, 'amount' => '100.00',
+            'currency' => 'RUB', 'period_start_at' => now(), 'period_end_at' => now()->addMonth(),
+            'client_idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+        $payment = \App\Models\CommercialPayment::query()->create([
+            'commercial_order_id' => $order->id, 'provider' => 'tochka', 'provider_status' => 'created', 'amount_minor' => 10000,
+            'currency' => 'RUB', 'provider_idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+        $invoice = \App\Models\CommercialBankInvoice::query()->create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(), 'organization_id' => $organizationId, 'commercial_order_id' => $order->id,
+            'commercial_payment_id' => $payment->id, 'number' => 'MOST-'.str_pad((string) $order->id, 10, '0', STR_PAD_LEFT),
+            'amount_minor' => 10000, 'snapshot' => [], 'expires_at' => now()->addWeek(),
+        ]);
+        $proof = \App\Models\CommercialBankPaymentProof::query()->create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(), 'organization_id' => $organizationId, 'commercial_account_id' => $account->id,
+            'commercial_bank_invoice_id' => $invoice->id, 'submitted_by' => $fixture->owner->id, 'status' => 'pending',
+            'storage_path' => 'org-'.$organizationId.'/billing/test.pdf', 'mime' => 'application/pdf', 'size_bytes' => 100,
+            'sha256' => str_repeat('a', 64), 'package_slugs' => ['working-entry'], 'resource_addons' => [],
+            'submitted_at' => now(), 'temporary_expires_at' => now()->addSeconds(5),
+        ]);
+        app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->invalidate($organizationId);
+        $policy = app(AssistantDataAccessPolicy::class);
+        $policy->setTrustedSurface(\App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::ADMIN);
+        $registry = new RagSourceRegistry([]);
+        $indexer = new RagIndexer(Mockery::mock(RagEmbeddingProviderInterface::class), $registry);
+        $coverage = new RagCoverageService($registry, $indexer, $policy);
+        $this->app->instance(RagCoverageService::class, $coverage);
+        $service = new AssistantIndexStatusService($coverage, app(AssistantDocumentCoverageService::class), new RagIndexingCoordinator($indexer), $policy, app(AuthorizationService::class));
+        $metrics = new ApiQueryMetrics(true);
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        self::assertFalse($service->status($organizationId, $fixture->member, 'all')['status_available']);
+        $job = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
+        self::assertInstanceOf(RefreshAssistantIndexStatusJob::class, $job);
+        $job->handle($service, $policy);
+        self::assertIsArray(Cache::get($job->cacheKey));
+        self::assertTrue($service->status($organizationId, $fixture->member, 'all')['status_available']);
+        self::assertSame('ready', $metrics->summary()['assistant_snapshot']['phase']);
+        $fingerprintReads = 0;
+        $advanced = false;
+        $armed = true;
+        DB::listen(function ($query) use (&$fingerprintReads, &$advanced, &$armed, $proof): void {
+            if (! $armed || ! str_contains($query->sql, 'pg_class') || ! str_contains($query->sql, 'commercial_bank_payment_proofs')) { return; }
+            foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 35) as $frame) {
+                if (($frame['class'] ?? null) === AssistantStatusSnapshotInputs::class && ($frame['function'] ?? null) === 'buildFingerprint') {
+                    $fingerprintReads++;
+                    if ($fingerprintReads === 1) {
+                        $this->travelTo($proof->temporary_expires_at);
+                        $advanced = true;
+                    }
+                    break;
+                }
+            }
+        });
+        try {
+            $status = $service->status($organizationId, $fixture->member, 'all');
+        } finally {
+            $armed = false;
+        }
+        self::assertTrue($advanced, 'The proof must expire after final access checks and before the final module fingerprint read.');
+        self::assertSame(1, $fingerprintReads);
+        self::assertFalse($status['status_available']);
+        self::assertNotSame('ready', $metrics->summary()['assistant_snapshot']['phase']);
+        self::assertNotContains('ai-assistant', app(OrganizationEntitlementService::class)->getEffectiveModuleSlugs($organizationId));
+    }
+
     public function test_snapshot_footprint_ignores_only_the_exact_transaction_mode_probe(): void
     {
         $footprint = app(AssistantStatusSnapshotFootprint::class);

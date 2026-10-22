@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
@@ -17,10 +18,21 @@ final class AssistantStatusSnapshotInputs
 
     public function fingerprint(User $actor, int $organizationId, KnowledgeSurface $surface, string $section, ?string $ip, AuthorizationService $authorization): ?string
     {
+        return $this->buildFingerprint($actor, $organizationId, $surface, $section, $ip, $authorization);
+    }
+
+    public function fingerprintForLookup(User $actor, int $organizationId, KnowledgeSurface $surface, string $section, ?string $ip, AuthorizationService $authorization, AssistantDataAccessPolicy $access): ?string
+    {
+        return $this->buildFingerprint($actor, $organizationId, $surface, $section, $ip, $authorization, $access);
+    }
+
+    private function buildFingerprint(User $actor, int $organizationId, KnowledgeSurface $surface, string $section, ?string $ip, AuthorizationService $authorization, ?AssistantDataAccessPolicy $access = null): ?string
+    {
         $release = config('ai-assistant.status_snapshot_release') ?: getenv('MOST_RELEASE_SHA');
         if (! is_string($release) || preg_match('/^[a-f0-9]{40}$/D', $release) !== 1) { return null; }
         $roles = $authorization->getUserRoles($actor)->sortBy('id')->values()->toArray();
-        $modules = $this->entitlements->getEffectiveModuleSlugs($organizationId);
+        $modules = $access?->moduleSlugsForSnapshotLookup($actor, $organizationId, $authorization, $this->entitlements)
+            ?? $this->entitlements->getEffectiveModuleSlugs($organizationId);
         sort($modules);
         $connection = DB::connection();
         $configuration = [config('app.env'), config('app.timezone'), config('authorization'), config('ai-assistant'), config('commercial_offers'),
