@@ -302,6 +302,7 @@ class RagRetrieverTest extends TestCase
     #[DataProvider('addressedContentModes')]
     public function test_search_preserves_content_after_preview_and_keeps_project_access_scope(string $mode): void
     {
+        config()->set('ai-assistant.rag.expanded_context_enabled', true);
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
             UserProjectAccessMode::ASSIGNED_PROJECTS->value
         );
@@ -331,6 +332,7 @@ class RagRetrieverTest extends TestCase
     #[DataProvider('addressedContentModes')]
     public function test_search_distinguishes_multiple_chunks_from_the_same_source(string $mode): void
     {
+        config()->set('ai-assistant.rag.expanded_context_enabled', true);
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
             UserProjectAccessMode::ALL_PROJECTS->value
         );
