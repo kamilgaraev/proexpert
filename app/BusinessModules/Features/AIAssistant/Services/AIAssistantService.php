@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDo
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantBudgetExceeded;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
@@ -18,6 +19,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanne
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateResolver;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
@@ -176,6 +178,7 @@ class AIAssistantService
         private readonly AssistantStructuredFactVerifier $structuredFacts = new AssistantStructuredFactVerifier(),
         private readonly ?AssistantLegacyLiveEvidenceAdapter $legacyLiveEvidence = null,
         private readonly ?AssistantDocumentCoverageService $documentCoverageService = null,
+        private readonly OrdinaryAssistantEgress $ordinaryEgress = new OrdinaryAssistantEgress(),
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -1821,6 +1824,7 @@ class AIAssistantService
     private function requestErrorCode(Throwable $exception): string
     {
         return match (true) {
+            $exception instanceof AssistantEgressDenied => 'assistant_egress_denied',
             $exception instanceof AssistantRequestDeadlineExceeded => 'request_deadline_exceeded',
             $exception instanceof AssistantRequestCancelled => 'request_cancelled',
             $exception instanceof AssistantBudgetExceeded => 'approved_budget_exceeded',
@@ -2806,13 +2810,18 @@ class AIAssistantService
             throw new RuntimeException('assistant_native_responses_unavailable');
         }
 
-        $attempt = $this->activeRequest !== null
-            ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
-            : 1;
+        $egressRequest = $this->ordinaryEgress->prepare($preparedMessages, $preparedOptions, $organizationId, $user, $this->llmProvider->getModel());
+        $this->ordinaryEgress->transport()->arm($this->llmProvider, $egressRequest,
+            fn () => $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $this->llmProvider->getModel()));
+        $attempt = 1;
         $response = null;
         $providerStarted = false;
         try {
+            $attempt = $this->activeRequest !== null
+                ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
+                : 1;
             $this->executionCheckpoint();
+            $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $this->llmProvider->getModel());
             $providerStarted = true;
             $providerCallStarted = hrtime(true);
             $providerCallFailure = null;
@@ -2861,7 +2870,7 @@ class AIAssistantService
                 'fallback_reason' => null,
             ];
         } catch (Throwable $exception) {
-            if ($providerStarted) {
+            if ($providerStarted && (! $exception instanceof AssistantEgressDenied || $this->ordinaryEgress->transport()->dispatched())) {
                 $failedUsage = $this->providerUsageFromFailure($exception, $response);
                 try {
                     $this->recordProviderUsageDuringCleanup($failedUsage, $organizationId, $user, $preparedOptions, true, false, (int) $attempt);
@@ -2873,6 +2882,8 @@ class AIAssistantService
             }
             $this->executionCheckpoint();
             throw $exception;
+        } finally {
+            $this->ordinaryEgress->transport()->clear();
         }
     }
 

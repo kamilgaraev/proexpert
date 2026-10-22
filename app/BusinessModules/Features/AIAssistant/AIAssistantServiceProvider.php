@@ -43,6 +43,8 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVer
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
@@ -206,6 +208,11 @@ class AIAssistantServiceProvider extends ServiceProvider
                 default => throw new InvalidArgumentException('ai_llm_provider_invalid'),
             };
         });
+
+        $this->app->scoped(OrdinaryAssistantEgress::class);
+        $this->app->when(AIAssistantService::class)
+            ->needs(LLMProviderInterface::class)
+            ->give(fn ($app) => $app->make(OrdinaryAssistantProviderFactory::class)->make());
 
         // Регистрация реестра инструментов
         $this->app->scoped(AIToolRegistry::class, function ($app) {

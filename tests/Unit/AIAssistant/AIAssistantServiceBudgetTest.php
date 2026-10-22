@@ -18,6 +18,9 @@ use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Services\ContextBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgressRequest;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\IntentRecognizer;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -28,6 +31,10 @@ use App\Models\User;
 use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\AssistantEgressFixtureAuthority;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\Middleware;
+use GuzzleHttp\Psr7\Response;
 
 interface NativeResponsesTestProvider extends LLMProviderInterface
 {
@@ -1955,26 +1962,40 @@ class AIAssistantServiceBudgetTest extends TestCase
     {
         $call = ['type' => 'function_call', 'id' => 'fc_service', 'status' => 'completed', 'call_id' => 'call_service',
             'name' => 'search_projects', 'arguments' => '{}'];
-        $provider = $this->createMock(NativeResponsesTestProvider::class);
-        $provider->expects($this->never())->method('chat');
-        $provider->method('getModel')->willReturn('openai/gpt-6-luna');
-        $provider->expects($this->exactly(2))->method('responses')->willReturnCallback(function (array $input, array $options) use ($call): array {
-            self::assertInstanceOf(\App\Support\AI\PreparedTokenBudget::class, $options['_prepared_token_budget']);
-            self::assertSame('function', $options['tools'][0]['type']);
-            self::assertArrayNotHasKey('function', $options['tools'][0]);
-            self::assertSame('Запрос', $input[0]['content']);
-
-            return ['content' => '', 'output' => [$call], 'function_calls' => [$call], 'response_status' => 'completed',
-                'model' => 'openai/gpt-6-luna', 'input_tokens' => 10, 'output_tokens' => 5, 'tokens_used' => 15];
-        });
+        config(['ai-assistant.llm.provider' => 'timeweb', 'ai-assistant.llm.timeweb.api_key' => 'offline-only-key',
+            'ai-assistant.llm.timeweb.base_uri' => 'https://offline.invalid/v1', 'ai-assistant.llm.timeweb.model' => 'openai/gpt-6-luna']);
+        $wire = new Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'id' => 'resp_offline', 'object' => 'response', 'created_at' => 1791540000, 'status' => 'completed', 'model' => 'openai/gpt-6-luna',
+            'output' => [$call], 'max_output_tokens' => 2048, 'parallel_tool_calls' => false,
+            'previous_response_id' => null, 'temperature' => null, 'top_p' => null, 'tool_choice' => 'auto', 'tools' => [],
+            'usage' => ['input_tokens' => 10, 'output_tokens' => 5, 'total_tokens' => 15,
+                'input_tokens_details' => ['cached_tokens' => 0], 'output_tokens_details' => ['reasoning_tokens' => 0]],
+        ], JSON_THROW_ON_ERROR));
+        $authority = new AssistantEgressFixtureAuthority;
+        $egress = new OrdinaryAssistantEgress($authority);
+        $history = [];
+        $provider = (new OrdinaryAssistantProviderFactory($egress, $this->createMock(LoggingService::class)))
+            ->make(Middleware::history($history)(new MockHandler([$wire, $wire])));
         $registry = new AIToolRegistry;
         $registry->registerTool($this->makeTool('search_projects'));
-        $service = $this->makeService($registry, provider: $provider);
+        $service = $this->makeService($registry, provider: $provider, egress: $egress);
         $tools = $registry->getToolsDefinitions(['search_projects'], true);
         $input = [['role' => 'user', 'content' => 'Запрос']];
+        $actor = new User(['is_active' => true, 'current_organization_id' => 15]);
+        $actor->id = 7;
+        [$preparedInput, $preparedOptions] = $service->exposePrepareProviderPayload($input, ['tools' => $tools]);
+        $authority->approve(OrdinaryAssistantEgressRequest::capture($preparedInput, $preparedOptions, 15, $actor, $provider->getModel()));
         $first = $service->exposeRequestAssistantResponse($input, ['tools' => $tools]);
-        self::assertSame([$call], $first['response']['function_calls']);
+        self::assertEqualsCanonicalizing([$call], $first['response']['function_calls']);
+        self::assertCount(1, $history);
+        $payload = json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame('function', $payload['tools'][0]['type']);
+        self::assertArrayNotHasKey('function', $payload['tools'][0]);
+        self::assertSame('Запрос', $payload['input'][0]['content']);
+        self::assertSame($authority->approvedPayload, $payload);
         $input = [...$input, ...$first['response']['output'], ['type' => 'function_call_output', 'call_id' => 'call_service', 'output' => '{"found":2}']];
+        [$preparedInput, $preparedOptions] = $service->exposePrepareProviderPayload($input, ['tools' => $tools]);
+        $authority->approve(OrdinaryAssistantEgressRequest::capture($preparedInput, $preparedOptions, 15, $actor, $provider->getModel()));
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('assistant_native_replayed_output');
         $service->exposeRequestAssistantResponse($input, ['tools' => $tools]);
@@ -2081,7 +2102,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         (new \ReflectionMethod(AIAssistantService::class, 'savePendingSummary'))->invoke($service, new User(['id' => 9, 'current_organization_id' => 15]));
     }
 
-    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null, array $history = []): TestableAIAssistantService
+    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null, array $history = [], ?OrdinaryAssistantEgress $egress = null): TestableAIAssistantService
     {
         $llmProvider = $provider ?? $this->createMock(NativeResponsesTestProvider::class);
         $conversationManager = $this->createMock(ConversationManager::class);
@@ -2116,7 +2137,8 @@ class AIAssistantServiceBudgetTest extends TestCase
                 {
                     return array_fill(0, mb_strlen($text), 1);
                 }
-            }))
+            })),
+            ordinaryEgress: $egress ?? new OrdinaryAssistantEgress,
         );
     }
 
@@ -2212,7 +2234,7 @@ class TestableAIAssistantService extends AIAssistantService
 
     public function exposeRequestAssistantResponse(array $input, array $options): array
     {
-        $actor = new User;
+        $actor = new User(['is_active' => true, 'current_organization_id' => 15]);
         $actor->id = 7;
 
         return $this->requestAssistantResponse($input, $options, 15, $actor);
