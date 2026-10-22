@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use Illuminate\Container\Container;
 use PHPUnit\Framework\TestCase;
+use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
 
@@ -84,6 +85,68 @@ final class GenerateEstimateDraftJobTest extends TestCase
         $this->job()->failed(new RuntimeException('pipeline failed'));
 
         self::assertSame(1, $failureHandler->calls);
+    }
+
+    public function test_queue_delivery_is_not_deleted_when_recovery_does_not_commit(): void
+    {
+        $previousContainer = Container::getInstance();
+        try {
+            foreach ([false, true] as $throws) {
+                $container = new Container;
+                Container::setInstance($container);
+                $container->instance(HandleEstimateGenerationDraftFailure::class, new class($throws)
+                {
+                    public function __construct(private bool $throws) {}
+
+                    public function handle(FailureExecutionSnapshot $snapshot, \Throwable $error): bool
+                    {
+                        if ($this->throws) {
+                            throw new \RuntimeException('recovery unavailable');
+                        }
+
+                        return false;
+                    }
+                });
+                $overflow = new InvalidArgumentException('estimate_work_items_exceed_approved_plan');
+                $generation = $this->throwingGeneration($overflow);
+                $job = $this->job()->withFakeQueueInteractions();
+                try {
+                    $job->handle($generation);
+                    self::fail('An uncommitted recovery deleted the delivery.');
+                } catch (\Throwable $error) {
+                    if ($throws) {
+                        self::assertSame('recovery unavailable', $error->getMessage());
+                    } else {
+                        self::assertSame($overflow, $error);
+                    }
+                }
+                $job->assertNotDeleted()->assertNotReleased()->assertNotFailed();
+            }
+        } finally {
+            Container::setInstance($previousContainer);
+        }
+    }
+
+    public function test_nonoverflow_exceptions_keep_the_original_queue_failure(): void
+    {
+        foreach ([new InvalidArgumentException('estimate_work_approved_plan_invalid'), new \RuntimeException('transport failed')] as $error) {
+            $job = $this->job()->withFakeQueueInteractions();
+            try {
+                $job->handle($this->throwingGeneration($error));
+                self::fail('A technical failure was swallowed.');
+            } catch (\Throwable $actual) {
+                self::assertSame($error, $actual);
+            }
+            $job->assertNotDeleted()->assertNotReleased()->assertNotFailed();
+        }
+    }
+
+    private function throwingGeneration(\Throwable $error): RunEstimateGenerationDraft
+    {
+        $generation = $this->createMock(RunEstimateGenerationDraft::class);
+        $generation->expects(self::once())->method('handle')->willThrowException($error);
+
+        return $generation;
     }
 
     private function job(): GenerateEstimateDraftJob

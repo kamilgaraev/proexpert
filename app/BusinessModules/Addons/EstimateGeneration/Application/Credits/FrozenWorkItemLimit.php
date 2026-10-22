@@ -10,6 +10,8 @@ use InvalidArgumentException;
 /** A scoped, frozen ceiling. No mutable counter is shared between operations. */
 final class FrozenWorkItemLimit
 {
+    public const EXCEEDED = 'estimate_work_items_exceed_approved_plan';
+
     public static function forOperation(int $organizationId, int $projectId, int $sessionId, ?string $operationId): ?int
     {
         if ($operationId === null) {
@@ -45,7 +47,7 @@ final class FrozenWorkItemLimit
     public static function assertCount(int $count, ?int $limit): void
     {
         if ($count < 0 || ($limit !== null && $count > $limit)) {
-            throw new InvalidArgumentException('estimate_work_items_exceed_approved_plan');
+            throw new InvalidArgumentException(self::EXCEEDED);
         }
     }
 

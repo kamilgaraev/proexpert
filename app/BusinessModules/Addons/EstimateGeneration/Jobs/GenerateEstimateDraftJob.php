@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\HandleEstimateGenerationDraftFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
@@ -16,6 +17,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\Skip;
 use Illuminate\Queue\SerializesModels;
+use InvalidArgumentException;
 use Throwable;
 
 class GenerateEstimateDraftJob implements ShouldQueue
@@ -73,6 +75,12 @@ class GenerateEstimateDraftJob implements ShouldQueue
             $generation->handle($this->failureSnapshot, $this->expectedStateVersion, $this->attemptId);
         } catch (StaleEstimateGenerationState) {
             return;
+        } catch (InvalidArgumentException $error) {
+            if ($error->getMessage() !== FrozenWorkItemLimit::EXCEEDED
+                || ! app(HandleEstimateGenerationDraftFailure::class)->handle($this->failureSnapshot, $error)) {
+                throw $error;
+            }
+            $this->delete();
         }
     }
 
