@@ -66,6 +66,14 @@ final readonly class AssistantCustomReportReference
                     return false;
                 }
                 $purchaseOrderSuppliers = $scope['entity_type'] === 'purchase_order' && in_array('supplier_name', $reference['checked_fields'], true);
+                $crmLabels = $scope['entity_type'] === 'crm_deal' && array_intersect(AssistantCrmDealReportProjection::LABEL_FIELDS, $reference['checked_fields']) !== [];
+                if ($crmLabels) {
+                    if (! (new AssistantCrmDealReportProjection)->canReadLinks($source['query'], $scope['crm_label_links'] ?? null, $ids, $reference['checked_fields'])) {
+                        return false;
+                    }
+                } elseif (array_key_exists('crm_label_links', $scope)) {
+                    return false;
+                }
                 if ($purchaseOrderSuppliers) {
                     if (! ($source['projection'] instanceof AssistantPurchaseOrderReportProjection)
                         || ! $source['projection']->canReadLinks($source['query'], $scope['purchase_order_supplier_links'] ?? null, $ids)) {

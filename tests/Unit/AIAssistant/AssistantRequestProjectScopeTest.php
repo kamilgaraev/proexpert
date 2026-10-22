@@ -16,6 +16,24 @@ final class AssistantRequestProjectScopeTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_crm_report_column_list_does_not_create_a_named_project_scope(): void
+    {
+        $question = 'Собери CSV для контроля открытых сделок CRM по всей организации: название сделки, компания, этап, ответственный, проект и ожидаемая дата закрытия. Сделки без проекта тоже включи. Не ограничивайся выбранным проектом.';
+        $scope = AssistantRequestProjectScope::fromPlan(['request' => ['message' => $question,
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => 102]]]]]);
+        $arguments = ['title' => 'Открытые сделки', 'format' => 'csv', 'sections' => [[
+            'title' => 'Сделки', 'scope' => 'organization', 'domain' => 'crm', 'entity_type' => 'crm_deal',
+            'project_id' => 102, 'columns' => ['title', 'company_id', 'stage_code', 'owner_user_id', 'project_id', 'expected_close_at'],
+            'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'open']],
+            'group_by' => [], 'metrics' => [], 'order_by' => [], 'row_limit' => 1000,
+        ]]];
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        self::assertFalse($scope->requested);
+        $section = $scope->bindReportScope($question, $arguments)['sections'][0];
+        self::assertNull($section['project_id']);
+        self::assertSame($arguments['sections'][0]['filters'], $section['filters']);
+    }
+
     public function test_safety_incidents_organization_report_clears_selected_project_scope(): void
     {
         $question = 'Подготовь CSV по всем инцидентам охраны труда организации, включая закрытые и отменённые: номер, название, проект, тип, серьёзность, статус и дата происшествия. Не ограничивайся выбранным проектом.';
@@ -29,6 +47,39 @@ final class AssistantRequestProjectScopeTest extends TestCase
         self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
         self::assertFalse($scope->requested);
         self::assertNull($scope->bindReportScope($question, $arguments)['sections'][0]['project_id']);
+    }
+
+    public function test_colon_report_columns_preserve_organization_scope_without_project_lookup(): void
+    {
+        foreach (['Сделай CSV по всей организации: название, компания, проект и статус.',
+            'Нужен отчёт по всей организации: номер, объект и дата.',
+            'Собери реестр всей организации: название сделки, компания, этап, ответственный, проект и ожидаемая дата закрытия.',
+            'Сделай CSV по всей организации: номер, проект или статус. Не ограничивайся выбранным проектом.'] as $question) {
+            self::assertNull(AssistantReportEntityQuery::extract($question, 'project'), $question);
+            self::assertNull(AssistantReportEntityQuery::extract($question, 'project', true), $question);
+            self::assertTrue(AssistantRequestProjectScope::organizationWide($question), $question);
+            $search = static function (): never {
+                self::fail('A validated report column triggered project lookup');
+            };
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => 52, 'filters' => []]]];
+            self::assertNull(AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search)['sections'][0]['project_id']);
+        }
+    }
+
+    public function test_colon_report_columns_do_not_consume_literal_or_explicit_project_operands(): void
+    {
+        foreach (['Сделай CSV по всей организации: название, проект И Дата Корпуса Б, статус.' => 'И Дата Корпуса Б',
+            'Сделай CSV по всей организации: номер, проект «И Статус», дата.' => 'И Статус',
+            'Сделай CSV по всей организации: номер, проект 100, статус.' => '100',
+            'Сделай CSV по всей организации: номер, по проекту Север, статус.' => 'Север',
+            'Сделай CSV по всей организации: номер, проект и неизвестная колонка.' => 'и неизвестная колонка',
+            'Покажи по всей организации: номер, проект и статус.' => 'и статус'] as $question => $name) {
+            self::assertSame($name, AssistantReportEntityQuery::extract($question, 'project'), $question);
+            self::assertFalse(AssistantRequestProjectScope::organizationWide($question), $question);
+        }
+        $question = 'Сделай CSV по всей организации: номер, проект и статус. Для проекта «Север» отдельно добавь лист.';
+        self::assertSame('Север', AssistantReportEntityQuery::extract($question, 'project'));
+        self::assertFalse(AssistantRequestProjectScope::organizationWide('Не показывай по всей организации: номер, проект и статус.'));
     }
 
     public function test_occupational_safety_record_inflections_preserve_real_project_restrictions(): void

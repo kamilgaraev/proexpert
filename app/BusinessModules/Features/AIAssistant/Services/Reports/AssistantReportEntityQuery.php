@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantOrganizationRecordVocabulary;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod;
 
@@ -49,6 +50,9 @@ final class AssistantReportEntityQuery
                 $name = trim((string) ($parts[0] ?? ''));
             } else {
                 $prefix = substr($message, 0, $offset);
+                if ($type === 'project' && self::isColonReportColumn($message, $offset, $mention)) {
+                    continue;
+                }
                 if ($type === 'project'
                     && preg_match('/(?<![\pL\pN])(?:в\s+разрезе|с\s+детализацией\s+по)\s*$/iu', $prefix) === 1
                     && self::isGroupingTail($tail)) {
@@ -80,6 +84,42 @@ final class AssistantReportEntityQuery
         }
 
         return array_values($names);
+    }
+
+    private static function isColonReportColumn(string $message, int $offset, string $mention): bool
+    {
+        if (preg_match('/^(?:проект|объект)\s+$/iu', $mention) !== 1) {
+            return false;
+        }
+        $prefix = substr($message, 0, $offset);
+        if (preg_match('/:(?<columns>[^:;.!?\r\n]*)$/u', $prefix, $match, PREG_OFFSET_CAPTURE) !== 1
+            || preg_match('/(?:^|,|\b(?:и|или))\s*$/iu', $match['columns'][0]) !== 1) {
+            return false;
+        }
+        $colon = $match[0][1];
+        if (preg_match('/(?<![\pL\pN])(?:CSV|XLSX|PDF|Excel|отч[её]т[а-яё]*|реестр[а-яё]*|сводк[а-яё]*|таблиц[а-яё]*|выгрузк[а-яё]*)(?![\pL\pN])/iu', substr($message, 0, $colon)) !== 1) {
+            return false;
+        }
+        $sentences = preg_split('/[;.!?\r\n]/u', substr($message, $colon + 1), 2) ?: [];
+        $declaration = $sentences[0] ?? '';
+        $fields = preg_split('/\s*,\s*|\s+(?:и|или)\s+/iu', trim($declaration)) ?: [];
+        if (count($fields) < 3 || count($fields) > 30) {
+            return false;
+        }
+        $labels = ['Проект', 'Объект', 'Компания', 'Название сделки', 'Ожидаемая дата закрытия'];
+        if (app()->bound('translator')) {
+            $translated = app('translator')->get('ai_assistant_facts.fields', [], 'ru');
+            $labels = [...$labels, ...array_values(is_array($translated) ? $translated : []), ...array_values(AssistantExtendedDomainRegistry::values('fieldLabels'))];
+        }
+        $labels = array_map(static fn (string $label): string => mb_strtolower(trim($label)), array_values(array_filter($labels, is_string(...))));
+        foreach ($fields as $field) {
+            if (! in_array(mb_strtolower(trim($field)), $labels, true)
+                && ! AssistantOrganizationRecordVocabulary::matchesReportFieldInflection($field)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static function isGroupingTail(string $tail): bool
