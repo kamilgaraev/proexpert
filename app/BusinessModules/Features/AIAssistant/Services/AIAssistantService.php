@@ -2300,6 +2300,7 @@ class AIAssistantService
         }
         $arguments = json_decode((string) ($toolCall['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
+        $modelArguments = $args;
         $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
         $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
@@ -2309,7 +2310,8 @@ class AIAssistantService
             $args['include_document_id'] = preg_match('/идентификатор|(?<!\pL)id(?!\pL)/iu', $requestQuery) === 1;
             foreach (['document_id', 'unit_id', 'cursor', 'text_offset'] as $field) { $args[$field] = null; }
         }
-        if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)) {
+        if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)
+            && ! AssistantRequestProjectScope::organizationWide($requestQuery) && ! array_key_exists('project_id', $args)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             if ($args['project_id'] === null) {
                 $args['query'] = $requestQuery;
@@ -2452,26 +2454,52 @@ class AIAssistantService
         $searchScopeAttempt = null;
         try {
             $schema = $tool->getParametersSchema();
+            $usesCurrentProjectDefault = $requestProjectScope->requested
+                && in_array($toolName, ['get_bim_model_elements', 'resolve_estimate', 'get_estimate_answer'], true)
+                && array_key_exists('project_id', $modelArguments) && $modelArguments['project_id'] === null;
+            if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
+                if ($requestProjectScope->projectId === null) {
+                    return $this->currentProjectScopeUnavailable('current_project_required');
+                }
+                if (isset($schema['properties']['project_id']) && array_key_exists('project_id', $modelArguments) && ! $usesCurrentProjectDefault
+                    && (is_int($modelArguments['project_id']) && $modelArguments['project_id'] > 0 || $modelArguments['project_id'] === null)
+                    && $modelArguments['project_id'] !== $requestProjectScope->projectId) {
+                    return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                }
+                if (in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
+                    && ($args['entity_type'] ?? null) === 'project' && array_key_exists('id', $modelArguments)
+                    && (! is_int($modelArguments['id']) && ! is_string($modelArguments['id'])
+                        || (string) $modelArguments['id'] !== (string) $requestProjectScope->projectId)) {
+                    return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                }
+            }
             if ($toolName === 'assistant_domain_search') {
                 $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
-                $args = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
+                $searchArguments = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
                     $this->resolveRagProjectId($taskPlan['request']['context'] ?? []),
                     $definition !== null && in_array('project_id', $definition->fields, true),
                     fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+                if (array_key_exists('project_id', $modelArguments)) {
+                    if (($searchArguments['project_id'] ?? null) !== null
+                        && (is_int($modelArguments['project_id']) && $modelArguments['project_id'] > 0 || $modelArguments['project_id'] === null)
+                        && $searchArguments['project_id'] !== $modelArguments['project_id']) {
+                        return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                    }
+                    $searchArguments['project_id'] = $modelArguments['project_id'];
+                }
+                $args = $searchArguments;
             }
             if ($toolName === 'search_projects') {
                 unset($args['project_id']);
             }
             if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
-                if ($requestProjectScope->projectId === null) {
-                    return $this->currentProjectScopeUnavailable('current_project_required');
-                }
                 if (isset($schema['properties']['project_id'])) {
-                    $args['project_id'] = $requestProjectScope->projectId;
+                    $args['project_id'] = array_key_exists('project_id', $modelArguments) && ! $usesCurrentProjectDefault
+                        ? $modelArguments['project_id'] : $requestProjectScope->projectId;
                 }
                 if (in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
                     && ($args['entity_type'] ?? null) === 'project') {
-                    $args['id'] = $requestProjectScope->projectId;
+                    $args['id'] = array_key_exists('id', $modelArguments) ? $modelArguments['id'] : $requestProjectScope->projectId;
                 }
             }
             if ($toolName === 'generate_custom_report') {
@@ -2571,6 +2599,14 @@ class AIAssistantService
                 ], 'warning');
 
                 return ['error' => $message];
+            }
+
+            if ($requestProjectScope->requested && in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
+                && ! $this->readPhase(fn (): bool => $this->canReadEntityInRequestedProject($user, $organizationId,
+                    (string) ($args['entity_type'] ?? ''), $args['id'], (int) $requestProjectScope->projectId), $user, $organizationId)) {
+                $this->recordRequestOutcome('insufficient_data');
+
+                return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
             }
 
             $toolFailureStage = 'tool_preparation';
@@ -2729,6 +2765,39 @@ class AIAssistantService
                 return $unavailable;
             }
             return ['error' => $message];
+        }
+    }
+
+    protected function canReadEntityInRequestedProject(User $actor, int $organizationId, string $type, int|string $id, int $projectId): bool
+    {
+        $policy = $this->dataAccess ?? app(AssistantDataAccessPolicy::class);
+        try {
+            return $policy->withCurrentChecks($actor, $organizationId, function () use ($policy, $actor, $organizationId, $type, $id, $projectId): bool {
+                $query = $policy->entityQuery($actor, $organizationId, $type);
+
+                if ($query === null) {
+                    return false;
+                }
+                if ($type === 'contractor') {
+                    $anchors = (new AssistantRequestProjectScope(true, $projectId))->withAnchorReferences([
+                        ['entity_type' => $type, 'entity_id' => $id, 'project_id' => null],
+                    ], $this->activeToolResults);
+                    $contractIds = array_column(array_filter($anchors,
+                        static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'contract'), 'entity_id');
+                    if ($contractIds === [] || ! $query->whereKey($id)->exists()) {
+                        return false;
+                    }
+                    $contracts = $policy->entityQuery($actor, $organizationId, 'contract');
+
+                    return $contracts !== null && $policy->applyEntityProjectScope($actor, $organizationId, 'contract', $contracts, $projectId)
+                        && $contracts->whereKey($contractIds)->where($contracts->getModel()->qualifyColumn('contractor_id'), $id)->exists();
+                }
+
+                return $policy->applyEntityProjectScope($actor, $organizationId, $type, $query, $projectId)
+                    && $query->whereKey($id)->exists();
+            }, true);
+        } catch (AccessDeniedHttpException) {
+            return false;
         }
     }
 

@@ -308,7 +308,8 @@ final class RagRetriever
                     excerpt: $this->excerpt((string) $row->content),
                     similarity: $similarity,
                     metadata: $this->referenceMetadata($row),
-                    updatedAt: $this->date($row->source_indexed_at)
+                    updatedAt: $this->date($row->source_indexed_at),
+                    content: (string) $row->content
                 );
 
                 if (! isset($rankedResults[$identity])) {
@@ -877,6 +878,7 @@ final class RagRetriever
             })
             ->select([
                 'c.id',
+                'c.chunk_index',
                 'c.project_id',
                 'c.content',
                 'c.metadata as chunk_metadata',
@@ -928,7 +930,8 @@ final class RagRetriever
                     excerpt: $this->excerpt((string) $row->content),
                     similarity: min(0.69, 0.5 + ((int) $row->lexical_score * 0.03)),
                     metadata: $this->referenceMetadata($row),
-                    updatedAt: $this->date($row->source_indexed_at)
+                    updatedAt: $this->date($row->source_indexed_at),
+                    content: (string) $row->content
                 );
             })
             ->all();
@@ -990,6 +993,7 @@ final class RagRetriever
         $sql = <<<SQL
 WITH compatible_chunks AS MATERIALIZED (
 SELECT c.id,
+       c.chunk_index,
        c.project_id,
        c.content,
        c.metadata AS chunk_metadata,
@@ -1010,7 +1014,7 @@ WHERE c.organization_id = ?
   AND c.embedding_model = ?
   AND vector_dims(c.embedding) = ?
 {$sourceFilter}{$projectFilter})
-SELECT id, project_id, content, chunk_metadata, source_type, entity_type, entity_id, title, source_indexed_at, rag_source_id, rag_source_checksum, rag_source_version,
+SELECT id, chunk_index, project_id, content, chunk_metadata, source_type, entity_type, entity_id, title, source_indexed_at, rag_source_id, rag_source_checksum, rag_source_version,
        1 - (embedding <=> ?::vector) AS similarity
 FROM compatible_chunks
 ORDER BY embedding <=> ?::vector
@@ -1059,6 +1063,7 @@ SQL;
             })
             ->select([
                 'c.id',
+                'c.chunk_index',
                 'c.project_id',
                 'c.content',
                 'c.metadata as chunk_metadata',
@@ -1375,6 +1380,8 @@ SQL;
             $metadata['rag_source_checksum'] = $row->rag_source_checksum ?? null;
         }
         $metadata['source_id'] = isset($row->rag_source_id) ? (int) $row->rag_source_id : null;
+        $metadata['chunk_id'] = isset($row->id) ? (int) $row->id : null;
+        $metadata['chunk_index'] = isset($row->chunk_index) ? (int) $row->chunk_index : null;
         $metadata['source_version'] = $row->rag_source_version ?? null;
         $metadata['checksum'] = $row->rag_source_checksum ?? null;
         return $metadata;

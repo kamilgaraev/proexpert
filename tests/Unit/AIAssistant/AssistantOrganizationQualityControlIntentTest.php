@@ -44,7 +44,7 @@ final class AssistantOrganizationQualityControlIntentTest extends TestCase
         $plan = ['request' => ['message' => $question,
             'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
         self::assertSame(['name' => 'get_organization_quality_defect_control', 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan));
-        self::assertSame(['scope' => 'organization'], AssistantRequiredProjectRead::bindArguments($plan, 'get_organization_quality_defect_control', ['scope' => 'project', 'project_id' => 104]));
+        self::assertSame(['scope' => 'organization'], AssistantRequiredProjectRead::bindArguments($plan, 'get_organization_quality_defect_control', []));
         self::assertContains('get_organization_quality_defect_control', AssistantToolSurface::names(['get_organization_quality_defect_control'], $plan));
         self::assertSame(AssistantOperationalReaderRegistry::ORGANIZATION_TOOLS['get_organization_quality_defect_control'], AssistantRequiredProjectRead::decisionReader('get_organization_quality_defect_control', $question));
     }

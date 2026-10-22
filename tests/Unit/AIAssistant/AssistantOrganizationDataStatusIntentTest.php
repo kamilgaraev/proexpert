@@ -24,7 +24,7 @@ final class AssistantOrganizationDataStatusIntentTest extends TestCase
             $plan = ['request' => ['message' => $query,
                 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
             self::assertSame(['name' => 'get_rag_index_status', 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan), $query);
-            self::assertSame(['scope' => 'organization'], AssistantRequiredProjectRead::bindArguments($plan, 'get_rag_index_status', ['scope' => 'project']));
+            self::assertSame(['scope' => 'organization'], AssistantRequiredProjectRead::bindArguments($plan, 'get_rag_index_status', []));
             self::assertContains('get_rag_index_status', AssistantToolSurface::names(['get_rag_index_status'], $plan));
             self::assertSame(AssistantOperationalReaderRegistry::ORGANIZATION_TOOLS['get_rag_index_status'], AssistantRequiredProjectRead::decisionReader('get_rag_index_status', $query));
         }

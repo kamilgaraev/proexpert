@@ -17,7 +17,8 @@ use JsonException;
 
 final readonly class EloquentProjectModelRepository implements ProjectModelRepository, TechnologyReselectionRepository
 {
-    public function __construct(private DatabaseManager $database) {}
+    public function __construct(private DatabaseManager $database,
+        private ?\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService $cellReviews = null) {}
 
     public function resolveEntityStableKey(
         int $organizationId,
@@ -276,6 +277,48 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot
     {
+        return $this->currentCellReviewProjection($organizationId, $projectId, $sessionId,
+            $this->rawSnapshot($organizationId, $projectId, $sessionId, $factLimit), $factLimit)['snapshot'];
+    }
+
+    private function currentCellReviewProjection(int $organizationId, int $projectId, int $sessionId, ProjectModelSnapshot $snapshot, ?int $factLimit = null): array
+    {
+        $entities = array_column($snapshot->entities, null, 'id');
+        $reviewFacts = [];
+        foreach ($snapshot->facts as $fact) {
+            if ($fact->origin === 'document' && $fact->type === 'equipment_specification'
+                && isset($entities[$fact->entityId]?->attributes['properties']['document_cell_review_anchor'])) {
+                $reviewFacts[$fact->id] = null;
+            }
+        }
+        if ($reviewFacts === []) {
+            return ['snapshot' => $snapshot, 'reviews' => []];
+        }
+        $scope = [$organizationId, $projectId, $sessionId];
+        $decisions = $this->cellReviews === null ? []
+            : $this->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $facts = [];
+        foreach ($snapshot->facts as $fact) {
+            if (! array_key_exists($fact->id, $reviewFacts)) {
+                $facts[] = $fact;
+                continue;
+            }
+            $current = $this->cellReviews?->captureCellReview($scope, $snapshot, $decisions, $fact);
+            $reviewFacts[$fact->id] = $current['source_claim_key'] ?? null;
+            if ($current !== null) {
+                $facts[] = $fact;
+            }
+        }
+        if (count($facts) !== count($snapshot->facts) && $factLimit !== null && count($snapshot->facts) >= $factLimit) {
+            throw new InvalidArgumentException('planning_source_filter_budget_exceeded');
+        }
+        ksort($reviewFacts, SORT_STRING);
+
+        return ['snapshot' => new ProjectModelSnapshot($snapshot->entities, $facts, $snapshot->evidence, $snapshot->conflicts), 'reviews' => $reviewFacts];
+    }
+
+    private function rawSnapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot
+    {
         $facts = $this->currentFacts($organizationId, $projectId, $sessionId, limit: $factLimit);
         if ($facts === []) {
             return new ProjectModelSnapshot([], [], [], $this->currentConflicts($organizationId, $projectId, $sessionId));
@@ -370,8 +413,14 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $factLimit, $includeFactSourceEntities, $includeTokenState): array {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
 
-            $snapshot = $this->snapshot($organizationId, $projectId, $sessionId, $factLimit);
+            $raw = $this->rawSnapshot($organizationId, $projectId, $sessionId, $factLimit);
+            $projection = $this->currentCellReviewProjection($organizationId, $projectId, $sessionId, $raw, $factLimit);
+            $snapshot = $projection['snapshot'];
             $state = $this->understandingSnapshotState($organizationId, $projectId, $sessionId);
+            $capturedReviews = array_intersect_key($state['cell_review_projection'] ?? [], array_fill_keys(array_column($raw->facts, 'id'), true));
+            if ($projection['reviews'] !== $capturedReviews) {
+                throw new InvalidArgumentException('project_model_cell_review_snapshot_changed');
+            }
 
             return [
                 'snapshot' => $snapshot,
@@ -2034,6 +2083,30 @@ SQL, [
             ->orderBy('input_fingerprint')
             ->get(['role', 'subject_version', 'input_fingerprint']);
 
+        $reviewProjection = [];
+        $latestEntities = [];
+        foreach ($entityRows as $entity) {
+            $latestEntities[(string) $entity->stable_key] ??= $this->decode($entity->payload);
+        }
+        foreach ($facts as $fact) {
+            if ($fact->fact_origin === 'document' && $fact->assertion_type === 'equipment_specification'
+                && isset($latestEntities[(string) $fact->entity_stable_key]['properties']['document_cell_review_anchor'])) {
+                $reviewProjection[(string) $fact->stable_key] = null;
+            }
+        }
+        if ($reviewProjection !== []) {
+            if ($facts->count() >= 10001) {
+                throw new InvalidArgumentException('planning_source_filter_budget_exceeded');
+            }
+            $current = $this->currentCellReviewProjection($organizationId, $projectId, $sessionId,
+                $this->rawSnapshot($organizationId, $projectId, $sessionId, 10001), 10001)['reviews'];
+            ksort($reviewProjection, SORT_STRING);
+            if (array_keys($reviewProjection) !== array_keys($current)) {
+                throw new InvalidArgumentException('project_model_cell_review_snapshot_changed');
+            }
+            $reviewProjection = $current;
+        }
+
         return [
             'scope' => ['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId],
             'source_versions' => array_values(array_unique($sourceVersions)),
@@ -2046,6 +2119,7 @@ SQL, [
                 'selected_fact_id' => (string) $decision->selected_fact_stable_key,
                 'version' => (int) $decision->version,
             ])->all(),
+            ...($reviewProjection !== [] ? ['cell_review_projection' => $reviewProjection] : []),
             'role_runs' => $roleRuns->map(static fn ($run): array => [
                 'role' => (string) $run->role,
                 'subject_version' => (string) $run->subject_version,

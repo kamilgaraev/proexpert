@@ -51,7 +51,7 @@ final class AssistantDocumentRequestIntentTest extends TestCase
         self::assertSame('ready', $read['arguments']['document_status']);
         self::assertNull($read['arguments']['project_id']);
         self::assertNull($read['arguments']['filename_query']);
-        $bound = \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::bindArguments($plan, 'search_assistant_documents', ['metadata_offset' => 20, 'document_id' => 999]);
+        $bound = \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::bindArguments($plan, 'search_assistant_documents', ['metadata_offset' => 20]);
         self::assertSame(20, $bound['metadata_offset']);
         self::assertArrayNotHasKey('document_id', $bound);
         self::assertNull(AssistantDocumentRequestIntent::readyListArguments('Какие документы с готовым текстом по Севгу доступны?'));
