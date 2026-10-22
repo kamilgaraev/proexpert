@@ -2454,11 +2454,14 @@ class AIAssistantService
         $searchScopeAttempt = null;
         try {
             $schema = $tool->getParametersSchema();
+            $usesCurrentProjectDefault = $requestProjectScope->requested
+                && in_array($toolName, ['get_bim_model_elements', 'resolve_estimate', 'get_estimate_answer'], true)
+                && array_key_exists('project_id', $modelArguments) && $modelArguments['project_id'] === null;
             if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
                 if ($requestProjectScope->projectId === null) {
                     return $this->currentProjectScopeUnavailable('current_project_required');
                 }
-                if (isset($schema['properties']['project_id']) && array_key_exists('project_id', $modelArguments)
+                if (isset($schema['properties']['project_id']) && array_key_exists('project_id', $modelArguments) && ! $usesCurrentProjectDefault
                     && (is_int($modelArguments['project_id']) && $modelArguments['project_id'] > 0 || $modelArguments['project_id'] === null)
                     && $modelArguments['project_id'] !== $requestProjectScope->projectId) {
                     return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
@@ -2491,7 +2494,8 @@ class AIAssistantService
             }
             if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
                 if (isset($schema['properties']['project_id'])) {
-                    $args['project_id'] = array_key_exists('project_id', $modelArguments) ? $modelArguments['project_id'] : $requestProjectScope->projectId;
+                    $args['project_id'] = array_key_exists('project_id', $modelArguments) && ! $usesCurrentProjectDefault
+                        ? $modelArguments['project_id'] : $requestProjectScope->projectId;
                 }
                 if (in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
                     && ($args['entity_type'] ?? null) === 'project') {

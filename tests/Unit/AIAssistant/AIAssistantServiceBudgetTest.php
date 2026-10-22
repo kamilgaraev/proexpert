@@ -303,6 +303,36 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertNotEmpty($failures);
     }
 
+    public function test_nullable_estimate_project_uses_required_current_or_named_scope_with_real_tool_schema(): void
+    {
+        foreach ([\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
+            \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool::class] as $class) {
+            foreach ([false, true] as $namedScope) {
+                $definition = (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+                $schema = $definition->getParametersSchema();
+                $arguments = ['query' => 'Выбери одну доступную смету.', 'project_id' => null];
+                if (isset($schema['properties']['estimate_id'])) { $arguments['estimate_id'] = null; }
+                $expected = array_replace($arguments, ['project_id' => $namedScope ? 102 : 52]);
+                $tool = $this->createMock(AIToolInterface::class);
+                $tool->method('getName')->willReturn($definition->getName());
+                $tool->method('getParametersSchema')->willReturn($schema);
+                $tool->expects($this->once())->method('execute')->with($expected, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+                $registry = new AIToolRegistry;
+                $registry->registerTool($tool);
+                $question = $namedScope ? 'Выбери одну доступную смету проекта Альфа.' : 'Выбери одну доступную смету текущего проекта.';
+                $plan = ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+                if ($namedScope) { $plan['named_project_scope'] = ['project_id' => 102, 'message_sha256' => hash('sha256', $question)]; }
+                $failures = [];
+
+                $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $tool->getName(),
+                    'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
+
+                self::assertSame('success', $result['status']);
+                self::assertSame([], $failures);
+            }
+        }
+    }
+
     public function test_current_project_estimate_tools_reject_another_model_project(): void
     {
         foreach (['resolve_estimate', 'get_estimate_answer'] as $name) {
@@ -598,7 +628,7 @@ class AIAssistantServiceBudgetTest extends TestCase
                 'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52, 'label' => 'Поддельное имя']]]]];
             $failures = [];
             $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'bim_scope', 'name' => 'get_bim_model_elements',
-                'arguments' => json_encode(['model_query' => $inputSelector] + (\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::fromPlan($plan)->requested ? [] : ['project_id' => null]), JSON_THROW_ON_ERROR)], $plan, $failures);
+                'arguments' => json_encode(['model_query' => $inputSelector, 'project_id' => null], JSON_THROW_ON_ERROR)], $plan, $failures);
             self::assertSame('success', $result['status']);
         }
     }
@@ -2103,9 +2133,10 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_explicit_model_scope_conflict_is_rejected_before_tool_execution(): void
     {
-        foreach ([[999, false], [null, false], [999, true]] as [$projectId, $namedScope]) {
+        foreach ([[999, false, 'get_project_snapshot'], [null, false, 'get_project_snapshot'], [999, true, 'get_project_snapshot'],
+            [999, false, 'get_bim_model_elements']] as [$projectId, $namedScope, $toolName]) {
             $tool = $this->createMock(AIToolInterface::class);
-            $tool->method('getName')->willReturn('get_project_snapshot');
+            $tool->method('getName')->willReturn($toolName);
             $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer']]]);
             $tool->expects($this->never())->method('execute');
             $registry = new AIToolRegistry;
