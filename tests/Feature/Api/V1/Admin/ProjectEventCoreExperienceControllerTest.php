@@ -31,6 +31,7 @@ class ProjectEventCoreExperienceControllerTest extends TestCase
             'title' => 'Blocking inspection',
             'event_type' => 'inspection',
             'event_date' => '2026-06-03',
+            'duration_minutes' => 90,
             'is_blocking' => true,
             'priority' => 'high',
         ]);

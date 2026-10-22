@@ -246,12 +246,10 @@ class ProjectEventService
      */
     public function checkEventConflicts(ProjectEvent $event): array
     {
-        $endDate = $event->end_date ?? $event->event_date;
-        if (!$event->end_date && !$event->is_all_day && $event->duration_minutes > 0) {
-            $endDate = Carbon::parse(
-                $event->event_date->toDateString() . ' ' . ($event->event_time ?: '00:00:00'),
-                'UTC'
-            )->addMinutes($event->duration_minutes)->subMicrosecond();
+        $start = $this->getIntervalStart($event);
+        $end = $this->getIntervalEnd($event);
+        if ($end->lessThanOrEqualTo($start)) {
+            return ['has_conflicts' => false, 'conflicts' => collect()];
         }
 
         $conflicts = ProjectEvent::query()
@@ -259,15 +257,44 @@ class ProjectEventService
             ->where('id', '!=', $event->id)
             ->where('is_blocking', true)
             ->inDateRange(
-                $event->event_date,
-                $endDate
+                $start,
+                $end->copy()->subMicrosecond()
             )
-            ->get();
+            ->get()
+            ->filter(function (ProjectEvent $candidate) use ($start, $end): bool {
+                $candidateStart = $this->getIntervalStart($candidate);
+                $candidateEnd = $this->getIntervalEnd($candidate);
+
+                return $candidateEnd->greaterThan($candidateStart)
+                    && $candidateStart->lessThan($end)
+                    && $candidateEnd->greaterThan($start);
+            })
+            ->values();
 
         return [
             'has_conflicts' => $conflicts->isNotEmpty(),
             'conflicts' => $conflicts,
         ];
+    }
+
+    private function getIntervalStart(ProjectEvent $event): Carbon
+    {
+        $time = $event->is_all_day ? '00:00:00' : ($event->event_time ?: '00:00:00');
+
+        return Carbon::parse($event->event_date->toDateString() . ' ' . $time, 'UTC');
+    }
+
+    private function getIntervalEnd(ProjectEvent $event): Carbon
+    {
+        if ($event->end_date) {
+            return Carbon::parse($event->end_date->toDateString(), 'UTC')->addDay();
+        }
+
+        $start = $this->getIntervalStart($event);
+
+        return $event->is_all_day
+            ? $start->addDay()
+            : $start->addMinutes(max(0, $event->duration_minutes ?? 0));
     }
 
     /**

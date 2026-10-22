@@ -16,6 +16,46 @@ class ProjectEventDateRangeTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_conflicts_compare_exact_half_open_intervals_and_all_day_boundaries(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create([
+            'organization_id' => $context->organization->id,
+        ]));
+        $attributes = [
+            'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id,
+            'project_id' => $project->id,
+            'event_type' => 'meeting', 'title' => 'Exact conflict fixture',
+            'event_date' => '2026-10-24', 'event_time' => '23:30', 'duration_minutes' => 120,
+            'is_all_day' => false, 'is_blocking' => true, 'priority' => 'normal', 'status' => 'scheduled',
+        ];
+        $night = ProjectEvent::query()->create($attributes);
+        $next = ProjectEvent::query()->create(array_replace($attributes, [
+            'event_date' => '2026-10-25', 'event_time' => '18:00', 'duration_minutes' => 60,
+        ]));
+        $service = new ProjectEventService();
+
+        $this->assertFalse($service->checkEventConflicts($night)['has_conflicts']);
+        $this->assertFalse($service->checkEventConflicts($next)['has_conflicts']);
+
+        $next->update(['event_time' => '01:30']);
+        $this->assertFalse($service->checkEventConflicts($night)['has_conflicts']);
+        $this->assertFalse($service->checkEventConflicts($next)['has_conflicts']);
+
+        $next->update(['event_time' => '01:29']);
+        $this->assertTrue($service->checkEventConflicts($night)['has_conflicts']);
+        $this->assertTrue($service->checkEventConflicts($next)['has_conflicts']);
+
+        $next->update(['is_all_day' => true, 'event_time' => '18:00']);
+        $this->assertTrue($service->checkEventConflicts($night)['has_conflicts']);
+        $this->assertTrue($service->checkEventConflicts($next)['has_conflicts']);
+
+        $night->update(['end_date' => '2026-10-24']);
+        $this->assertFalse($service->checkEventConflicts($night)['has_conflicts']);
+        $this->assertFalse($service->checkEventConflicts($next)['has_conflicts']);
+    }
+
     public function test_conflicts_cover_both_directions_of_an_overnight_event_and_exclude_its_midnight_end(): void
     {
         $context = AdminApiTestContext::create();
