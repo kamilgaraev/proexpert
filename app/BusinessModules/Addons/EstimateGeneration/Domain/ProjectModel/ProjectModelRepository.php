@@ -103,8 +103,8 @@ interface ProjectModelRepository
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot;
 
-    /** @return array{snapshot:ProjectModelSnapshot,token:string} */
-    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false): array;
+    /** @return array{snapshot:ProjectModelSnapshot,token:string,token_state?:array} */
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false, bool $includeTokenState = false): array;
 
     public function understandingPreflight(
         int $organizationId,
@@ -176,8 +176,8 @@ interface ProjectModelRepository
 
     public function currentUnderstanding(int $organizationId, int $projectId, int $sessionId): ?array;
 
-    /** @return array{snapshot:ProjectModelSnapshot,token:string} */
-    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit): array;
+    /** @return array{snapshot:ProjectModelSnapshot,token:string,token_state?:array} */
+    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeTokenState = false): array;
 
     public function replaceTechnologyRecommendations(
         int $organizationId,

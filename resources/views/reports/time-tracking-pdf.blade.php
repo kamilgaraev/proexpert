@@ -113,7 +113,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="header">
         <div class="report-title">{{ $title }}</div>
         <div class="metadata">
@@ -177,9 +177,7 @@
     </table>
 
     <div class="footer">
-        Документ сформирован автоматически в системе МОСТ.
         <span class="page-number"></span>
     </div>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

@@ -27,7 +27,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <h1>ЕЖЕДНЕВНАЯ ВЫПИСКА ИЗ ЖУРНАЛА РАБОТ</h1>
     
     <div class="header-info">
@@ -221,7 +221,6 @@
         </div>
         @endif
     </div>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>
 

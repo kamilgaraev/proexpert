@@ -595,6 +595,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         self::assertSame($originalKeys, array_column($revision['result']['scenarios'][0]['positions'], 'key'));
         self::assertTrue($revision['result']['scope_confirmed']);
         $manualSources = $this->assertCurrentFloorQuantitySources($session, $nativeFacts);
+        $this->assertChangedFloorScenario($actor, $session, $nativeFacts, $quantities);
         $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, $projectId, $sessionId,
             ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
                 'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'],
@@ -653,7 +654,123 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
     }
 
-    private function assertCurrentFloorQuantitySources(EstimateGenerationSession $session, array $nativeFacts, array $previousManual = []): array
+    private function assertChangedFloorScenario(User $actor, EstimateGenerationSession $session, array $nativeFacts, array $quantities): void
+    {
+        DB::beginTransaction();
+        try {
+            $projectId = (int) $session->project_id;
+            $sessionId = (int) $session->id;
+            foreach ($quantities as &$quantity) {
+                if ($quantity['work_item_key'] === 'preparation') {
+                    $quantity['value'] = '2';
+                }
+            }
+            unset($quantity);
+            app(SaveEvaluationScenarioSet::class)->handle($actor, $projectId, $sessionId,
+                ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+                    'definitions' => array_map(static fn (string $id): array => ['id' => $id,
+                        'basis' => 'Отдельное пользовательское допущение: подготовка 2 м², отделка 1 м²; пол 50 м² из XLSX.',
+                        'quantities' => $quantities], ['minimum', 'base', 'maximum'])]);
+            $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $projectId, $sessionId,
+                (int) $session->fresh()->state_version, (string) Str::uuid());
+            self::assertTrue($revision['result']['can_confirm_for_apply']);
+            self::assertSame('1.59', $revision['result']['scenarios'][1]['total_by_currency']['RUB']);
+            $input = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+                'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'],
+                'scenario_id' => 'base', 'assumptions_accepted' => true];
+            $this->assertInvalidatedNativeFloorCannotConfirm($actor, $session, $nativeFacts[0], $input);
+            $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, $projectId, $sessionId, $input);
+            self::assertNotSame($revision['revision_id'], $confirmation['result_revision_id']);
+            self::assertSame($revision['revision_id'], $confirmation['revision_id']);
+            $session->refresh();
+            $accepted = $session->input_payload['confirmed_evaluation'];
+            self::assertSame($revision['revision_id'], $accepted['source_revision_id']);
+            self::assertSame($revision['content_hash'], $accepted['source_content_hash']);
+            self::assertSame($confirmation['result_revision_id'], $accepted['revision_id']);
+            $current = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetCurrentEvaluation::class)->handle($actor, $projectId, $sessionId);
+            $selected = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEvaluationScenario)->select($current['result'], 'base');
+            self::assertSame($selected['scenario_hash'], $accepted['scenario_hash']);
+            $beforeReplay = $session->getRawOriginal();
+            self::assertSame(CanonicalPipelineJson::encode($confirmation), CanonicalPipelineJson::encode(
+                app(ConfirmEvaluationScenario::class)->handle($actor, $projectId, $sessionId, $input)));
+            self::assertSame($beforeReplay, $session->fresh()->getRawOriginal());
+            $manual = $this->assertCurrentFloorQuantitySources($session, $nativeFacts, expectedManual: ['preparation' => '2']);
+            $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
+            $role = OrganizationCustomRole::query()->where('organization_id', $session->organization_id)->where('slug', $assignment->role_slug)->firstOrFail();
+            $permissions = $role->module_permissions;
+            $permissions['ai-estimates'][] = 'estimate_generation.export';
+            $permissions['ai-estimates'][] = 'estimate_generation.apply';
+            $role->update(['module_permissions' => $permissions]);
+            $projection = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport::class)
+                ->read($actor, $projectId, $sessionId);
+            $items = [];
+            foreach ($projection->draft_payload['local_estimates'] as $estimate) {
+                foreach ($estimate['sections'] as $section) {
+                    foreach ($section['work_items'] as $item) {
+                        $items[$item['key']] = $item;
+                    }
+                }
+            }
+            self::assertSame(CanonicalPipelineJson::encode(['preparation' => '2', 'finish.floor' => '50', 'finishing' => '1']),
+                CanonicalPipelineJson::encode(array_column(array_values($items), 'quantity', 'key')));
+            self::assertSame(CanonicalPipelineJson::encode(['preparation' => '0.05', 'finish.floor' => '1.25', 'finishing' => '0.03']),
+                CanonicalPipelineJson::encode(array_column(array_values($items), 'total_cost', 'key')));
+            $request = Request::create('/export', 'GET', ['format' => 'excel']);
+            $request->setUserResolver(static fn () => $actor);
+            self::assertSame(200, app(EstimateGenerationPackageController::class)->export($request, $session->project, $session->fresh())->getStatusCode());
+            $command = new ApplyGeneratedEstimateCommand($sessionId, (int) $session->organization_id, $projectId, $confirmation['state_version'],
+                idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);
+            $applied = app(ApplyGeneratedEstimate::class)->handle($command);
+            self::assertSame($applied->estimateId, app(ApplyGeneratedEstimate::class)->handle($command)->estimateId);
+            $estimate = Estimate::query()->findOrFail($applied->estimateId);
+            self::assertSame(3, $estimate->items()->whereNull('parent_work_id')->count());
+            for ($iteration = 0; $iteration < 2; $iteration++) {
+                app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+                self::assertSame('1.33', $estimate->fresh()->total_amount);
+                self::assertSame('1.59', $estimate->fresh()->total_amount_with_vat);
+                $this->assertCurrentFloorQuantitySources($session, $nativeFacts, $manual, ['preparation' => '2']);
+            }
+            $totals = (new \ReflectionMethod(EstimateExportService::class, 'prepareTotalsData'))->invoke(app(EstimateExportService::class), $estimate->fresh());
+            self::assertTrue(\Brick\Math\BigDecimal::of((string) $totals['vat_amount'])->isEqualTo('0.26'));
+        } finally {
+            DB::rollBack();
+            $session->refresh();
+        }
+    }
+
+    private function assertInvalidatedNativeFloorCannotConfirm(User $actor, EstimateGenerationSession $session, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $native, array $input): void
+    {
+        $models = app(ProjectModelRepository::class);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $before = $models->snapshotForPlanning(...[...$scope, 10001, true]);
+        $default = $models->snapshotForPlanning(...[...$scope, 10001]);
+        self::assertSame(['snapshot', 'token'], array_keys($default));
+        self::assertSame($default['token'], $before['token']);
+        self::assertSame($before['token'], \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingInputFingerprint::fromExactState($before['token_state']));
+        $beforeSession = $session->fresh()->getRawOriginal();
+        $estimates = Estimate::query()->where('project_id', $scope[1])->count();
+        DB::beginTransaction();
+        try {
+            self::assertSame(1, app(EvidenceRepository::class)->invalidate(...[...$scope, [(int) substr($native->evidenceIds[0], 9)], 'Источнику измерения требуется повторная проверка.']));
+            $changed = $models->snapshotForPlanning(...[...$scope, 10001, true]);
+            self::assertNotSame($before['token'], $changed['token']);
+            self::assertNotSame($before['token_state']['bindings'], $changed['token_state']['bindings']);
+            try {
+                app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $input);
+                self::fail('An invalidated native operand cannot be refreshed as a scenario self-write.');
+            } catch (\Illuminate\Validation\ValidationException $exception) {
+                self::assertNotEmpty($exception->errors());
+            }
+            self::assertSame($beforeSession, $session->fresh()->getRawOriginal());
+            self::assertSame($estimates, Estimate::query()->where('project_id', $scope[1])->count());
+        } finally {
+            DB::rollBack();
+            $session->refresh();
+        }
+        self::assertSame($before['token'], $models->snapshotForPlanning(...[...$scope, 10001])['token']);
+    }
+
+    private function assertCurrentFloorQuantitySources(EstimateGenerationSession $session, array $nativeFacts, array $previousManual = [], array $expectedManual = []): array
     {
         $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $session->organization_id,
             (int) $session->project_id, (int) $session->id, 10001)['snapshot'];
@@ -684,7 +801,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                     self::assertCount(1, $operands);
                     $fact = $facts[$operands[0]['fact_id']];
                     self::assertSame('user_assumption', $fact->origin);
-                    self::assertSame('1', $fact->value);
+                    self::assertSame($expectedManual[$item['key']] ?? '1', $fact->value);
                     self::assertSame('m2', $fact->unit);
                     self::assertSame($nativeFacts[0]->entityId, $fact->entityId);
                     self::assertSame([], $fact->nativeNumericProofs);

@@ -56,7 +56,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="header">
         <div class="report-title">Отчет по остаткам на складах</div>
         <div class="metadata">Сформирован: {{ $generated_at }}</div>
@@ -113,6 +113,5 @@
             @endforeach
         </tbody>
     </table>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

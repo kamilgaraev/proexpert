@@ -365,16 +365,18 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         );
     }
 
-    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false): array
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false, bool $includeTokenState = false): array
     {
-        return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $factLimit, $includeFactSourceEntities): array {
+        return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $factLimit, $includeFactSourceEntities, $includeTokenState): array {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
 
             $snapshot = $this->snapshot($organizationId, $projectId, $sessionId, $factLimit);
+            $state = $this->understandingSnapshotState($organizationId, $projectId, $sessionId);
 
             return [
                 'snapshot' => $snapshot,
-                'token' => $this->understandingSnapshotToken($organizationId, $projectId, $sessionId),
+                'token' => ProjectUnderstandingInputFingerprint::fromExactState($state),
+                ...($includeTokenState ? ['token_state' => $state] : []),
                 ...($includeFactSourceEntities ? ['source_entities' => $this->factSourceEntities($organizationId, $projectId, $sessionId, $snapshot->facts)] : []),
             ];
         }, 3);
@@ -1881,6 +1883,11 @@ SQL, [
 
     private function understandingSnapshotToken(int $organizationId, int $projectId, int $sessionId): string
     {
+        return ProjectUnderstandingInputFingerprint::fromExactState($this->understandingSnapshotState($organizationId, $projectId, $sessionId));
+    }
+
+    private function understandingSnapshotState(int $organizationId, int $projectId, int $sessionId): array
+    {
         $facts = $this->database->table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
             ->where('projection.organization_id', $organizationId)
@@ -2027,7 +2034,7 @@ SQL, [
             ->orderBy('input_fingerprint')
             ->get(['role', 'subject_version', 'input_fingerprint']);
 
-        return ProjectUnderstandingInputFingerprint::fromExactState([
+        return [
             'scope' => ['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId],
             'source_versions' => array_values(array_unique($sourceVersions)),
             'entities' => array_values($entities),
@@ -2044,7 +2051,7 @@ SQL, [
                 'subject_version' => (string) $run->subject_version,
                 'input_fingerprint' => (string) $run->input_fingerprint,
             ])->all(),
-        ]);
+        ];
     }
 
     private function lockUnderstandingScope(int $organizationId, int $projectId, int $sessionId): void
@@ -2194,9 +2201,9 @@ SQL, [
         ];
     }
 
-    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeTokenState = false): array
     {
-        $capture = $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit);
+        $capture = $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit, includeTokenState: $includeTokenState);
         $snapshot = $capture['snapshot'];
         $evidence = array_column($snapshot->evidence, null, 'id');
         $documentIds = [];

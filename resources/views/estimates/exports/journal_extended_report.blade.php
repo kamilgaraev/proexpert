@@ -66,7 +66,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <h1>РАСШИРЕННЫЙ ОТЧЕТ ПО ЖУРНАЛУ РАБОТ</h1>
 
     <div class="meta">
@@ -177,6 +177,5 @@
             @endforelse
         </tbody>
     </table>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

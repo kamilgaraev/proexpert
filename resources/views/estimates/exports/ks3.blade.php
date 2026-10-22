@@ -47,7 +47,7 @@
         @include('pdf.partials.most-brand-styles')
         @page {
             size: A4 landscape;
-            margin: 8mm 10mm 10mm;
+            margin: 8mm 10mm 12mm;
         }
 
         body {
@@ -72,20 +72,6 @@
             line-height: 1.18;
             padding-right: 4mm;
             text-align: right;
-        }
-
-        .most-document-note {
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: -7mm;
-            margin: 0;
-            padding: 0;
-            border: 0;
-        }
-
-        .most-fixed-footer {
-            display: none;
         }
 
         .header-area {
@@ -292,10 +278,10 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.most-brand-footer')
     @if($isDraft)
         <div class="draft-watermark">ЧЕРНОВИК</div>
     @endif
-    @include('pdf.partials.most-brand-footer')
     <div class="header-area">
         <div class="top-note">
             <div>Унифицированная форма № КС-3</div>

@@ -77,7 +77,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="header">
         <div class="report-title">{{ $title }}</div>
         <div class="metadata">
@@ -133,6 +133,5 @@
             @endforelse
         </tbody>
     </table>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

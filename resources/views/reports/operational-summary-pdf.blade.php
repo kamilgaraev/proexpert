@@ -289,7 +289,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header', ['generated_at' => $report['generated_at'] ?? null])
+    @include('pdf.partials.most-brand-footer', ['generated_at' => $report['generated_at'] ?? null])
 
     <h1 class="report-title">{{ $report['title'] ?? 'Отчет МОСТ' }}</h1>
     @if($description !== '')
@@ -496,6 +496,5 @@
         </div>
     @endif
 
-    @include('pdf.partials.most-brand-footer', ['generated_at' => $report['generated_at'] ?? null])
 </body>
 </html>

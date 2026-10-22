@@ -6,7 +6,7 @@
     <style>
         @include('pdf.partials.most-brand-styles')
         @page {
-            margin: 1cm;
+            margin: 10mm 10mm 12mm;
             size: A4 landscape;
         }
         
@@ -141,7 +141,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
+    @include('pdf.partials.most-brand-footer')
     <div class="header">
         <h1>Заказ поставщику № {{ $order->order_number }} от {{ $date_formatted }}</h1>
     </div>
@@ -222,6 +222,5 @@
             </td>
         </tr>
     </table>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>
