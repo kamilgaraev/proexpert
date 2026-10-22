@@ -65,6 +65,15 @@ final readonly class AssistantCustomReportReference
                 if (! is_array($ids) || count($ids) > 1000 || count(array_unique($ids)) !== count($ids)) {
                     return false;
                 }
+                $purchaseOrderSuppliers = $scope['entity_type'] === 'purchase_order' && in_array('supplier_name', $reference['checked_fields'], true);
+                if ($purchaseOrderSuppliers) {
+                    if (! ($source['projection'] instanceof AssistantPurchaseOrderReportProjection)
+                        || ! $source['projection']->canReadLinks($source['query'], $scope['purchase_order_supplier_links'] ?? null, $ids)) {
+                        return false;
+                    }
+                } elseif (array_key_exists('purchase_order_supplier_links', $scope)) {
+                    return false;
+                }
                 $paymentContracts = $scope['entity_type'] === 'payment_document'
                     && array_intersect(['contract_id', 'contract_number'], $reference['checked_fields']) !== [];
                 if ($paymentContracts) {
