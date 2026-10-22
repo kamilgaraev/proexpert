@@ -80,9 +80,22 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         $user = $this->user(7);
         $request->setUserResolver(static fn (): User => $user);
 
-        $payload = (new EstimateGenerationDocumentResource($this->document('failed')))->toArray($request);
+        $document = $this->document('failed');
+        $document->forceFill(['page_count' => null, 'processed_page_count' => 0, 'progress_percent' => 100,
+            'error_code' => 'unexpected_internal_failure', 'facts_summary' => null]);
+        $document->setRelation('pages', new Collection);
+        $document->setRelation('processingUnits', new Collection);
+        $payload = (new EstimateGenerationDocumentResource($document))->toArray($request);
 
         self::assertSame('user_action_required', $payload['processing_outcome']['type']);
+        self::assertSame('questions', $payload['processing_outcome']['state']);
+        self::assertSame('review_required', $payload['processing_outcome']['readiness']);
+        self::assertFalse($payload['processing_outcome']['is_ready']);
+        self::assertSame(0, $payload['processing_outcome']['execution_progress_percent']);
+        self::assertSame(['completed_pages' => 0, 'total_pages' => 0, 'progress_percent' => 0], $payload['processing_outcome']['execution']);
+        self::assertSame(0, $payload['progress_percent']);
+        self::assertSame('estimate_generation.documents_upload_error', $payload['processing_outcome']['message_key']);
+        self::assertSame('unexpected_internal_failure', $payload['error']['code']);
         self::assertSame(['ignore_document'], array_column($payload['available_actions'], 'action'));
     }
 
