@@ -36,6 +36,54 @@ final class EstimateComposerPostgresTest extends EstimateGenerationCanonicalPost
     private int $sessionId;
 
     #[Test]
+    public function answered_proposed_claim_is_stored_in_the_existing_completed_role_receipt_and_replays_once(): void
+    {
+        $factory = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory::class);
+        self::assertSame($this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService::class),
+            (new \ReflectionProperty($factory, 'learning'))->getValue($factory));
+        [$connection, $schema] = $this->fixture();
+        try {
+            $input = new EstimateComposerInput($this->organizationId, $this->projectId, $this->sessionId, str_repeat('c', 64), [
+                ['id' => 'fact:answer', 'type' => 'evaluation_answer', 'entity_id' => 'project:root', 'unit' => null,
+                    'origin' => 'user_assumption', 'status' => 'confirmed', 'context_kind' => 'composer_answer',
+                    'value' => ['kind' => 'composer_answer', 'answer' => 'Нужен корпус AISI 316', 'numeric_parameters_confirmed' => false],
+                    'context_entity_id' => 'project:root', 'answer_work_sections' => ['equipment']],
+                ['id' => 'fact:document', 'type' => 'equipment_specification', 'entity_id' => 'equipment:child',
+                    'entity_type' => 'equipment', 'unit' => null, 'value' => 'AISI 316', 'origin' => 'document', 'status' => 'confirmed'],
+            ], [], [], [], [], RunEstimateComposer::ANSWER_PROMPT_CONTRACT, allowedWorkSections: ['equipment']);
+            $candidate = ['source_answer_fact_id' => 'fact:answer', 'entity_id' => 'equipment:child',
+                'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'AISI 316'],
+                'unit' => null, 'document_fact_ids' => ['fact:document']];
+            $model = $this->createMock(EstimateComposerModel::class);
+            $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $captured, callable $reserved) use ($candidate): array {
+                $reserved(AiOperationContext::deterministicId($captured->fingerprint()));
+
+                return ['work_intents' => [], 'claim_candidates' => [$candidate]];
+            });
+            $composer = new RunEstimateComposer(new EloquentAiRoleRunRepository($connection, 180), $model, 'openai/gpt-6-luna');
+            $outcome = $composer->runDetailed($input);
+            self::assertSame([], $outcome['intents']);
+            self::assertSame($outcome, $composer->runDetailed($input));
+            $receipts = $connection->table('estimate_generation_ai_role_runs')->where('session_id', $this->sessionId)
+                ->where('role', 'estimate_composer')->get();
+            self::assertCount(1, $receipts);
+            self::assertSame('completed', $receipts[0]->status);
+            self::assertSame('estimate-composer:answers:v2', $receipts[0]->prompt_contract_version);
+            self::assertSame($input->fingerprint(), $receipts[0]->input_fingerprint);
+            $payload = json_decode($receipts[0]->result_payload, true, 512, JSON_THROW_ON_ERROR);
+            self::assertSame(2, $payload['schema_version']);
+            self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([$candidate]),
+                \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($payload['claim_candidates']));
+            self::assertSame([], $payload['work_intents']);
+            self::assertCount(6, $payload['claim_candidates'][0]);
+            self::assertNull($payload['claim_candidates'][0]['unit']);
+            self::assertSame([], $input->derivedQuantities);
+        } finally {
+            $this->cleanup($connection, $schema);
+        }
+    }
+
+    #[Test]
     public function composer_role_run_is_persisted_replayed_once_and_recomputed_after_snapshot_change(): void
     {
         self::assertInstanceOf(TimewebEstimateComposerModel::class, $this->app->make(EstimateComposerModel::class));
