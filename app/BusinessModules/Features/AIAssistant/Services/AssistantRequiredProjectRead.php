@@ -157,15 +157,7 @@ final readonly class AssistantRequiredProjectRead
     {
         $read = self::fromPlan($plan);
         if (($read['name'] ?? null) !== $toolName) { return $arguments; }
-        $bound = $read['arguments'];
-        if (($toolName === 'search_estimate_positions'
-            || $toolName === 'assistant_domain_search' && ($bound['predicate'] ?? null) !== 'overdue')
-            && is_string($arguments['cursor'] ?? null)) { $bound['cursor'] = $arguments['cursor']; }
-        if ($toolName === 'get_project_material_stock' && is_int($arguments['offset'] ?? null)) { $bound['offset'] = $arguments['offset']; }
-        if ($toolName === 'get_project_payment_readiness' && is_int($arguments['offset'] ?? null)
-            && $arguments['offset'] >= 0 && $arguments['offset'] <= 9999 && ! array_key_exists('offset', $bound)) { $bound['offset'] = $arguments['offset']; }
-        if ($toolName === 'search_assistant_documents' && is_int($arguments['metadata_offset'] ?? null)) { $bound['metadata_offset'] = $arguments['metadata_offset']; }
-        return $bound;
+        return array_replace($read['arguments'], $arguments);
     }
 
     private static function simpleExpenseTotal(string $query): bool

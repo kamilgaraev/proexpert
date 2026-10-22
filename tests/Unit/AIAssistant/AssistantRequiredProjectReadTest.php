@@ -111,7 +111,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
         foreach ($queries as $tool => $query) {
             $plan = $this->plan($query);
             self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
-            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, $tool, ['project_id' => 999]));
+            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, $tool, []));
             self::assertNotNull(AssistantRequiredProjectRead::decisionReader($tool, $query));
             foreach (array_diff(array_keys($queries), [$tool]) as $other) { self::assertNull(AssistantRequiredProjectRead::decisionReader($other, $query)); }
         }
@@ -140,7 +140,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $query = 'Что у нас по приёмке и передаче нашего объекта: какие зоны уже приняты, какие ещё в работе и что должно быть следующим шагом?';
         $plan = $this->plan($query);
         self::assertSame(['name' => 'get_project_handover_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
-        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_handover_summary', ['project_id' => 999]));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_handover_summary', []));
         self::assertSame(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectHandoverReader::class, AssistantRequiredProjectRead::decisionReader('get_project_handover_summary', $query));
         foreach (['Какие зоны нашего объекта приняты и сколько затрат за сентябрь?', 'Покажи приёмку нашего проекта и его график.',
             'Прими зону нашего объекта.', 'Что по приёмке и передаче нашего объекта и сколько оплатить?',
@@ -154,7 +154,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
     {
         $plan = $this->plan('Какие действующие договоры и подрядчики у нашего объекта? Покажи номера и плановые сроки окончания, чтобы я мог подготовить встречу с ними.');
         self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
-        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_contract_roster', ['project_id' => 999]));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_contract_roster', []));
         foreach (['Какие договоры нашего объекта уже просрочены по сроку окончания? Покажи номера, подрядчиков и даты; договоры без срока выдели отдельно, не называй их просроченными.',
             'Какие договоры нашего объекта имеют просроченную дату окончания?', 'У каких договоров нашего объекта не указана дата окончания?',
             'Покажи нерасторгнутые действующие договоры нашего объекта.', 'Покажи не закрытые активные договоры нашего объекта.',
@@ -172,7 +172,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             $arguments = ['project_id' => 52];
             if ($filter !== null) { $arguments['deadline_filter'] = $filter; }
             self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => $arguments], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
-            self::assertSame($arguments, AssistantRequiredProjectRead::bindArguments($this->plan($query), 'get_project_contract_roster', ['project_id' => 999, 'deadline_filter' => 'all']));
+            self::assertSame($arguments, AssistantRequiredProjectRead::bindArguments($this->plan($query), 'get_project_contract_roster', []));
         }
         foreach (['Покажи действующие договоры нашего объекта на сегодня',
             'Какие активные договоры нашего объекта действуют на сегодняшний день?'] as $query) {
@@ -232,7 +232,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
     {
         $plan = $this->plan('Какая техника сейчас закреплена за нашим объектом и есть ли среди неё простаивающая или ожидающая ремонта? Что мне нужно решить в первую очередь?');
         self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
-        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_machinery_summary', ['project_id' => 999]));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_machinery_summary', []));
         foreach ([
             'Почему техника OA-35 на нашем объекте числится назначенной, хотя текущих назначений нет? Покажи плановые даты назначения и поясни, можно ли считать эту машину свободной.',
             'Какая техника назначена на наш объект и до каких дат?',
@@ -270,7 +270,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             $expected = ['project_id' => 52] + $filter;
             $target = $this->plan($query);
             self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => $expected], AssistantRequiredProjectRead::fromPlan($target));
-            self::assertSame($expected, AssistantRequiredProjectRead::bindArguments($target, 'get_project_machinery_summary', ['project_id' => 999, 'asset_id' => 999]));
+            self::assertSame($expected, AssistantRequiredProjectRead::bindArguments($target, 'get_project_machinery_summary', []));
         }
     }
 
@@ -279,23 +279,23 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $finance = $this->plan('Теперь по деньгам: какой бюджет у нашего объекта, сколько уже потрачено за сентябрь 2026 года и можем ли мы говорить о перерасходе?');
         self::assertSame(['name' => 'get_project_finance_overview', 'arguments' => ['project_id' => 52, 'period_start' => '2026-09-01',
             'period_end' => '2026-09-30', 'currency' => null]], AssistantRequiredProjectRead::fromPlan($finance));
-        self::assertSame(52, AssistantRequiredProjectRead::bindArguments($finance, 'get_project_finance_overview', ['project_id' => 999])['project_id']);
+        self::assertSame(52, AssistantRequiredProjectRead::bindArguments($finance, 'get_project_finance_overview', [])['project_id']);
         $impact = $this->plan('Какая из просроченных задач сильнее всего влияет на общий срок проекта? Покажи почему так и что надо разблокировать.');
         self::assertSame(['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => 52, 'focus' => 'overdue_impact']], AssistantRequiredProjectRead::fromPlan($impact));
-        self::assertSame(['project_id' => 52, 'focus' => 'overdue_impact'], AssistantRequiredProjectRead::bindArguments($impact, 'analyze_project_schedule_impact', ['project_id' => 999, 'focus' => 'dependencies']));
+        self::assertSame(['project_id' => 52, 'focus' => 'overdue_impact'], AssistantRequiredProjectRead::bindArguments($impact, 'analyze_project_schedule_impact', []));
         self::assertSame('critical_path', AssistantRequiredProjectRead::fromPlan($this->plan('Какой критический путь нашего проекта?'))['arguments']['focus']);
         self::assertSame('dependencies', AssistantRequiredProjectRead::fromPlan($this->plan('Покажи зависимости задач нашего проекта.'))['arguments']['focus']);
         $people = $this->plan('Кто работал на нашем объекте за сентябрь 2026 года и сколько часов учтено? Есть ли табели, которые ещё нужно согласовать?');
         self::assertSame(['name' => 'get_project_workforce_summary', 'arguments' => ['project_id' => 52, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30']],
             AssistantRequiredProjectRead::fromPlan($people));
-        self::assertSame(52, AssistantRequiredProjectRead::bindArguments($people, 'get_project_workforce_summary', ['project_id' => 999])['project_id']);
+        self::assertSame(52, AssistantRequiredProjectRead::bindArguments($people, 'get_project_workforce_summary', [])['project_id']);
         $payment = $this->plan('Какие счета по нашему объекту ещё не оплачены, сколько по каждому и что мне проверить перед оплатой?');
         self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($payment));
-        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['project_id' => 999]));
-        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['project_id' => 999, 'offset' => 20]));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', []));
+        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['offset' => 20]));
         $nextPayment = $this->plan('Покажи неоплаченные счета нашего объекта, начиная с 21-го. Что проверить перед оплатой?');
         self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52, 'offset' => 20]], AssistantRequiredProjectRead::fromPlan($nextPayment));
-        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($nextPayment, 'get_project_payment_readiness', ['project_id' => 999, 'offset' => 0]));
+        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($nextPayment, 'get_project_payment_readiness', []));
         self::assertSame('procurement', AssistantRequiredProjectRead::fromPlan($this->plan('Что со снабжением нашего объекта: какие поставки и заявки требуют решения сегодня, что может помешать ближайшим работам?'))['arguments']['focus']);
         self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan('Измени зависимости задач нашего проекта.')));
         foreach (['Какие задачи влияют на сроки нашего проекта и сколько потрачено за сентябрь 2026?',
@@ -407,7 +407,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
         }
     }
 
-    public function test_workforce_month_to_date_overrides_model_supplied_historical_dates(): void
+    public function test_workforce_month_to_date_supplies_missing_dates_without_overriding_model_dates(): void
     {
         \Carbon\CarbonImmutable::setTestNow(\Carbon\CarbonImmutable::parse('2026-10-15 10:00:00', 'Europe/Moscow'));
         try {
@@ -416,7 +416,9 @@ final class AssistantRequiredProjectReadTest extends TestCase
             $expected = ['project_id' => 52, 'period_start' => '2026-10-01', 'period_end' => '2026-10-15'];
             self::assertSame(['name' => 'get_project_workforce_summary', 'arguments' => $expected], AssistantRequiredProjectRead::fromPlan($plan));
             self::assertSame($expected, AssistantRequiredProjectRead::bindArguments($plan, 'get_project_workforce_summary',
-                ['project_id' => 999, 'period_start' => '2025-10-01', 'period_end' => '2025-10-31']));
+                []));
+            $model = ['project_id' => 52, 'period_start' => '2025-10-01', 'period_end' => '2025-10-31'];
+            self::assertSame($model, AssistantRequiredProjectRead::bindArguments($plan, 'get_project_workforce_summary', $model));
         } finally { \Carbon\CarbonImmutable::setTestNow(); }
     }
 
@@ -530,7 +532,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             self::assertSame(['name' => $name, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
             self::assertNotNull(AssistantRequiredProjectRead::decisionReader($name, $query));
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_handover_summary', $query));
-            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, $name, ['project_id' => 99]));
+            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, $name, []));
             self::assertContains($name, \App\BusinessModules\Features\AIAssistant\Services\AssistantToolSurface::names([$name], $plan));
         }
         foreach (['Какие коммерческие предложения и исполнительные документы ждут решения по нашему объекту?',
@@ -564,7 +566,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
         (new \App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator)->validate(
             AssistantRequiredProjectRead::fromPlan($plan)['arguments'], $tool->getParametersSchema());
         self::assertSame($expected['arguments'], AssistantRequiredProjectRead::bindArguments($plan, 'assistant_domain_read',
-            ['domain' => 'payments', 'entity_type' => 'payment_document', 'id' => 99, 'fields' => ['currency']]));
+            []));
         foreach (['Какой бюджет нашего объекта в долларах?', 'Какой бюджет нашего объекта и сколько потрачено?',
             'Какой бюджет нашего объекта на бетон?'] as $query) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
@@ -578,13 +580,13 @@ final class AssistantRequiredProjectReadTest extends TestCase
         self::assertSame(['project_id' => 52, 'offset' => 0, 'limit' => 20], $read['arguments']);
         self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan('Сколько бетона осталось на складе текущего объекта?')));
         $stock = AssistantRequiredProjectRead::bindArguments($this->plan('Что сейчас есть на складе текущего объекта и сколько осталось?'),
-            'get_project_material_stock', ['project_id' => 99, 'offset' => 20, 'limit' => 1]);
-        self::assertSame(['project_id' => 52, 'offset' => 20, 'limit' => 20], $stock);
+            'get_project_material_stock', ['offset' => 20, 'limit' => 1]);
+        self::assertSame(['project_id' => 52, 'offset' => 20, 'limit' => 1], $stock);
         $list = AssistantRequiredProjectRead::bindArguments($this->plan('Какие работы уже приняли на текущем объекте?'),
-            'assistant_domain_search', ['project_id' => 99, 'cursor' => 'signed-continuation', 'predicate' => null]);
+            'assistant_domain_search', ['cursor' => 'signed-continuation', 'predicate' => null]);
         self::assertSame('signed-continuation', $list['cursor']);
         self::assertSame(52, $list['project_id']);
-        self::assertSame('confirmed', $list['predicate']);
+        self::assertNull($list['predicate']);
     }
 
     public function test_current_project_list_reads_bind_entity_and_status_and_keep_compound_filters_unforced(): void

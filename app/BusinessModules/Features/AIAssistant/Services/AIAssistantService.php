@@ -2300,6 +2300,7 @@ class AIAssistantService
         }
         $arguments = json_decode((string) ($toolCall['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
+        $modelArguments = $args;
         $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
         $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
@@ -2309,7 +2310,8 @@ class AIAssistantService
             $args['include_document_id'] = preg_match('/идентификатор|(?<!\pL)id(?!\pL)/iu', $requestQuery) === 1;
             foreach (['document_id', 'unit_id', 'cursor', 'text_offset'] as $field) { $args[$field] = null; }
         }
-        if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)) {
+        if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)
+            && ! AssistantRequestProjectScope::organizationWide($requestQuery) && ! array_key_exists('project_id', $args)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             if ($args['project_id'] === null) {
                 $args['query'] = $requestQuery;
@@ -2452,26 +2454,48 @@ class AIAssistantService
         $searchScopeAttempt = null;
         try {
             $schema = $tool->getParametersSchema();
+            if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
+                if ($requestProjectScope->projectId === null) {
+                    return $this->currentProjectScopeUnavailable('current_project_required');
+                }
+                if (isset($schema['properties']['project_id']) && array_key_exists('project_id', $modelArguments)
+                    && (is_int($modelArguments['project_id']) && $modelArguments['project_id'] > 0 || $modelArguments['project_id'] === null)
+                    && $modelArguments['project_id'] !== $requestProjectScope->projectId) {
+                    return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                }
+                if (in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
+                    && ($args['entity_type'] ?? null) === 'project' && array_key_exists('id', $modelArguments)
+                    && (! is_int($modelArguments['id']) && ! is_string($modelArguments['id'])
+                        || (string) $modelArguments['id'] !== (string) $requestProjectScope->projectId)) {
+                    return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                }
+            }
             if ($toolName === 'assistant_domain_search') {
                 $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
-                $args = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
+                $searchArguments = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
                     $this->resolveRagProjectId($taskPlan['request']['context'] ?? []),
                     $definition !== null && in_array('project_id', $definition->fields, true),
                     fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+                if (array_key_exists('project_id', $modelArguments)) {
+                    if (($searchArguments['project_id'] ?? null) !== null
+                        && (is_int($modelArguments['project_id']) && $modelArguments['project_id'] > 0 || $modelArguments['project_id'] === null)
+                        && $searchArguments['project_id'] !== $modelArguments['project_id']) {
+                        return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+                    }
+                    $searchArguments['project_id'] = $modelArguments['project_id'];
+                }
+                $args = $searchArguments;
             }
             if ($toolName === 'search_projects') {
                 unset($args['project_id']);
             }
             if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
-                if ($requestProjectScope->projectId === null) {
-                    return $this->currentProjectScopeUnavailable('current_project_required');
-                }
                 if (isset($schema['properties']['project_id'])) {
-                    $args['project_id'] = $requestProjectScope->projectId;
+                    $args['project_id'] = array_key_exists('project_id', $modelArguments) ? $modelArguments['project_id'] : $requestProjectScope->projectId;
                 }
                 if (in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
                     && ($args['entity_type'] ?? null) === 'project') {
-                    $args['id'] = $requestProjectScope->projectId;
+                    $args['id'] = array_key_exists('id', $modelArguments) ? $modelArguments['id'] : $requestProjectScope->projectId;
                 }
             }
             if ($toolName === 'generate_custom_report') {

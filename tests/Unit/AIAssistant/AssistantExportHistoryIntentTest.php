@@ -19,7 +19,7 @@ final class AssistantExportHistoryIntentTest extends TestCase
         self::assertSame('get_project_report_delivery_summary', AssistantOperationalReaderRegistry::intent($query)['name']);
         self::assertSame(['name' => 'get_project_report_delivery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
         self::assertContains('get_project_report_delivery_summary', AssistantToolSurface::names(['get_project_report_delivery_summary'], $plan));
-        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_report_delivery_summary', ['project_id' => 999]));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_report_delivery_summary', []));
         foreach (['Хочу оценить, есть ли активные регулярные отчёты и готовые выгрузки по объекту?',
             'Для оценки: есть ли активные регулярные отчёты и готовые выгрузки по объекту?'] as $readQuery) {
             self::assertSame('get_project_report_delivery_summary', AssistantOperationalReaderRegistry::intent($readQuery)['name'] ?? null);
@@ -51,7 +51,7 @@ final class AssistantExportHistoryIntentTest extends TestCase
             $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
             self::assertSame(['name' => 'get_project_export_history', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
             self::assertContains('get_project_export_history', AssistantToolSurface::names(['get_project_export_history', 'get_project_report_catalog'], $plan));
-            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_export_history', ['project_id' => 999]));
+            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_export_history', []));
         }
         foreach (['Скачай готовую выгрузку', 'Покажи готовые выгрузки и расходы проекта',
             'Какие готовые выгрузки и какие у меня уведомления?', 'Какие у меня права на отчёты и покажи готовую выгрузку?'] as $query) {

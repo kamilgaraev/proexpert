@@ -56,7 +56,7 @@ final class AssistantOrganizationCoverageIntentTest extends TestCase
         ] as [$query, $tool]) {
             $plan = $this->plan($query);
             self::assertSame(['name' => $tool, 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan), $query);
-            self::assertSame(['scope' => 'organization'], AssistantRequiredProjectRead::bindArguments($plan, $tool, ['scope' => 'project']));
+            self::assertSame(['scope' => 'organization'], AssistantRequiredProjectRead::bindArguments($plan, $tool, []));
             self::assertContains($tool, AssistantToolSurface::names([$tool], $plan));
             self::assertSame(AssistantOperationalReaderRegistry::ORGANIZATION_TOOLS[$tool], AssistantRequiredProjectRead::decisionReader($tool, $query));
         }
