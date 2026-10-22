@@ -606,8 +606,11 @@ final readonly class ContractSettlementOwnerSource
             $scope->organizationId,
             $asOf,
         );
-        if ($versions->isEmpty()) {
-            throw new DomainException('contract_settlement_owner_history_missing');
+        $versionCounts = $versions->countBy('owner_type');
+        foreach ((array) $checkpoint->owner_counts as $type => $expectedCount) {
+            if ((int) $versionCounts->get($type, 0) < (int) $expectedCount) {
+                throw new DomainException('contract_settlement_owner_history_missing');
+            }
         }
 
         $classes = [

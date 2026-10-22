@@ -84,7 +84,7 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
             quality: $this->quality($record),
             provenance: new ReportProvenance(
                 sourceOfTruth: 'most',
-                sourceRefs: $this->sourceRefs($context, $snapshot),
+                sourceRefs: $this->sourceRefs($context, $snapshot, (int) $record->row_count),
                 sourceHash: $snapshot->sourceHash,
                 externalConfirmationRole: 'confirmation_only',
             ),
@@ -254,7 +254,7 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
         );
     }
 
-    private function sourceRefs(ReportExecutionContext $context, ReportSnapshotRef $snapshot): array
+    private function sourceRefs(ReportExecutionContext $context, ReportSnapshotRef $snapshot, int $rowCount): array
     {
         $grouped = [];
         foreach ($this->rows($context, $snapshot)->orderBy('row_key')->get() as $row) {
@@ -285,6 +285,17 @@ final readonly class ContractSettlementQueryService implements ReportDrillDownPr
             );
         }
         if ($sources === []) {
+            if ($rowCount === 0) {
+                return [new ReportSourceRef(
+                    'contract_settlement_exposure',
+                    $snapshot->kind,
+                    'snapshot_'.strtolower($snapshot->id),
+                    ContractSettlementExposureCandidateContract::SOURCE_SCHEMA_VERSION,
+                    'w'.$snapshot->watermarks['source_fact_id'],
+                    0,
+                    $snapshot->materializedSourceHash ?? $snapshot->sourceHash,
+                )];
+            }
             throw new DomainException('contract_settlement_source_provenance_missing');
         }
 

@@ -4,14 +4,19 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\WaveOne;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureOptionsService;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerTimestamp;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementProjectionService;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementQueryService;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureSnapshot;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerHistoryCheckpoint;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerVersion;
@@ -24,6 +29,7 @@ use DomainException;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
+use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 #[Group('postgres')]
 final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
@@ -42,6 +48,7 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
         $this->assertEmptySnapshot($snapshot->id);
         self::assertSame($snapshot->id, $projection->materialize($scope, $query)->id);
         self::assertSame(0, ContractSettlementSourceFact::query()->where('organization_id', $scope->organizationId)->count());
+        $this->assertReadableEmptySnapshot($scope, $snapshot);
     }
 
     #[Test]
@@ -62,6 +69,7 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
         self::assertNotSame($unfiltered->id, $snapshot->id);
         self::assertSame($snapshot->id, $projection->materialize($scope, $query)->id);
         self::assertSame(1, ContractSettlementSourceFact::query()->where('organization_id', $scope->organizationId)->count());
+        $this->assertReadableEmptySnapshot($scope, $snapshot);
     }
 
     #[Test]
@@ -78,18 +86,53 @@ final class ContractSettlementEmptySnapshotPostgresTest extends TestCase
     }
 
     #[Test]
-    public function missing_owner_history_still_rejects_materialization(): void
+    public function a_zero_checkpoint_without_any_contracts_is_a_ready_empty_source(): void
     {
         $organization = Organization::factory()->create();
         $checkpoint = ContractSettlementOwnerHistoryCheckpoint::query()->where('organization_id', $organization->id)->sole();
         $scope = new ReportScope((int) $organization->id, [(int) $organization->id], [], [], new DateTimeZone('UTC'));
+        self::assertSame(0, array_sum($checkpoint->owner_counts));
+        $asOf = $checkpoint->completed_at->addSeconds(2)->toDateTimeImmutable();
+        self::assertTrue($this->app->make(ContractSettlementExposureOptionsService::class)->options($scope, $asOf)['available']);
+        $snapshot = $this->app->make(ContractSettlementProjectionService::class)->materialize(
+            $scope,
+            $this->query($scope, $asOf),
+        );
+        $this->assertEmptySnapshot($snapshot->id);
+        $this->assertReadableEmptySnapshot($scope, $snapshot);
+    }
+
+    #[Test]
+    public function a_checkpoint_with_missing_declared_history_is_rejected(): void
+    {
+        $scope = new ReportScope(799999982, [799999982], [], [], new DateTimeZone('UTC'));
+        $asOf = new DateTimeImmutable('2026-10-22T12:00:00Z');
+        ContractSettlementOwnerHistoryCheckpoint::query()->create([
+            'organization_id' => $scope->organizationId, 'completed_at' => $asOf->modify('-1 second'),
+            'owner_counts' => ['contract' => 1, 'contract_allocation' => 1], 'source_hash' => str_repeat('a', 64),
+        ]);
+        $this->version($scope->organizationId, 'contract', 101, 'delete', [], $asOf);
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('contract_settlement_owner_history_missing');
 
-        $this->app->make(ContractSettlementProjectionService::class)->materialize(
-            $scope,
-            $this->query($scope, $checkpoint->completed_at->addSeconds(2)->toDateTimeImmutable()),
-        );
+        $this->app->make(ContractSettlementProjectionService::class)->materialize($scope, $this->query($scope, $asOf));
+    }
+
+    private function assertReadableEmptySnapshot(ReportScope $scope, ReportSnapshotRef $snapshot): void
+    {
+        $context = (new ReportExecutionContextBuilder)->scope($scope)->authorization(new AuthorizationDecisionContext(
+            'http', $scope->organizationId, $scope->holdingOrganizationIds, $scope->projectIds,
+            $scope->resources, $scope->timezone, 'settlement-empty-test', null,
+        ))->build();
+        $service = $this->app->make(ContractSettlementQueryService::class);
+        $result = $service->result($context, $snapshot);
+        self::assertSame(0, $result->metadata->rowCount);
+        self::assertSame([], $result->totals);
+        self::assertCount(1, $result->provenance->sourceRefs);
+        self::assertSame(0, $result->provenance->sourceRefs[0]->rowCount);
+        $page = $service->page($context, $snapshot, new ReportWindowSort('contract_id', ReportSortDirection::ASC), null, 20);
+        self::assertSame([], $page->rows);
+        self::assertFalse($page->hasMore);
     }
 
     private function assertEmptySnapshot(string $id): void
