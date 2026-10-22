@@ -64,6 +64,115 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[DataProvider('regionalPriceVersionCases')]
+    public function test_changing_the_regional_price_version_requires_fresh_confirmation_and_matching_resource_prices(bool $withMatchingPrice): void
+    {
+        [$actor, $session, $catalog, $source] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $workKey = $this->installation($session)['key'];
+        app(SelectNormativeCandidate::class)->handle($scope[2], $scope[0], $scope[1], $actor,
+            $session->fresh()->state_version, $workKey, $catalog['norm_id'], true);
+        $revision = $this->prepareInstallationScope($actor, $session, $source, $workKey);
+        self::assertSame('30.00', $revision['result']['scenarios'][0]['known_subtotals']['RUB']);
+        self::assertSame('36.60', $revision['result']['scenarios'][0]['gross_subtotals']['RUB']);
+        $oldConfirmationInput = $this->confirmationInput($session, $revision);
+        app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $oldConfirmationInput);
+        $oldArtifact = $session->fresh()->draft_payload['artifact_hash'];
+        $oldInputHash = app(EvaluationInputFingerprint::class)->fromSession($session->fresh());
+        $original = get_object_vars($source);
+        $oldPrice = (array) DB::table('estimate_resource_prices')->where('id', $catalog['price_id'])->first();
+        $next = $this->anotherRegionalPriceVersion($catalog, $withMatchingPrice);
+        self::assertSame(0, DB::table('estimate_resource_prices')->where('resource_code', $oldPrice['resource_code'])
+            ->whereNull('regional_price_version_id')->count());
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'estimate_regional_price_version_id' => $next['version_id'],
+            'conditions' => ['as_of_date' => '2026-10-01', 'vat_mode' => 'excluded', 'vat_rate' => '22',
+                'delivery' => 'outside_scope', 'basis' => 'Синтетическая смена версии цены того же ресурса; объём и норма неизменны.']];
+        $saved = app(SaveSessionPricingSource::class)->handle($actor, $scope[1], $scope[2], $input);
+        self::assertSame('0', $saved['cost_units']);
+        self::assertTrue($saved['recalculation_required']);
+        self::assertEquals($saved, app(SaveSessionPricingSource::class)->handle($actor, $scope[1], $scope[2], $input));
+        self::assertArrayNotHasKey('confirmed_evaluation', $session->fresh()->input_payload);
+        self::assertSame($next['version_id'], $session->fresh()->input_payload['regional_context']['estimate_regional_price_version_id']);
+        self::assertNotSame($oldInputHash, app(EvaluationInputFingerprint::class)->fromSession($session->fresh()));
+        self::assertSame($oldArtifact, $session->fresh()->draft_payload['artifact_hash']);
+        self::assertTrue(app(BuildMostEstimateDraft::class)->verifyArtifact($session->fresh()->draft_payload));
+        self::assertSame('ready_to_apply', $session->fresh()->status->value);
+        $beforeRejected = $session->fresh()->getAttributes();
+        try {
+            app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], [...$oldConfirmationInput,
+                'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version]);
+            self::fail('A prior price revision was confirmed against the current state.');
+        } catch (ValidationException $error) {
+            self::assertArrayHasKey('scenario', $error->errors());
+        }
+        self::assertSame($beforeRejected, $session->fresh()->getAttributes());
+        try {
+            app(ApplyGeneratedEstimate::class)->handle(new ApplyGeneratedEstimateCommand($scope[2], $scope[0], $scope[1],
+                $session->fresh()->state_version, idempotencyKey: (string) Str::uuid(), artifactHash: $oldArtifact, actor: $actor));
+            self::fail('A prior price confirmation was applied against the current state.');
+        } catch (ValidationException $error) {
+            self::assertArrayHasKey('draft', $error->errors());
+        }
+        self::assertSame($beforeRejected, $session->fresh()->getAttributes());
+        self::assertSame(0, Estimate::query()->where('project_id', $scope[1])->count());
+        $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2],
+            $session->fresh()->state_version, (string) Str::uuid());
+        $item = $this->installation($session);
+        self::assertSame('3', $item['quantity']);
+        self::assertSame('count', $item['unit']);
+        self::assertSame($source->id, $item['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+        if (! $withMatchingPrice) {
+            self::assertFalse($revision['result']['can_confirm_for_apply']);
+            self::assertNull($item['total_cost']);
+            self::assertNull($revision['result']['scenarios'][0]['positions'][0]['price_snapshot']);
+            try {
+                app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $this->confirmationInput($session, $revision));
+                self::fail('A missing V2 resource price borrowed the V1 price.');
+            } catch (ValidationException $error) {
+                self::assertArrayHasKey('scenario', $error->errors());
+            }
+            self::assertSame(0, Estimate::query()->where('project_id', $scope[1])->count());
+        } else {
+            self::assertTrue($revision['result']['can_confirm_for_apply']);
+            self::assertSame($catalog['norm_id'], $item['normative_match']['norm_id']);
+            self::assertSame($catalog['context']['normative_dataset_version'], $item['normative_match']['dataset_version']['version_key']);
+            self::assertSame('0.01', NormativeUnitNormalizer::safeQuantityFactorDecimal($item['unit'], $item['normative_match']['unit']));
+            self::assertSame('0.03', (string) BigDecimal::of($item['quantity'])->multipliedBy('0.01')->strippedOfTrailingZeros());
+            self::assertSame('0.3', (string) BigDecimal::of($item['labor'][0]['quantity'])->strippedOfTrailingZeros());
+            self::assertSame('200', (string) BigDecimal::of($item['labor'][0]['unit_price'])->strippedOfTrailingZeros());
+            self::assertSame($catalog['resource_id'], $item['labor'][0]['normative_ref']['norm_resource_id']);
+            self::assertSame($next['price_id'], $item['labor'][0]['normative_ref']['price_id']);
+            self::assertSame('60.00', $item['total_cost']);
+            self::assertSame('60.00', $revision['result']['scenarios'][0]['known_subtotals']['RUB']);
+            self::assertSame('73.20', $revision['result']['scenarios'][0]['gross_subtotals']['RUB']);
+            $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $this->confirmationInput($session, $revision));
+            $export = app(ReadConfirmedEvaluationExport::class)->read($actor, $scope[1], $scope[2]);
+            $exportItem = $export->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+            self::assertSame('3', $exportItem['quantity']);
+            self::assertSame('60.00', $exportItem['total_cost']);
+            self::assertSame('0.3', (string) BigDecimal::of($exportItem['labor'][0]['quantity'])->strippedOfTrailingZeros());
+            self::assertSame('200', (string) BigDecimal::of($exportItem['labor'][0]['unit_price'])->strippedOfTrailingZeros());
+            self::assertSame($next['price_id'], $exportItem['labor'][0]['normative_ref']['price_id']);
+            self::assertSame($source->id, $exportItem['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+            $published = app(ApplyGeneratedEstimate::class)->handle(new ApplyGeneratedEstimateCommand($scope[2], $scope[0], $scope[1],
+                $confirmation['state_version'], idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor));
+            $this->assertPersistedMoney(Estimate::query()->findOrFail($published->estimateId), $source,
+                [...$catalog, 'price_id' => $next['price_id']],
+                ['quantity' => '3', 'labor' => '0.3', 'net' => '60.00', 'gross' => '73.20', 'vat' => '13.20', 'unit_price' => '200']);
+        }
+        self::assertSame($oldPrice, (array) DB::table('estimate_resource_prices')->where('id', $catalog['price_id'])->first());
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertSame($original, get_object_vars(array_column($snapshot->facts, null, 'id')[$source->id]));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        Http::assertNothingSent();
+    }
+
+    public static function regionalPriceVersionCases(): array
+    {
+        return ['new matching regional price' => [true], 'no V2 or eligible base resource price' => [false]];
+    }
+
     public function test_explicit_work_quantity_reprices_resources_before_a_changed_scenario_can_be_confirmed(): void
     {
         [$actor, $session, $catalog, $source] = $this->fixture();
@@ -489,7 +598,7 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
         $resource = $parent->resources()->sole();
         self::assertSame('0.1', (string) BigDecimal::of($resource->quantity_per_unit)->strippedOfTrailingZeros());
         self::assertSame($oracle['labor'], (string) BigDecimal::of($resource->total_quantity)->strippedOfTrailingZeros());
-        self::assertSame('100', (string) BigDecimal::of($resource->unit_price)->strippedOfTrailingZeros());
+        self::assertSame($oracle['unit_price'] ?? '100', (string) BigDecimal::of($resource->unit_price)->strippedOfTrailingZeros());
         self::assertSame($oracle['net'], $resource->total_amount);
         self::assertSame('22', $parent->metadata['generated_source_money']['money']['vat_rate']);
         self::assertSame($oracle['vat'], $parent->metadata['generated_source_money']['money']['vat_amount']);
@@ -735,6 +844,26 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
             $spreadsheet->disconnectWorksheets();
             unlink($path);
         }
+    }
+
+    private function anotherRegionalPriceVersion(array $catalog, bool $withMatchingPrice): array
+    {
+        $now = now();
+        $source = (array) DB::table('estimate_resource_prices')->where('id', $catalog['price_id'])->first();
+        $key = 'synthetic-price-v2-'.strtolower((string) Str::ulid());
+        $dataset = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fgis_labor_prices', 'version_key' => $key,
+            'bucket' => 'test', 'prefix' => $key, 'status' => 'parsed', 'created_at' => $now, 'updated_at' => $now]);
+        $version = DB::table('estimate_regional_price_versions')->insertGetId(['source' => 'fgiscs',
+            'region_id' => $source['region_id'], 'price_zone_id' => $source['price_zone_id'], 'period_id' => $source['period_id'],
+            'version_key' => $key, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
+        $price = $withMatchingPrice ? DB::table('estimate_resource_prices')->insertGetId([
+            'dataset_version_id' => $dataset, 'regional_price_version_id' => $version,
+            'region_id' => $source['region_id'], 'price_zone_id' => $source['price_zone_id'], 'period_id' => $source['period_id'],
+            'resource_code' => $source['resource_code'], 'resource_name' => $source['resource_name'], 'unit' => 'h',
+            'base_price' => '200.0000', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]) : null;
+        DB::table('estimate_regional_price_versions')->where('id', $version)->update(['status' => 'active']);
+
+        return ['version_id' => $version, 'price_id' => $price];
     }
 
     private function catalog(bool $withNorm, bool $withPrice, string $laborRate, string $laborPrice): array
