@@ -25,6 +25,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\Evaluatio
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScenarioSet;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationRequirementDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveSessionPricingSource;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
@@ -62,6 +64,121 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_explicit_work_quantity_reprices_resources_before_a_changed_scenario_can_be_confirmed(): void
+    {
+        [$actor, $session, $catalog, $source] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $workKey = $this->installation($session)['key'];
+        app(SelectNormativeCandidate::class)->handle($scope[2], $scope[0], $scope[1], $actor,
+            $session->fresh()->state_version, $workKey, $catalog['norm_id'], true);
+        $nativeRevision = $this->prepareInstallationScope($actor, $session, $source, $workKey);
+        self::assertSame('3', $this->installation($session)['quantity']);
+        self::assertSame('0.3', $this->installation($session)['labor'][0]['quantity']);
+        self::assertSame('30.00', $nativeRevision['result']['scenarios'][0]['known_subtotals']['RUB']);
+        self::assertSame('36.60', $nativeRevision['result']['scenarios'][0]['gross_subtotals']['RUB']);
+        $original = get_object_vars($source);
+        $definitions = array_map(static fn (string $id): array => ['id' => $id,
+            'basis' => 'Пользовательский вариант монтажа четырёх единиц; исходный документ содержит три.',
+            'quantities' => [['work_item_key' => $workKey, 'value' => '4', 'unit' => 'count']]], ['minimum', 'base', 'maximum']);
+        app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], [
+            'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'definitions' => $definitions]);
+        $unpriced = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2],
+            $session->fresh()->state_version, (string) Str::uuid());
+        self::assertFalse($unpriced['result']['can_confirm_for_apply']);
+        foreach ($unpriced['result']['scenarios'] as $scenario) {
+            self::assertCount(1, $scenario['positions']);
+            self::assertSame('4', $scenario['positions'][0]['quantity']);
+            self::assertNull($scenario['positions'][0]['price_snapshot']);
+            self::assertContains('scenario_normative_resources_require_recalculation', $scenario['positions'][0]['warnings']);
+        }
+        self::assertSame('3', $this->installation($session)['quantity']);
+        $beforeRejectedConfirmation = $session->fresh()->getAttributes();
+        try {
+            app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $this->confirmationInput($session, $unpriced));
+            self::fail('An unpriced normative scenario was confirmed.');
+        } catch (ValidationException $error) {
+            self::assertArrayHasKey('scenario', $error->errors());
+        }
+        self::assertSame($beforeRejectedConfirmation, $session->fresh()->getAttributes());
+        self::assertSame(0, Estimate::query()->where('project_id', $scope[1])->count());
+        $quantityInput = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'work_item_key' => $workKey, 'value' => '4', 'unit' => 'count',
+            'reason' => 'Явно введено четыре единицы для выбранной работы; это не изменение количества в документе.'];
+        $quantity = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $quantityInput);
+        self::assertEquals($quantity, app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $quantityInput));
+        app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2],
+            $session->fresh()->state_version, (string) Str::uuid());
+        $item = $this->installation($session);
+        self::assertSame('4', $item['quantity']);
+        self::assertSame('count', $item['unit']);
+        self::assertSame('0.01', NormativeUnitNormalizer::safeQuantityFactorDecimal($item['unit'], $item['normative_match']['unit']));
+        self::assertSame('0.04', (string) BigDecimal::of($item['quantity'])->multipliedBy('0.01')->strippedOfTrailingZeros());
+        self::assertSame('0.4', (string) BigDecimal::of($item['labor'][0]['quantity'])->strippedOfTrailingZeros());
+        self::assertSame('10', (string) BigDecimal::of($item['labor'][0]['quantity_per_unit'])->strippedOfTrailingZeros());
+        self::assertSame('0.1', (string) BigDecimal::of($item['labor'][0]['quantity_per_work_unit'])->strippedOfTrailingZeros());
+        self::assertSame('100', (string) BigDecimal::of($item['labor'][0]['unit_price'])->strippedOfTrailingZeros());
+        self::assertSame('40.00', $item['total_cost']);
+        self::assertSame($quantity['source_fact_id'], $item['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+        $models = app(ProjectModelRepository::class);
+        $facts = array_column($models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts, null, 'id');
+        $entered = $facts[$quantity['source_fact_id']];
+        self::assertSame('4', $entered->value);
+        self::assertSame('count', $entered->unit);
+        self::assertSame($source->entityId, $entered->entityId);
+        self::assertSame('user_input', $entered->origin);
+        self::assertSame([], $entered->nativeNumericProofs);
+        self::assertNotSame($source->id, $entered->id);
+        self::assertSame($original, get_object_vars($facts[$source->id]));
+        self::assertSame('evidenced', $item['quantity_evidence']['source'], json_encode([
+            'entered_fact' => get_object_vars($entered), 'quantity_evidence' => $item['quantity_evidence'],
+        ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], [
+            'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'definitions' => $definitions]);
+        $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2],
+            $session->fresh()->state_version, (string) Str::uuid());
+        self::assertTrue($revision['result']['can_confirm_for_apply'], json_encode($revision['result'], JSON_THROW_ON_ERROR));
+        self::assertSame('40.00', $revision['result']['scenarios'][1]['known_subtotals']['RUB']);
+        self::assertSame('48.80', $revision['result']['scenarios'][1]['gross_subtotals']['RUB']);
+        $confirmationInput = $this->confirmationInput($session, $revision);
+        $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $confirmationInput);
+        self::assertEquals($confirmation, app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $confirmationInput));
+        $facts = array_column($models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts, null, 'id');
+        $materialized = $facts[$session->fresh()->input_payload['quantity_selections'][$workKey]['source_fact_id']];
+        self::assertSame('4', $materialized->value);
+        self::assertSame('count', $materialized->unit);
+        self::assertSame($source->entityId, $materialized->entityId);
+        self::assertSame($entered->id, $materialized->supersedesFactId);
+        self::assertSame('user_assumption', $materialized->origin);
+        self::assertSame([], $materialized->nativeNumericProofs);
+        self::assertSame($original, get_object_vars($facts[$source->id]));
+        $export = app(ReadConfirmedEvaluationExport::class)->read($actor, $scope[1], $scope[2]);
+        $exportItem = $export->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('4', $exportItem['quantity']);
+        self::assertSame('40.00', $exportItem['total_cost']);
+        self::assertSame('estimated', $exportItem['quantity_evidence']['source']);
+        self::assertSame('0.4', (string) BigDecimal::of($exportItem['labor'][0]['quantity'])->strippedOfTrailingZeros());
+        self::assertSame($materialized->id, $exportItem['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
+        self::assertSame($catalog['resource_id'], $exportItem['labor'][0]['normative_ref']['norm_resource_id']);
+        self::assertSame($catalog['price_id'], $exportItem['labor'][0]['normative_ref']['price_id']);
+        $command = new ApplyGeneratedEstimateCommand($scope[2], $scope[0], $scope[1], $confirmation['state_version'],
+            idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor);
+        $published = app(ApplyGeneratedEstimate::class)->handle($command);
+        self::assertSame($published->estimateId, app(ApplyGeneratedEstimate::class)->handle($command)->estimateId);
+        $estimate = Estimate::query()->findOrFail($published->estimateId);
+        $oracle = ['quantity' => '4', 'labor' => '0.4', 'net' => '40.00', 'gross' => '48.80', 'vat' => '8.80'];
+        $this->assertPersistedMoney($estimate, $materialized, $catalog, $oracle);
+        $identities = $estimate->items()->orderBy('id')->pluck('id')->all();
+        for ($iteration = 0; $iteration < 2; $iteration++) {
+            app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+            $this->assertPersistedMoney($estimate->fresh(), $materialized, $catalog, $oracle);
+            self::assertSame($identities, $estimate->items()->orderBy('id')->pluck('id')->all());
+        }
+        $facts = array_column($models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts, null, 'id');
+        self::assertSame($original, get_object_vars($facts[$source->id]));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
     public function test_native_count_scaled_norm_and_resource_money_survive_confirmation_apply_and_ordinary_recalculation(): void
     {
         [$actor, $session, $catalog, $source] = $this->fixture();
@@ -350,31 +467,32 @@ final class NativeEquipmentMoneyPostgresTest extends EstimateGenerationCanonical
             'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'], 'scenario_id' => 'base', 'assumptions_accepted' => true];
     }
 
-    private function assertPersistedMoney(Estimate $estimate, Fact $source, array $catalog): void
+    private function assertPersistedMoney(Estimate $estimate, Fact $source, array $catalog,
+        array $oracle = ['quantity' => '3', 'labor' => '0.3', 'net' => '30.00', 'gross' => '36.60', 'vat' => '6.60']): void
     {
-        self::assertSame('30.00', $estimate->total_amount);
-        self::assertSame('36.60', $estimate->total_amount_with_vat);
+        self::assertSame($oracle['net'], $estimate->total_amount);
+        self::assertSame($oracle['gross'], $estimate->total_amount_with_vat);
         self::assertSame(1, $estimate->items()->whereNull('parent_work_id')->count());
         self::assertSame(1, $estimate->items()->whereNotNull('parent_work_id')->count());
         $parent = $estimate->items()->whereNull('parent_work_id')->sole();
         $child = $estimate->items()->whereNotNull('parent_work_id')->sole();
-        self::assertSame('3', (string) BigDecimal::of($parent->quantity)->strippedOfTrailingZeros());
-        self::assertSame('0.3', (string) BigDecimal::of($parent->labor_hours)->strippedOfTrailingZeros());
+        self::assertSame($oracle['quantity'], (string) BigDecimal::of($parent->quantity)->strippedOfTrailingZeros());
+        self::assertSame($oracle['labor'], (string) BigDecimal::of($parent->labor_hours)->strippedOfTrailingZeros());
         self::assertSame('0', (string) BigDecimal::of($parent->machinery_hours)->strippedOfTrailingZeros());
-        self::assertSame('30.00', $parent->total_amount);
-        self::assertSame('0.3', (string) BigDecimal::of($child->quantity)->strippedOfTrailingZeros());
-        self::assertSame('30.00', $child->total_amount);
+        self::assertSame($oracle['net'], $parent->total_amount);
+        self::assertSame($oracle['labor'], (string) BigDecimal::of($child->quantity)->strippedOfTrailingZeros());
+        self::assertSame($oracle['net'], $child->total_amount);
         self::assertSame('0.1', (string) BigDecimal::of($child->metadata['quantity_per_unit'])->strippedOfTrailingZeros());
         self::assertSame($catalog['norm_id'], $child->metadata['normative_ref']['norm_id']);
         self::assertSame($catalog['resource_id'], $child->metadata['normative_ref']['norm_resource_id']);
         self::assertSame($catalog['price_id'], $child->metadata['normative_ref']['price_id']);
         $resource = $parent->resources()->sole();
         self::assertSame('0.1', (string) BigDecimal::of($resource->quantity_per_unit)->strippedOfTrailingZeros());
-        self::assertSame('0.3', (string) BigDecimal::of($resource->total_quantity)->strippedOfTrailingZeros());
+        self::assertSame($oracle['labor'], (string) BigDecimal::of($resource->total_quantity)->strippedOfTrailingZeros());
         self::assertSame('100', (string) BigDecimal::of($resource->unit_price)->strippedOfTrailingZeros());
-        self::assertSame('30.00', $resource->total_amount);
+        self::assertSame($oracle['net'], $resource->total_amount);
         self::assertSame('22', $parent->metadata['generated_source_money']['money']['vat_rate']);
-        self::assertSame('6.60', $parent->metadata['generated_source_money']['money']['vat_amount']);
+        self::assertSame($oracle['vat'], $parent->metadata['generated_source_money']['money']['vat_amount']);
         self::assertSame($source->id, $parent->metadata['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']);
     }
 
