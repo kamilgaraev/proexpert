@@ -178,6 +178,34 @@ class EstimateGenerationDocumentController extends Controller
         ]);
     }
 
+    public function cellReviews(Request $request, Project $project, EstimateGenerationSession $session, EstimateGenerationDocument $document,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReviewSpreadsheetCellInterpretation $reviews): JsonResponse
+    {
+        return $this->safeReadResponse(function () use ($request, $project, $session, $document, $reviews): JsonResponse {
+            $this->guardDocument($request, $project, $session, $document);
+
+            return AdminResponse::success(['state_version' => (int) $session->state_version,
+                'items' => $reviews->rows($request->user(), $session, (int) $document->id)]);
+        }, 'list cell interpretations', ['session_id' => $session->id, 'document_id' => $document->id]);
+    }
+
+    public function reviewCell(\App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ReviewSpreadsheetCellRequest $request,
+        Project $project, EstimateGenerationSession $session, EstimateGenerationDocument $document,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReviewSpreadsheetCellInterpretation $reviews): JsonResponse
+    {
+        $this->guardDocument($request, $project, $session, $document);
+        try {
+            return AdminResponse::success($reviews->handle($request->user(), (int) $project->id, (int) $session->id,
+                (int) $document->id, $request->all()));
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        }
+    }
+
     public function retry(
         RetryEstimateGenerationDocumentRequest $request,
         Project $project,

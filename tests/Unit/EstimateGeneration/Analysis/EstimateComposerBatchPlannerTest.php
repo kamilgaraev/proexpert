@@ -18,6 +18,34 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateComposerBatchPlannerTest extends TestCase
 {
+    public function test_optional_cells_fit_existing_parts_once_or_are_omitted_without_cutting_mandatory_facts(): void
+    {
+        $facts = array_map(static fn (int $id): array => ['id' => 'fact:'.$id, 'entity_id' => 'entity:'.$id,
+            'value' => str_repeat('context ', 180), 'status' => 'confirmed'], range(1, 3));
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], [], [], RunEstimateComposer::PROMPT_CONTRACT);
+        $planner = new EstimateComposerBatchPlanner(3000);
+        $baseline = $planner->plan($input);
+        self::assertGreaterThan(1, count($baseline));
+        $row = ['row_id' => 'row:'.str_repeat('a', 64), 'document_id' => 1, 'unit_id' => 2,
+            'source_version' => 'sha256:'.str_repeat('a', 64), 'artifact_sha256' => 'sha256:'.str_repeat('b', 64),
+            'sheet' => 'Лист', 'row' => 2, 'policy_hash' => str_repeat('c', 64), 'cells' => [
+                ['cell_id' => 'cell:'.str_repeat('d', 64), 'address' => 'A2', 'raw_value' => 'Изделие'],
+                ['cell_id' => 'cell:'.str_repeat('e', 64), 'address' => 'B2', 'raw_value' => 'Описание изделия'],
+            ]];
+        $parts = $planner->plan($input->withNativeCellContext([$row]));
+        self::assertCount(count($baseline), $parts);
+        self::assertSame(1, array_sum(array_map(static fn ($part): int => count($part->nativeCellContext), $parts)));
+        self::assertSame(array_column($facts, 'id'), array_values(array_unique(array_merge(...array_map(static fn ($part): array => array_column($part->facts, 'id'), $parts)))));
+        foreach ($parts as $part) {
+            self::assertLessThanOrEqual(3000, strlen(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['project' => $part->canonicalPayload()])));
+        }
+        $row['cells'] = array_map(static fn (int $id): array => ['cell_id' => 'cell:'.hash('sha256', (string) $id),
+            'address' => chr(65 + $id).'2', 'raw_value' => str_repeat('x', 500)], range(0, 15));
+        $omitted = $planner->plan($input->withNativeCellContext([$row]));
+        self::assertCount(count($baseline), $omitted);
+        self::assertSame(array_map(static fn ($part) => $part->canonicalPayload(), $baseline), array_map(static fn ($part) => $part->canonicalPayload(), $omitted));
+    }
+
     public function test_split_equipment_context_keeps_the_current_root_answer_and_reuses_its_reference_without_more_batches(): void
     {
         [$source, $reference] = $this->sourceClaims();

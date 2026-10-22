@@ -736,6 +736,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             (int) config('estimate-generation.estimate_composer.max_facts'),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::class),
         ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection::class,
@@ -959,7 +960,19 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ? config('estimate-generation.normative_matching.retrieval.semantic_index_version')
                 : null,
         ));
-        $this->app->singleton(EstimateGenerationLearningEvidenceService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::class,
+            static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+            ));
+        $this->app->singleton(EstimateGenerationLearningEvidenceService::class, static fn ($app) => new EstimateGenerationLearningEvidenceService(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EquipmentCountKnowledgeValidationService::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder::class),
+        ));
         $this->app->singleton(LLMNormativeCandidateReranker::class, fn ($app) => new LLMNormativeCandidateReranker(
             $app->make(LLMProviderInterface::class),
             $app->make(AttemptAwareNormativeLlmClient::class),
