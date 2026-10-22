@@ -62,7 +62,7 @@ final class AssistantProductionSchedulePeriod
 
     private const CALENDAR_DETERMINERS = '(?:(?:весь|всего|вс[её]м|полный|полного|полном|целый|целого|целом|календарный|календарного|календарном)\s+){0,3}';
 
-    private const MONTH_YEAR = '(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого|предыдущего|позапрошлого|следующего|будущего)\s+года)';
+    private const MONTH_YEAR = '(?:(?:19|20)\d{2}(?:\s+года?)?|(?:этого|текущего|прошлого|предыдущего|позапрошлого|следующего|будущего)\s+года)';
 
     private const ORDINAL_UNIT_DAY = '(?:(?:перв|втор|четв[её]рт|пят|шест|седьм|восьм|девят)(?:ое|ого)|трет(?:ье|ьего))';
 
@@ -140,9 +140,7 @@ final class AssistantProductionSchedulePeriod
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_PERIOD.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
-            .'|'.self::PERIOD_PREFIX.'\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::RELATIVE_DAY.'\b)';
-        $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
+        $parts = preg_split('/\s+(?='.self::nameSuffixPattern().')/iu', $name, 2);
         foreach ([self::BACKWARD_OFFSET_PERIOD, self::VERBAL_DATE, self::INCOMPLETE_DATE] as $pattern) {
             $candidate = preg_split('/\s+(?='.$pattern.')/iu', $name, 2);
             if (count($candidate) > 1 && (count($parts) === 1 || strlen($candidate[0]) < strlen($parts[0]))) {
@@ -153,6 +151,31 @@ final class AssistantProductionSchedulePeriod
         $head = trim((string) ($parts[0] ?? $name));
 
         return count($parts) > 1 ? (preg_replace('/[\s,;:—–\-]+$/u', '', $head) ?? $head) : $head;
+    }
+
+    public static function withoutCompleteSuffix(string $name): string
+    {
+        $head = $name;
+        foreach ([self::nameSuffixPattern(complete: true), self::BACKWARD_OFFSET_PERIOD, self::VERBAL_DATE] as $pattern) {
+            $candidate = trim(preg_replace('/\s+(?:'.$pattern.')\s*[.!?]*$/iu', '', $name) ?? $name);
+            if (strlen($candidate) < strlen($head)) {
+                $head = $candidate;
+            }
+        }
+
+        return $head;
+    }
+
+    private static function nameSuffixPattern(bool $complete = false): string
+    {
+        $snapshot = $complete ? self::SNAPSHOT_PREFIX.'\s+(?:'.self::CURRENT_SNAPSHOT_TIME.'|'.self::RELATIVE_DAY.'|'.self::EXPLICIT_DATE.')\b' : self::SNAPSHOT_PREFIX;
+        $date = $complete ? '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::EXPLICIT_DATE : self::EXPLICIT_DATE;
+        $start = $complete
+            ? '(?:с|со)\s+начала\s+(?:(?:(?:19|20)\d{2}|этого|текущего|прошлого|предыдущего|позапрошлого|этой|текущей|прошлой|предыдущей|позапрошлой)\s+)?(?:года|квартала|месяца|недели|дня|суток)(?:\s+по\s+(?:сегодня|текущий\s+день))?\b'
+            : self::PERIOD_PREFIX.'\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)';
+
+        return '(?:'.$snapshot.'|'.self::CURRENT_SNAPSHOT.'|'.$date.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_PERIOD.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+            .'|'.$start.'|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::RELATIVE_DAY.'\b)';
     }
 
     public static function arguments(int $projectId, array $plan): array

@@ -30,8 +30,9 @@ final readonly class AssistantCustomReportBuilder
         $specification = Validator::make($specification, [
             'title' => ['required', 'string', 'max:120'], 'format' => ['required', 'in:xlsx,csv,pdf'],
             'sections' => ['required', 'array', 'min:1', 'max:5'],
-            'sections.*' => ['required', 'array:title,domain,entity_type,project_id,columns,filters,group_by,metrics,order_by,row_limit'],
+            'sections.*' => ['required', 'array:title,domain,entity_type,scope,project_id,columns,filters,group_by,metrics,order_by,row_limit'],
             'sections.*.title' => ['required', 'string', 'max:80'],
+            'sections.*.scope' => ['sometimes', 'in:organization,project'],
             'sections.*.domain' => ['required', 'string', 'max:80'], 'sections.*.entity_type' => ['required', 'string', 'max:80'],
             'sections.*.project_id' => ['nullable', 'integer', 'min:1'],
             'sections.*.row_limit' => ['integer', 'min:1', 'max:1000'],
