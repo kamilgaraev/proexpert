@@ -261,6 +261,8 @@ class AppServiceProvider extends ServiceProvider
             $connectionState = new \App\Services\Monitoring\SqlConnectionState;
             Event::listen(\Illuminate\Database\Events\ConnectionEstablished::class,
                 static fn (\Illuminate\Database\Events\ConnectionEstablished $event) => $connectionState->established($event->connection));
+            Event::listen(\Illuminate\Database\Events\StatementPrepared::class,
+                static fn (\Illuminate\Database\Events\StatementPrepared $event) => $connectionState->prepared($event->connection));
             foreach (DB::getConnections() as $connection) {
                 $connectionState->watch($connection);
             }

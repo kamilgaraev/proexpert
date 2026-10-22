@@ -93,6 +93,47 @@ final class SlowQueryContextTest extends TestCase
         }
     }
 
+    public function test_event_intervals_accept_only_finite_nonnegative_numbers_after_safe_boolean_state(): void
+    {
+        $previous = Container::getInstance();
+        $application = new Application(dirname(__DIR__, 3));
+        $application->instance('config', new Repository);
+        try {
+            $factory = new SlowQueryContext(new TracingService(null));
+            $event = new QueryExecuted('select 1', [], 600, new Connection(null));
+            $state = [
+                'observed' => true, 'write_lazy_before' => true, 'read_lazy_before' => false,
+                'write_ready_before' => false, 'read_ready_before' => false,
+                'write_ready_after' => true, 'read_ready_after' => false,
+                'manager_connection_event_during_run' => false,
+            ];
+            $intervals = ['observed' => true, 'before_to_prepared_ms' => 12.345, 'prepared_to_query_event_ms' => 0];
+            $context = $factory->forQuery($event, $state + ['event_intervals' => $intervals + ['sql' => 'private-value', 'statement' => new \stdClass]]);
+            self::assertSame($intervals, $context['query_event_intervals']);
+            self::assertSame($state, $context['connection_state']);
+            $handler = new TestHandler;
+            $handler->setFormatter(new JsonFormatter);
+            $logger = new IlluminateLogger(new MonologLogger('slow_queries', [$handler]));
+            (new EnsureLogFailuresAreNonFatal)($logger);
+            $logger->warning('slow_query', $context);
+            $serialized = $handler->getRecords()[0]->formatted;
+            $logged = json_decode($serialized, true, 512, JSON_THROW_ON_ERROR)['context'];
+            self::assertSame($intervals, $logged['query_event_intervals']);
+            self::assertStringNotContainsString('private-value', $serialized);
+            foreach ([-1, INF, -INF, NAN, '12.3', null, true, [], new \stdClass] as $invalid) {
+                foreach (['before_to_prepared_ms', 'prepared_to_query_event_ms'] as $field) {
+                    $context = $factory->forQuery($event, $state + ['event_intervals' => array_replace($intervals, [$field => $invalid])]);
+                    self::assertSame(['observed' => false], $context['query_event_intervals']);
+                }
+            }
+            foreach ([null, ['observed' => true], $state + ['event_intervals' => ['observed' => false]], array_replace($state, ['write_ready_after' => 'private', 'event_intervals' => $intervals])] as $invalid) {
+                self::assertSame(['observed' => false], $factory->forQuery($event, $invalid)['query_event_intervals']);
+            }
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     public function test_full_statement_fingerprint_survives_log_redaction_without_exposing_sql_or_bindings(): void
     {
         $previous = Container::getInstance();

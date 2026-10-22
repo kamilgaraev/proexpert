@@ -36,11 +36,30 @@ final class SlowQueryContext
             'bindings_truncated' => false,
             'transaction_level' => $query->connection->transactionLevel(),
             'connection_state' => self::safeConnectionState($connectionState),
+            'query_event_intervals' => self::safeEventIntervals($connectionState),
             'execution_context' => $this->tracing->executionContext(),
             'rag_collector' => RagCollectorQueryContext::current(),
             'source' => self::source(),
             ...$this->tracing->slowQueryTrace($query),
         ];
+    }
+
+    private static function safeEventIntervals(?array $state): array
+    {
+        $intervals = $state['event_intervals'] ?? null;
+        if (self::safeConnectionState($state)['observed'] !== true || ! is_array($intervals) || ($intervals['observed'] ?? null) !== true) {
+            return ['observed' => false];
+        }
+        $safe = ['observed' => true];
+        foreach (['before_to_prepared_ms', 'prepared_to_query_event_ms'] as $field) {
+            $value = $intervals[$field] ?? null;
+            if ((! is_int($value) && ! is_float($value)) || ! is_finite((float) $value) || $value < 0) {
+                return ['observed' => false];
+            }
+            $safe[$field] = $value;
+        }
+
+        return $safe;
     }
 
     private static function safeConnectionState(?array $state): array
