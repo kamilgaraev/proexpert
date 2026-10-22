@@ -680,6 +680,10 @@ final readonly class AssistantRequestProjectScope
         $noun = '(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])';
         $quoted = '(?:'.self::QUOTED_NAME.')(*SKIP)(*F)|';
         $question = preg_replace('/'.$quoted.'без\s+'.$noun.'\s+(?:тоже|также)\s+(?:учти|включи|добавь)(?:те)?(?![\pL\pN])/iu', 'включая непривязанные записи', $question) ?? $question;
+        $records = '(?:документы|записи|договоры|акты|заказы|заявки|платежи)';
+        $inclusion = '(?<inclusion_boundary>^|[.;!?\r\n])\s*(?:(?:также|тоже)\s+)?(?:учти|включи|добавь)(?:те)?\s+(?:(?:также|тоже)\s+)?'.$records.'\s+без\s+'.$noun;
+        $inclusionEnd = '(?=\s*(?:$|[,.;!?]|и\s+не\s+ограничивай(?:ся|тесь)(?![\pL\pN])))';
+        $question = preg_replace_callback('/'.$quoted.$inclusion.$inclusionEnd.'/iu', static fn (array $match): string => $match['inclusion_boundary'].' включая непривязанные записи', $question) ?? $question;
         $nullRequest = '(?:только|лишь|исключительно)\s+(?<null_kind>без|с)\s+(?:привязк(?:и|ой)\s+к\s+|(?:указанным|заданным)\s+)?'.$noun.'(?=\s*(?:$|[,.;!?]))';
         $question = preg_replace_callback('/'.$quoted.$nullRequest.'/iu', static function (array $match) use (&$constraints): string {
             $operator = mb_strtolower($match['null_kind']) === 'без' ? 'is_null' : 'is_not_null';

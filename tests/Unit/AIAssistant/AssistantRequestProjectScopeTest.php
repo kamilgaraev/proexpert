@@ -1157,6 +1157,59 @@ final class AssistantRequestProjectScopeTest extends TestCase
             'filters' => [['field' => 'project_id', 'operator' => 'is_null', 'value' => null]]]]]);
     }
 
+    public function test_preposed_projectless_inclusion_preserves_organization_financial_report_scope(): void
+    {
+        $question = 'Сделай CSV со сводкой платёжных документов по всей организации: для каждого типа документа, статуса и валюты — количество документов и общая сумма. Черновики тоже посчитай. Валюты не смешивай. Учти документы без проекта и не ограничивайся выбранным проектом.';
+        $arguments = ['format' => 'csv', 'sections' => [['scope' => 'organization', 'project_id' => null,
+            'domain' => 'finance', 'entity_type' => 'payment_document', 'filters' => []]]];
+        $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+        $search = static function (): array {
+            self::fail('Projectless inclusion must not request a project lookup');
+        };
+
+        self::assertSame($arguments, $scope->bindReportScope($question, $arguments, $search));
+    }
+
+    public function test_preposed_projectless_inclusion_does_not_authorize_a_null_only_filter(): void
+    {
+        foreach (['Учти документы', 'Включите также записи', 'Также добавь договоры', 'Учтите акты', 'Включи заказы', 'Добавьте заявки', 'Учти платежи'] as $directive) {
+            $question = 'Все записи организации. '.$directive.' без проекта.';
+            $scope = AssistantRequestProjectScope::fromPlan($this->plan($question));
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null, 'filters' => []]]];
+            self::assertSame($arguments, $scope->bindReportScope($question, $arguments), $question);
+            try {
+                $arguments['sections'][0]['filters'] = [['field' => 'project_id', 'operator' => 'is_null', 'value' => null]];
+                $scope->bindReportScope($question, $arguments);
+                self::fail('Projectless inclusion accepted an exclusive null filter: '.$question);
+            } catch (AssistantReportScopeAmbiguous) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_projectless_inclusion_normalization_preserves_named_and_quoted_exclusions(): void
+    {
+        foreach ([['Все акты организации. Учти документы без проекта СевГУ.', 'СевГУ'],
+            ['Все акты организации, кроме проекта «Учти документы без проекта».', 'Учти документы без проекта']] as [$question, $name]) {
+            $search = static function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return ['status' => 'success', 'results' => [['id' => 100]], 'result_window' => ['has_more' => false]];
+            };
+            $arguments = ['sections' => [['scope' => 'organization', 'project_id' => null,
+                'filters' => [['field' => 'project_id', 'operator' => 'neq', 'value' => 100]]]]];
+            self::assertSame($arguments, AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question, $arguments, $search));
+        }
+    }
+
+    public function test_negated_preposed_inclusion_does_not_drop_projectless_constraints(): void
+    {
+        $question = 'Все документы организации. Не включи документы без проекта.';
+        $this->expectException(AssistantReportScopeAmbiguous::class);
+        AssistantRequestProjectScope::fromPlan($this->plan($question))->bindReportScope($question,
+            ['sections' => [['scope' => 'organization', 'project_id' => null, 'filters' => []]]]);
+    }
+
     public function test_negated_project_prepositions_never_become_positive_search_restrictions(): void
     {
         foreach (['но не по проекту 100', 'не в проекте 100', 'не для проекта #100',
