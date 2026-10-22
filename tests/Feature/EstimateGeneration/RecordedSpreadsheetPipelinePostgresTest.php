@@ -366,14 +366,11 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             self::assertSame([], $automaticSuspendedCeilings, 'An office label and floor dimensions do not choose a suspended ceiling.');
             self::assertTrue(app(BuildMostEstimateDraft::class)->verifyArtifact($session->draft_payload));
             self::assertCount(count(ProcessingStage::cases()), $adapter->lastRun['completed_stages']);
-            self::assertSame(4, $adapter->lastRun['provider_requests']);
-            self::assertSame(4, $adapter->lastRun['requests_after_replay']);
+            self::assertSame(2, $adapter->lastRun['provider_requests']);
+            self::assertSame(2, $adapter->lastRun['requests_after_replay']);
             $auditSubjects = DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
                 ->where('role', 'estimate_auditor')->pluck('subject_id')->all();
-            self::assertCount(3, $auditSubjects);
-            foreach ($auditSubjects as $subject) {
-                self::assertStringStartsWith($session->id.':0:part:', $subject, 'Context parts are not extra audit/correction passes.');
-            }
+            self::assertSame([$session->id.':0'], $auditSubjects);
             self::assertSame(0, $adapter->lastRun['document_run']['vision_requests']);
             self::assertSame(0, $adapter->lastRun['document_run']['vision_requests_after_replay']);
             self::assertSame(['completed'], $adapter->lastRun['document_run']['units']);
@@ -393,7 +390,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             self::assertCount(1, $positions);
             self::assertCount(1, array_unique(array_column($numeric, 'entityId')));
             $roomEntityId = $numeric[0]->entityId;
-            self::assertSame('room-floor:'.hash('sha256', "finish_finishing-norm-intent-1\0".$roomEntityId), $positions[0]['key']);
+            self::assertSame('finish.floor', $positions[0]['key']);
             self::assertSame($roomEntityId, $positions[0]['entity_id']);
             self::assertSame('50', $positions[0]['quantity']);
             self::assertSame('m2', $positions[0]['unit']);
@@ -401,19 +398,14 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             self::assertSame('floor_area', $positions[0]['quantity_formula']);
             self::assertNotEmpty($positions[0]['quantity_evidence_details']);
             $roughFloor = array_values(array_filter($adapter->lastRun['evaluation']['scenarios'][0]['positions'], static fn (array $item): bool => $item['work_key'] === 'rough.floor'));
-            self::assertCount(1, $roughFloor);
-            self::assertSame('room-floor:'.hash('sha256', "rough_finishing-norm-intent-1\0".$roomEntityId), $roughFloor[0]['key']);
-            self::assertSame($roomEntityId, $roughFloor[0]['entity_id']);
-            self::assertSame('50', $roughFloor[0]['quantity']);
-            self::assertSame('supported', $roughFloor[0]['quantity_status']);
+            self::assertSame([], $roughFloor);
             self::assertNull($positions[0]['price_snapshot']);
             $coveredDuplicates = array_values(array_filter($session->draft_payload['estimate_composition']['request_info'],
                 static fn (array $notice): bool => $notice['reason'] === 'estimate_composer_physical_duplicate_covered'));
-            self::assertCount(1, $coveredDuplicates);
-            self::assertSame($positions[0]['key'], $coveredDuplicates[0]['covered_by_position_key']);
+            self::assertSame([], $coveredDuplicates);
             self::assertNotContains('work_source_review', array_column($adapter->lastRun['evaluation']['missing_requirements'], 'requirement'));
-            self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
-            self::assertSame(3, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
+            self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            self::assertSame(1, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
                 ->where('role', 'estimate_auditor')->where('status', 'completed')->distinct()->count('subject_id'));
             $repository = app(ProjectModelRepository::class);
             $measurementVersion = $numeric[0]->sourceVersion;
@@ -433,7 +425,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                 self::assertSame($currentIds, array_column($repository->currentDerivedQuantities(
                     (int) $session->organization_id, (int) $session->project_id, (int) $session->id, $measurementVersion), 'id'));
             }
-            $this->confirmAndApplyOriginalWorklist($session, $adapter, $roomEntityId);
+            $this->confirmAndApplyOriginalWorklist($session, $adapter);
         } finally {
             $book->disconnectWorksheets();
             if (is_file($input)) {
@@ -496,7 +488,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             'estimate_regional_price_version_id' => $version, 'normative_dataset_version' => $key]];
     }
 
-    private function confirmAndApplyOriginalWorklist(EstimateGenerationSession $session, RecordedUniversalPipelineAdapter $adapter, string $roomEntityId): void
+    private function confirmAndApplyOriginalWorklist(EstimateGenerationSession $session, RecordedUniversalPipelineAdapter $adapter): void
     {
         $actor = User::query()->findOrFail($session->user_id);
         $projectId = (int) $session->project_id;
@@ -505,12 +497,11 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $original = $adapter->lastRun['evaluation']['scenarios'][0]['positions'];
         $originalKeys = array_column($original, 'key');
         $nativePosition = array_values(array_filter($original, static fn (array $item): bool => $item['work_key'] === 'finish.floor'))[0];
-        self::assertEqualsCanonicalizing([
-            'room-floor:'.hash('sha256', "rough_finishing-norm-intent-1\0".$roomEntityId), 'rough_finishing-norm-intent-2', 'rough_finishing-norm-intent-3',
-            'room-floor:'.hash('sha256', "finish_finishing-norm-intent-1\0".$roomEntityId), 'finish_finishing-norm-intent-2', 'finish_finishing-norm-intent-3',
-            'finish_finishing-norm-intent-4', 'finishing', 'preparation',
-        ], $originalKeys);
+        self::assertEqualsCanonicalizing(['finish.floor', 'finishing', 'preparation'], $originalKeys);
         $snapshot = app(ProjectModelRepository::class)->snapshot($organizationId, $projectId, $sessionId);
+        $nativeFacts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->origin === 'document'
+            && in_array($fact->type, ['length', 'width'], true)));
+        self::assertCount(2, $nativeFacts);
         $names = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_name'));
         self::assertCount(1, $names, 'The actual XLSX name must remain in the canonical snapshot.');
         $name = $names[0];
@@ -574,7 +565,9 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                 ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
                     'work_item_key' => $position['key'], 'source_reference' => $price['source_reference'], 'source_hash' => $price['source_hash'],
                     'conditions_confirmation' => ['region' => ['value' => 'Москва', 'basis' => 'Пользователь принимает регион цены для выбранного объекта.']]]);
-            $quantities[] = ['work_item_key' => $position['key'], 'value' => $native ? '50' : '1', 'unit' => $workUnit];
+            if (! $native) {
+                $quantities[] = ['work_item_key' => $position['key'], 'value' => '1', 'unit' => $workUnit];
+            }
         }
         $recalculated = app(RecalculateUniversalEvaluation::class)->handle($actor, $projectId, $sessionId,
             (int) $session->fresh()->state_version, (string) Str::uuid());
@@ -594,14 +587,25 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             self::assertSame('0.03', $position['price_snapshot']['unit_price']);
             self::assertSame('RUB', $position['price_snapshot']['currency']);
             self::assertSame($native ? '1.50' : '0.03', $position['total_cost']);
+            self::assertSame($native ? '1.25' : '0.03', $position['money_breakdown']['net_amount']);
+            self::assertSame($native ? '0.25' : '0.00', $position['money_breakdown']['vat_amount']);
+            self::assertSame($native ? '1.50' : '0.03', $position['money_breakdown']['gross_amount']);
         }
-        self::assertSame('1.74', $revision['result']['scenarios'][0]['total_by_currency']['RUB']);
+        self::assertSame('1.56', $revision['result']['scenarios'][0]['total_by_currency']['RUB']);
         self::assertSame($originalKeys, array_column($revision['result']['scenarios'][0]['positions'], 'key'));
         self::assertTrue($revision['result']['scope_confirmed']);
+        $manualSources = $this->assertCurrentFloorQuantitySources($session, $nativeFacts);
         $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, $projectId, $sessionId,
             ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
                 'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'],
                 'scenario_id' => 'base', 'assumptions_accepted' => true]);
+        $this->assertCurrentFloorQuantitySources($session, $nativeFacts, $manualSources);
+        $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
+        $role = OrganizationCustomRole::query()->where('organization_id', $organizationId)->where('slug', $assignment->role_slug)->firstOrFail();
+        $permissions = $role->module_permissions;
+        $permissions['ai-estimates'][] = 'estimate_generation.export';
+        $permissions['ai-estimates'][] = 'estimate_generation.apply';
+        $role->update(['module_permissions' => $permissions]);
         $request = Request::create('/export', 'GET', ['format' => 'excel']);
         $request->setUserResolver(static fn () => $actor);
         $beforeExport = $session->fresh()->getRawOriginal();
@@ -609,29 +613,99 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         self::assertSame(200, $response->getStatusCode(), (string) $response->getContent());
         self::assertSame('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', $response->headers->get('Content-Type'));
         self::assertSame($beforeExport, $session->fresh()->getRawOriginal());
-        $this->assertPipelineXlsx((string) $response->getContent(), $originalKeys);
-        $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
-        $role = OrganizationCustomRole::query()->where('organization_id', $organizationId)->where('slug', $assignment->role_slug)->firstOrFail();
-        $permissions = $role->module_permissions;
-        $permissions['ai-estimates'][] = 'estimate_generation.apply';
-        $role->update(['module_permissions' => $permissions]);
+        $quantityReferences = [];
+        foreach ($session->fresh()->draft_payload['local_estimates'] as $localEstimate) {
+            foreach ($localEstimate['sections'] as $section) {
+                foreach ($section['work_items'] as $item) {
+                    $quantityReferences[$item['key']] = $item;
+                }
+            }
+        }
+        $this->assertPipelineXlsx((string) $response->getContent(), $originalKeys, $quantityReferences);
         $command = new ApplyGeneratedEstimateCommand($sessionId, $organizationId, $projectId, $confirmation['state_version'],
             idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor);
         $applied = app(ApplyGeneratedEstimate::class)->handle($command);
         self::assertSame($applied->estimateId, app(ApplyGeneratedEstimate::class)->handle($command)->estimateId);
         $estimate = Estimate::query()->findOrFail($applied->estimateId);
-        self::assertSame('1.74', $estimate->total_amount_with_vat);
+        self::assertSame('1.56', $estimate->total_amount_with_vat);
+        self::assertSame('1.31', $estimate->total_amount);
         self::assertSame(count($original), $estimate->items()->whereNull('parent_work_id')->count());
         for ($iteration = 0; $iteration < 2; $iteration++) {
             app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
-            self::assertSame('1.74', $estimate->fresh()->total_amount_with_vat);
+            self::assertSame('1.56', $estimate->fresh()->total_amount_with_vat);
+            self::assertSame('1.31', $estimate->fresh()->total_amount);
+            $this->assertCurrentFloorQuantitySources($session, $nativeFacts, $manualSources);
+            foreach ($estimate->fresh()->items()->whereNull('parent_work_id')->get() as $item) {
+                $native = $item->metadata['source_work_item_key'] === 'finish.floor';
+                self::assertTrue(\Brick\Math\BigDecimal::of((string) $item->quantity_total)->isEqualTo($native ? '50' : '1'));
+                self::assertSame($native ? '1.25' : '0.03', $item->metadata['generated_source_money']['money']['net_amount']);
+                self::assertSame($native ? '0.25' : '0.00', $item->metadata['generated_source_money']['money']['vat_amount']);
+                self::assertSame($native ? '1.50' : '0.03', $item->metadata['generated_source_money']['money']['gross_amount']);
+                self::assertSame($native ? 'evidenced' : 'estimated', $item->metadata['quantity_evidence']['source']);
+                self::assertSame($native ? [] : [$item->metadata['quantity_evidence']['formula_inputs']['operands'][0]['fact_id']],
+                    $item->metadata['quantity_evidence']['assumptions']);
+            }
         }
         $totals = (new \ReflectionMethod(EstimateExportService::class, 'prepareTotalsData'))->invoke(app(EstimateExportService::class), $estimate->fresh());
-        self::assertSame('1.74', (string) $totals['total_amount_with_vat']);
-        self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
+        self::assertSame('1.56', (string) $totals['total_amount_with_vat']);
+        self::assertSame('1.31', (string) $totals['total_amount']);
+        self::assertTrue(\Brick\Math\BigDecimal::of((string) $totals['vat_amount'])->isEqualTo('0.25'));
+        self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
     }
 
-    private function assertPipelineXlsx(string $content, array $workKeys): void
+    private function assertCurrentFloorQuantitySources(EstimateGenerationSession $session, array $nativeFacts, array $previousManual = []): array
+    {
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $session->organization_id,
+            (int) $session->project_id, (int) $session->id, 10001)['snapshot'];
+        $facts = array_column($snapshot->facts, null, 'id');
+        $evidence = array_column($snapshot->evidence, null, 'id');
+        foreach ($nativeFacts as $original) {
+            $current = $facts[$original->id];
+            self::assertSame($original->entityId, $current->entityId);
+            self::assertSame($original->value, $current->value);
+            self::assertSame($original->sourceVersion, $current->sourceVersion);
+            self::assertSame($original->evidenceIds, $current->evidenceIds);
+            self::assertSame('document', $current->origin);
+            self::assertTrue((new NativeNumericFactProof)->matches($current, $evidence[$current->evidenceIds[0]]));
+        }
+        $manual = [];
+        foreach ($session->fresh()->draft_payload['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                foreach ($section['work_items'] as $item) {
+                    $native = $item['key'] === 'finish.floor';
+                    $basis = $item['quantity_evidence'];
+                    self::assertSame($native ? 'evidenced' : 'estimated', $basis['source']);
+                    $operands = $basis['formula_inputs']['operands'];
+                    if ($native) {
+                        self::assertEqualsCanonicalizing(array_column($nativeFacts, 'id'), array_column($operands, 'fact_id'));
+                        self::assertSame([], $basis['assumptions']);
+                        continue;
+                    }
+                    self::assertCount(1, $operands);
+                    $fact = $facts[$operands[0]['fact_id']];
+                    self::assertSame('user_assumption', $fact->origin);
+                    self::assertSame('1', $fact->value);
+                    self::assertSame('m2', $fact->unit);
+                    self::assertSame($nativeFacts[0]->entityId, $fact->entityId);
+                    self::assertSame([], $fact->nativeNumericProofs);
+                    self::assertSame([$fact->id], $basis['assumptions']);
+                    self::assertSame($fact->evidenceIds, $operands[0]['evidence_ids']);
+                    foreach ($fact->evidenceIds as $id) {
+                        self::assertSame('user_input', $evidence[$id]->sourceType);
+                    }
+                    if (isset($previousManual[$item['key']]) && $previousManual[$item['key']]->id !== $fact->id) {
+                        self::assertSame($previousManual[$item['key']]->id, $fact->supersedesFactId);
+                    }
+                    $manual[$item['key']] = $fact;
+                }
+            }
+        }
+        self::assertEqualsCanonicalizing(['finishing', 'preparation'], array_keys($manual));
+
+        return $manual;
+    }
+
+    private function assertPipelineXlsx(string $content, array $workKeys, array $quantityReferences): void
     {
         $path = tempnam(sys_get_temp_dir(), 'most-recorded-pipeline-export-');
         self::assertNotFalse($path);
@@ -647,7 +721,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                     $gross[] = (string) \Brick\Math\BigDecimal::of(str_replace(' ', '', (string) $sheet->getCell('G'.$row)->getValue()))->toScale(2);
                 }
             }
-            self::assertSame(['1.74'], $gross);
+            self::assertSame(['1.56'], $gross);
             $metadataSheet = $book->getSheetByName('_METADATA_');
             self::assertNotNull($metadataSheet);
             $metadata = json_decode((string) $metadataSheet->getCell('A1')->getValue(), true, 64, JSON_THROW_ON_ERROR);
@@ -667,7 +741,19 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                 self::assertNull($item['parent_work_id']);
                 self::assertGreaterThan(0, $item['quantity_total']);
                 self::assertNotEmpty($item['metadata']['price_snapshot']['source_hash']);
-                self::assertNotEmpty($item['metadata']['source_money']);
+                $native = $item['metadata']['work_item_key'] === 'finish.floor';
+                self::assertSame($native ? '1.25' : '0.03', $item['metadata']['source_money']['net_amount']);
+                self::assertSame($native ? '0.25' : '0.00', $item['metadata']['source_money']['vat_amount']);
+                self::assertSame($native ? '1.50' : '0.03', $item['metadata']['source_money']['gross_amount']);
+                self::assertSame('included', $item['metadata']['source_money']['vat_mode']);
+                self::assertSame('20', $item['metadata']['source_money']['vat_rate']);
+                $source = $quantityReferences[$item['metadata']['work_item_key']];
+                foreach (['quantity_evidence_id', 'quantity_evidence_fingerprint', 'quantity_evidence_source_version', 'quantity_formula'] as $field) {
+                    if ($field !== 'quantity_formula') {
+                        self::assertNotEmpty($source[$field]);
+                    }
+                    self::assertSame($source[$field] ?? null, $item['metadata'][$field]);
+                }
                 $exported[] = $item['metadata']['evaluation_confirmation']['scenario_id'];
             }
             self::assertSame(array_fill(0, count($workKeys), 'base'), $exported);
