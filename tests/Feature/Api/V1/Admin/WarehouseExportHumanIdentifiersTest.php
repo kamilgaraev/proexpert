@@ -51,17 +51,17 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $forms = [
-            [M4ExportStrategy::class, 'H11'],
-            [M7ExportStrategy::class, 'H11'],
-            [M11ExportStrategy::class, 'H11'],
-            [M15ExportStrategy::class, 'H12'],
+            [M4ExportStrategy::class, 'H11', 'б/н'],
+            [M7ExportStrategy::class, 'H11', 'б/н'],
+            [M11ExportStrategy::class, 'H11', 'б/н'],
+            [M15ExportStrategy::class, 'A6', 'НАКЛАДНАЯ N б/н'],
         ];
 
-        foreach ($forms as [$strategy, $numberCell]) {
+        foreach ($forms as [$strategy, $numberCell, $expectedNumber]) {
             $path = app($strategy)->export($movement);
             $sheet = $this->sheetFromStorage($path);
 
-            $this->assertSame('б/н', $sheet->getCell($numberCell)->getValue());
+            $this->assertSame($expectedNumber, $sheet->getCell($numberCell)->getValue(), $strategy);
             $this->assertStringContainsString('20260830_101112', $path);
             $this->assertStringNotContainsString('_'.$movement->id.'.xlsx', $path);
         }
@@ -137,19 +137,21 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
             'hire_date' => '2026-01-01',
         ]);
 
-        $movement->forceFill(['movement_date' => '2025-06-01 10:11:12'])->save();
-        $historicalSheet = $this->sheetFromStorage(app(M4ExportStrategy::class)->export($movement));
-        $historicalPersonText = (string) $historicalSheet->getCell('A19')->getValue();
-        $this->assertStringContainsString('Старый Сотрудник', $historicalPersonText);
-        $this->assertStringNotContainsString('Гараев Камиль Тестович', $historicalPersonText);
-
-        $movement->forceFill(['movement_date' => '2026-09-01 10:11:12'])->save();
-
         $forms = [
             [M4ExportStrategy::class, 'A19'],
             [M11ExportStrategy::class, 'A19'],
-            [M15ExportStrategy::class, 'A16'],
+            [M15ExportStrategy::class, 'AE16'],
         ];
+
+        $movement->forceFill(['movement_date' => '2025-06-01 10:11:12'])->save();
+        foreach ($forms as [$strategy, $personCell]) {
+            $historicalSheet = $this->sheetFromStorage(app($strategy)->export($movement));
+            $historicalPersonText = (string) $historicalSheet->getCell($personCell)->getValue();
+            $this->assertStringContainsString('Старый Сотрудник', $historicalPersonText);
+            $this->assertStringNotContainsString('Гараев Камиль Тестович', $historicalPersonText);
+        }
+
+        $movement->forceFill(['movement_date' => '2026-09-01 10:11:12'])->save();
 
         foreach ($forms as [$strategy, $personCell]) {
             $sheet = $this->sheetFromStorage(app($strategy)->export($movement));

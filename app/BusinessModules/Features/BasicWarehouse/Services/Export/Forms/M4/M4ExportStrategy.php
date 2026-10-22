@@ -58,10 +58,12 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
         $org = $movement->organization;
         $warehouse = $movement->warehouse;
 
-        $sheet->setCellValue('J1', 'Унифицированная форма № М-4');
-        $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
-        $sheet->setCellValue('J3', 'России от 30.10.97 № 71а');
-        $sheet->getStyle('J1:L3')->getFont()->setSize(8);
+        $sheet->mergeCells('G1:I1');
+        $sheet->mergeCells('G2:I2');
+        $sheet->mergeCells('G3:I3');
+        $sheet->setCellValue('G1', 'Унифицированная форма № М-4');
+        $sheet->setCellValue('G2', 'Утверждена постановлением Госкомстата');
+        $sheet->setCellValue('G3', 'России от 30.10.97 № 71а');
 
         $sheet->mergeCells('A5:G5');
         $sheet->setCellValue('A5', $org->legal_name ?? $org->name);
@@ -142,16 +144,6 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
 
     protected function applyStyles($sheet): void
     {
-        $sheet->getColumnDimension('A')->setWidth(45);
-        $sheet->getColumnDimension('B')->setWidth(10);
-        $sheet->getColumnDimension('C')->setWidth(10);
-        $sheet->getColumnDimension('D')->setWidth(10);
-        $sheet->getColumnDimension('E')->setWidth(12);
-        $sheet->getColumnDimension('F')->setWidth(12);
-        $sheet->getColumnDimension('G')->setWidth(12);
-        $sheet->getColumnDimension('H')->setWidth(15);
-        $sheet->getColumnDimension('I')->setWidth(25);
-
-        $sheet->getStyle('A1:L50')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        $this->applyReceiptPrintLayout($sheet, 16, true);
     }
 }

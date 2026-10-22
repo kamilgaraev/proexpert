@@ -227,7 +227,7 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         }
 
         $sheet->mergeCells("A{$row}:M{$row}");
-        $sheet->setCellValue("M{$row}", 'Всего:');
+        $sheet->setCellValue("A{$row}", 'Всего:');
         $sheet->setCellValue("N{$row}", $incomeTotal);
         $sheet->setCellValue("O{$row}", $expenseTotal);
         $sheet->setCellValue("P{$row}", $balance);
@@ -309,5 +309,14 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getStyle("N28:P{$lastRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $sheet->getStyle('A22:S27')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         $sheet->getStyle("A28:S{$lastRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        foreach (['N1:S1', 'N2:S2', 'B8:O8', 'E14:F14', 'M14', 'O14', 'D17:K17'] as $range) {
+            $this->fitWrappedCell($sheet, $range, 16);
+        }
+        for ($row = 28; $row < $lastRow; $row++) {
+            $this->fitWrappedCell($sheet, "B{$row}", 16);
+            $this->fitWrappedCell($sheet, "D{$row}:L{$row}", 16);
+        }
+        $sheet->getStyle("N28:P{$lastRow}")->getAlignment()->setWrapText(false)->setShrinkToFit(true);
+        $sheet->getPageSetup()->setRowsToRepeatAtTop([22, 25]);
     }
 }
