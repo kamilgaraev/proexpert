@@ -352,6 +352,38 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         self::assertSame([], (new RoleScanner())->getSystemPermissions('unit-fence-role'));
     }
 
+    public function testPlainCurrentSystemPermissionsReadOneDefinitionAndRefreshOnEveryIndependentRead(): void
+    {
+        $catalog = $this->countingRoleCatalog();
+        $definition = ['system_permissions' => ['reports.view'], 'interface_access' => ['admin'],
+            'module_permissions' => ['ai_assistant' => ['chat']]];
+        $catalog->put('authorization_roles:v3', collect(['unit-fence-role' => $definition]));
+        $resolver = (new PermissionResolver(new RoleScanner, new ModulePermissionChecker(Mockery::mock(AccessController::class)), Mockery::mock(LoggingService::class)))
+            ->forCurrentChecks();
+
+        self::assertSame(['reports.view', 'admin.access', 'admin.view', 'dashboard.view'], $resolver->getSystemPermissions(self::assignment()));
+        self::assertSame(1, $catalog->catalogReads);
+
+        $catalog->put('authorization_roles:v3', collect(['unit-fence-role' => [
+            'system_permissions' => [], 'interface_access' => [], 'module_permissions' => [],
+        ]]));
+        self::assertSame([], $resolver->getSystemPermissions(self::assignment()));
+        self::assertSame(2, $catalog->catalogReads);
+
+        $catalog->put('authorization_roles:v3', collect(['unit-fence-role' => [
+            'system_permissions' => ['users.view'], 'interface_access' => [], 'module_permissions' => [],
+        ]]));
+        $catalog->put('authorization_roles_revision', 1);
+        self::assertSame(['users.view'], $resolver->getSystemPermissions(self::assignment()));
+        self::assertSame(3, $catalog->catalogReads);
+        self::assertSame([], $resolver->getModulePermissions(self::assignment()));
+        self::assertSame(4, $catalog->catalogReads);
+
+        $catalog->put('authorization_roles:v3', collect());
+        self::assertSame([], $resolver->getSystemPermissions(self::assignment()));
+        self::assertSame(5, $catalog->catalogReads);
+    }
+
     public function testSystemRoleDefinitionIsSharedOnlyInsideOneReadScope(): void
     {
         $catalog = $this->countingRoleCatalog();
