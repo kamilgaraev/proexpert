@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
@@ -16,18 +17,22 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagExpectedSourceProjection;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
+use App\Models\File;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\DatabaseTransactionsManager;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\RagTestEmbedding;
@@ -37,6 +42,7 @@ final class RagActorCoverageTest extends TestCase
 {
     private RagCoverageService $coverage;
     private RagIndexer $indexer;
+    private AssistantDataAccessPolicy $policy;
     private ActorCoverageCollector $collector;
     private bool $permissions = true;
     private array $permissionChecks = [];
@@ -58,6 +64,7 @@ final class RagActorCoverageTest extends TestCase
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'payments']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService(), $modules);
+        $this->policy = $policy;
         $this->collector = new ActorCoverageCollector();
         $registry = new RagSourceRegistry([$this->collector]);
         $this->indexer = new RagIndexer(new ActorCoverageEmbedding(), $registry);
@@ -243,6 +250,111 @@ final class RagActorCoverageTest extends TestCase
         $this->assertSame([], $status['source_catalog']);
         $this->assertFalse($status['ready']);
         $this->assertSame(0, $this->collector->collections);
+    }
+
+    public function test_projection_diagnostics_follow_each_counts_batch_and_leave_eager_proof_filters_unavailable(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $this->coverage->refreshCoverage($organization->id);
+        $file = File::withoutEvents(fn () => File::create([
+            'organization_id' => $organization->id, 'user_id' => $actor->id,
+            'fileable_type' => Project::class, 'fileable_id' => $visible->id,
+            'name' => 'Diagnostic.pdf', 'original_name' => 'Diagnostic.pdf', 'path' => 'org-'.$organization->id.'/diagnostic.pdf',
+            'disk' => 's3', 'mime_type' => 'application/pdf', 'size' => 100,
+        ]));
+        $document = AIAssistantDocument::withoutEvents(fn () => AIAssistantDocument::create([
+            'organization_id' => $organization->id, 'project_id' => $visible->id, 'file_id' => $file->id,
+            'parent_entity_type' => 'project', 'parent_entity_id' => (string) $visible->id,
+            'storage_path' => $file->path, 'filename' => 'Diagnostic.pdf', 'mime_type' => 'application/pdf',
+            'checksum' => hash('sha256', 'diagnostic-document'), 'size_bytes' => 100, 'status' => 'ready',
+        ]));
+        RagExpectedSource::query()->where('organization_id', $organization->id)->firstOrFail()->replicate()->forceFill([
+            'source_type' => 'file_document', 'entity_type' => 'assistant_document', 'entity_id' => (string) $document->id,
+            'identity_part_key' => 'diagnostic-file', 'checksum' => $document->checksum,
+        ])->save();
+        $generation = (string) RagExpectedSource::query()->where('organization_id', $organization->id)->value('generation');
+        $records = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$records): bool {
+            $records[] = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        $connection = DB::connection();
+        $dispatcher = $connection->getEventDispatcher();
+        self::assertNotNull($dispatcher);
+        $connection->setEventDispatcher(clone $dispatcher);
+        $queries = 0;
+        $connection->listen(static function (QueryExecuted $event) use (&$queries): void {
+            if (str_contains($event->sql, 'expected.source_type, COUNT(*)')) { $queries++; usleep(520000); }
+        });
+        try {
+            $projection = new RagExpectedSourceProjection($this->indexer);
+            $proof = null;
+            $counts = $projection->actorCounts($organization->id, $actor, $this->policy, ['project', 'file_document'], $generation, proof: $proof, collectProof: false);
+            self::assertNull($proof);
+            $full = $projection->actorCounts($organization->id, $actor, $this->policy, ['project', 'file_document'], $generation, proof: $proof);
+        } finally {
+            $connection->setEventDispatcher($dispatcher);
+        }
+        self::assertSame(4, $queries);
+        self::assertCount(4, $records);
+        self::assertSame(1, (int) $counts['project']->expected_count);
+        self::assertSame((int) $counts['project']->expected_count, (int) $full['project']->expected_count);
+        self::assertSame(1, (int) $counts['file_document']->expected_count);
+        self::assertSame(1, (int) $full['file_document']->expected_count);
+        foreach ($counts as $type => $row) { self::assertSame((int) $row->expected_count, (int) $full[$type]->expected_count); }
+        self::assertCount(array_sum(array_map(static fn (object $row): int => (int) $row->expected_count, $full)), $proof);
+        self::assertCount(2, $proof);
+        $seenTypes = [];
+        foreach (array_slice($records, 0, 2) as $index => $record) {
+            self::assertCount(1, $record['source_type_filters']);
+            $type = $record['source_type_filters'][0];
+            $seenTypes[] = $type;
+            self::assertSame('counts', $records[$index]['projection_mode']);
+            self::assertSame($index + 1, $records[$index]['query_ordinal']);
+            self::assertSame([$type], $records[$index]['source_type_filters']);
+            self::assertSame([$type === 'file_document' ? 'assistant_document' : 'project'], $records[$index]['entity_type_filters']);
+            self::assertTrue($records[$index]['source_type_filters_complete']);
+            self::assertTrue($records[$index]['entity_type_filters_complete']);
+            self::assertSame('proof', $records[$index + 2]['projection_mode']);
+            self::assertNull($records[$index + 2]['source_type_filters']);
+            self::assertNull($records[$index + 2]['entity_type_filters']);
+            self::assertFalse($records[$index + 2]['source_type_filters_complete']);
+            self::assertFalse($records[$index + 2]['entity_type_filters_complete']);
+        }
+        sort($seenTypes);
+        self::assertSame(['file_document', 'project'], $seenTypes);
+    }
+
+    public function test_projection_query_failure_survives_a_failing_diagnostic_logger(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $this->coverage->refreshCoverage($organization->id);
+        $generation = (string) RagExpectedSource::query()->where('organization_id', $organization->id)->value('generation');
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andThrow(new \RuntimeException('private_logger_fixture'));
+        Log::swap($logger);
+        $sentinel = new \RuntimeException('private_query_fixture');
+        $connection = DB::connection();
+        $dispatcher = $connection->getEventDispatcher();
+        self::assertNotNull($dispatcher);
+        $connection->setEventDispatcher(clone $dispatcher);
+        $connection->listen(static function (QueryExecuted $event) use ($sentinel): void {
+            if (str_contains($event->sql, 'expected.source_type, COUNT(*)')) { usleep(520000); throw $sentinel; }
+        });
+        try {
+            (new RagExpectedSourceProjection($this->indexer))->actorCounts($organization->id, $actor, $this->policy, ['project'], $generation, collectProof: false);
+            self::fail('The query failure must propagate.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame($sentinel, $exception);
+        } finally {
+            $connection->setEventDispatcher($dispatcher);
+        }
     }
 
     public function test_counts_only_matches_projection_parts_and_current_embedding_and_assignment_revocation(): void
