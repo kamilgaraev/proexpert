@@ -11,15 +11,15 @@ class KS3SummaryService
     public function summarize(int $contractId, string $periodStart, string $periodEnd): array
     {
         $previous = $this->approvedQuery($contractId)
-            ->where('act_date', '<', $periodStart)
+            ->whereRaw('COALESCE(period_end, act_date) < ?', [$periodStart])
             ->sum('amount');
 
         $current = $this->approvedQuery($contractId)
-            ->whereBetween('act_date', [$periodStart, $periodEnd])
+            ->whereRaw('COALESCE(period_end, act_date) BETWEEN ? AND ?', [$periodStart, $periodEnd])
             ->sum('amount');
 
         $cumulative = $this->approvedQuery($contractId)
-            ->where('act_date', '<=', $periodEnd)
+            ->whereRaw('COALESCE(period_end, act_date) <= ?', [$periodEnd])
             ->sum('amount');
 
         return [
