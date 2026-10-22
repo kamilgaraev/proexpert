@@ -74,7 +74,8 @@ class ExcelEstimateBuilder
             $row = $this->buildTotals($sheet, $row, $data);
         }
         $this->buildSignatures($sheet, $row, $options);
-        if ($closingRow > 45) {
+        $fitsOnePage = $this->fitsShortPrintPage($sheet);
+        if (! $fitsOnePage) {
             $sheet->setBreak('A'.($closingRow - 1), Worksheet::BREAK_ROW);
         }
         $sheet->getPageMargins()->setTop(0.3937)->setBottom(0.3937)
@@ -86,7 +87,7 @@ class ExcelEstimateBuilder
             ->setPaperSize(PageSetup::PAPERSIZE_A4)
             ->setFitToPage(true)
             ->setFitToWidth(1)
-            ->setFitToHeight($this->fitsShortPrintPage($sheet) ? 1 : 0)
+            ->setFitToHeight($fitsOnePage ? 1 : 0)
             ->setPrintArea('A1:H'.$sheet->getHighestRow());
     }
 

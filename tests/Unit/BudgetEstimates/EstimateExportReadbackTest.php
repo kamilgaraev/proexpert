@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Collection;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 use Smalot\PdfParser\Parser;
@@ -435,13 +436,14 @@ final class EstimateExportReadbackTest extends TestCase
         }
     }
 
-    public function test_long_excel_preserves_every_position_and_repeats_print_headings(): void
+    #[DataProvider('multipagePositionCounts')]
+    public function test_long_excel_preserves_every_position_and_repeats_print_headings(int $count): void
     {
         $estimate = $this->fixture();
         $section = $estimate->sections->first();
         $template = $section->items->first();
         $items = new Collection;
-        for ($number = 1; $number <= 55; $number++) {
+        for ($number = 1; $number <= $count; $number++) {
             $item = clone $template;
             $item->id = 500000 + $number;
             $item->position_number = (string) $number;
@@ -454,10 +456,11 @@ final class EstimateExportReadbackTest extends TestCase
             $items->push($item);
         }
         $section->setRelation('items', $items);
-        $section->section_total_amount = 9900;
-        $estimate->total_direct_costs = 9900;
-        $estimate->total_amount = 9900;
-        $estimate->total_amount_with_vat = 9900;
+        $amount = $count * 180;
+        $section->section_total_amount = $amount;
+        $estimate->total_direct_costs = $amount;
+        $estimate->total_amount = $amount;
+        $estimate->total_amount_with_vat = $amount;
         $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
         $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
         $path = tempnam(sys_get_temp_dir(), 'pto-business-long-');
@@ -472,15 +475,25 @@ final class EstimateExportReadbackTest extends TestCase
                 self::assertEquals(180, $sheet->getCell('G'.$row)->getValue());
             }
             $totalRow = $this->rowContaining($sheet, 'A', 'ВСЕГО С НДС:');
-            self::assertEquals(9900, $sheet->getCell('G'.$totalRow)->getValue());
+            self::assertEquals($amount, $sheet->getCell('G'.$totalRow)->getValue());
             $summaryRow = $this->rowContaining($sheet, 'A', 'ИТОГОВАЯ СВОДКА');
+            if ($count === 30) {
+                self::assertLessThanOrEqual(45, $summaryRow);
+                self::assertGreaterThan(45, $sheet->getHighestRow());
+            }
             self::assertSame(Worksheet::BREAK_ROW, $sheet->getBreaks()['A'.($summaryRow - 1)] ?? null);
             if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
-                file_put_contents($directory.'/estimate-business-long.xlsx', $result['content']);
+                $variant = $count === 30 ? 'medium' : 'long';
+                file_put_contents($directory.'/estimate-business-'.$variant.'.xlsx', $result['content']);
             }
         } finally {
             unlink($path);
         }
+    }
+
+    public static function multipagePositionCounts(): array
+    {
+        return ['medium' => [30], 'long' => [55]];
     }
 
     private function rowContaining(Worksheet $sheet, string $column, string $value): int
