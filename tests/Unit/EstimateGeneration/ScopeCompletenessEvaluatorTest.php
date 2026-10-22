@@ -16,6 +16,34 @@ use PHPUnit\Framework\TestCase;
 
 final class ScopeCompletenessEvaluatorTest extends TestCase
 {
+    public function test_canonical_equipment_installation_covers_only_its_section_and_entity(): void
+    {
+        $version = 'sha256:'.str_repeat('a', 64);
+        $snapshot = new ProjectModelSnapshot([
+            new Entity('equipment:1', 1, 2, 3, $version, 'equipment', 'equipment:1'),
+            new Entity('equipment:2', 1, 2, 3, $version, 'equipment', 'equipment:2'),
+        ], [], [], []);
+        $evaluator = new ScopeCompletenessEvaluator;
+        $position = ['key' => 'install:1', 'work_key' => 'equipment.install', 'section' => 'equipment', 'entity_id' => 'equipment:1'];
+        $result = $evaluator->evaluate($snapshot, 'construction', 'new_construction', ['equipment' => ['equipment:1']], [$position]);
+        self::assertFalse($result['scope_complete']);
+        self::assertNotContains('installation', array_column($result['missing_requirements'], 'requirement'));
+        self::assertSame(['equipment_specification', 'equipment_purchase', 'delivery', 'commissioning'],
+            array_column($result['missing_requirements'], 'requirement'));
+        foreach ([
+            [...$position, 'work_key' => 'equipment.purchase'],
+            [...$position, 'work_key' => 'equipment.custom'],
+            [...$position, 'section' => 'heating'],
+            [...$position, 'entity_id' => 'equipment:2'],
+            [...$position, 'selected' => false],
+            [...$position, 'included' => false],
+        ] as $unsupported) {
+            $result = $evaluator->evaluate($snapshot, 'construction', 'new_construction', ['equipment' => ['equipment:1']], [$unsupported]);
+            self::assertContains('installation', array_column($result['missing_requirements'], 'requirement'));
+            self::assertFalse($result['scope_complete']);
+        }
+    }
+
     public function test_registered_finishing_work_covers_only_its_requirement_section_and_entity(): void
     {
         $version = 'sha256:'.str_repeat('a', 64);

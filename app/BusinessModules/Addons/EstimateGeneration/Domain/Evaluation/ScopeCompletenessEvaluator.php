@@ -31,6 +31,9 @@ final class ScopeCompletenessEvaluator
 
     public static function workRequirement(string $section, string $workKey): string
     {
+        if ($section === 'equipment' && $workKey === 'equipment.install') {
+            return 'installation';
+        }
         if ($section !== 'finishing') {
             return $workKey;
         }
