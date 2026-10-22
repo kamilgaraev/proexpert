@@ -18,6 +18,7 @@ use App\Models\Project;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Eloquent\Collection;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
@@ -274,13 +275,13 @@ final class EstimateExportReadbackTest extends TestCase
             foreach (['B', 'C', $notesColumn] as $column) {
                 self::assertLessThanOrEqual(70, $sheet->getColumnDimension($column)->getWidth());
             }
-            self::assertEquals(35, $sheet->getColumnDimension($notesColumn)->getWidth());
+            self::assertEquals(26, $sheet->getColumnDimension($notesColumn)->getWidth());
             self::assertSame($showPrices, $sheet->getColumnDimension('G')->getVisible());
             self::assertSame($showPrices, $sheet->getColumnDimension('H')->getVisible());
-            self::assertSame('ГЭСН08-02-002-05 (Н)', $sheet->getCell('B17')->getValue());
-            self::assertSame($item->name, $sheet->getCell('C17')->getValue());
-            self::assertSame($item->description, $sheet->getCell($notesColumn.'17')->getValue());
-            foreach (['B17', 'C17', $notesColumn.'17'] as $coordinate) {
+            $itemRow = $this->rowContaining($sheet, 'C', $item->name);
+            self::assertSame('ГЭСН08-02-002-05 (Н)', $sheet->getCell('B'.$itemRow)->getValue());
+            self::assertSame($item->description, $sheet->getCell($notesColumn.$itemRow)->getValue());
+            foreach (['B'.$itemRow, 'C'.$itemRow, $notesColumn.$itemRow] as $coordinate) {
                 self::assertTrue($sheet->getStyle($coordinate)->getAlignment()->getWrapText());
             }
             self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
@@ -312,13 +313,14 @@ final class EstimateExportReadbackTest extends TestCase
         try {
             file_put_contents($path, $result['content']);
             $sheet = IOFactory::load($path)->getSheetByName('Смета');
-            self::assertEquals(999999999, $sheet->getCell('E17')->getValue());
-            self::assertEquals(179999999820, $sheet->getCell('G17')->getValue());
-            foreach (['E17', 'F17', 'G17'] as $coordinate) {
+            $itemRow = $this->rowContaining($sheet, 'C', $item->name);
+            self::assertEquals(999999999, $sheet->getCell('E'.$itemRow)->getValue());
+            self::assertEquals(179999999820, $sheet->getCell('G'.$itemRow)->getValue());
+            foreach (['E'.$itemRow, 'F'.$itemRow, 'G'.$itemRow] as $coordinate) {
                 self::assertTrue($sheet->getStyle($coordinate)->getAlignment()->getShrinkToFit());
                 self::assertFalse($sheet->getStyle($coordinate)->getAlignment()->getWrapText());
             }
-            self::assertTrue($sheet->getStyle('G18')->getAlignment()->getShrinkToFit());
+            self::assertTrue($sheet->getStyle('G'.($itemRow + 1))->getAlignment()->getShrinkToFit());
             if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
                 file_put_contents($directory.'/estimate-large-numbers.xlsx', $result['content']);
             }
@@ -382,6 +384,113 @@ final class EstimateExportReadbackTest extends TestCase
         $document = (new Parser)->parseContent($result['content']);
 
         return [$document, $document->getText()];
+    }
+
+    public function test_excel_business_form_is_monochrome_compact_and_keeps_numeric_totals(): void
+    {
+        $estimate = $this->fixture();
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-business-');
+        try {
+            file_put_contents($path, $result['content']);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            self::assertSame('ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ', $sheet->getCell('A1')->getValue());
+            self::assertSame('MOST_ESTIMATE_EXPORT_V1', $book->getProperties()->getDescription());
+            self::assertSame(Worksheet::SHEETSTATE_HIDDEN, $book->getSheetByName('_METADATA_')->getSheetState());
+            self::assertFalse($sheet->getShowGridlines());
+            $values = array_merge(...$sheet->toArray());
+            self::assertNotContains('MOST', $values);
+            self::assertNotContains('Система управления проектами и смет', $values);
+            $headerRow = $this->rowContaining($sheet, 'A', '№');
+            self::assertSame([(string) $headerRow, (string) $headerRow], $sheet->getPageSetup()->getRowsToRepeatAtTop());
+            self::assertSame('D'.($headerRow + 1), $sheet->getFreezePane());
+            $totalRow = $this->rowContaining($sheet, 'A', 'ВСЕГО С НДС:');
+            self::assertEquals(30300, $sheet->getCell('G'.$totalRow)->getValue());
+            self::assertSame('n', $sheet->getCell('G'.$totalRow)->getDataType());
+            self::assertArrayHasKey('A'.$totalRow.':F'.$totalRow, $sheet->getMergeCells());
+            self::assertStringContainsString('Страница &P из &N', $sheet->getHeaderFooter()->getOddFooter());
+            $colors = [];
+            foreach ($sheet->getRowIterator() as $row) {
+                foreach ($row->getCellIterator('A', 'H') as $cell) {
+                    if ($cell->getValue() === null) {
+                        continue;
+                    }
+                    $style = $sheet->getStyle($cell->getCoordinate());
+                    foreach ([$style->getFont()->getColor(), $style->getFill()->getStartColor()] as $color) {
+                        $rgb = substr($color->getRGB(), -6);
+                        $colors[$rgb] = true;
+                    }
+                }
+            }
+            foreach (array_keys($colors) as $rgb) {
+                self::assertMatchesRegularExpression('/^([0-9A-F]{2})\1\1$/', (string) $rgb);
+            }
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-business-short.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function test_long_excel_preserves_every_position_and_repeats_print_headings(): void
+    {
+        $estimate = $this->fixture();
+        $section = $estimate->sections->first();
+        $template = $section->items->first();
+        $items = new Collection;
+        for ($number = 1; $number <= 55; $number++) {
+            $item = clone $template;
+            $item->id = 500000 + $number;
+            $item->position_number = (string) $number;
+            $item->name = 'ПОЗИЦИЯ-'.str_pad((string) $number, 2, '0', STR_PAD_LEFT).' Учебная работа с подробным наименованием для печатной проверки';
+            $item->quantity = 1;
+            $item->quantity_total = 1;
+            $item->unit_price = 180;
+            $item->total_amount = 180;
+            $item->direct_costs = 180;
+            $items->push($item);
+        }
+        $section->setRelation('items', $items);
+        $section->section_total_amount = 9900;
+        $estimate->total_direct_costs = 9900;
+        $estimate->total_amount = 9900;
+        $estimate->total_amount_with_vat = 9900;
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-business-long-');
+        try {
+            file_put_contents($path, $result['content']);
+            $sheet = IOFactory::load($path)->getSheetByName('Смета');
+            self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
+            self::assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+            foreach ($items as $item) {
+                $row = $this->rowContaining($sheet, 'C', $item->name);
+                self::assertEquals(1, $sheet->getCell('E'.$row)->getValue());
+                self::assertEquals(180, $sheet->getCell('G'.$row)->getValue());
+            }
+            $totalRow = $this->rowContaining($sheet, 'A', 'ВСЕГО С НДС:');
+            self::assertEquals(9900, $sheet->getCell('G'.$totalRow)->getValue());
+            $summaryRow = $this->rowContaining($sheet, 'A', 'ИТОГОВАЯ СВОДКА');
+            self::assertSame(Worksheet::BREAK_ROW, $sheet->getBreaks()['A'.($summaryRow - 1)] ?? null);
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-business-long.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    private function rowContaining(Worksheet $sheet, string $column, string $value): int
+    {
+        for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
+            if ($sheet->getCell($column.$row)->getValue() === $value) {
+                return $row;
+            }
+        }
+        self::fail('Не найдена строка: '.$value);
     }
 
     private function fixture(): Estimate

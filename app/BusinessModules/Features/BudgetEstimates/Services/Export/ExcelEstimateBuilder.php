@@ -27,6 +27,8 @@ class ExcelEstimateBuilder
     {
         $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
         $spreadsheet->getProperties()->setDescription('MOST_ESTIMATE_EXPORT_V1');
+        $spreadsheet->getDefaultStyle()->getFont()->setName('Arial')->setSize(10);
+        $spreadsheet->getDefaultStyle()->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
 
         // Create main estimate sheet
         $mainSheet = $spreadsheet->getActiveSheet();
@@ -59,240 +61,104 @@ class ExcelEstimateBuilder
         ];
     }
 
-    /**
-     * Построить основной лист сметы
-     */
     protected function buildMainSheet(Worksheet $sheet, array $data, array $options): void
     {
-        $row = 1;
-
-        // Header with МОСТ branding
-        $row = $this->buildHeader($sheet, $row, $data);
-
-        // Estimate info section
-        $row = $this->buildEstimateInfo($sheet, $row, $data);
-
-        // Main table with items
+        $sheet->setShowGridlines(false);
+        $sheet->setPrintGridlines(false);
+        $sheet->getDefaultRowDimension()->setRowHeight(16);
+        $this->applyColumnWidths($sheet, (bool) $options['show_prices']);
+        $row = $this->buildEstimateInfo($sheet, 1, $data);
         $row = $this->buildItemsTable($sheet, $row, $data, $options);
-
-        // Totals section
+        $closingRow = $row;
         if ($options['show_prices']) {
             $row = $this->buildTotals($sheet, $row, $data);
         }
-
-        // Signature fields
-        $row = $this->buildSignatures($sheet, $row, $options);
-
-        // Apply column widths
-        $this->applyColumnWidths($sheet, $options['show_prices']);
+        $this->buildSignatures($sheet, $row, $options);
+        if ($closingRow > 45) {
+            $sheet->setBreak('A'.($closingRow - 1), Worksheet::BREAK_ROW);
+        }
+        $sheet->getPageMargins()->setTop(0.3937)->setBottom(0.3937)
+            ->setLeft(0.3937)->setRight(0.3937)->setHeader(0.19685)->setFooter(0.19685);
+        $number = str_replace('&', '&&', (string) ($data['estimate']['number'] ?? ''));
+        $sheet->getHeaderFooter()->setOddFooter('&L&"Arial,Regular"&8Смета № '.$number.'&R&"Arial,Regular"&8Страница &P из &N');
         $sheet->getPageSetup()
             ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
             ->setPaperSize(PageSetup::PAPERSIZE_A4)
+            ->setFitToPage(true)
             ->setFitToWidth(1)
             ->setFitToHeight($this->fitsShortPrintPage($sheet) ? 1 : 0)
             ->setPrintArea('A1:H'.$sheet->getHighestRow());
     }
 
-    /**
-     * Построить шапку с брендингом МОСТ
-     */
-    protected function buildHeader(Worksheet $sheet, int $row, array $data): int
-    {
-        // МОСТ branding - основной заголовок
-        $sheet->setCellValue("A{$row}", 'MOST');
-        $sheet->mergeCells("A{$row}:H{$row}");
-        $sheet->getStyle("A{$row}")->applyFromArray([
-            'font' => [
-                'bold' => true,
-                'size' => 20,
-                'color' => ['rgb' => 'FFFFFF'],
-            ],
-            'fill' => [
-                'fillType' => Fill::FILL_SOLID,
-                'startColor' => ['rgb' => '667EEA'],
-            ],
-            'alignment' => [
-                'horizontal' => Alignment::HORIZONTAL_CENTER,
-                'vertical' => Alignment::VERTICAL_CENTER,
-            ],
-        ]);
-        $sheet->getRowDimension($row)->setRowHeight(35);
-        $row++;
-
-        // Подзаголовок
-        $sheet->setCellValue("A{$row}", 'Система управления проектами и смет');
-        $sheet->mergeCells("A{$row}:H{$row}");
-        $sheet->getStyle("A{$row}")->applyFromArray([
-            'font' => [
-                'italic' => true,
-                'size' => 10,
-                'color' => ['rgb' => '718096'],
-            ],
-            'alignment' => [
-                'horizontal' => Alignment::HORIZONTAL_CENTER,
-                'vertical' => Alignment::VERTICAL_CENTER,
-            ],
-        ]);
-        $sheet->getRowDimension($row)->setRowHeight(18);
-        $row++;
-
-        $row++; // Empty row
-
-        return $row;
-    }
-
-    /**
-     * Построить секцию информации о смете
-     */
     protected function buildEstimateInfo(Worksheet $sheet, int $row, array $data): int
     {
         $estimate = $data['estimate'];
-
-        // Estimate title
         $sheet->setCellValue("A{$row}", 'ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ');
         $sheet->mergeCells("A{$row}:H{$row}");
         $sheet->getStyle("A{$row}")->applyFromArray([
-            'font' => [
-                'bold' => true,
-                'size' => 16,
-                'color' => ['rgb' => '2D3748'],
-            ],
-            'alignment' => [
-                'horizontal' => Alignment::HORIZONTAL_CENTER,
-                'vertical' => Alignment::VERTICAL_CENTER,
-            ],
-            'borders' => [
-                'bottom' => [
-                    'borderStyle' => Border::BORDER_THICK,
-                    'color' => ['rgb' => '667EEA'],
-                ],
-            ],
+            'font' => ['bold' => true, 'size' => 14, 'color' => ['rgb' => '000000']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders' => ['bottom' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['rgb' => '000000']]],
         ]);
-        $sheet->getRowDimension($row)->setRowHeight(30);
+        $sheet->getRowDimension($row)->setRowHeight(22);
+        $sheet->getRowDimension(++$row)->setRowHeight(6);
         $row++;
-
-        $row += 2; // Empty rows
-
-        // Estimate details
         $info = [
             ['Номер сметы:', $estimate['number'] ?? 'Не указан'],
             ['Наименование:', $estimate['name'] ?? ''],
             ['Дата составления:', $estimate['estimate_date'] ?? ''],
             ['Организация:', $estimate['organization']['legal_name'] ?? $estimate['organization']['name'] ?? ''],
         ];
-
         if ($estimate['project']) {
             $info[] = ['Проект:', $estimate['project']['name']];
-            if (!empty($estimate['project']['address'])) {
+            if (! empty($estimate['project']['address'])) {
                 $info[] = ['Адрес объекта:', $estimate['project']['address']];
             }
         }
-
         if ($estimate['contract']) {
-            $info[] = ['Договор:', $estimate['contract']['number'] . ' - ' . $estimate['contract']['name']];
+            $info[] = ['Договор:', $estimate['contract']['number'].' - '.$estimate['contract']['name']];
         }
-
         $info[] = ['Статус:', $this->formatStatus($estimate['status'])];
-
-        // Apply background to info section
-        $startRow = $row;
-        foreach ($info as $index => $line) {
+        foreach ($info as $line) {
             $sheet->setCellValue("A{$row}", $line[0]);
             $sheet->mergeCells("A{$row}:B{$row}");
+            $sheet->getStyle("A{$row}")->getFont()->setBold(true);
             $sheet->setCellValue("C{$row}", $line[1]);
             $sheet->mergeCells("C{$row}:H{$row}");
-            
-            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
-                'fill' => [
-                    'fillType' => Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => $index % 2 === 0 ? 'F7FAFC' : 'FFFFFF'],
-                ],
-                'borders' => [
-                    'bottom' => [
-                        'borderStyle' => Border::BORDER_THIN,
-                        'color' => ['rgb' => 'E2E8F0'],
-                    ],
-                ],
-            ]);
-            
-            $sheet->getStyle("A{$row}")->applyFromArray([
-                'font' => [
-                    'bold' => true,
-                    'color' => ['rgb' => '4A5568'],
-                ],
-            ]);
-            
-            $sheet->getStyle("C{$row}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('2D3748'));
-            
-            $sheet->getRowDimension($row)->setRowHeight(20);
+            $sheet->getStyle("A{$row}:H{$row}")->getAlignment()->setWrapText(true);
+            $sheet->getRowDimension($row)->setRowHeight(max(16, (int) ceil(mb_strwidth((string) $line[1], 'UTF-8') / 100) * 13));
             $row++;
         }
+        $sheet->getRowDimension($row)->setRowHeight(6);
 
-        // Add border around info section
-        $endRow = $row - 1;
-        $sheet->getStyle("A{$startRow}:H{$endRow}")->applyFromArray([
-            'borders' => [
-                'outline' => [
-                    'borderStyle' => Border::BORDER_MEDIUM,
-                    'color' => ['rgb' => 'E2E8F0'],
-                ],
-            ],
-        ]);
-
-        $row += 2; // Empty rows
-
-        return $row;
+        return $row + 1;
     }
 
-    /**
-     * Построить таблицу позиций
-     */
     protected function buildItemsTable(Worksheet $sheet, int $row, array $data, array $options): int
     {
-        // Table header
         $headerRow = $row;
         $headers = ['№', 'Код', 'Наименование', 'Ед.изм.', 'Кол-во'];
-
         if ($options['show_prices']) {
             $headers[] = 'Цена';
             $headers[] = 'Сумма';
         }
-
         $headers[] = 'Примечание';
-
-        $col = 'A';
+        $column = 'A';
         foreach ($headers as $header) {
-            $sheet->setCellValue("{$col}{$row}", $header);
-            $col++;
+            $sheet->setCellValue("{$column}{$row}", $header);
+            $column++;
         }
-
-        // Style header
-        $lastCol = chr(ord('A') + count($headers) - 1);
-        $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
-            'font' => [
-                'bold' => true,
-                'color' => ['rgb' => 'FFFFFF'],
-                'size' => 11,
-            ],
-            'fill' => [
-                'fillType' => Fill::FILL_SOLID,
-                'startColor' => ['rgb' => '4A5568'],
-            ],
-            'borders' => [
-                'allBorders' => [
-                    'borderStyle' => Border::BORDER_MEDIUM,
-                    'color' => ['rgb' => '2D3748'],
-                ],
-            ],
-            'alignment' => [
-                'horizontal' => Alignment::HORIZONTAL_CENTER,
-                'vertical' => Alignment::VERTICAL_CENTER,
-            ],
+        $lastColumn = chr(ord('A') + count($headers) - 1);
+        $sheet->getStyle("A{$row}:{$lastColumn}{$row}")->applyFromArray([
+            'font' => ['bold' => true, 'size' => 10, 'color' => ['rgb' => '000000']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F2F2F2']],
+            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['rgb' => '808080']]],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
         ]);
-        $sheet->getRowDimension($row)->setRowHeight(25);
+        $sheet->getRowDimension($row)->setRowHeight(26);
+        $sheet->freezePane('D'.($row + 1));
+        $sheet->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd($headerRow, $headerRow);
         $row++;
-
-        // Add sections and items
         foreach ($data['sections'] as $section) {
             $row = $this->buildSection($sheet, $row, $section, $options, count($headers));
         }
@@ -300,73 +166,40 @@ class ExcelEstimateBuilder
         return $row;
     }
 
-    /**
-     * Построить раздел сметы
-     */
     protected function buildSection(Worksheet $sheet, int $row, array $section, array $options, int $colCount): int
     {
-        // Section header
-        $sectionName = $section['full_section_number'] . '. ' . $section['name'];
-        $sheet->setCellValue("A{$row}", $sectionName);
-        $lastCol = chr(ord('A') + $colCount - 1);
-        $sheet->mergeCells("A{$row}:{$lastCol}{$row}");
-        $sheet->getStyle("A{$row}")->applyFromArray([
-            'font' => [
-                'bold' => true,
-                'size' => 11,
-                'color' => ['rgb' => '2D3748'],
-            ],
-            'fill' => [
-                'fillType' => Fill::FILL_SOLID,
-                'startColor' => ['rgb' => 'EDF2F7'],
-            ],
-            'borders' => [
-                'allBorders' => [
-                    'borderStyle' => Border::BORDER_MEDIUM,
-                    'color' => ['rgb' => 'CBD5E0'],
-                ],
-            ],
+        $name = $section['full_section_number'].'. '.$section['name'];
+        $lastColumn = chr(ord('A') + $colCount - 1);
+        $sheet->setCellValue("A{$row}", $name);
+        $sheet->mergeCells("A{$row}:{$lastColumn}{$row}");
+        $sheet->getStyle("A{$row}:{$lastColumn}{$row}")->applyFromArray([
+            'font' => ['bold' => true, 'size' => 10, 'color' => ['rgb' => '000000']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F2F2F2']],
+            'alignment' => ['wrapText' => true],
+            'borders' => ['outline' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['rgb' => '808080']]],
         ]);
-        $sheet->getRowDimension($row)->setRowHeight(22);
+        $sheet->getRowDimension($row)->setRowHeight(max(18, (int) ceil(mb_strwidth($name, 'UTF-8') / 130) * 13));
         $row++;
-
-        // Add items
         foreach ($section['items'] as $item) {
             $row = $this->buildItem($sheet, $row, $item, $options, 0);
         }
-
-        // Section total
         if ($options['show_prices'] && $section['section_total_amount'] > 0) {
             $sheet->setCellValue("A{$row}", 'ИТОГО ПО РАЗДЕЛУ:');
             $sheet->mergeCells("A{$row}:F{$row}");
-            $sheet->setCellValue("G{$row}", number_format($section['section_total_amount'], 2, '.', ' '));
+            $sheet->setCellValue("G{$row}", $section['section_total_amount']);
+            $sheet->getStyle("G{$row}")->getNumberFormat()->setFormatCode('#,##0.00');
             $sheet->getStyle("A{$row}:G{$row}")->applyFromArray([
-                'font' => [
-                    'bold' => true,
-                    'size' => 11,
-                    'color' => ['rgb' => '744210'],
-                ],
-                'fill' => [
-                    'fillType' => Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => 'FEF5E7'],
-                ],
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => Border::BORDER_MEDIUM,
-                        'color' => ['rgb' => 'F6AD55'],
-                    ],
-                ],
+                'font' => ['bold' => true, 'size' => 10, 'color' => ['rgb' => '000000']],
+                'borders' => ['top' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['rgb' => '808080']]],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_RIGHT],
             ]);
-            $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-            $sheet->getStyle("G{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             $sheet->getStyle("G{$row}")->getAlignment()->setShrinkToFit(true);
-            $sheet->getRowDimension($row)->setRowHeight(20);
+            $sheet->getRowDimension($row)->setRowHeight(18);
             $row++;
         }
+        $sheet->getRowDimension($row)->setRowHeight(6);
 
-        $row++; // Empty row after section
-
-        return $row;
+        return $row + 1;
     }
 
     /**
@@ -463,157 +296,62 @@ class ExcelEstimateBuilder
         return $row;
     }
 
-    /**
-     * Построить итоговую секцию
-     */
     protected function buildTotals(Worksheet $sheet, int $row, array $data): int
     {
         $totals = $data['totals'];
-        $row += 2; // Empty rows
-
-        // Заголовок секции
         $sheet->setCellValue("A{$row}", 'ИТОГОВАЯ СВОДКА');
         $sheet->mergeCells("A{$row}:H{$row}");
-        $sheet->getStyle("A{$row}")->applyFromArray([
-            'font' => [
-                'bold' => true,
-                'size' => 14,
-                'color' => ['rgb' => '2D3748'],
-            ],
-            'alignment' => [
-                'horizontal' => Alignment::HORIZONTAL_CENTER,
-                'vertical' => Alignment::VERTICAL_CENTER,
-            ],
-            'fill' => [
-                'fillType' => Fill::FILL_SOLID,
-                'startColor' => ['rgb' => 'F7FAFC'],
-            ],
-            'borders' => [
-                'allBorders' => [
-                    'borderStyle' => Border::BORDER_MEDIUM,
-                    'color' => ['rgb' => 'E2E8F0'],
-                ],
-            ],
-        ]);
-        $sheet->getRowDimension($row)->setRowHeight(30);
+        $sheet->getStyle("A{$row}")->getFont()->setBold(true);
+        $sheet->getRowDimension($row)->setRowHeight(18);
         $row++;
-
-        $row++; // Empty row
-
-        $totalLines = [
+        $lines = [
             ['Прямые затраты:', $totals['total_direct_costs']],
-            ['Накладные расходы (' . number_format($totals['overhead_rate'], 2) . '%):', $totals['total_overhead_costs']],
-            ['Сметная прибыль (' . number_format($totals['profit_rate'], 2) . '%):', $totals['total_estimated_profit']],
+            ['Накладные расходы ('.number_format($totals['overhead_rate'], 2).'%):', $totals['total_overhead_costs']],
+            ['Сметная прибыль ('.number_format($totals['profit_rate'], 2).'%):', $totals['total_estimated_profit']],
             ...((float) ($totals['contingency_amount'] ?? 0) === 0.0 ? [] : [['Резерв на непредвиденные расходы:', $totals['contingency_amount']]]),
             ['ИТОГО без НДС:', $totals['total_amount']],
             [($totals['vat_calculation_method'] ?? null) === \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator::METHOD
-                ? 'НДС по подтверждённым источникам:' : 'НДС (' . number_format($totals['vat_rate'], 0) . '%):', $totals['vat_amount']],
+                ? 'НДС по подтверждённым источникам:' : 'НДС ('.number_format($totals['vat_rate'], 0).'%):', $totals['vat_amount']],
             ['ВСЕГО С НДС:', $totals['total_amount_with_vat']],
         ];
-
-        foreach ($totalLines as $index => $line) {
-            $isLast = $index === count($totalLines) - 1;
-
-            $sheet->setCellValue("F{$row}", $line[0]);
-            $sheet->setCellValue("G{$row}", number_format($line[1], 2, '.', ' '));
+        foreach ($lines as $index => $line) {
+            $last = $index === count($lines) - 1;
+            $sheet->setCellValue("A{$row}", $line[0]);
+            $sheet->mergeCells("A{$row}:F{$row}");
+            $sheet->setCellValue("G{$row}", $line[1]);
             $sheet->mergeCells("G{$row}:H{$row}");
-
-            $style = [
-                'font' => [
-                    'bold' => $isLast,
-                    'size' => $isLast ? 13 : 11,
-                    'color' => ['rgb' => $isLast ? 'FFFFFF' : '4A5568'],
-                ],
-                'borders' => [
-                    'top' => [
-                        'borderStyle' => Border::BORDER_THIN,
-                        'color' => ['rgb' => 'CBD5E0'],
-                    ],
-                    'bottom' => [
-                        'borderStyle' => $isLast ? Border::BORDER_DOUBLE : Border::BORDER_THIN,
-                        'color' => ['rgb' => $isLast ? '667EEA' : 'CBD5E0'],
-                    ],
-                ],
-            ];
-
-            if ($isLast) {
-                $style['fill'] = [
-                    'fillType' => Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => '667EEA'],
-                ];
-            }
-
-            $sheet->getStyle("F{$row}:H{$row}")->applyFromArray($style);
-            $sheet->getStyle("F{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-            $sheet->getStyle("G{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $sheet->getStyle("G{$row}")->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
+                'font' => ['bold' => $last, 'size' => $last ? 11 : 10, 'color' => ['rgb' => '000000']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_RIGHT],
+                'borders' => ['bottom' => ['borderStyle' => $last ? Border::BORDER_DOUBLE : Border::BORDER_THIN, 'color' => ['rgb' => 'B0B0B0']]],
+            ]);
             $sheet->getStyle("G{$row}")->getAlignment()->setShrinkToFit(true);
-            
-            if ($isLast) {
-                $sheet->getRowDimension($row)->setRowHeight(25);
-            }
-
+            $sheet->getRowDimension($row)->setRowHeight($last ? 20 : 16);
             $row++;
         }
 
         return $row;
     }
 
-    /**
-     * Построить блок подписей
-     */
     protected function buildSignatures(Worksheet $sheet, int $row, array $options): int
     {
-        $row += 3; // Empty rows
-
-        // Заголовок блока подписей
+        $sheet->getRowDimension($row)->setRowHeight(8);
+        $row++;
         $sheet->setCellValue("A{$row}", 'ПОДПИСИ ОТВЕТСТВЕННЫХ ЛИЦ');
         $sheet->mergeCells("A{$row}:H{$row}");
-        $sheet->getStyle("A{$row}")->applyFromArray([
-            'font' => [
-                'bold' => true,
-                'size' => 12,
-                'color' => ['rgb' => '4A5568'],
-            ],
-            'alignment' => [
-                'horizontal' => Alignment::HORIZONTAL_CENTER,
-            ],
-            'fill' => [
-                'fillType' => Fill::FILL_SOLID,
-                'startColor' => ['rgb' => 'F7FAFC'],
-            ],
-            'borders' => [
-                'bottom' => [
-                    'borderStyle' => Border::BORDER_MEDIUM,
-                    'color' => ['rgb' => 'E2E8F0'],
-                ],
-            ],
-        ]);
-        $sheet->getRowDimension($row)->setRowHeight(25);
+        $sheet->getStyle("A{$row}")->getFont()->setBold(true);
+        $sheet->getRowDimension($row)->setRowHeight(18);
         $row++;
-
-        $row++; // Empty row
-
         foreach ($options['signature_fields'] as $field) {
-            $sheet->setCellValue("A{$row}", $field . ':');
+            $sheet->setCellValue("A{$row}", $field.':');
             $sheet->mergeCells("A{$row}:B{$row}");
+            $sheet->getStyle("A{$row}")->getFont()->setBold(true);
             $sheet->getStyle("A{$row}")->getAlignment()->setWrapText(true);
-            $sheet->setCellValue("C{$row}", '_____________________________ (ФИО) "____"_____________ 20___ г.');
+            $sheet->setCellValue("C{$row}", '________________ (должность, ФИО) __________ (подпись) «___» __________ 20___ г.');
             $sheet->mergeCells("C{$row}:H{$row}");
-            $sheet->getStyle("A{$row}")->applyFromArray([
-                'font' => [
-                    'bold' => true,
-                    'color' => ['rgb' => '4A5568'],
-                ],
-            ]);
-            $sheet->getStyle("C{$row}")->applyFromArray([
-                'borders' => [
-                    'bottom' => [
-                        'borderStyle' => Border::BORDER_DOTTED,
-                        'color' => ['rgb' => 'CBD5E0'],
-                    ],
-                ],
-            ]);
-            $sheet->getRowDimension($row)->setRowHeight(max(22, (int) ceil(mb_strlen($field.':') / 22) * 14));
+            $sheet->getStyle("C{$row}")->getAlignment()->setWrapText(true);
+            $sheet->getRowDimension($row)->setRowHeight(max(22, (int) ceil(mb_strwidth($field.':', 'UTF-8') / 25) * 13));
             $row++;
         }
 
@@ -735,22 +473,13 @@ class ExcelEstimateBuilder
         }
     }
 
-    /**
-     * Применить ширину колонок
-     */
     protected function applyColumnWidths(Worksheet $sheet, bool $showPrices = true): void
     {
-        // Устанавливаем минимальную ширину для основных колонок
-        $sheet->getColumnDimension('A')->setWidth(8);  // №
-        $sheet->getColumnDimension('B')->setWidth(22); // Код
-        $sheet->getColumnDimension('C')->setWidth(60); // Наименование - увеличено
-        $sheet->getColumnDimension('D')->setWidth(12); // Ед.изм.
-        $sheet->getColumnDimension('E')->setWidth(14); // Кол-во
-        $sheet->getColumnDimension('F')->setWidth(18); // Цена
-        $sheet->getColumnDimension('G')->setWidth(18); // Сумма
-        $sheet->getColumnDimension('H')->setWidth(35); // Примечание
-        if (!$showPrices) {
-            $sheet->getColumnDimension('F')->setWidth(35);
+        foreach (['A' => 5, 'B' => 20, 'C' => 50, 'D' => 8, 'E' => 12, 'F' => 16, 'G' => 18, 'H' => 26] as $column => $width) {
+            $sheet->getColumnDimension($column)->setWidth($width);
+        }
+        if (! $showPrices) {
+            $sheet->getColumnDimension('F')->setWidth(26);
             $sheet->getColumnDimension('G')->setVisible(false);
             $sheet->getColumnDimension('H')->setVisible(false);
         }
