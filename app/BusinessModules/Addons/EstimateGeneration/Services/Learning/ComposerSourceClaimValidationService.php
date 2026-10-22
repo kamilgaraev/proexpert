@@ -32,7 +32,9 @@ final readonly class ComposerSourceClaimValidationService
 
     public const MAX_CANDIDATE_JSON_BYTES = self::MAX_CLAIMS * 4096;
 
-    public function __construct(private EvidenceRepository $evidence, private DocumentProcessingUnitStore $units) {}
+    public function __construct(private EvidenceRepository $evidence, private DocumentProcessingUnitStore $units,
+        private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource $cellSources = null,
+        private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization $reviewAuthorization = null) {}
 
     public function capture(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $input,
         array $candidate, array $anchors, array &$checkedAnswers = []): ?array
@@ -67,6 +69,10 @@ final readonly class ComposerSourceClaimValidationService
             return null;
         }
         $source = $sources[0];
+        if (isset($entity->attributes['properties']['document_cell_review_anchor'])
+            && $this->captureCellReview($scope, $snapshot, $decisions, $source) === null) {
+            return null;
+        }
         if ([$source->organizationId, $source->projectId, $source->sessionId] !== $scope
             || $source->sourceVersion !== $entity->sourceVersion || $source->nativeNumericProofs !== []) {
             return null;
@@ -85,6 +91,92 @@ final readonly class ComposerSourceClaimValidationService
 
         return ['source_claim_key' => hash('sha256', CanonicalPipelineJson::encode($identity)), 'identity' => $identity,
             'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved'];
+    }
+
+    public function captureCellReview(array $scope, ProjectModelSnapshot $snapshot, array $decisions, Fact $source): ?array
+    {
+        if ($this->cellSources === null || $this->reviewAuthorization === null
+            || [$source->organizationId, $source->projectId, $source->sessionId] !== $scope
+            || $source->type !== 'equipment_specification' || $source->origin !== 'document' || $source->status !== 'confirmed'
+            || $source->unit !== null || ! is_string($source->value) || $source->nativeNumericProofs !== []) {
+            return null;
+        }
+        $entity = array_column($snapshot->entities, null, 'id')[$source->entityId] ?? null;
+        $anchor = $entity?->attributes['properties']['document_cell_review_anchor'] ?? null;
+        $reviews = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->entityId === $anchor
+            && $fact->type === 'evaluation_answer' && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'document_cell_review'));
+        if (count($reviews) !== 1 || ! $entity instanceof Entity || GeometryInventory::type($entity) !== 'equipment'
+            || $entity->sourceVersion !== $source->sourceVersion) {
+            return null;
+        }
+        $review = $reviews[0];
+        $value = $review->value;
+        $decision = array_column($decisions, null, 'id')[$value['decision_id'] ?? ''] ?? null;
+        if ([$review->organizationId, $review->projectId, $review->sessionId] !== $scope || $review->origin !== 'user_input'
+            || $review->status !== 'confirmed' || ($value['decision'] ?? null) !== 'accept'
+            || ($value['identity_confirmation'] ?? null) !== 'new_document_local_equipment'
+            || ! $decision instanceof Decision || $decision->selectedFactId !== $review->id || $decision->actorType !== 'user'
+            || [$decision->organizationId, $decision->projectId, $decision->sessionId] !== $scope
+            || $decision->sourceVersion !== $review->sourceVersion || $decision->version !== $review->version
+            || $review->evidenceIds === [] || $decision->evidenceIds !== $review->evidenceIds
+            || array_intersect($review->evidenceIds, $source->evidenceIds) !== []) {
+            return null;
+        }
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        foreach ($review->evidenceIds as $id) {
+            $proof = $proofs[$id] ?? null;
+            if ($proof === null || $proof->sourceType !== 'user_input' || $proof->producerName !== 'user_input_normalizer'
+                || $proof->sourceVersion !== $review->sourceVersion
+                || $proof->choiceHash !== hash('sha256', CanonicalPipelineJson::encode($value))
+                || preg_match('/\Aevidence:([1-9][0-9]*)\z/D', $id, $match) !== 1) {
+                return null;
+            }
+            $node = $this->evidence->node(...[...$scope, (int) $match[1]]);
+            if ($node === null || $node->invalidatedAt !== null || $node->sourceType !== EvidenceSourceType::UserInput
+                || $node->producerName !== 'user_input_normalizer' || $node->sourceVersion !== $review->sourceVersion
+                || ($node->value['fact_value'] ?? null) !== $proof->choiceHash || $node->fingerprint !== $proof->fingerprint) {
+                return null;
+            }
+        }
+        $session = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()
+            ->where('organization_id', $scope[0])->where('project_id', $scope[1])->find($scope[2]);
+        $actor = \App\Models\User::query()->where('is_active', true)->find($decision->actorId);
+        if ($session === null || $actor === null || (int) $actor->current_organization_id !== $scope[0]) {
+            return null;
+        }
+        try {
+            $this->reviewAuthorization->authorize($actor, $session, 'estimate_generation.review');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            return null;
+        }
+        $frozen = $value['binding'] ?? [];
+        $row = $this->cellSources->resolve($session, (int) ($frozen['document_id'] ?? 0), (int) ($frozen['unit_id'] ?? 0), (string) ($frozen['row_id'] ?? ''));
+        if ($row === null || CanonicalPipelineJson::encode(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::wire([$row])[0])
+                !== CanonicalPipelineJson::encode($frozen)
+            || \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::proposal($value['proposal'] ?? null, [$row]) === null) {
+            return null;
+        }
+        $cell = array_column($row['cells'], null, 'cell_id')[$value['proposal']['value_cell_id']] ?? null;
+        if ($cell === null || $cell['raw_value'] !== $source->value) {
+            return null;
+        }
+        $candidate = ['source_review_decision_id' => $decision->id, 'entity_id' => $source->entityId,
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => $source->value], 'unit' => null,
+            'document_fact_ids' => [$source->id]];
+        $binding = $this->documentBinding($scope, $snapshot, $source, $candidate, GeometryInventory::currentDocumentVersions($snapshot));
+        if ($binding === null || $binding['literal_witness']['entity_key'] !== ($value['entity_key'] ?? null)
+            || $binding['literal_witness']['cell'] !== $cell['address']) {
+            return null;
+        }
+        $identity = ['predicate' => 'document-cell-review-correspondence:v1', 'scope' => $scope, 'candidate' => $candidate,
+            'review' => ['fact_id' => $review->id, 'version' => $review->version, 'decision_id' => $decision->id,
+                'value_hash' => hash('sha256', CanonicalPipelineJson::encode($value))],
+            'source' => ['fact_id' => $source->id, 'version' => $source->version, 'source_version' => $source->sourceVersion,
+                'entity_id' => $source->entityId, ...$binding]];
+
+        return ['candidate' => $candidate, 'source_claim_key' => hash('sha256', CanonicalPipelineJson::encode($identity)), 'identity' => $identity,
+            'human_interpretation' => 'confirmed_by_user', 'interpretation_status' => 'proposed',
+            'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved'];
     }
 
     private function documentBinding(array $scope, ProjectModelSnapshot $snapshot, Fact $source, array $candidate, array $anchors): ?array
@@ -195,10 +287,21 @@ final readonly class ComposerSourceClaimValidationService
 
     public static function literalValueCorresponds(array $candidate, mixed $originalValue, array $witness): bool
     {
-        return self::isCandidate($candidate) && is_string($originalValue)
+        return (self::isCandidate($candidate) || self::isCellReviewCandidate($candidate)) && is_string($originalValue)
             && $candidate['value']['data'] === $originalValue
             && is_string($witness['value_hash'] ?? null)
             && hash_equals($witness['value_hash'], hash('sha256', json_encode($originalValue, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)));
+    }
+
+    public static function isCellReviewCandidate(mixed $candidate): bool
+    {
+        return is_array($candidate) && self::keys($candidate, ['source_review_decision_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids'])
+            && self::identifier($candidate['source_review_decision_id']) && self::identifier($candidate['entity_id'])
+            && $candidate['fact_type'] === 'equipment_specification' && $candidate['unit'] === null
+            && is_array($candidate['value']) && self::keys($candidate['value'], ['type', 'data'])
+            && FactVocabulary::documentObservation('equipment_specification', 'equipment:review', $candidate['value'], null) !== null
+            && is_array($candidate['document_fact_ids']) && array_is_list($candidate['document_fact_ids'])
+            && count($candidate['document_fact_ids']) === 1 && self::identifier($candidate['document_fact_ids'][0]);
     }
 
     private static function keys(array $value, array $keys): bool

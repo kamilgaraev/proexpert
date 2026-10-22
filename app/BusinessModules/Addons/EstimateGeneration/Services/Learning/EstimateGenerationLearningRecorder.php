@@ -503,6 +503,138 @@ final class EstimateGenerationLearningRecorder
         }
     }
 
+    public function cellReviewProposalsForOperation(EstimateGenerationSession $session, string $operationId): array
+    {
+        if (! Str::isUuid($operationId) || $session->project_id === null) {
+            return [];
+        }
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)
+            ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)->where('session_id', $session->id)
+            ->where('kind', 'generation')->where('status', 'settled')->whereNotNull('receipt')->first();
+        $limit = $operation === null ? null : (json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR)['composer_part_limit'] ?? null);
+        if (! is_int($limit) || $limit < 1 || $limit > ComposerSourceClaimValidationService::MAX_RECEIPTS) {
+            return [];
+        }
+        $query = DB::table('estimate_generation_credit_attempts as credit')
+            ->join('estimate_generation_vision_physical_attempts as physical', 'physical.attempt_id', '=', 'credit.attempt_id')
+            ->join('estimate_generation_ai_role_runs as run', 'run.physical_attempt_id', '=', 'physical.attempt_id')
+            ->where('credit.operation_id', $operationId)->where('physical.credit_operation_id', $operationId)
+            ->where('credit.role', 'estimate_composition')->where('physical.credit_role', 'estimate_composition')
+            ->whereIn('credit.status', ['recorded', 'unavailable'])->whereNotNull('credit.usage_transferred_at')
+            ->where('run.status', 'completed')->where('run.role', AiAnalysisRole::EstimateComposer->value)
+            ->where('run.subject_type', 'estimate_session')->where('run.subject_id', (string) $session->id)
+            ->whereNull('run.document_id')->whereNull('run.page_id')
+            ->whereIn('run.prompt_contract_version', array_values(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::CELL_PROMPT_CONTRACTS))
+            ->whereColumn('physical.request_fingerprint', 'run.input_fingerprint')->whereColumn('physical.logical_request_fingerprint', 'run.input_fingerprint')
+            ->whereRaw("run.result_payload->'schema_version' = '3'::jsonb")
+            ->whereRaw("octet_length(run.result_payload::text) <= 262144");
+        foreach (['credit', 'physical', 'run'] as $table) {
+            $query->where($table.'.organization_id', $session->organization_id)->where($table.'.project_id', $session->project_id)->where($table.'.session_id', $session->id);
+        }
+        $runs = $query->orderBy('run.id')->limit($limit + 1)->get(['run.*']);
+        if ($runs->count() > $limit) {
+            return [];
+        }
+        $result = $seen = [];
+        foreach ($runs as $run) {
+            $identity = new AiRoleRunInput((int) $run->organization_id, (int) $run->project_id, (int) $run->session_id,
+                null, null, $run->subject_type, $run->subject_id, $run->subject_version, AiAnalysisRole::EstimateComposer, $run->model,
+                $run->prompt_contract_version, $run->input_fingerprint);
+            if (! hash_equals($identity->identityFingerprint(), $run->identity_fingerprint)) {
+                return [];
+            }
+            $payload = json_decode($run->result_payload, true, 64, JSON_THROW_ON_ERROR);
+            $allowed = ['schema_version', 'role', 'work_intents', 'quarantined_intents', 'result_state', 'cell_mapping_proposals', 'cell_mapping_context',
+                ...(isset($payload['claim_candidates']) ? ['claim_candidates'] : [])];
+            $contexts = $payload['cell_mapping_context'] ?? null;
+            $proposals = $payload['cell_mapping_proposals'] ?? null;
+            if (count($payload) !== count($allowed) || array_diff(array_keys($payload), $allowed) !== []
+                || ($payload['role'] ?? null) !== 'estimate_composer' || ! is_array($payload['work_intents'] ?? null)
+                || ! is_array($payload['quarantined_intents'] ?? null) || ! in_array($payload['result_state'] ?? null, ['ready', 'partial'], true)
+                || ! is_array($contexts) || ! array_is_list($contexts) || count($contexts) > 8
+                || ! is_array($proposals) || ! array_is_list($proposals) || count($proposals) > 8) {
+                continue;
+            }
+            foreach ($proposals as $proposal) {
+                $binding = \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::proposal($proposal, $contexts);
+                if ($binding === null) {
+                    continue;
+                }
+                $hash = hash('sha256', CanonicalPipelineJson::encode([$run->input_fingerprint, $proposal, $binding]));
+                $row = $proposal['row_id'];
+                if (isset($seen[$row]) && $seen[$row] !== $hash) {
+                    unset($result[$row]);
+                    $seen[$row] = 'conflict';
+                    continue;
+                }
+                if (! isset($seen[$row])) {
+                    $result[$row] = ['run_id' => (int) $run->id, 'operation_id' => $operationId, 'input_fingerprint' => $run->input_fingerprint,
+                        'proposal_hash' => $hash, 'proposal' => $proposal, 'binding' => $binding];
+                    $seen[$row] = $hash;
+                }
+            }
+        }
+
+        return count($seen) > 8 ? [] : array_values($result);
+    }
+
+    public function recordCellReview(EstimateGenerationSession $session, array $proposal,
+        \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $review): int
+    {
+        if (DB::transactionLevel() < 1 || ($review->value['kind'] ?? null) !== 'document_cell_review'
+            || ($review->value['decision'] ?? null) !== 'accept') {
+            throw new \LogicException('document_cell_review_transaction_required');
+        }
+        $receipts = $this->cellReviewProposalsForOperation($session, $proposal['operation_id']);
+        if (count(array_filter($receipts, static fn (array $row): bool => $row['run_id'] === $proposal['run_id']
+            && $row['proposal_hash'] === $proposal['proposal_hash'])) !== 1) {
+            throw new \LogicException('document_cell_review_proposal_stale');
+        }
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $capture = $this->sourceClaimPlanningSnapshot($scope);
+        if ($capture === null) {
+            throw new \LogicException('document_cell_review_context_unavailable');
+        }
+        $snapshot = $capture['snapshot'];
+        $entities = array_column($snapshot->entities, null, 'id');
+        $sources = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'equipment_specification'
+            && ($entities[$fact->entityId]->attributes['properties']['document_cell_review_anchor'] ?? null) === $review->entityId));
+        $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $validations = array_values(array_filter(array_map(
+            fn ($source): ?array => $this->sourceClaims->captureCellReview($scope, $snapshot, $decisions, $source), $sources),
+            static fn (?array $validation): bool => $validation !== null));
+        $validation = count($validations) === 1 ? $validations[0] : null;
+        if ($validation === null || $validation['candidate']['source_review_decision_id'] !== $review->value['decision_id']) {
+            throw new \LogicException('document_cell_review_source_unresolved');
+        }
+        $candidate = $validation['candidate'];
+        $context = ['schema_version' => 1, 'origin' => 'document_cell_review:v1', 'candidate' => $candidate,
+            'proposal_hash' => $proposal['proposal_hash'], 'source_claim_validation' => $validation, 'training_allowed' => false];
+
+        $created = DB::affectingStatement(<<<'SQL'
+            INSERT INTO estimate_generation_learning_examples (
+                organization_id, project_id, generation_session_id, source_type, source_entity_type, source_entity_id,
+                source_claim_key, work_name, norm_code, decision_status, is_positive, accepted_at,
+                context_payload, source_refs, quality_flags, created_at, updated_at
+            ) VALUES (?, ?, ?, 'composer_source_claim', 'ai_role_run', ?, ?, ?, NULL, 'proposed', false, NULL,
+                ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)
+            ON CONFLICT (organization_id, project_id, generation_session_id, source_claim_key) DO NOTHING
+            SQL, [...$scope, $proposal['run_id'], $validation['source_claim_key'], $candidate['value']['data'],
+            CanonicalPipelineJson::encode($context), CanonicalPipelineJson::encode(['role_run_id' => $proposal['run_id'],
+                'credit_operation_id' => $proposal['operation_id'], 'source_review_decision_id' => $candidate['source_review_decision_id'],
+                'document_fact_ids' => $candidate['document_fact_ids']]),
+            json_encode(['source_correspondence_only', 'human_reviewed_interpretation', 'do_not_index'], JSON_THROW_ON_ERROR), now(), now()]);
+        $stored = DB::table('estimate_generation_learning_examples')->where('organization_id', $scope[0])->where('project_id', $scope[1])
+            ->where('generation_session_id', $scope[2])->where('source_claim_key', $validation['source_claim_key'])->value('context_payload');
+        $stored = is_string($stored) ? json_decode($stored, true, 64, JSON_THROW_ON_ERROR) : null;
+        if (! is_array($stored) || CanonicalPipelineJson::encode($stored['source_claim_validation']['identity'] ?? [])
+            !== CanonicalPipelineJson::encode($validation['identity'])) {
+            throw new \DomainException('composer_source_claim_identity_collision');
+        }
+
+        return $created;
+    }
+
     public function sourceClaimCandidatesForOperation(EstimateGenerationSession $session, string $operationId): array
     {
         if ($session->project_id === null || ! Str::isUuid($operationId)) {
@@ -528,14 +660,18 @@ final class EstimateGenerationLearningRecorder
             ->where('run.status', 'completed')->where('run.role', AiAnalysisRole::EstimateComposer->value)
             ->where('run.subject_type', 'estimate_session')->where('run.subject_id', (string) $session->id)
             ->whereNull('run.document_id')->whereNull('run.page_id')
-            ->whereIn('run.prompt_contract_version', ['estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2'])
+            ->whereIn('run.prompt_contract_version', ['estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2',
+                'estimate-composer:answer-cells:v1', 'estimate-composer:legacy-answer-cells:v1'])
             ->whereColumn('physical.request_fingerprint', 'run.input_fingerprint')
             ->whereColumn('physical.logical_request_fingerprint', 'run.input_fingerprint')
-            ->whereRaw("run.result_payload->'schema_version' = '2'::jsonb")
+            ->whereRaw("((run.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2') AND run.result_payload->'schema_version' = '2'::jsonb
+                AND run.result_payload - ARRAY['schema_version','role','work_intents','quarantined_intents','result_state','claim_candidates'] = '{}'::jsonb)
+                OR (run.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1') AND run.result_payload->'schema_version' = '3'::jsonb
+                AND run.result_payload - ARRAY['schema_version','role','work_intents','quarantined_intents','result_state','claim_candidates','cell_mapping_proposals','cell_mapping_context'] = '{}'::jsonb
+                AND jsonb_typeof(run.result_payload->'cell_mapping_proposals') = 'array' AND jsonb_typeof(run.result_payload->'cell_mapping_context') = 'array'))")
             ->whereRaw("run.result_payload->>'role' = ?", [AiAnalysisRole::EstimateComposer->value])
             ->whereRaw("CASE WHEN jsonb_typeof(run.result_payload->'claim_candidates') = 'array' THEN jsonb_array_length(run.result_payload->'claim_candidates') BETWEEN 0 AND ? ELSE false END", [ComposerSourceClaimValidationService::MAX_CLAIMS])
             ->whereRaw("octet_length((run.result_payload->'claim_candidates')::text) <= ?", [ComposerSourceClaimValidationService::MAX_CANDIDATE_JSON_BYTES])
-            ->whereRaw("run.result_payload - ARRAY['schema_version','role','work_intents','quarantined_intents','result_state','claim_candidates'] = '{}'::jsonb")
             ->whereRaw("jsonb_typeof(run.result_payload->'work_intents') = 'array'")
             ->whereRaw("jsonb_typeof(run.result_payload->'quarantined_intents') = 'array'")
             ->whereRaw("run.result_payload->>'result_state' IN (?, ?)", ['ready', 'partial']);
