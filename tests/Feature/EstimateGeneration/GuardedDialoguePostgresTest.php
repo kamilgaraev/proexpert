@@ -7,10 +7,13 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CanonicalEstimateCommandProposalResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\TimewebEstimateCommandInterpreter;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDialogueController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\InterpretEstimateCommandRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
@@ -29,6 +32,8 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Routing\Route;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class GuardedDialoguePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
@@ -36,6 +41,138 @@ final class GuardedDialoguePostgresTest extends EstimateGenerationCanonicalPostg
     private int $calls = 0;
 
     private ?\Closure $afterWire = null;
+
+    public function test_canonical_provider_text_survives_publication_recovery_api_and_one_settled_replay(): void
+    {
+        config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $history = [];
+        $responses = new MockHandler;
+        $stack = HandlerStack::create($responses);
+        $stack->push(Middleware::history($history));
+        [$session, $actor, $interpreter] = $this->fixture(new Client(['handler' => $stack]), realPrices: true);
+        $this->handler($session, $actor, $interpreter);
+        $requestPermissions = $this->createMock(AuthorizationService::class);
+        $requestPermissions->method('can')->willReturnCallback(static fn ($user, $permission, $scope): bool => $user->id === $actor->id
+            && $permission === 'estimate_generation.review'
+            && $scope === ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id]);
+        $this->app->instance(AuthorizationService::class, $requestPermissions);
+        $session->update(['input_payload' => ['description' => 'Нужно объяснить условия монтажа без изменения сметы.']]);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialProjectFactsWriter::class)->write($session, $actor);
+        config(['estimate-generation.credits.enabled' => true, 'ai-assistant-credits.enforce' => false]);
+        $context = app(EstimateCommandContextBuilder::class)->build($session);
+        $text = 'В исходных данных не указаны условия крепления стендов. Для выбора работ требуется спецификация и сведения об основании.';
+        $evidenceIds = array_slice($context['allowed_references']['evidence_ids'] ?? [], 0, 1);
+        self::assertNotEmpty($evidenceIds);
+        $responses->append(new Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'id' => 'canonical-text', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+            'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => json_encode([
+                'kind' => 'explain', 'text' => $text, 'references' => [], 'evidence_ids' => $evidenceIds,
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)], 'finish_reason' => 'stop']],
+            'usage' => ['prompt_tokens' => 200, 'completion_tokens' => 50, 'total_tokens' => 250],
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)));
+        $organization = Organization::query()->findOrFail($session->organization_id);
+        app(\App\Services\Credits\AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'fixture:canonical-text');
+        $key = (string) \Illuminate\Support\Str::uuid();
+        $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $key, 'dialogue', ['command' => 'Объясни', 'idempotency_key' => $key]);
+        $original = $session->fresh()->only(['status', 'state_version', 'draft_payload']);
+        $facts = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->orderBy('id')->get()->toJson();
+        $decisions = DB::table('estimate_generation_project_model_corrections')->where('session_id', $session->id)->orderBy('id')->get()->toJson();
+        $post = function () use ($session, $actor, $key, $quote): \Illuminate\Http\JsonResponse {
+            $project = Project::query()->findOrFail($session->project_id);
+            $request = InterpretEstimateCommandRequest::create('/', 'POST', ['command' => 'Объясни', 'idempotency_key' => $key,
+                'request_id' => $key, 'quote_id' => $quote['quote_id'], 'state_version' => 0]);
+            $request->setContainer($this->app)->setRedirector($this->app['redirect']);
+            $request->setUserResolver(static fn (): User => $actor);
+            $route = new Route('POST', 'projects/{project}/dialogue', []);
+            $route->bind($request);
+            $route->setParameter('project', $project);
+            $request->setRouteResolver(static fn (): Route => $route);
+            $request->validateResolved();
+
+            return app(EstimateGenerationDialogueController::class)->interpret($request, $project, $session->fresh());
+        };
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION eg_test_canonical_text_completion_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.state = 'completed' THEN RAISE EXCEPTION 'fixture_completion_failed'; END IF;
+    RETURN NEW;
+END; $$;
+CREATE TRIGGER eg_test_canonical_text_completion_failure_trg BEFORE UPDATE ON estimate_interpretation_attempts FOR EACH ROW EXECUTE FUNCTION eg_test_canonical_text_completion_failure();
+SQL);
+        try {
+            self::assertSame(500, $post()->getStatusCode());
+            self::assertCount(1, $history);
+            $attempt = DB::table('estimate_interpretation_attempts')->where('session_id', $session->id)->sole();
+            self::assertSame('response_received', $attempt->state);
+            $interpretation = json_decode($attempt->interpretation_payload, true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame('estimate-command:v1', $interpretation['version']);
+            self::assertSame($text, $interpretation['text']);
+            self::assertArrayNotHasKey('explanation', $interpretation);
+        } finally {
+            DB::unprepared('DROP TRIGGER eg_test_canonical_text_completion_failure_trg ON estimate_interpretation_attempts; DROP FUNCTION eg_test_canonical_text_completion_failure();');
+        }
+        self::assertSame('in_progress', $post()->getData(true)['data']['kind']);
+        self::assertCount(1, $history);
+        $this->travel(61)->seconds();
+        $response = $post();
+        self::assertSame(200, $response->getStatusCode(), $response->getContent());
+        $result = $response->getData(true)['data'];
+        self::assertSame($text, $result['explanation']);
+        self::assertSame('explanation', $result['kind']);
+        self::assertTrue($result['read_only']);
+        self::assertSame($interpretation['evidence'], $result['evidence']);
+        self::assertEquals($result, json_decode(DB::table('estimate_interpretation_attempts')->where('session_id', $session->id)->value('result_payload'), true, flags: JSON_THROW_ON_ERROR));
+        $balance = app(\App\Services\Credits\AICreditService::class)->balance($organization);
+        self::assertEquals($result, $post()->getData(true)['data']);
+        self::assertSame($balance, app(\App\Services\Credits\AICreditService::class)->balance($organization));
+        self::assertCount(1, $history);
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(1, DB::table('estimate_generation_vision_physical_attempts')->where('session_id', $session->id)->count());
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $key)->sole();
+        self::assertSame('settled', $operation->status);
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
+        self::assertSame(1, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->count());
+        self::assertSame(0, DB::table('estimate_change_proposals')->where('session_id', $session->id)->count());
+        self::assertSame($original, $session->fresh()->only(['status', 'state_version', 'draft_payload']));
+        self::assertSame($facts, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->orderBy('id')->get()->toJson());
+        self::assertSame($decisions, DB::table('estimate_generation_project_model_corrections')->where('session_id', $session->id)->orderBy('id')->get()->toJson());
+    }
+
+    #[DataProvider('invalidCanonicalText')]
+    public function test_invalid_present_text_cannot_fall_back_to_a_valid_legacy_explanation(mixed $text): void
+    {
+        config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $responses = new MockHandler([new Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'id' => 'invalid-text', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+            'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => json_encode([
+                'kind' => 'explain', 'text' => $text, 'explanation' => 'Существующее объяснение не заменяет повреждённый текст.',
+            ], JSON_THROW_ON_ERROR)], 'finish_reason' => 'stop']],
+            'usage' => ['prompt_tokens' => 200, 'completion_tokens' => 50, 'total_tokens' => 250],
+        ], JSON_THROW_ON_ERROR))]);
+        $history = [];
+        $stack = HandlerStack::create($responses);
+        $stack->push(Middleware::history($history));
+        [$session, $actor, $interpreter] = $this->fixture(new Client(['handler' => $stack]));
+        $handler = $this->handler($session, $actor, $interpreter);
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            try {
+                $handler->handle($session, $actor, 'Объясни', 'request:invalid-text');
+                self::fail('Invalid canonical text was published using the legacy field.');
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure $exception) {
+                self::assertSame('estimate_generation.dialogue_presentation_invalid', $exception->getPrevious()?->getMessage());
+            }
+            $this->travel(61)->seconds();
+        }
+        self::assertCount(1, $history);
+        self::assertNull(DB::table('estimate_interpretation_attempts')->where('session_id', $session->id)->value('result_payload'));
+        self::assertSame(0, DB::table('estimate_change_proposals')->where('session_id', $session->id)->count());
+    }
+
+    public static function invalidCanonicalText(): array
+    {
+        return [[null], [''], [[]]];
+    }
 
     public function test_real_http_adapter_sends_luna_json_and_preserves_reported_token_usage(): void
     {

@@ -125,7 +125,9 @@ final readonly class InterpretEstimateCommand
                     app(EstimateGenerationActionAuthorization::class)->authorize($actor, $current, 'estimate_generation.review');
                 }
                 if ($interpretation->kind() === 'explain') {
-                    $result = ['kind' => 'explanation', 'explanation' => mb_substr((string) ($interpretation->payload['explanation'] ?? ''), 0, 8000), 'evidence' => array_slice(is_array($interpretation->payload['evidence'] ?? null) ? $interpretation->payload['evidence'] : [], 0, 100), 'read_only' => true];
+                    $presentation = (new SafeEstimateDialoguePresentation)->sanitize(['explanation' => array_key_exists('text', $interpretation->payload)
+                        ? $interpretation->payload['text'] : ($interpretation->payload['explanation'] ?? null)]);
+                    $result = ['kind' => 'explanation', 'explanation' => $presentation['explanation'], 'evidence' => array_slice(is_array($interpretation->payload['evidence'] ?? null) ? $interpretation->payload['evidence'] : [], 0, 100), 'read_only' => true];
                     $this->attempts->complete((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $result);
                     if ($creditOperationId !== null) {
                         app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->publishDialogue($current, $creditOperationId, $result);
