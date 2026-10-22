@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotFootprint;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotPlanProfile;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Log\LogManager;
 use Illuminate\Support\Facades\DB;
@@ -42,11 +43,30 @@ final class AssistantStatusSnapshotPlanProfileTest extends TestCase
             self::assertCount(1, array_filter($queries, static fn (array $query): bool => $query[0] === $sql));
             $explains = array_values(array_filter($queries, static fn (array $query): bool => str_starts_with($query[0], 'EXPLAIN ')));
             self::assertCount(1, $explains);
+            self::assertStringContainsString('COSTS FALSE', $explains[0][0]);
+            self::assertStringContainsString('VERBOSE', $explains[0][0]);
+            self::assertStringContainsString('SUMMARY TRUE', $explains[0][0]);
+            self::assertStringNotContainsString('ANALYZE', $explains[0][0]);
             $row = $connection->selectOne($explains[0][0], $explains[0][1]);
             $json = (string) ((array) $row)['QUERY PLAN'];
             $plan = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
             self::assertArrayHasKey('Planning Time', $plan[0]);
             self::assertIsNumeric($plan[0]['Planning Time']);
+            $control = $connection->selectOne(str_replace('COSTS FALSE', 'COSTS TRUE', $explains[0][0]), $explains[0][1]);
+            $controlJson = (string) ((array) $control)['QUERY PLAN'];
+            $controlPlan = json_decode($controlJson, true, 512, JSON_THROW_ON_ERROR);
+            self::assertSame($this->relationPairs($controlPlan), $this->relationPairs($plan));
+            self::assertSame(['public.organizations', 'public.projects'], $this->relationPairs($plan));
+            self::assertLessThan(strlen($controlJson), strlen($json));
+            foreach (['Startup Cost', 'Total Cost', 'Plan Rows', 'Plan Width'] as $field) {
+                self::assertStringContainsString($field, $controlJson);
+                self::assertStringNotContainsString($field, $json);
+            }
+            $summary = (new AssistantStatusSnapshotPlanProfile)->sample($plan, 600, 0, strlen($json), strlen($sql), 0, 1);
+            self::assertNotNull($summary);
+            self::assertNull($summary['root_plan_rows']);
+            self::assertNull($summary['root_total_cost']);
+            self::assertIsFloat($summary['planning_ms']);
             foreach (['Execution Time', 'Actual Rows', 'Actual Total Time'] as $field) {
                 self::assertStringNotContainsString($field, $json);
             }
@@ -97,6 +117,8 @@ final class AssistantStatusSnapshotPlanProfileTest extends TestCase
             self::assertSame(str_repeat('a', 40), $logged['release_sha']);
             self::assertGreaterThanOrEqual(500, $logged['select_elapsed_ms']);
             self::assertIsFloat($logged['planning_ms']);
+            self::assertNull($logged['root_plan_rows']);
+            self::assertNull($logged['root_total_cost']);
             self::assertSame(1, $logged['bindings_count']);
             self::assertSame(1, $logged['plan_ordinal']);
             self::assertGreaterThan(0, $logged['plan_bytes']);
@@ -109,5 +131,22 @@ final class AssistantStatusSnapshotPlanProfileTest extends TestCase
             $connection->setEventDispatcher($original);
         }
         self::assertSame($original, $connection->getEventDispatcher());
+    }
+
+    private function relationPairs(array $node): array
+    {
+        $pairs = [];
+        if (isset($node['Schema'], $node['Relation Name'])) {
+            $pairs[] = $node['Schema'].'.'.$node['Relation Name'];
+        }
+        foreach ($node as $value) {
+            if (is_array($value)) {
+                $pairs = array_merge($pairs, $this->relationPairs($value));
+            }
+        }
+        $pairs = array_values(array_unique($pairs));
+        sort($pairs);
+
+        return $pairs;
     }
 }
