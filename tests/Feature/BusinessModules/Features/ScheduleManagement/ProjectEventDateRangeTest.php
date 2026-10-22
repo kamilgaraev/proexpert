@@ -16,6 +16,37 @@ class ProjectEventDateRangeTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_conflicts_cover_both_directions_of_an_overnight_event_and_exclude_its_midnight_end(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create([
+            'organization_id' => $context->organization->id,
+        ]));
+        $attributes = [
+            'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id,
+            'project_id' => $project->id,
+            'event_type' => 'meeting', 'title' => 'Overnight conflict fixture',
+            'event_date' => '2026-10-24', 'event_time' => '23:30', 'duration_minutes' => 120,
+            'is_all_day' => false, 'is_blocking' => true, 'priority' => 'normal', 'status' => 'scheduled',
+        ];
+        $night = ProjectEvent::query()->create($attributes);
+        $morning = ProjectEvent::query()->create(array_replace($attributes, [
+            'event_date' => '2026-10-25', 'event_time' => '00:45', 'duration_minutes' => 15,
+        ]));
+        $service = new ProjectEventService();
+
+        $this->assertSame([$morning->id], $service->checkEventConflicts($night)['conflicts']->pluck('id')->all());
+        $this->assertSame([$night->id], $service->checkEventConflicts($morning)['conflicts']->pluck('id')->all());
+
+        $night->update(['duration_minutes' => 30]);
+        $this->assertFalse($service->checkEventConflicts($night)['has_conflicts']);
+        $this->assertFalse($service->checkEventConflicts($morning)['has_conflicts']);
+
+        $night->update(['duration_minutes' => 2000, 'end_date' => '2026-10-24']);
+        $this->assertFalse($service->checkEventConflicts($night)['has_conflicts']);
+    }
+
     public function test_ranges_include_ongoing_durations_without_including_finished_or_foreign_events(): void
     {
         $context = AdminApiTestContext::create();

@@ -246,13 +246,21 @@ class ProjectEventService
      */
     public function checkEventConflicts(ProjectEvent $event): array
     {
+        $endDate = $event->end_date ?? $event->event_date;
+        if (!$event->end_date && !$event->is_all_day && $event->duration_minutes > 0) {
+            $endDate = Carbon::parse(
+                $event->event_date->toDateString() . ' ' . ($event->event_time ?: '00:00:00'),
+                'UTC'
+            )->addMinutes($event->duration_minutes)->subMicrosecond();
+        }
+
         $conflicts = ProjectEvent::query()
             ->forProject($event->project_id)
             ->where('id', '!=', $event->id)
             ->where('is_blocking', true)
             ->inDateRange(
                 $event->event_date,
-                $event->end_date ?? $event->event_date
+                $endDate
             )
             ->get();
 
