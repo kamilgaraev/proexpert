@@ -211,7 +211,7 @@ final class ConnectionStateTestStatement extends PDOStatement
 {
     public function __construct(private readonly ?Closure $duringExecute) {}
 
-    public function setFetchMode(int $mode, mixed ...$args): bool
+    public function setFetchMode(int $mode, mixed ...$args): true
     {
         return true;
     }

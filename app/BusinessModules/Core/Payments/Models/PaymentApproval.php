@@ -113,7 +113,7 @@ class PaymentApproval extends Model
     /**
      * Утвердить
      */
-    public function approve(string $comment = null): bool
+    public function approve(?string $comment = null): bool
     {
         $this->status = 'approved';
         $this->decision_comment = $comment;
@@ -137,7 +137,7 @@ class PaymentApproval extends Model
     /**
      * Пропустить (для необязательных утверждений)
      */
-    public function skip(string $reason = null): bool
+    public function skip(?string $reason = null): bool
     {
         $this->status = 'skipped';
         $this->decision_comment = $reason;

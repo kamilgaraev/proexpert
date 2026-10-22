@@ -158,7 +158,7 @@ final class RecordedQualityAcceptancePostgresTest extends EstimateGenerationCano
         ob_start();
         imagepng($image);
         $bytes = (string) ob_get_clean();
-        imagedestroy($image);
+        unset($image);
         $objects = new class($bytes) implements BenchmarkObjectReader
         {
             public function __construct(private readonly string $bytes) {}

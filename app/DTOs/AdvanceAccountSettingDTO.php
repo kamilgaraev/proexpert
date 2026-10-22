@@ -61,7 +61,7 @@ class AdvanceAccountSettingDTO implements Arrayable, JsonSerializable
         ]);
     }
 
-    public static function fromModelOrDefaults(AdvanceAccountSetting $setting = null, int $organizationId): self
+    public static function fromModelOrDefaults(?AdvanceAccountSetting $setting, int $organizationId): self
     {
         if ($setting) {
             return self::fromModel($setting);

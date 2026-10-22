@@ -21,9 +21,9 @@ class InsufficientPermissionsException extends Exception
         array $requiredPermissions,
         array $userPermissions = [],
         ?AuthorizationContext $context = null,
-        string $message = null,
+        ?string $message = null,
         int $code = 403,
-        Exception $previous = null
+        ?Exception $previous = null
     ) {
         $this->user = $user;
         $this->requiredPermissions = $requiredPermissions;

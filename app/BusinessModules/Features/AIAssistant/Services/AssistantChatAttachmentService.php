@@ -45,7 +45,7 @@ final class AssistantChatAttachmentService
             restore_error_handler();
         }
         if ($decoded === false || $decodeWarning) {
-            if ($decoded !== false) { imagedestroy($decoded); }
+            unset($decoded);
             $this->invalid();
         }
         ob_start();
@@ -58,7 +58,7 @@ final class AssistantChatAttachmentService
             $clean = ob_get_contents();
         } finally {
             ob_end_clean();
-            imagedestroy($decoded);
+            unset($decoded);
         }
         if (!$encoded || !is_string($clean) || strlen($clean) > self::MAX_BYTES) {
             $this->invalid();

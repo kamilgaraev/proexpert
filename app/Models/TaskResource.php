@@ -169,7 +169,7 @@ class TaskResource extends Model
         return $cost;
     }
 
-    public function updateActualCost(float $actualHours = null): float
+    public function updateActualCost(?float $actualHours = null): float
     {
         if ($actualHours !== null) {
             $this->update(['actual_hours' => $actualHours]);

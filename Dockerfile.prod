@@ -1,4 +1,4 @@
-# Используем официальный образ PHP 8.2 с FPM/CLI
+# Используем официальный образ PHP 8.5 CLI
 FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS geometry-runtime
 
 ARG LIBREDWG_VERSION=0.13.4
@@ -22,7 +22,7 @@ RUN apk add --no-cache build-base libseccomp-dev linux-headers \
     && /tmp/geometry-network-deny /tmp/geometry-network-deny.bpf \
     && cc -static -O2 -Wall -Wextra -Werror /tmp/landlock-sandbox.c -o /tmp/geometry-landlock-sandbox
 
-FROM php:8.2.35-cli-alpine@sha256:bd5e0f6e6b65a0155066ec109de7c60a34efef70925dac953fd093fe8d89bd2d
+FROM php:8.5.12-cli-alpine@sha256:d0cc453a4a24eb5e2e70c4657cf8bddedce4c4c33a9a348409cdc7d4b9762e94
 
 ARG LIBREDWG_VERSION=0.13.4
 
@@ -83,7 +83,7 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp
 
 # Установка PHP расширений
 RUN apk add --no-cache --virtual .curl-build-deps curl-dev \
-    && docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl posix opcache intl bcmath curl \
+    && docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl posix intl bcmath curl \
     && php -r "exit(function_exists('bcdiv') && extension_loaded('curl') && function_exists('imagewebp') && function_exists('imagecreatefromwebp') ? 0 : 1);" \
     && apk del .curl-build-deps
 
@@ -114,6 +114,7 @@ COPY --from=ghcr.io/roadrunner-server/roadrunner:2023.3.11 /usr/bin/rr /usr/bin/
 # Ставим vendor в отдельном кэшируемом слое, чтобы не пересобирать зависимости на каждый коммит.
 COPY composer.json composer.lock package.json package-lock.json ${APP_DIR}/
 RUN composer install --no-dev --no-interaction --prefer-dist --no-scripts --no-autoloader
+RUN composer check-platform-reqs --no-dev --lock
 RUN npm ci --omit=dev --ignore-scripts
 
 # Копируем исходный код приложения после установки зависимостей.

@@ -143,7 +143,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             ob_start();
             imagepng($image);
             $source = (string) ob_get_clean();
-            imagedestroy($image);
+            unset($image);
         }
         $sourceVersion = 'sha256:'.hash('sha256', $source);
         $document = new EstimateGenerationDocument([
@@ -294,9 +294,9 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             self::assertSame(($cropColor >> 8) & 255, $cropColor & 255);
             self::assertEqualsWithDelta($fullColor & 255, $cropColor & 255, 2);
             self::assertNotSame(imagecolorat($original, 0, 0), $cropColor);
-            imagedestroy($crop);
-            imagedestroy($fullPage);
-            imagedestroy($original);
+            unset($crop);
+            unset($fullPage);
+            unset($original);
         }
     }
 

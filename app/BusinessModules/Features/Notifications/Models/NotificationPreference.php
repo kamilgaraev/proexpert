@@ -58,7 +58,7 @@ class NotificationPreference extends Model
         return in_array($channel, $this->enabled_channels ?? []);
     }
 
-    public function isInQuietHours(\Carbon\Carbon $time = null): bool
+    public function isInQuietHours(?\Carbon\Carbon $time = null): bool
     {
         $time = $time ?? now();
         

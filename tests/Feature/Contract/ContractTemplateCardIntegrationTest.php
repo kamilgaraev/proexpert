@@ -933,7 +933,7 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         }
         if ($rich) {
             $raster = imagecreatetruecolor(2, 2);
-            ob_start(); imagepng($raster); $png = (string) ob_get_clean(); imagedestroy($raster);
+            ob_start(); imagepng($raster); $png = (string) ob_get_clean(); unset($raster);
             $content['document']['attrs']['pageDecorations'] = ['header' => ['text' => 'Проверенный колонтитул', 'align' => 'left'],
                 'pageNumbers' => ['enabled' => true, 'position' => 'footer', 'align' => 'center', 'format' => 'current_total', 'startAt' => 1, 'hideFirst' => false]];
             $content['document']['content'][] = ['type' => 'table', 'attrs' => ['columnWidths' => [40, 60],

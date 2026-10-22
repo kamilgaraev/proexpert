@@ -1672,7 +1672,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         ob_start();
         imagepng($image);
         $bytes = (string) ob_get_clean();
-        imagedestroy($image);
+        unset($image);
         $id = (string) Str::uuid();
         $row = ChatAttachment::query()->create(['public_id' => $id, 'organization_id' => $this->organization->id, 'user_id' => $this->actor->id, 'name' => 'photo.png', 'mime' => 'image/png', 'width' => 16, 'height' => 16, 'size' => strlen($bytes), 'checksum' => hash('sha256', $bytes), 'storage_path' => 'org-'.$this->organization->id.'/ai-assistant/chat-images/'.$id.'.png']);
         $files = $this->mock(FileService::class);

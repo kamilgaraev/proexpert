@@ -135,6 +135,7 @@ final class ContractDocumentExporter
             throw new ContractBuilderException('contracts.builder_export_invalid', 422);
         }
         $this->blocks($body, $section);
+        (new ContractWordParagraphStyles)->apply($word);
         $path = tempnam(sys_get_temp_dir(), 'most-contract-export-');
         if ($path === false) {
             throw new ContractBuilderException('contracts.builder_export_failed', 503);

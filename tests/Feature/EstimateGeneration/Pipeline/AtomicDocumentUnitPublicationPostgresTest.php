@@ -1153,7 +1153,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends EstimateGeneration
             ob_start();
             imagepng($image);
             $content = (string) ob_get_clean();
-            imagedestroy($image);
+            unset($image);
             $source = new \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput(
                 $context->organizationId, $context->projectId, $context->sessionId, $context->documentId,
                 $context->pageId, $context->index, $context->unitId, $sourceVersion, 'sha256:'.hash('sha256', $content),

@@ -19,6 +19,48 @@ use PHPUnit\Framework\TestCase;
 
 final class ContractDocumentLayoutTest extends TestCase
 {
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    public function test_docx_exports_preserve_content_without_php85_deprecations(bool $positioned): void
+    {
+        $html = '<h1>Договор</h1><p>Обычный абзац</p><ol><li>Первый пункт</li><li>Второй пункт</li></ol>'
+            .'<table><tr><td><p>Текст ячейки</p></td></tr></table>';
+        if ($positioned) {
+            $content = self::content();
+            $content['document']['content'][0]['content'][0]['text'] = 'Обычный абзац';
+            $html = (new ContractDocumentRenderer)->render($content['document'], [], []);
+        }
+        set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+            if ($severity === E_DEPRECATED) {
+                throw new \ErrorException($message, 0, $severity, $file, $line);
+            }
+
+            return false;
+        });
+        try {
+            $bytes = (new ContractDocumentExporter)->render($html, 'docx');
+        } finally {
+            restore_error_handler();
+        }
+
+        $file = tempnam(sys_get_temp_dir(), 'most-php85-docx-');
+        file_put_contents($file, $bytes);
+        $zip = new \ZipArchive;
+        try {
+            self::assertTrue($zip->open($file));
+            $xml = $zip->getFromName('word/document.xml');
+            self::assertIsString($xml);
+            self::assertStringContainsString('Обычный абзац', $xml);
+            if (! $positioned) {
+                self::assertStringContainsString('Текст ячейки', $xml);
+            }
+            self::assertSame($positioned ? 0 : 2, substr_count($xml, '<w:numPr>'));
+        } finally {
+            $zip->close();
+            unlink($file);
+        }
+    }
+
     public function test_paragraph_alignment_stays_independent_inside_one_text_group_in_pdf_and_word(): void
     {
         $paragraphs = array_map(static fn (array $item): array => ['type' => 'paragraph',
@@ -262,7 +304,7 @@ final class ContractDocumentLayoutTest extends TestCase
             $offset = ($y * 256 + $x) * 3;
             imagesetpixel($raster, $x, $y, (ord($pixels[$offset]) << 16) | (ord($pixels[$offset + 1]) << 8) | ord($pixels[$offset + 2]));
         } }
-        ob_start(); imagepng($raster); $bytes = ob_get_clean(); imagedestroy($raster);
+        ob_start(); imagepng($raster); $bytes = ob_get_clean(); unset($raster);
         self::assertGreaterThan(150000, strlen($bytes));
         $layout = self::content()['document']['attrs']['layout'];
         $unit = 72 / 25.4;

@@ -353,7 +353,7 @@ final class ShadowDocumentScenario
             ob_start();
             imagepng($image);
             $images[] = (string) ob_get_clean();
-            imagedestroy($image);
+            unset($image);
         }
         if ($contract['flow'] === 'document-image-injection') return ['filename' => 'injection.png', 'mime' => 'image/png', 'content' => $images[0], 'page_count' => 1];
         $pdf = new \Dompdf\Dompdf;
