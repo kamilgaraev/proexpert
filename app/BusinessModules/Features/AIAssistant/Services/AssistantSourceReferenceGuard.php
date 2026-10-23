@@ -42,7 +42,30 @@ class AssistantSourceReferenceGuard
             fn (): bool => $this->freshCurrent($actor, $organizationId, $references), true);
     }
 
-    private function freshCurrent(User $actor, int $organizationId, array $references): bool
+    public function storedDocumentCurrent(User $actor, int $organizationId, array $references): bool
+    {
+        if ($references === []) { return false; }
+        foreach ($references as $reference) {
+            if (! is_array($reference)
+                || ($reference['egress_projection_version'] ?? null) !== \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection::VERSION
+                || ($reference['entity_type'] ?? null) !== 'assistant_document'
+                || ($reference['source_type'] ?? null) !== 'file_document'
+                || ($reference['content_scope'] ?? null) !== 'unstructured'
+                || ($reference['organization_id'] ?? null) !== $organizationId) { return false; }
+            foreach (['entity_id', 'document_id', 'project_id', 'unit_id', 'source_id', 'chunk_id'] as $key) {
+                if (! is_int($reference[$key] ?? null) || $reference[$key] < 1) { return false; }
+            }
+            if ($reference['entity_id'] !== $reference['document_id']) { return false; }
+            foreach (['document_checksum', 'unit_checksum', 'rag_source_checksum'] as $key) {
+                if (! is_string($reference[$key] ?? null) || $reference[$key] === '') { return false; }
+            }
+        }
+
+        return $this->policy->withCurrentChecks($actor, $organizationId,
+            fn (): bool => $this->freshCurrent($actor, $organizationId, $references, true), true);
+    }
+
+    private function freshCurrent(User $actor, int $organizationId, array $references, bool $storedDocument = false): bool
     {
         if (! $this->canReadCurrent($actor, $organizationId, $references)) {
             return false;
@@ -58,7 +81,7 @@ class AssistantSourceReferenceGuard
             } catch (\Throwable) {
                 return false;
             }
-            if ($timestamp->isFuture() || $timestamp->lt(now()->subMinutes(5))) {
+            if ($timestamp->isFuture() || (! $storedDocument && $timestamp->lt(now()->subMinutes(5)))) {
                 return false;
             }
             $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'];

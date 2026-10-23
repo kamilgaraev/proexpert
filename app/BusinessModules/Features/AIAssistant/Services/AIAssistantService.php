@@ -2373,8 +2373,11 @@ class AIAssistantService
         $modelArguments = $args;
         $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
-        $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
+        if (! ($this->scopedContext?->isGuarded() ?? false)) {
+            $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
+        }
         if ($toolName === 'search_assistant_documents'
+            && ! ($this->scopedContext?->allowsExpansion('document_rag') ?? false)
             && \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::metadataOnly($requestQuery)) {
             $args['read_mode'] = 'metadata';
             $args['include_document_id'] = preg_match('/идентификатор|(?<!\pL)id(?!\pL)/iu', $requestQuery) === 1;

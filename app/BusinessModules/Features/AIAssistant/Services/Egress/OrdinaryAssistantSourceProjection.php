@@ -13,8 +13,20 @@ final class OrdinaryAssistantSourceProjection
 
     public const TOOLS = ['get_project_attention', 'get_project_production_schedule_summary'];
 
+    public static function toolsForPolicy(string $version): array
+    {
+        return match ($version) {
+            self::VERSION => self::TOOLS,
+            OrdinaryAssistantDocumentProjection::VERSION => [OrdinaryAssistantDocumentProjection::TOOL],
+            default => [],
+        };
+    }
+
     public function arguments(string $tool, array $arguments, int $projectId): array
     {
+        if ($tool === OrdinaryAssistantDocumentProjection::TOOL) {
+            return app(OrdinaryAssistantDocumentProjection::class)->arguments($arguments, $projectId);
+        }
         if (! in_array($tool, self::TOOLS, true) || ($arguments['project_id'] ?? null) !== $projectId) {
             throw new AssistantEgressDenied('scope_mismatch');
         }
@@ -95,6 +107,9 @@ final class OrdinaryAssistantSourceProjection
 
     public function forProvider(array $projected): array
     {
+        if (($projected['egress_projection_version'] ?? null) === OrdinaryAssistantDocumentProjection::VERSION) {
+            return OrdinaryAssistantDocumentProjection::forProvider($projected);
+        }
         $projected['source_refs'] = array_values(array_unique(array_map(static fn (array $ref): array => [
             'entity_type' => 'project', 'entity_id' => $ref['project_id'], 'project_id' => $ref['project_id'],
         ], $projected['source_refs']), SORT_REGULAR));
