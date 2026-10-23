@@ -60,6 +60,8 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
 {
     private const GENERIC_WORK_KEY = 'custom.exposition_setup';
 
+    private const SECONDARY_WORK_KEY = 'custom.exposition_positioning';
+
     private array $wireHistory = [];
 
     private array $composerProjects = [];
@@ -767,6 +769,61 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return ['pending qualitative question' => [false], 'current human assumption' => [true]];
     }
 
+    public function test_http_excluded_work_cannot_keep_a_current_technology_card_or_accept_an_answer(): void
+    {
+        $clarification = ['question' => 'Как оборудование закрепляется в составе первой работы?',
+            'reason' => 'Способ крепления первой работы не задан исходным описанием.'];
+        [, $project, $session, , $headers] = $this->generatedSession(false, true, 'installation', $clarification, true);
+        $url = $this->url($project, $session);
+        $first = $this->installation($session->fresh(), self::GENERIC_WORK_KEY);
+        $second = $this->installation($session->fresh(), self::SECONDARY_WORK_KEY);
+        self::assertNotSame($first['key'], $second['key']);
+        self::assertSame($first['metadata']['scope_entity_id'], $second['metadata']['scope_entity_id']);
+        self::assertSame($first['composition_intent']['source_fact_ids'], $second['composition_intent']['source_fact_ids']);
+        $question = $this->workTechnologyQuestion($project, $session, $headers);
+        $answerInput = ['response' => 'other', 'other' => 'Предварительный ответ относится только к первой работе, которую пользователь затем исключает.',
+            'document_ids' => [], 'idempotency_key' => (string) Str::uuid(),
+            'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint']];
+        $this->postJson($url.'/questions/'.$question['code'].'/answer', $answerInput, $headers)->assertOk();
+        $answered = $this->workTechnologyQuestion($project, $session, $headers);
+        $models = app(ProjectModelRepository::class);
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $historyIds = [...$first['composition_intent']['source_fact_ids'], $answered['answer']['fact_id']];
+        $history = array_map(get_object_vars(...), $models->factsByIds(...[...$scope, $historyIds]));
+        $decision = $models->decisions(...[...$scope, [$answered['answer']['decision_id']]]);
+        self::assertCount(1, $decision);
+        $money = $this->modelMoneySnapshot($session);
+        $selection = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'selected_sections' => ['equipment'], 'profile_id' => 'construction', 'construction_type' => 'new_construction',
+            'price_policy' => 'catalog', 'selected_work_item_keys' => [$second['key']],
+            'artifact_hash' => $session->fresh()->draft_payload['artifact_hash'],
+            'scope_reason' => 'В текущую смету включена только вторая работа; первая работа и её технологическое допущение исключены.'];
+        $receipt = $this->postJson($url.'/evaluation/scope', $selection, $headers)->assertOk()->json('data');
+        self::assertSame('0', $receipt['cost_units']);
+        self::assertSame(CanonicalPipelineJson::encode($receipt), CanonicalPipelineJson::encode(
+            $this->postJson($url.'/evaluation/scope', $selection, $headers)->assertOk()->json('data')));
+        $evaluation = $this->postJson($url.'/evaluation/recalculate', ['request_id' => (string) Str::uuid(),
+            'state_version' => $session->fresh()->state_version], $headers)->assertOk()->json('data');
+        self::assertSame('0', $evaluation['cost_units']);
+        self::assertSame([$second['key']], $evaluation['result']['selected_work_item_keys']);
+        self::assertSame([$first['key']], array_column($evaluation['result']['excluded_work_items'], 'key'));
+        self::assertSame([$second['key']], array_column($evaluation['result']['scenarios'][0]['positions'], 'key'));
+        $questions = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+        self::assertSame([], array_values(array_filter($questions, static fn (array $item): bool =>
+            ($item['code'] ?? null) === $question['code'])), 'An excluded work still exposes its technology answer as current.');
+        $this->postJson($url.'/questions/'.$question['code'].'/answer', [...$answerInput,
+            'idempotency_key' => (string) Str::uuid()], $headers)->assertConflict()->assertJsonPath('code', 'question_stale');
+        self::assertSame($history, array_map(get_object_vars(...), $models->factsByIds(...[...$scope, $historyIds])));
+        self::assertSame(array_map(get_object_vars(...), $decision), array_map(get_object_vars(...),
+            $models->decisions(...[...$scope, [$answered['answer']['decision_id']]])));
+        $included = $this->installation($session->fresh(), self::SECONDARY_WORK_KEY);
+        self::assertSame([$second['key'], $second['name'], $second['metadata']['scope_entity_id'], $second['composition_intent']['source_fact_ids'], null, null, null, null],
+            [$included['key'], $included['name'], $included['metadata']['scope_entity_id'], $included['composition_intent']['source_fact_ids'],
+                $included['quantity'], $included['unit'], $included['unit_price'], $included['total_cost']]);
+        self::assertSame($money, $this->modelMoneySnapshot($session));
+        $this->assertNoExtraModelWork($session);
+    }
+
     public function test_ignored_uploaded_source_invalidates_the_real_quantity_guard_and_denies_http_export_and_apply(): void
     {
         [, $project, $session, , $headers, $count] = $this->confirmedSession();
@@ -914,7 +971,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count, $revision];
     }
 
-    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null): array
+    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, bool $withSecondaryWork = false): array
     {
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
@@ -998,7 +1055,8 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         } else {
             self::assertFalse($session->fresh()->input_payload['input_confirmed'] ?? false);
         }
-        $this->transport($session, descriptionOnly: $descriptionOnly, requirementKey: $requirementKey, technologyClarification: $technologyClarification);
+        $this->transport($session, descriptionOnly: $descriptionOnly, requirementKey: $requirementKey, technologyClarification: $technologyClarification,
+            withSecondaryWork: $withSecondaryWork);
         app(AICreditService::class)->grant($rights->organization, 1000000, 'purchase', null, 'test:http-money-acceptance');
         $operation = (string) Str::uuid();
         $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation, 'state_version' => $session->fresh()->state_version,
@@ -1025,11 +1083,11 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count];
     }
 
-    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, ?array $workOverride = null): void
+    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, ?array $workOverride = null, bool $withSecondaryWork = false): void
     {
         $descriptor = json_decode(file_get_contents(base_path('tests/Fixtures/EstimateGeneration/universal-replay/xlsx-floor-finishing-v1.json')), true, 64, JSON_THROW_ON_ERROR);
         $responses = $descriptor['recordings'];
-        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly, $requirementKey, $technologyClarification, $workOverride): Response {
+        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly, $requirementKey, $technologyClarification, $workOverride, $withSecondaryWork): Response {
             try {
                 $wire = json_decode((string) $request->getBody(), true, 128, JSON_THROW_ON_ERROR);
                 $project = null;
@@ -1105,8 +1163,14 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                     ...($requirementKey !== null ? ['requirement_key' => $requirementKey] : []),
                     ...($technologyClarification !== null ? ['technology_clarification' => $technologyClarification] : []),
                     'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+                $intents = [$intent];
+                if ($withSecondaryWork) {
+                    $secondary = [...$intent, 'work_key' => self::SECONDARY_WORK_KEY, 'name' => 'Размещение экспозиционного оборудования в выбранной зоне'];
+                    unset($secondary['technology_clarification']);
+                    $intents[] = $secondary;
+                }
                 $response = $responses[0]['response'];
-                $response['choices'][0]['message']['content'] = json_encode(['work_intents' => [$intent]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+                $response['choices'][0]['message']['content'] = json_encode(['work_intents' => $intents], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
 
                 return new Response(200, ['Content-Type' => 'application/json'], json_encode($response, JSON_THROW_ON_ERROR));
             } catch (\Throwable $error) {
