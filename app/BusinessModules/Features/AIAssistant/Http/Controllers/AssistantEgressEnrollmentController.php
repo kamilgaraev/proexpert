@@ -21,7 +21,8 @@ final class AssistantEgressEnrollmentController extends AbstractAssistantApiCont
             $operator = $this->actor($request);
             $this->enrollments->assertPlatform($operator);
             $data = $request->validated();
-            $cohort = $this->enrollments->assign($operator, $data['organization_id'], User::query()->findOrFail($data['actor_id']), $data['project_id'], $data['tools']);
+            $cohort = $this->enrollments->assign($operator, $data['organization_id'], User::query()->findOrFail($data['actor_id']), $data['project_id'], $data['tools'],
+                $data['policy_version'] ?? \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSourceProjection::VERSION);
 
             return $this->success($request, ['cohort_id' => $cohort->id, 'status' => $cohort->status, 'policy_version' => $cohort->policy_version,
                 'expires_at' => $cohort->expires_at->toISOString()], 201);

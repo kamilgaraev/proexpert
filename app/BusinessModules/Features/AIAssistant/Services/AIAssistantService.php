@@ -20,6 +20,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateS
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantExceptionBoundary;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateResolver;
@@ -209,119 +210,131 @@ class AIAssistantService
         array $requestPayload = [],
         ?string $surface = null
     ): array {
-        $this->scopedContext?->enter($user, $organizationId, $query, $requestPayload, $conversationId);
-        $this->activeActor = $user;
-        $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
-        $this->activeToolResults = [];
-        $this->activeCustomReportSources = [];
-        $this->activeSearchScopeAttempts = [];
-        $this->documentContextBlocked = false;
-        $this->pendingSummary = null;
-        $this->requestOutcome = null;
-        $this->estimateResolutionAttempted = false;
-        $this->resolvedEstimateId = null;
-        $this->currentAttachmentIds = $requestPayload['attachment_ids'] ?? [];
-        $this->currentAttachmentIds = array_map('strtolower', $this->currentAttachmentIds);
-        sort($this->currentAttachmentIds, SORT_STRING);
-        $this->currentImageParts = [];
-        if ($this->requestLifecycle === null) {
+        $legacy = false;
+        try {
+            $this->scopedContext?->enter($user, $organizationId, $query, $requestPayload, $conversationId);
+            $legacy = $this->scopedContext?->isLegacy() ?? false;
+            $this->activeActor = $user;
+            $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
+            $this->activeToolResults = [];
+            $this->activeCustomReportSources = [];
+            $this->activeSearchScopeAttempts = [];
+            $this->documentContextBlocked = false;
+            $this->pendingSummary = null;
+            $this->requestOutcome = null;
+            $this->estimateResolutionAttempted = false;
+            $this->resolvedEstimateId = null;
+            $this->currentAttachmentIds = $requestPayload['attachment_ids'] ?? [];
+            $this->currentAttachmentIds = array_map('strtolower', $this->currentAttachmentIds);
+            sort($this->currentAttachmentIds, SORT_STRING);
+            $this->currentImageParts = [];
+            if ($this->requestLifecycle === null) {
+                try {
+                    return $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
+                } finally {
+                    $this->activeActor = null;
+                    $this->activeToolResults = [];
+                    $this->activeCustomReportSources = [];
+                    $this->activeSearchScopeAttempts = [];
+                    $this->documentContextBlocked = false;
+                }
+            }
+
+            $payload = array_merge($requestPayload, ['message' => $query, 'conversation_id' => $conversationId]);
+            $started = $this->requestLifecycle->start($this->resolveOrganization($organizationId), $user, $conversationId, $payload, $surface);
+            if (is_array($started['response'])) {
+                $this->activeActor = null;
+                return $started['response'];
+            }
+            $this->activeRequest = $started['request'];
+            $previousRequestScope = app(AssistantCurrentRequest::class)->replace($this->activeRequest);
+            $requestPayload['request_id'] = $this->activeRequest->request_id;
             try {
-                return $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
+                $result = $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
+                return $this->requestLifecycle->complete($this->activeRequest, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user));
+            } catch (Throwable $exception) {
+                $this->requestLifecycle->fail($this->activeRequest, $this->requestErrorCode($exception));
+                throw $exception;
             } finally {
+                app(AssistantCurrentRequest::class)->replace($previousRequestScope);
+                $this->activeRequest = null;
                 $this->activeActor = null;
                 $this->activeToolResults = [];
                 $this->activeCustomReportSources = [];
                 $this->activeSearchScopeAttempts = [];
+                $this->pendingSummary = null;
+                $this->currentAttachmentIds = [];
+                $this->currentImageParts = [];
                 $this->documentContextBlocked = false;
-                $this->scopedContext?->clear();
             }
-        }
-
-        $payload = array_merge($requestPayload, ['message' => $query, 'conversation_id' => $conversationId]);
-        $started = $this->requestLifecycle->start($this->resolveOrganization($organizationId), $user, $conversationId, $payload, $surface);
-        if (is_array($started['response'])) {
-            $this->activeActor = null;
-            $this->scopedContext?->clear();
-            return $started['response'];
-        }
-        $this->activeRequest = $started['request'];
-        $previousRequestScope = app(AssistantCurrentRequest::class)->replace($this->activeRequest);
-        $requestPayload['request_id'] = $this->activeRequest->request_id;
-        try {
-            $result = $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
-            return $this->requestLifecycle->complete($this->activeRequest, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user));
         } catch (Throwable $exception) {
-            $this->requestLifecycle->fail($this->activeRequest, $this->requestErrorCode($exception));
-            throw $exception;
+            throw $legacy ? $exception : OrdinaryAssistantExceptionBoundary::sanitize($exception);
         } finally {
-            app(AssistantCurrentRequest::class)->replace($previousRequestScope);
-            $this->activeRequest = null;
-            $this->activeActor = null;
-            $this->activeToolResults = [];
-            $this->activeCustomReportSources = [];
-            $this->activeSearchScopeAttempts = [];
-            $this->pendingSummary = null;
-            $this->currentAttachmentIds = [];
-            $this->currentImageParts = [];
-            $this->documentContextBlocked = false;
             $this->scopedContext?->clear();
         }
     }
 
     public function executeStartedRequest(AssistantRequest $request, User $user): array
     {
-        if ($this->requestLifecycle === null || $request->started_at === null || !is_array($request->payload)
-            || (int) $request->user_id !== (int) $user->id) {
-            throw new \InvalidArgumentException('Invalid queued assistant request');
-        }
-        $payload = $request->payload;
-        $query = $payload['message'] ?? null;
-        if (!is_string($query) || trim($query) === '') {
-            throw new \InvalidArgumentException('Invalid queued assistant payload');
-        }
-        $conversationId = isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null;
-        $this->activeActor = $user;
-        $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
-        $this->activeToolResults = [];
-        $this->activeCustomReportSources = [];
-        $this->activeSearchScopeAttempts = [];
-        $this->documentContextBlocked = false;
-        $this->pendingSummary = null;
-        $this->requestOutcome = null;
-        $this->estimateResolutionAttempted = false;
-        $this->resolvedEstimateId = null;
-        $this->activeRequest = $request;
-        $previousRequestScope = app(AssistantCurrentRequest::class)->replace($request);
-        $this->runtimeTimingEnabled = true;
-        $this->currentAttachmentIds = $payload['attachment_ids'] ?? [];
-        $this->currentImageParts = [];
+        $legacy = false;
         try {
-            $this->scopedContext?->enter($user, (int) $request->organization_id, $query, $payload, $conversationId);
-            if ($this->currentAttachmentIds !== []) {
-                $validated = $this->measurePhase('attachment_prepare', fn (): array => app(AssistantChatAttachmentService::class)->prepareRequest($payload, $user, (int) $request->organization_id));
-                if (!hash_equals($request->request_hash, app(\App\Services\Credits\AICreditService::class)->canonicalAssistantRequest($validated))) {
-                    throw new AuthorizationException(trans_message('ai_assistant.request_mismatch'));
-                }
+            if ($this->requestLifecycle === null || $request->started_at === null || !is_array($request->payload)
+                || (int) $request->user_id !== (int) $user->id) {
+                throw new \InvalidArgumentException('Invalid queued assistant request');
             }
-            $this->measurePhase('request_context', fn () => $this->requestLifecycle->stage($request, $user, 'reading'));
-            $result = $this->performAsk($query, (int) $request->organization_id, $user, $conversationId, $payload);
-            return $this->measurePhase('request_complete', fn (): array => $this->requestLifecycle->complete($request, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user)));
-        } catch (Throwable $exception) {
-            $errorCode = $this->requestErrorCode($exception);
-            $this->requestLifecycle->fail($request, $errorCode);
-            throw $exception;
-        } finally {
-            $this->runtimeTimingEnabled = false;
-            app(AssistantCurrentRequest::class)->replace($previousRequestScope);
-            $this->activeRequest = null;
-            $this->activeActor = null;
+            $payload = $request->payload;
+            $query = $payload['message'] ?? null;
+            if (!is_string($query) || trim($query) === '') {
+                throw new \InvalidArgumentException('Invalid queued assistant payload');
+            }
+            $conversationId = isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null;
+            $this->activeActor = $user;
+            $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
             $this->activeToolResults = [];
             $this->activeCustomReportSources = [];
             $this->activeSearchScopeAttempts = [];
-            $this->pendingSummary = null;
-            $this->currentAttachmentIds = [];
-            $this->currentImageParts = [];
             $this->documentContextBlocked = false;
+            $this->pendingSummary = null;
+            $this->requestOutcome = null;
+            $this->estimateResolutionAttempted = false;
+            $this->resolvedEstimateId = null;
+            $this->activeRequest = $request;
+            $previousRequestScope = app(AssistantCurrentRequest::class)->replace($request);
+            $this->runtimeTimingEnabled = true;
+            $this->currentAttachmentIds = $payload['attachment_ids'] ?? [];
+            $this->currentImageParts = [];
+            try {
+                $this->scopedContext?->enter($user, (int) $request->organization_id, $query, $payload, $conversationId);
+                $legacy = $this->scopedContext?->isLegacy() ?? false;
+                if ($this->currentAttachmentIds !== []) {
+                    $validated = $this->measurePhase('attachment_prepare', fn (): array => app(AssistantChatAttachmentService::class)->prepareRequest($payload, $user, (int) $request->organization_id));
+                    if (!hash_equals($request->request_hash, app(\App\Services\Credits\AICreditService::class)->canonicalAssistantRequest($validated))) {
+                        throw new AuthorizationException(trans_message('ai_assistant.request_mismatch'));
+                    }
+                }
+                $this->measurePhase('request_context', fn () => $this->requestLifecycle->stage($request, $user, 'reading'));
+                $result = $this->performAsk($query, (int) $request->organization_id, $user, $conversationId, $payload);
+                return $this->measurePhase('request_complete', fn (): array => $this->requestLifecycle->complete($request, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user)));
+            } catch (Throwable $exception) {
+                $errorCode = $this->requestErrorCode($exception);
+                $this->requestLifecycle->fail($request, $errorCode);
+                throw $exception;
+            } finally {
+                $this->runtimeTimingEnabled = false;
+                app(AssistantCurrentRequest::class)->replace($previousRequestScope);
+                $this->activeRequest = null;
+                $this->activeActor = null;
+                $this->activeToolResults = [];
+                $this->activeCustomReportSources = [];
+                $this->activeSearchScopeAttempts = [];
+                $this->pendingSummary = null;
+                $this->currentAttachmentIds = [];
+                $this->currentImageParts = [];
+                $this->documentContextBlocked = false;
+            }
+        } catch (Throwable $exception) {
+            throw $legacy ? $exception : OrdinaryAssistantExceptionBoundary::sanitize($exception);
+        } finally {
             $this->scopedContext?->clear();
         }
     }
@@ -2360,8 +2373,11 @@ class AIAssistantService
         $modelArguments = $args;
         $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
-        $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
+        if (! ($this->scopedContext?->isGuarded() ?? false)) {
+            $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
+        }
         if ($toolName === 'search_assistant_documents'
+            && ! ($this->scopedContext?->allowsExpansion('document_rag') ?? false)
             && \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::metadataOnly($requestQuery)) {
             $args['read_mode'] = 'metadata';
             $args['include_document_id'] = preg_match('/идентификатор|(?<!\pL)id(?!\pL)/iu', $requestQuery) === 1;

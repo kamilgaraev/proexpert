@@ -17,7 +17,9 @@ final readonly class OrdinaryAssistantSourceCatalog
 
     public function capture(User $actor, int $organizationId, int $projectId, string $name, array $arguments): array
     {
-        $arguments = $this->projection->arguments($name, $arguments, $projectId);
+        $documentSource = $name === OrdinaryAssistantDocumentProjection::TOOL;
+        $arguments = $documentSource ? app(OrdinaryAssistantDocumentProjection::class)->selection($arguments, $projectId)
+            : $this->projection->arguments($name, $arguments, $projectId);
         if ((int) $actor->current_organization_id !== $organizationId || ! $actor->is_active
             || ! $this->permissions->canExposeTool($actor, $name) || ! $this->permissions->canExecuteTool($actor, $name, $arguments)) {
             throw new AssistantEgressDenied('access_denied');
@@ -26,6 +28,9 @@ final readonly class OrdinaryAssistantSourceCatalog
         $organization = Organization::query()->find($organizationId);
         if ($tool === null || $organization === null) {
             throw new AssistantEgressDenied('source_unknown');
+        }
+        if ($documentSource) {
+            return app(OrdinaryAssistantDocumentProjection::class)->capture($actor, $organizationId, $projectId, $arguments);
         }
         $result = $this->projection->project($name, $tool->execute($arguments, $actor, $organization), $organizationId, (int) $actor->id, $projectId);
         $provider = $this->projection->forProvider($result);
