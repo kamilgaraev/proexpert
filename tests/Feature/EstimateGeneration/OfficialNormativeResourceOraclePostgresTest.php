@@ -7,7 +7,14 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalBackfillService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalRolloutService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources;
@@ -138,6 +145,141 @@ final class OfficialNormativeResourceOraclePostgresTest extends EstimateGenerati
         self::assertFalse($fixture['source']['current_edition_verified']);
         self::assertFalse($fixture['source']['official_xml_import_verified']);
         self::assertFalse($fixture['synthetic_price_context']['official_price_verified']);
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
+    public function test_retrieval_and_explicit_selection_preserve_edition_source_and_regional_price_pins(): void
+    {
+        [$fixture, $catalog, $item, $context] = $this->fixture();
+        $foreignFixture = $fixture;
+        $foreignFixture['fixture_kind'] = 'controlled_foreign_edition_not_an_official_source';
+        $foreignFixture['source'] = ['edition' => 'controlled-foreign-edition',
+            'current_edition_verified' => false, 'official_xml_import_verified' => false];
+        $foreignFixture['synthetic_price_context'] = [...$fixture['synthetic_price_context'],
+            'quarter' => 3, 'business_date' => '2022-07-01'];
+        $foreign = $this->catalog($foreignFixture);
+        $regionCode = DB::table('estimate_regions')->where('id', $catalog['context']['region_id'])->value('code');
+        $foreignRegion = DB::table('estimate_regions')->where('id', $foreign['context']['region_id'])->value('code');
+        DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update([
+            'region_code' => $regionCode, 'valid_from' => '2022-05-18', 'valid_to' => '2022-06-30',
+        ]);
+        $context['regional_context']['region_code'] = $regionCode;
+        $backfill = app(NormativeRetrievalBackfillService::class);
+        for ($batch = 0; $batch < 10; $batch++) {
+            $progress = $backfill->resume(1000);
+            if ($progress['complete']) {
+                break;
+            }
+        }
+        self::assertTrue($progress['complete']);
+        self::assertSame('enabled', app(NormativeRetrievalRolloutService::class)->deploy()['deploy_status']);
+        $sourceIds = ['estimate_dataset_versions' => [$catalog['dataset_id'], $foreign['dataset_id']],
+            'estimate_norm_collections' => [$catalog['collection_id'], $foreign['collection_id']],
+            'estimate_norms' => [$catalog['norm_id'], $foreign['norm_id']],
+            'estimate_norm_resources' => [$catalog['resource_id'], $foreign['resource_id']],
+            'estimate_resource_prices' => [$catalog['price_id'], $foreign['price_id']],
+            'estimate_regional_price_versions' => [$catalog['context']['estimate_regional_price_version_id'],
+                $foreign['context']['estimate_regional_price_version_id']]];
+        $sourceBefore = [];
+        foreach ($sourceIds as $table => $ids) {
+            $sourceBefore[$table] = DB::table($table)->whereIn('id', $ids)->orderBy('id')->get()->all();
+        }
+        $sessionBefore = EstimateGenerationSession::query()->findOrFail($context['session_id'])->getRawOriginal();
+        $source = app(PostgresNormativeCandidateSource::class);
+        $version = $catalog['context']['normative_dataset_version'];
+        $found = $source->find($context['organization_id'], $context['project_id'], $version, $item['name'], 16, null);
+        self::assertCount(1, $found);
+        self::assertSame($catalog['norm_id'], $found[0]->normativeId);
+        self::assertSame($catalog['dataset_id'], $found[0]->datasetId);
+        self::assertSame($version, $found[0]->datasetVersion);
+        self::assertSame($fixture['norm']['code'], $found[0]->code);
+        self::assertSame($fixture['norm']['unit'], $found[0]->canonicalUnit);
+        self::assertSame(['norm:'.$catalog['norm_id'], 'dataset:'.$catalog['dataset_id']], $found[0]->sourceEvidence);
+        $foreignFound = $source->find($context['organization_id'], $context['project_id'],
+            $foreign['context']['normative_dataset_version'], $item['name'], 16, null);
+        self::assertCount(1, $foreignFound);
+        self::assertSame($foreign['norm_id'], $foreignFound[0]->normativeId);
+        self::assertSame($fixture['norm']['code'], $foreignFound[0]->code);
+        self::assertNotSame($version, $foreignFound[0]->datasetVersion);
+        $intents = app(NormativeWorkIntentFactory::class);
+        $intent = $intents->intent($item, [...$context, 'applicability_date' => '2022-05-18'], $version);
+        $retrieval = app(NormativeRetrievalService::class);
+        $set = $retrieval->retrieve($intent);
+        self::assertSame('retrieval_only', $set->status);
+        self::assertCount(1, $set->candidates);
+        self::assertSame($catalog['norm_id'], $set->candidates[0]->normativeId);
+        self::assertSame([], $set->rejected);
+        $resolver = app(ResolveSelectedNormativeResources::class);
+        $result = $resolver->resolveWithDiagnostics($item, $set->candidates[0]->normativeId, $context);
+        self::assertSame([], $result['blocking_issues'], json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        self::assertNotNull($result['item']);
+        $selected = $result['item'];
+        self::assertSame($catalog['norm_id'], $selected['normative_match']['norm_id']);
+        self::assertSame($version, $selected['normative_match']['dataset_version']['version_key']);
+        self::assertSame($catalog['norm_id'], $selected['normative_match']['catalog_identity']['norm_id']);
+        self::assertSame($catalog['collection_id'], $selected['normative_match']['catalog_identity']['collection']['id']);
+        self::assertSame($regionCode, $selected['normative_match']['catalog_identity']['metadata']['region_code']);
+        self::assertSame('2022-05-18', $selected['normative_match']['catalog_identity']['metadata']['valid_from']);
+        self::assertSame('2022-06-30', $selected['normative_match']['catalog_identity']['metadata']['valid_to']);
+        self::assertCount(1, $selected['labor']);
+        $labor = $selected['labor'][0];
+        self::assertSame($catalog['norm_id'], $labor['normative_ref']['norm_id']);
+        self::assertSame($catalog['resource_id'], $labor['normative_ref']['norm_resource_id']);
+        self::assertSame($catalog['price_id'], $labor['normative_ref']['price_id']);
+        self::assertSame($fixture['norm']['resources'][0]['code'], $labor['normative_ref']['resource_code']);
+        self::assertSame($fixture['norm']['resources'][0]['unit'], $labor['unit']);
+        self::assertNull($resolver->resolve($item, $foreign['norm_id'], $context));
+        $endContext = $context;
+        $endContext['regional_context']['business_date'] = '2022-06-30';
+        $end = $retrieval->retrieve($intents->intent($item, [...$endContext, 'applicability_date' => '2022-06-30'], $version));
+        self::assertCount(1, $end->candidates);
+        self::assertSame($catalog['norm_id'], $end->candidates[0]->normativeId);
+        $negativeContexts = [];
+        foreach (['region' => $foreignRegion, 'before' => '2022-05-17', 'after' => '2022-07-01'] as $kind => $value) {
+            $negative = $context;
+            $negative['regional_context'][$kind === 'region' ? 'region_code' : 'business_date'] = $value;
+            $negativeContexts[$kind] = [$item, $negative, $kind === 'region' ? 'region_mismatch' : 'applicability_date_mismatch'];
+        }
+        $negativeContexts['unit'] = [[...$item, 'unit' => 'м2'], $context, 'unit_mismatch'];
+        foreach ($negativeContexts as $kind => [$negativeItem, $negativeContext, $reason]) {
+            $negativeIntent = $intents->intent($negativeItem,
+                [...$negativeContext, 'applicability_date' => $negativeContext['regional_context']['business_date']], $version);
+            $denied = $retrieval->retrieve($negativeIntent);
+            self::assertSame([], $denied->candidates, $kind);
+            self::assertCount(1, $denied->rejected, $kind);
+            self::assertSame($catalog['norm_id'], $denied->rejected[0]->candidate->normativeId);
+            self::assertContains($reason, $denied->rejected[0]->reasonCodes, $kind);
+            $deniedSelection = $resolver->resolveWithDiagnostics($negativeItem, $catalog['norm_id'], $negativeContext);
+            self::assertNull($deniedSelection['item'], $kind);
+            self::assertNotSame([], $deniedSelection['blocking_issues'], $kind);
+        }
+        $prices = app(ResolveRegionalPrice::class);
+        $snapshot = $prices->handle($labor, $context['regional_context']);
+        self::assertSame('estimate_resource_prices:'.$catalog['price_id'], $snapshot->sourceReference);
+        foreach (['region_id' => 'regionId', 'price_zone_id' => 'zoneId', 'period_id' => 'periodId',
+            'estimate_regional_price_version_id' => 'versionId'] as $field => $property) {
+            self::assertSame($context['regional_context'][$field], $snapshot->{$property});
+            $wrongContext = [...$context['regional_context'], $field => $foreign['context'][$field]];
+            try {
+                $prices->handle($labor, $wrongContext);
+                self::fail('Foreign '.$field.' received a pinned resource price.');
+            } catch (MissingRegionalPrice $exception) {
+                self::assertSame($catalog['price_id'], $exception->priceId);
+                self::assertSame('price_payload_unusable', $exception->reason);
+            }
+        }
+        $metadata = json_decode(DB::table('estimate_dataset_versions')->where('id', $catalog['dataset_id'])->value('meta'),
+            true, flags: JSON_THROW_ON_ERROR);
+        self::assertEquals($fixture['source'], $metadata['transcribed_pdf_source']);
+        self::assertFalse($metadata['transcribed_pdf_source']['current_edition_verified']);
+        self::assertFalse($metadata['transcribed_pdf_source']['official_xml_import_verified']);
+        self::assertFalse($fixture['synthetic_price_context']['official_price_verified']);
+        self::assertSame('unresolved', $fixture['scenario']['engineering_applicability']);
+        foreach ($sourceIds as $table => $ids) {
+            self::assertEquals($sourceBefore[$table], DB::table($table)->whereIn('id', $ids)->orderBy('id')->get()->all(), $table);
+        }
+        self::assertSame($sessionBefore, EstimateGenerationSession::query()->findOrFail($context['session_id'])->getRawOriginal());
         Http::assertNothingSent();
         Queue::assertNothingPushed();
     }
