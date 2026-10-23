@@ -7,13 +7,37 @@ namespace App\BusinessModules\Features\AIAssistant\Http\Controllers;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantEgressEnrollmentRequest;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEnrollmentService;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantExceptionBoundary;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Throwable;
 
 final class AssistantEgressEnrollmentController extends AbstractAssistantApiController
 {
     public function __construct(private readonly OrdinaryAssistantEnrollmentService $enrollments) {}
+
+    public function capability(Request $request): JsonResponse
+    {
+        try {
+            if ($request->all() !== []) {
+                throw new AssistantEgressDenied('unsupported_purpose');
+            }
+            $response = $this->success($request, $this->enrollments->capability($this->actor($request), $this->organizationId($request)));
+        } catch (AssistantEgressDenied|AccessDeniedHttpException|AuthorizationException) {
+            $response = $this->error($request, 403);
+        } catch (AuthenticationException) {
+            $response = $this->error($request, 401, 'errors.unauthorized');
+        } catch (Throwable $failure) {
+            report(OrdinaryAssistantExceptionBoundary::sanitize($failure));
+            $response = $this->error($request, 500, 'ai_assistant.request_failed');
+        }
+
+        return $response->header('Cache-Control', 'private, no-store');
+    }
 
     public function assign(AssistantEgressEnrollmentRequest $request): JsonResponse
     {

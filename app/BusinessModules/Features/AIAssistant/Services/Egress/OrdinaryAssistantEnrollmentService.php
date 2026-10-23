@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantEgressCohort;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantEgressEnrollment;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Credits\AICreditQuote;
 use App\Models\User;
@@ -15,6 +16,7 @@ use App\Services\Credits\AICreditService;
 use App\Support\AI\LunaModelPolicy;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 final readonly class OrdinaryAssistantEnrollmentService
 {
@@ -24,6 +26,49 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function __construct(private AuthorizationService $authorization, private AssistantDataAccessPolicy $access,
         private OrdinaryAssistantSourceCatalog $sources, private AICreditService $credits) {}
+
+    public function capability(User $actor, int $organizationId): array
+    {
+        try {
+            return $this->discoverCapability($actor, $organizationId);
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
+        }
+    }
+
+    private function discoverCapability(User $actor, int $organizationId): array
+    {
+        $actor = $this->sources->freshReviewer((int) $actor->getKey(), $organizationId);
+        if (! app(AIPermissionChecker::class)->canUseAssistant($actor, $organizationId)) {
+            throw new AssistantEgressDenied('access_denied');
+        }
+        $cohort = AssistantEgressCohort::query()->where('organization_id', $organizationId)->where('actor_id', $actor->getKey())->first();
+        if ($cohort === null) {
+            return ['mode' => 'legacy', 'state' => 'not_enrolled', 'can_review_sources' => false, 'cohort' => null];
+        }
+        try {
+            $cohort = $this->cohort((string) $cohort->id, $organizationId);
+            if (! $this->access->withCurrentChecks($actor, $organizationId,
+                fn (): bool => $this->access->canReadEntity($actor, $organizationId, 'project', (int) $cohort->project_id), true)) {
+                throw new AssistantEgressDenied('access_denied');
+            }
+        } catch (AssistantEgressDenied) {
+            return ['mode' => 'guarded', 'state' => 'unavailable', 'can_review_sources' => false, 'cohort' => null];
+        }
+        try {
+            $this->assertOwner($actor, $organizationId);
+            $canReview = true;
+        } catch (AssistantEgressDenied) {
+            $canReview = false;
+        }
+
+        return ['mode' => 'guarded', 'state' => 'review_required', 'can_review_sources' => $canReview,
+            'cohort' => ['cohort_id' => $cohort->id, 'project_id' => (int) $cohort->project_id,
+                'policy_version' => $cohort->policy_version, 'allowed_tools' => array_values($cohort->allowed_tools),
+                'expires_at' => $cohort->expires_at->toISOString()]];
+    }
 
     public function assign(User $operator, int $organizationId, User $actor, int $projectId, array $tools, string $policyVersion = OrdinaryAssistantSourceProjection::VERSION): AssistantEgressCohort
     {
