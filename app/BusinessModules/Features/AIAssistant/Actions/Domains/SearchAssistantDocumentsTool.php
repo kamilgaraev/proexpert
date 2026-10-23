@@ -17,6 +17,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilde
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\Models\Organization;
 use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection;
 use Illuminate\Auth\Access\AuthorizationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Throwable;
@@ -79,6 +81,19 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         if (($arguments['project_id'] ?? null) !== null && !$this->access->withCurrentChecks($user, (int) $organization->id,
             fn (): bool => $this->access->canReadEntity($user, (int) $organization->id, 'project', $arguments['project_id']), true)) {
             throw new AuthorizationException;
+        }
+        $scoped = app(OrdinaryAssistantScopedContext::class);
+        if ($scoped->allowsExpansion('document_rag')) {
+            $scoped->assertTool($this->getName(), $arguments, $user, (int) $organization->id);
+            $read = function () use ($scoped, $arguments, $user, $organization, $execution): array {
+                $corpus = $scoped->documentCorpus($user, (int) $organization->id, $arguments);
+                $search = $this->retriever->searchWithDiagnostics($arguments['query'], (int) $organization->id, $user, $arguments,
+                    $execution === null ? null : $execution->assertCanContinue(...), corpus: $corpus);
+                $execution?->assertCanContinue();
+                return app(OrdinaryAssistantDocumentProjection::class)->project($corpus, $search['results'], $user, (int) $organization->id);
+            };
+            return $execution === null ? $read() : $execution->withDatabaseStatementTimeout(
+                fn (): array => $execution->withOperationBudget($read, 30_000, 'pgsql'));
         }
         $context = array_filter(array_intersect_key($arguments, array_flip(['project_id', 'source_types', 'limit', 'retrieval_mode'])),
             static fn (mixed $value): bool => $value !== null);

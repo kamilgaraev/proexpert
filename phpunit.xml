@@ -9,6 +9,11 @@
          displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
+        <testsuite name="OrdinaryAssistantDocumentAdmission">
+            <file>tests/Feature/AIAssistant/AssistantDocumentAdmissionTest.php</file>
+            <file>tests/Unit/AIAssistant/Documents/AssistantDocumentAdmissionContractTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagRetrieverTest.php</file>
+        </testsuite>
         <testsuite name="Php85Compatibility">
             <file>tests/Feature/Infrastructure/PhpUnitPostgresProfileTest.php</file>
             <file>tests/Feature/Auth/AuthTokenIssuerContractTest.php</file>
