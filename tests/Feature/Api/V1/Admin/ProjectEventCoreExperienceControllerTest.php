@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent;
+use App\BusinessModules\Features\ScheduleManagement\Services\ProjectEventService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Validation\ValidationException;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -274,6 +277,98 @@ class ProjectEventCoreExperienceControllerTest extends TestCase
             ->assertOk()->assertJsonPath('data.end_time', null)->assertJsonPath('data.duration_minutes', null);
         $this->withHeaders($context->authHeaders())->getJson("{$url}/calendar?start_date=2026-10-27&end_date=2026-10-28")
             ->assertOk()->assertJsonPath('data.0.end_local', null)->assertJsonPath('data.0.end', null);
+    }
+
+    public function test_existing_legacy_calendar_values_round_trip_when_editing_an_event(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+
+        foreach ([['site_request', 'medium'], ['site_request', 'normal'], ['meeting', 'medium']] as [$type, $priority]) {
+            $event = $this->createProjectEvent($project->id, $context->organization->id, $context->user->id, [
+                'event_type' => $type, 'priority' => $priority,
+            ]);
+            $url = "/api/v1/admin/projects/{$project->id}/events/{$event->id}";
+            $this->withHeaders($context->authHeaders())->putJson($url, [
+                'event_type' => $type, 'priority' => $priority, 'title' => 'Edited source event',
+                'event_date' => '2026-06-01', 'event_time' => '09:00:30',
+                'end_date' => '2026-06-02', 'end_time' => '10:45:15',
+                'duration_minutes' => null, 'is_all_day' => false, 'is_recurring' => false,
+            ])->assertOk()->assertJsonPath('data.event_type', $type)->assertJsonPath('data.priority', $priority);
+
+            $this->withHeaders($context->authHeaders())->getJson($url)
+                ->assertOk()->assertJsonPath('data.title', 'Edited source event')
+                ->assertJsonPath('data.event_type', $type)->assertJsonPath('data.priority', $priority);
+        }
+    }
+
+    public function test_legacy_calendar_values_cannot_be_introduced_by_manual_create_or_update(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $url = "/api/v1/admin/projects/{$project->id}/events";
+        $this->withHeaders($context->authHeaders())->postJson($url, [
+            'event_type' => 'site_request', 'priority' => 'medium',
+            'title' => 'Must not create service event', 'event_date' => '2026-06-01',
+        ])->assertUnprocessable()->assertJsonValidationErrors(['event_type', 'priority']);
+        $this->assertDatabaseMissing('project_events', ['title' => 'Must not create service event']);
+
+        foreach ([['meeting', 'normal', ['event_type', 'priority']], ['site_request', 'normal', ['priority']], ['meeting', 'medium', ['event_type']]] as [$type, $priority, $errors]) {
+            $event = $this->createProjectEvent($project->id, $context->organization->id, $context->user->id, [
+                'event_type' => $type, 'priority' => $priority,
+            ]);
+            $this->withHeaders($context->authHeaders())->putJson("{$url}/{$event->id}", [
+                'event_type' => 'site_request', 'priority' => 'medium', 'title' => 'Must not persist',
+            ])->assertUnprocessable()->assertJsonValidationErrors($errors);
+            $fresh = $event->fresh();
+            $this->assertSame($type, $fresh->event_type);
+            $this->assertSame($priority, $fresh->priority);
+            $this->assertSame('Project event', $fresh->title);
+        }
+    }
+
+    public function test_legacy_calendar_update_keeps_project_and_organization_scope(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $anotherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignOrganization = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $this->allowAdminAccess();
+
+        foreach ([$anotherProject, $foreignProject] as $otherProject) {
+            $event = $this->createProjectEvent($otherProject->id, $otherProject->organization_id, $context->user->id, [
+                'event_type' => 'site_request', 'priority' => 'medium',
+            ]);
+            $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/projects/{$project->id}/events/{$event->id}", [
+                'event_type' => 'site_request', 'priority' => 'medium', 'title' => 'Must not cross scope',
+            ])->assertNotFound();
+            $this->assertSame('Project event', $event->fresh()->title);
+        }
+    }
+
+    public function test_stale_legacy_event_cannot_restore_values_after_conversion_to_manual_values(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $event = $this->createProjectEvent($project->id, $context->organization->id, $context->user->id, [
+            'event_type' => 'site_request', 'priority' => 'medium',
+        ]);
+        $stale = $event->fresh();
+        $service = app(ProjectEventService::class);
+        $service->updateEvent($event, ['event_type' => 'meeting', 'priority' => 'normal']);
+
+        try {
+            $service->updateEvent($stale, ['event_type' => 'site_request', 'priority' => 'medium']);
+            $this->fail('Stale input restored legacy values');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('event_type', $exception->errors());
+            $this->assertArrayHasKey('priority', $exception->errors());
+        }
+        $this->assertSame('meeting', $event->fresh()->event_type);
+        $this->assertSame('normal', $event->fresh()->priority);
     }
 
     private function createProjectEvent(int $projectId, int $organizationId, int $userId, array $overrides = []): ProjectEvent
