@@ -14,6 +14,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -21,6 +22,64 @@ use Tests\TestCase;
 class WarehouseIdentifierAndScanEventControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_identifier_and_scan_timestamps_preserve_the_instant_with_an_explicit_offset(): void
+    {
+        $instant = Carbon::parse('2026-10-23 17:57:29', 'UTC');
+        $this->travelTo($instant);
+
+        try {
+            $context = AdminApiTestContext::create();
+            $warehouse = $this->createWarehouse($context->organization->id, 'Timestamp warehouse', 'TIME-WH');
+            $identifier = $this->createIdentifier($context->organization->id, $warehouse->id, 'TIME-QR');
+            $this->allowAdminAccess();
+
+            $before = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/warehouse-identifiers?warehouse_id='.$warehouse->id)
+                ->assertOk();
+            foreach (['assigned_at', 'created_at', 'updated_at'] as $field) {
+                $this->assertTimestampRepresentsInstant($before->json('data.0.'.$field), $instant);
+            }
+            $before->assertJsonPath('data.0.last_scanned_at', null);
+
+            $scan = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouse-scan-events', [
+                    'warehouse_id' => $warehouse->id,
+                    'code' => $identifier->code,
+                    'source' => WarehouseScanEvent::SOURCE_ADMIN,
+                ])
+                ->assertCreated()
+                ->assertJsonPath('data.identifier_id', $identifier->id);
+            foreach (['scanned_at', 'created_at', 'updated_at'] as $field) {
+                $this->assertTimestampRepresentsInstant($scan->json('data.'.$field), $instant);
+            }
+
+            $resolved = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouse-identifiers/resolve', [
+                    'warehouse_id' => $warehouse->id,
+                    'code' => $identifier->code,
+                ])
+                ->assertOk();
+            foreach (['assigned_at', 'last_scanned_at', 'created_at', 'updated_at'] as $field) {
+                $this->assertTimestampRepresentsInstant($resolved->json('data.'.$field), $instant);
+            }
+
+            $history = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/warehouse-scan-events?warehouse_id='.$warehouse->id)
+                ->assertOk();
+            foreach (['scanned_at', 'created_at', 'updated_at'] as $field) {
+                $this->assertTimestampRepresentsInstant($history->json('data.0.'.$field), $instant);
+            }
+
+            $identifier->forceFill(['assigned_at' => null])->save();
+            $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/warehouse-identifiers?warehouse_id='.$warehouse->id)
+                ->assertOk()
+                ->assertJsonPath('data.0.assigned_at', null);
+        } finally {
+            $this->travelBack();
+        }
+    }
 
     public function test_identifiers_are_scoped_unique_and_keep_single_primary_per_entity(): void
     {
@@ -339,6 +398,13 @@ class WarehouseIdentifierAndScanEventControllerTest extends TestCase
             'organization_id' => $context->organization->id,
             'code' => 'VIEWER-CODE',
         ]);
+    }
+
+    private function assertTimestampRepresentsInstant(mixed $value, Carbon $instant): void
+    {
+        $this->assertIsString($value);
+        $this->assertMatchesRegularExpression('/T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/', $value);
+        $this->assertSame($instant->getTimestamp(), Carbon::parse($value)->getTimestamp());
     }
 
     private function createWarehouse(int $organizationId, string $name, string $code): OrganizationWarehouse

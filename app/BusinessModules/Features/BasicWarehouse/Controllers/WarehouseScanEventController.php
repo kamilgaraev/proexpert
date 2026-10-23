@@ -179,7 +179,7 @@ class WarehouseScanEventController extends Controller
             'scan_context' => $event->scan_context,
             'metadata' => $this->snapshotService->publicMetadata($event),
             'notes' => $event->notes,
-            'scanned_at' => optional($event->scanned_at)?->toDateTimeString(),
+            'scanned_at' => optional($event->scanned_at)?->toIso8601String(),
             'warehouse' => $event->warehouse ? [
                 'id' => $event->warehouse->id,
                 'name' => $event->warehouse->name,
@@ -194,8 +194,8 @@ class WarehouseScanEventController extends Controller
                 'status' => $event->logisticUnit->status,
             ] : null,
             'entity_summary' => $this->snapshotService->entitySummary($event),
-            'created_at' => optional($event->created_at)?->toDateTimeString(),
-            'updated_at' => optional($event->updated_at)?->toDateTimeString(),
+            'created_at' => optional($event->created_at)?->toIso8601String(),
+            'updated_at' => optional($event->updated_at)?->toIso8601String(),
         ];
     }
 }

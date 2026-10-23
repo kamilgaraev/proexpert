@@ -364,8 +364,8 @@ class WarehouseIdentifierController extends Controller
             'label' => $identifier->label,
             'status' => $identifier->status,
             'is_primary' => (bool) $identifier->is_primary,
-            'assigned_at' => optional($identifier->assigned_at)?->toDateTimeString(),
-            'last_scanned_at' => optional($identifier->last_scanned_at)?->toDateTimeString(),
+            'assigned_at' => optional($identifier->assigned_at)?->toIso8601String(),
+            'last_scanned_at' => optional($identifier->last_scanned_at)?->toIso8601String(),
             'metadata' => $identifier->metadata ?? [],
             'notes' => $identifier->notes,
             'warehouse' => $warehouse ? [
@@ -376,8 +376,8 @@ class WarehouseIdentifierController extends Controller
             'entity_summary' => $identifier->entity_type === 'warehouse' && $warehouse !== null
                 ? $this->makeWarehouseSummary($warehouse)
                 : $this->makeEntitySummary($identifier->entity_type, (int) $identifier->entity_id, $identifier->organization_id),
-            'created_at' => optional($identifier->created_at)?->toDateTimeString(),
-            'updated_at' => optional($identifier->updated_at)?->toDateTimeString(),
+            'created_at' => optional($identifier->created_at)?->toIso8601String(),
+            'updated_at' => optional($identifier->updated_at)?->toIso8601String(),
         ];
     }
 
