@@ -7,6 +7,11 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\DesignAdditionalRagSource;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
@@ -17,8 +22,11 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use Mockery;
 use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 final class AssistantIfcSourceIdentityPlanTest extends TestCase
@@ -214,6 +222,14 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
                 'entity_type' => $type, 'entity_id' => (string) $id, 'title' => 'Mixed source', 'checksum' => hash('sha256', $type),
             ]));
         }
+        foreach (['design_ifc_model_element', 'design_package_section'] as $type) {
+            $source = RagSource::query()->where('organization_id', $organizationId)->where('entity_type', $type)->orderBy('id')->firstOrFail();
+            DB::table('ai_rag_chunks')->insert([
+                'organization_id' => $organizationId, 'project_id' => $project->id, 'source_id' => $source->id,
+                'chunk_index' => 0, 'content' => 'Counter '.$type, 'content_hash' => hash('sha256', 'Counter '.$type),
+                'embedding' => json_encode(RagTestEmbedding::fromLeadingValues([1.0]), JSON_THROW_ON_ERROR),
+            ]);
+        }
         DB::statement('ANALYZE ai_rag_status_sources');
         DB::statement("SET LOCAL work_mem = '64kB'");
         $policy->withCurrentChecks($fixture->owner, $organizationId, function () use ($policy, $fixture, $organizationId, $package): void {
@@ -226,8 +242,8 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             self::assertCount(1, $batches);
             $counts = $batches[0]->first();
             self::assertSame(20007, (int) $counts->stored_count);
-            self::assertSame(0, (int) $counts->chunk_count);
-            self::assertSame(0, (int) $counts->indexed_count);
+            self::assertSame(2, (int) $counts->chunk_count);
+            self::assertSame(2, (int) $counts->indexed_count);
             $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batches[0]->toSql(), $batches[0]->getBindings());
             $plan = json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan'];
             $sourceCtes = [];
@@ -251,11 +267,101 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             };
             $collect($plan);
             self::assertLessThanOrEqual(42000, $rowsProcessed, 'Mixed source counting must bound base and CTE work, including filtered rows and loops; temp blocks '.($plan['Temp Read Blocks'] ?? 0).'.');
+            $coverage = $this->assertFullMixedCorpusCoverage($policy, $fixture);
             $package->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
             self::assertNull($batches[0]->first());
+            self::assertSame(0, $coverage->coverageForActor($organizationId, $fixture->owner, countsOnly: true)['stored_source_count']);
             $package->updateQuietly(['organization_id' => $organizationId]);
             $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => false]);
             self::assertNull($batches[0]->first());
+            self::assertSame(0, $coverage->coverageForActor($organizationId, $fixture->owner, countsOnly: true)['stored_source_count']);
         }, fresh: true);
+    }
+
+    private function assertFullMixedCorpusCoverage(AssistantDataAccessPolicy $policy, AssistantRealAuthorizationFixture $fixture): RagCoverageService
+    {
+        $organizationId = (int) $fixture->organization->id;
+        $partial = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+        $combine = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, pg_catalog.SUM(accessible_sources.stored_count) AS stored_count, pg_catalog.SUM(accessible_sources.chunk_count) AS chunk_count, pg_catalog.SUM(accessible_sources.indexed_count) AS indexed_count');
+        $profileBatches = [];
+        $profiles = [];
+        foreach (['baseline' => false, 'specialized' => true] as $variant => $specialize) {
+            $started = hrtime(true);
+            $batches = $policy->aggregateSourceIdentityBatches(
+                RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $fixture->owner, $organizationId,
+                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
+                $combine, aggregateBranch: $partial, specializeDesignCandidates: $specialize,
+            );
+            $compileMs = round((hrtime(true) - $started) / 1000000, 3);
+            self::assertCount(1, $batches);
+            $totals = [0, 0, 0];
+            foreach ($batches as $batch) {
+                foreach ($batch->get() as $row) {
+                    self::assertSame('design_additional', $row->source_type);
+                    foreach (['stored_count', 'chunk_count', 'indexed_count'] as $index => $field) { $totals[$index] += (int) $row->{$field}; }
+                }
+            }
+            $pipelineMs = round((hrtime(true) - $started) / 1000000, 3);
+            self::assertSame([20007, 2, 2], $totals);
+            if (getenv('MOST_RAG_STORED_QUERY_PROFILE') === '1') {
+                $profileBatches[$variant] = $batches;
+                $profiles[$variant] = ['variant' => $variant, 'compile_ms' => $compileMs, 'pipeline_ms' => $pipelineMs, 'measurements' => []];
+            }
+        }
+        if ($profiles !== []) {
+            $previousWorkMem = DB::selectOne('SHOW work_mem')->work_mem;
+            DB::statement("SET LOCAL work_mem = '16MB'");
+            try {
+                foreach (['baseline', 'specialized', 'specialized', 'baseline', 'specialized', 'baseline', 'baseline', 'specialized'] as $repeat => $variant) {
+                    foreach ($profileBatches[$variant] as $ordinal => $batch) {
+                        $started = hrtime(true);
+                        $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
+                        $plan = json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
+                        $profiles[$variant]['measurements'][] = ['ordinal' => $ordinal + 1, 'repeat' => $repeat, 'sql_bytes' => strlen($batch->toSql()),
+                            'bindings' => count($batch->getBindings()), 'wall_ms' => round((hrtime(true) - $started) / 1000000, 3),
+                            'planning_ms' => $plan['Planning Time'], 'execution_ms' => $plan['Execution Time']];
+                    }
+                }
+                foreach ($profiles as $profile) { fwrite(STDOUT, PHP_EOL.'STORED_FULL_COUNTER_PROFILE '.json_encode($profile, JSON_THROW_ON_ERROR).PHP_EOL); }
+            } finally {
+                DB::select('SELECT set_config(?, ?, true)', ['work_mem', $previousWorkMem]);
+            }
+        }
+        Queue::fake();
+        $registry = new RagSourceRegistry([new DesignAdditionalRagSource]);
+        $coverage = new RagCoverageService($registry, Mockery::mock(RagIndexer::class), $policy);
+        $full = $coverage->coverageForActor($organizationId, $fixture->owner);
+        $counts = $coverage->coverageForActor($organizationId, $fixture->owner, countsOnly: true);
+        foreach (['source_count' => 20007, 'stored_source_count' => 20007, 'chunk_count' => 2, 'indexed_source_count' => 2] as $field => $expected) {
+            self::assertSame($expected, $full[$field], 'Full '.$field);
+            self::assertSame($full[$field], $counts[$field], 'Counts-only '.$field);
+        }
+        $calls = 0;
+        $failure = new \RuntimeException('stop_first_design_batch');
+        try {
+            $policy->aggregateSourceIdentityBatches(
+                RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $fixture->owner, $organizationId,
+                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
+                $combine, aggregateBranch: $partial, consume: static function () use (&$calls, $failure): void { $calls++; throw $failure; }, specializeDesignCandidates: true,
+            );
+            self::fail('A failed consumer must stop design batch traversal.');
+        } catch (\RuntimeException $caught) {
+            self::assertSame($failure, $caught);
+            self::assertSame(1, $calls);
+        }
+        $source = RagSource::query()->where('organization_id', $organizationId)->where('entity_type', 'design_ifc_model_element')->firstOrFail();
+        foreach (array_merge(['', 'unknown_design_entity'], array_keys(AssistantFinanceTenderSourceSchema::revisions())) as $entityType) {
+            $source->replicate()->forceFill(['entity_type' => $entityType, 'identity_part_key' => 'unknown-'.$entityType])->saveQuietly();
+        }
+        foreach ([false, true] as $countsOnly) {
+            $status = $coverage->coverageForActor($organizationId, $fixture->owner, countsOnly: $countsOnly);
+            self::assertSame(20007, $status['stored_source_count']);
+            self::assertSame(2, $status['chunk_count']);
+            self::assertSame(2, $status['indexed_source_count']);
+        }
+
+        return $coverage;
     }
 }
