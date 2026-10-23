@@ -211,6 +211,48 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertSame(0, $this->reads);
     }
 
+    public function test_role_subject_query_observes_assignment_revocation_on_each_new_operation(): void
+    {
+        [$fixture, $version, $directGrant] = $this->fixture(true);
+        $viewRole = $fixture->memberRole->replicate()->forceFill([
+            'name' => 'Просмотр без допуска к документу', 'slug' => $fixture->memberRole->slug.'_view',
+            'system_permissions' => ['legal_archive.view'], 'module_permissions' => [],
+        ]);
+        $viewRole->save();
+        $fixture->memberAssignment->replicate()->forceFill(['role_slug' => $viewRole->slug, 'custom_role_id' => $viewRole->id])->save();
+        $directGrant->update(['revoked_at' => now(), 'revoked_by_user_id' => $fixture->owner->id,
+            'revocation_reason' => 'Role-only source fixture']);
+        $roleGrant = LegalDocumentAccessGrant::query()->create([
+            'organization_id' => $fixture->organization->id, 'document_id' => $version->document_id,
+            'subject_kind' => 'internal_role', 'subject_organization_id' => $fixture->organization->id,
+            'subject_role_slug' => $fixture->memberAssignment->role_slug,
+            'abilities' => ['view'], 'granted_by_user_id' => $fixture->owner->id,
+        ]);
+        $read = static function (AuthorizationService $authorization) use ($fixture, $version): bool {
+            $query = LegalArchiveDocument::query()->whereKey($version->document_id);
+            return (new \App\Services\LegalArchive\Access\LegalDocumentAccessService($authorization))
+                ->scopeAccessibleQuery($query, $fixture->member, (int) $fixture->organization->id, 'view')->exists();
+        };
+        $authorization = app(AuthorizationService::class);
+        self::assertTrue($read($authorization));
+        $scope = $authorization->forCurrentChecks(true);
+        self::assertTrue($read($scope));
+        $fixture->memberAssignment->update(['is_active' => false]);
+        $nextScope = $scope->forCurrentChecks(true);
+        $context = ['organization_id' => (int) $fixture->organization->id];
+        self::assertTrue($authorization->can($fixture->member, 'legal_archive.view', $context));
+        self::assertTrue($nextScope->canCurrent($fixture->member, 'legal_archive.view', $context));
+        self::assertFalse($read($authorization));
+        self::assertFalse($read($nextScope));
+        $fixture->memberAssignment->update(['is_active' => true]);
+        self::assertTrue($read($authorization));
+        $roleGrant->update(['revoked_at' => now(), 'revoked_by_user_id' => $fixture->owner->id,
+            'revocation_reason' => 'Role access revoked']);
+        self::assertFalse($read($authorization));
+        self::assertSame(0, $this->reads);
+    }
+
+
     public function test_coverage_reuses_legal_authorization_reads_only_inside_current_operation(): void
     {
         [$fixture, $version] = $this->fixture(true);

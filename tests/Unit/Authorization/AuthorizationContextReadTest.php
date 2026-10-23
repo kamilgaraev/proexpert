@@ -43,12 +43,51 @@ final class AuthorizationContextReadTest extends TestCase
         self::assertSame(1, $scope->lookups());
     }
 
+    public function test_current_role_slugs_reuse_only_an_explicit_current_read_scope(): void
+    {
+        $service = $this->service();
+        $user = (new User)->forceFill(['id' => 7, 'current_organization_id' => 38]);
+        $context = ['organization_id' => 38];
+        $scope = $service->forCurrentChecks(true);
+        self::assertSame(['test-role'], $scope->getCurrentUserRoleSlugs($user, $context));
+        $scope->setRoleSlugs([]);
+        self::assertSame(['test-role'], $scope->getCurrentUserRoleSlugs($user, $context));
+        self::assertSame(1, $scope->roleReads());
+        self::assertSame([], $scope->forCurrentChecks(true)->getCurrentUserRoleSlugs($user, $context));
+        self::assertSame(2, $scope->roleReads());
+        self::assertSame([], $service->getCurrentUserRoleSlugs($user, $context));
+        $service->setRoleSlugs(['changed-role']);
+        self::assertSame(['changed-role'], $service->getCurrentUserRoleSlugs($user, $context));
+        self::assertSame(4, $service->roleReads());
+        $plain = $service->forCurrentChecks();
+        self::assertSame(['changed-role'], $plain->getCurrentUserRoleSlugs($user, $context));
+        $plain->setRoleSlugs([]);
+        self::assertSame([], $plain->getCurrentUserRoleSlugs($user, $context));
+        self::assertSame(6, $plain->roleReads());
+    }
+
+    public function test_current_role_slug_cache_separates_actors_and_organizations(): void
+    {
+        $scope = $this->service()->forCurrentChecks(true);
+        $first = (new User)->forceFill(['id' => 7, 'current_organization_id' => 38]);
+        $second = (new User)->forceFill(['id' => 8, 'current_organization_id' => 38]);
+        self::assertSame(['test-role'], $scope->getCurrentUserRoleSlugs($first, ['organization_id' => 38]));
+        $scope->setRoleSlugs(['second-role']);
+        self::assertSame(['second-role'], $scope->getCurrentUserRoleSlugs($second, ['organization_id' => 38]));
+        $scope->setRoleSlugs([]);
+        self::assertSame([], $scope->getCurrentUserRoleSlugs($first, ['organization_id' => 39]));
+        self::assertSame(['test-role'], $scope->getCurrentUserRoleSlugs($first, ['organization_id' => 38]));
+        self::assertSame(['second-role'], $scope->getCurrentUserRoleSlugs($second, ['organization_id' => 38]));
+        self::assertSame(3, $scope->roleReads());
+        self::assertSame(2, $scope->lookups());
+    }
+
     private function service(): CountingContextAuthorizationService
     {
         $resolver = $this->createMock(PermissionResolver::class);
         $resolver->method('forCurrentChecks')->willReturn($resolver);
         $resolver->method('forReadScope')->willReturn($resolver);
-        $resolver->method('hasPermission')->willReturn(true);
+        $resolver->method('hasPermission')->willReturnCallback(static fn (UserRoleAssignment $assignment, string $permission, ?array $context = null): bool => ! ($context['strict_project_scope'] ?? false));
 
         return new CountingContextAuthorizationService($this->createMock(RoleScanner::class), $resolver, $this->createMock(LoggingService::class));
     }
@@ -61,24 +100,29 @@ final class CountingContextAuthorizationService extends AuthorizationService
     public function __construct(RoleScanner $scanner, PermissionResolver $resolver, LoggingService $logging)
     {
         parent::__construct($scanner, $resolver, $logging);
-        $this->counter = (object) ['lookups' => 0];
+        $this->counter = (object) ['lookups' => 0, 'role_reads' => 0, 'role_slugs' => ['test-role']];
     }
 
     protected function resolveAuthContext(?array $context): ?AuthorizationContext
     {
         $this->counter->lookups++;
 
-        return (new AuthorizationContext)->forceFill(['id' => 100 + ($context['project_id'] ?? 0),
+        return (new AuthorizationContext)->forceFill(['id' => isset($context['project_id']) ? 100_000 + $context['project_id'] : 100 + ($context['organization_id'] ?? 0),
             'type' => isset($context['project_id']) ? AuthorizationContext::TYPE_PROJECT : AuthorizationContext::TYPE_ORGANIZATION,
             'resource_id' => $context['project_id'] ?? $context['organization_id'] ?? null]);
     }
 
     public function getUserRoles(User $user, ?AuthorizationContext $context = null): Collection
     {
-        return collect([(new UserRoleAssignment)->forceFill(['id' => 1, 'context_id' => 999, 'role_slug' => 'test-role', 'role_type' => 'system'])]);
+        $this->counter->role_reads++;
+
+        return collect($this->counter->role_slugs)->map(static fn (string $slug): UserRoleAssignment =>
+            (new UserRoleAssignment)->forceFill(['id' => 1, 'context_id' => $context?->id ?? 999, 'role_slug' => $slug, 'role_type' => 'system']));
     }
 
     protected function getContextHierarchy(AuthorizationContext $context): Collection { return collect([$context]); }
     protected function evaluateConditions(UserRoleAssignment $assignment, array $context): bool { return $context['condition_pass'] ?? true; }
     public function lookups(): int { return $this->counter->lookups; }
+    public function roleReads(): int { return $this->counter->role_reads; }
+    public function setRoleSlugs(array $slugs): void { $this->counter->role_slugs = $slugs; }
 }

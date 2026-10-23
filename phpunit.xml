@@ -284,6 +284,7 @@
             <file>tests/Feature/AIAssistant/AssistantLiveProjectFinanceSourceTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantMissingUsageBillingTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantNativeMissingCoverageBatchTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantOperationsBusinessCoverageTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantOperationsNativeFileAdapterTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantOrganizationReportingTest.php</file>
