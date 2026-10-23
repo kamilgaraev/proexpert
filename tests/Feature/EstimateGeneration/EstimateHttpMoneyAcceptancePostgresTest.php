@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativePinClock;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
@@ -20,6 +21,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningSourceTrustPolicy;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Enums\AuthSessionStatus;
@@ -58,6 +60,8 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
     private const GENERIC_WORK_KEY = 'custom.exposition_setup';
 
     private array $wireHistory = [];
+
+    private array $composerProjects = [];
 
     private ?\Throwable $recordingFailure = null;
 
@@ -421,6 +425,317 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         Http::assertNothingSent();
     }
 
+    public function test_http_current_work_technology_question_preserves_qualitative_trust_and_free_answer_history(): void
+    {
+        $clarification = ['question' => 'Как экспозиционное оборудование закрепляется и какой документ задаёт способ крепления?',
+            'reason' => 'Исходное описание не содержит способа крепления и условий его применимости.'];
+        [$rights, $project, $session, , $headers] = $this->generatedSession(false, true, 'installation', $clarification);
+        $url = $this->url($project, $session);
+        $questions = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+        $workQuestions = array_values(array_filter($questions, static fn (array $question): bool =>
+            ($question['source_locator']['kind'] ?? null) === 'composer_work_technology'));
+        self::assertCount(1, $workQuestions, 'The same-pass work intent has no public technology clarification.');
+        $question = $workQuestions[0];
+        self::assertStringStartsWith('composer_work_technology_', $question['code']);
+        self::assertSame('unanswered', $question['status']);
+        self::assertNull($question['answer']);
+        self::assertSame(['answer'], $question['actions']);
+        self::assertSame(['other', 'leave_unresolved'], array_column($question['choices'], 'value'));
+        self::assertSame('estimate_review_required', $session->fresh()->status->value);
+        $item = $this->installation($session->fresh(), self::GENERIC_WORK_KEY);
+        self::assertSame([null, null, null, null], [$item['quantity'], $item['unit'], $item['unit_price'], $item['total_cost']]);
+        $evaluation = $this->getJson($url.'/evaluation', $headers)->assertOk()->json('data.result');
+        self::assertCount(4, $evaluation['missing_requirements']);
+        self::assertFalse($evaluation['can_confirm_for_apply']);
+        $this->getJson($url.'/questions', $this->headers($rights->foreignOwner))->assertForbidden();
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $sourceFacts = array_map(get_object_vars(...), $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts);
+        $money = $this->modelMoneySnapshot($session);
+        $input = ['response' => 'other', 'other' => 'Пользователь предполагает крепление по инструкции изготовителя; документа с условиями применимости пока нет.',
+            'document_ids' => [], 'idempotency_key' => (string) Str::uuid(),
+            'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint']];
+        $answerUrl = $url.'/questions/'.$question['code'].'/answer';
+        $this->postJson($answerUrl, $input, $this->headers($rights->foreignOwner))->assertForbidden();
+        $viewer = $rights->addMember(['ai-estimates' => ['estimate_generation.view']], ['admin.access']);
+        $viewer->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
+        $this->postJson($answerUrl, $input, $this->headers($viewer))->assertForbidden();
+        $otherProject = Project::factory()->for($rights->organization)->create(['is_archived' => false]);
+        $this->postJson($this->url($otherProject, $session).'/questions/'.$question['code'].'/answer', $input, $headers)->assertForbidden();
+        $this->postJson($answerUrl, [...$input, 'answer_fingerprint' => str_repeat('0', 64)], $headers)->assertConflict();
+        $this->postJson($answerUrl, [...$input, 'document_ids' => [PHP_INT_MAX]], $headers)->assertUnprocessable();
+        $this->postJson($answerUrl, [...$input, 'target_entity_id' => $item['metadata']['scope_entity_id']], $headers)->assertUnprocessable();
+        self::assertSame($money, $this->modelMoneySnapshot($session));
+        $receipt = $this->postJson($answerUrl, $input, $headers)->assertOk()->json('data');
+        $readback = $this->workTechnologyQuestion($project, $session, $headers);
+        self::assertSame($question['code'], $readback['code']);
+        self::assertSame('answered', $readback['status']);
+        self::assertSame(['reanswer', 'revoke'], $readback['actions']);
+        self::assertSame(['other', $input['other'], [], 'user_assumption', 'unresolved', false],
+            [$readback['answer']['response'], $readback['answer']['other'], $readback['answer']['document_ids'],
+                $readback['answer']['trust'], $readback['answer']['engineering_applicability'], $readback['answer']['numeric_parameters_confirmed']]);
+        self::assertSame($receipt['decision_id'], $readback['answer']['decision_id']);
+        $receiptQuery = array_intersect_key($input, array_flip(['idempotency_key', 'expected_source_version', 'answer_fingerprint', 'document_ids']));
+        $receiptUrl = $url.'/questions/'.$question['code'].'/answer-receipt?';
+        $saved = $this->getJson($receiptUrl.http_build_query($receiptQuery), $headers)->assertOk()->json('data');
+        self::assertSame(['saved', $receipt['decision_id'], '0'], [$saved['status'], $saved['decision_id'], $saved['cost_units']]);
+        $this->getJson($receiptUrl.http_build_query([...$receiptQuery, 'answer_fingerprint' => str_repeat('0', 64)]), $headers)
+            ->assertOk()->assertJsonPath('data.status', 'unavailable');
+        $this->getJson($receiptUrl.http_build_query($receiptQuery), $this->headers($rights->owner))
+            ->assertOk()->assertJsonPath('data.status', 'unavailable');
+        $this->getJson($receiptUrl.http_build_query($receiptQuery), $this->headers($rights->foreignOwner))->assertForbidden();
+        $history = [$readback['answer']['fact_id'] => $input['other']];
+        $firstDecision = $models->decisions(...[...$scope, [$receipt['decision_id']]]);
+        self::assertCount(1, $firstDecision);
+        self::assertSame(['user', (string) $rights->member->id, $readback['answer']['fact_id']],
+            [$firstDecision[0]->actorType, $firstDecision[0]->actorId, $firstDecision[0]->selectedFactId]);
+        $beforeReplay = $session->fresh()->getAttributes();
+        $ledger = $this->answerLedgerCounts($session);
+        self::assertSame(CanonicalPipelineJson::encode($receipt), CanonicalPipelineJson::encode(
+            $this->postJson($answerUrl, $input, $headers)->assertOk()->json('data')));
+        self::assertSame($beforeReplay, $session->fresh()->getAttributes());
+        self::assertSame($ledger, $this->answerLedgerCounts($session));
+        $this->postJson($answerUrl, [...$input, 'other' => 'Другой текст с тем же идентификатором запроса.'], $headers)->assertUnprocessable();
+        foreach ([['other', 'Способ крепления уточнён пользователем; независимого инженерного подтверждения по-прежнему нет.', 'answered', 'user_assumption'],
+            ['revoke', null, 'revoked', 'no_active_claim'], ['leave_unresolved', null, 'left_unresolved', 'no_active_claim'],
+            ['other', 'Повторное предварительное решение пользователя; размеры и норматив отдельно не подтверждены.', 'answered', 'user_assumption']] as [$response, $other, $status, $trust]) {
+            $current = $this->workTechnologyQuestion($project, $session, $headers);
+            $next = ['response' => $response, 'idempotency_key' => (string) Str::uuid(),
+                'expected_source_version' => $current['source_version'], 'answer_fingerprint' => $current['answer_fingerprint'],
+                ...($other === null ? [] : ['other' => $other, 'document_ids' => []])];
+            $nextReceipt = $this->postJson($answerUrl, $next, $headers)->assertOk()->json('data');
+            $readback = $this->workTechnologyQuestion($project, $session, $headers);
+            self::assertSame([$question['code'], $status, $trust, 'unresolved', false],
+                [$readback['code'], $readback['status'], $readback['answer']['trust'],
+                    $readback['answer']['engineering_applicability'], $readback['answer']['numeric_parameters_confirmed']]);
+            self::assertSame($response === 'other' ? ['reanswer', 'revoke'] : ['reanswer'], $readback['actions']);
+            self::assertSame($nextReceipt['decision_id'], $readback['answer']['decision_id']);
+            self::assertArrayNotHasKey($readback['answer']['fact_id'], $history);
+            $history[$readback['answer']['fact_id']] = $other;
+            $ledger = $this->answerLedgerCounts($session);
+            self::assertSame(CanonicalPipelineJson::encode($nextReceipt), CanonicalPipelineJson::encode(
+                $this->postJson($answerUrl, $next, $headers)->assertOk()->json('data')));
+            self::assertSame($ledger, $this->answerLedgerCounts($session));
+            self::assertSame($money, $this->modelMoneySnapshot($session));
+        }
+        foreach ($models->factsByIds(...[...$scope, array_keys($history)]) as $fact) {
+            self::assertSame(['evaluation_answer', 'user_assumption', null, [], 'composer_answer', false, $history[$fact->id]],
+                [$fact->type, $fact->origin, $fact->unit, $fact->nativeNumericProofs, $fact->value['kind'],
+                    $fact->value['numeric_parameters_confirmed'], $fact->value['other'] ?? null]);
+        }
+        self::assertCount(count($history), $models->factsByIds(...[...$scope, array_keys($history)]));
+        $this->getJson($receiptUrl.http_build_query($receiptQuery), $headers)->assertOk()->assertJsonPath('data.status', 'saved');
+        self::assertSame($sourceFacts, array_map(get_object_vars(...), $models->factsByIds(...[...$scope, array_column($sourceFacts, 'id')])));
+        $after = $this->installation($session->fresh(), self::GENERIC_WORK_KEY);
+        self::assertSame([null, null, null, null], [$after['quantity'], $after['unit'], $after['unit_price'], $after['total_cost']]);
+        self::assertFalse(isset($after['normative_match']['norm_id']));
+        $currentEvaluation = $this->getJson($url.'/evaluation', $headers)->assertOk()->json('data.result');
+        self::assertCount(4, $currentEvaluation['missing_requirements']);
+        self::assertFalse($currentEvaluation['can_confirm_for_apply']);
+        foreach (EstimateGenerationLearningExample::query()->where('organization_id', $session->organization_id)
+            ->where('generation_session_id', $session->id)->get() as $example) {
+            self::assertFalse(EstimateGenerationLearningSourceTrustPolicy::isIndexable($example));
+        }
+        self::assertSame($money, $this->modelMoneySnapshot($session));
+        $this->assertNoExtraModelWork($session);
+    }
+
+    #[DataProvider('workTechnologyGenerationCases')]
+    public function test_http_approved_generation_reuses_current_work_technology_without_promoting_it_or_repeating_paid_work(string $status, bool $replaceWork = false): void
+    {
+        $clarification = ['question' => 'Как экспозиционное оборудование закрепляется на предусмотренном основании?',
+            'reason' => 'Из исходного описания не следует способ крепления.'];
+        [, $project, $session, , $headers] = $this->generatedSession(false, true, 'installation', $clarification);
+        $url = $this->url($project, $session);
+        $question = $this->workTechnologyQuestion($project, $session, $headers);
+        $oldItem = $this->installation($session->fresh(), self::GENERIC_WORK_KEY);
+        $staleOperation = (string) Str::uuid();
+        $staleQuote = $this->postJson($url.'/operations/quote', ['request_id' => $staleOperation,
+            'state_version' => $session->fresh()->state_version, 'operation_kind' => 'generation',
+            'operation_parameters' => ['max_work_items' => 4]], $headers)->assertOk()->json('data');
+        $response = $status === 'left_unresolved' ? 'leave_unresolved' : 'other';
+        $answerInput = ['response' => $response, 'idempotency_key' => (string) Str::uuid(),
+            'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint'],
+            ...($response === 'other' ? ['other' => 'Пользователь предполагает крепление по инструкции; независимой проверки технологии пока нет.', 'document_ids' => []] : [])];
+        $this->postJson($url.'/questions/'.$question['code'].'/answer', $answerInput, $headers)->assertOk();
+        if ($status === 'revoked') {
+            $question = $this->workTechnologyQuestion($project, $session, $headers);
+            $this->postJson($url.'/questions/'.$question['code'].'/answer', ['response' => 'revoke',
+                'idempotency_key' => (string) Str::uuid(), 'expected_source_version' => $question['source_version'],
+                'answer_fingerprint' => $question['answer_fingerprint']], $headers)->assertOk();
+        }
+        $question = $this->workTechnologyQuestion($project, $session, $headers);
+        self::assertSame($status, $question['status']);
+        $beforeStaleGenerate = $this->modelMoneySnapshot($session);
+        $this->postJson($url.'/generate', ['request_id' => $staleOperation, 'quote_id' => $staleQuote['quote_id'],
+            'state_version' => $session->fresh()->state_version, 'generation_mode' => 'ai_assisted'], $headers)->assertUnprocessable();
+        self::assertSame($beforeStaleGenerate, $this->modelMoneySnapshot($session));
+        $savedDraft = $session->fresh()->draft_payload;
+        $replacement = $replaceWork ? ['work_key' => 'custom.relocated_exposition', 'name' => 'Размещение экспозиционного оборудования в другой зоне'] : null;
+        $this->transport($session, descriptionOnly: true, requirementKey: 'installation', workOverride: $replacement);
+        $operation = (string) Str::uuid();
+        $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation,
+            'state_version' => $session->fresh()->state_version, 'operation_kind' => 'generation',
+            'operation_parameters' => ['max_work_items' => 4]], $headers)->assertOk()->json('data');
+        self::assertCount(2, $this->wireHistory);
+        $frozen = (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $operation)->sole();
+        $plan = json_decode($frozen['processing_plan'], true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(hash('sha256', CanonicalPipelineJson::encode($savedDraft)), $plan['known_context']['saved_draft_hash']);
+        self::assertSame(3 * $plan['composer_part_limit'], $plan['roles']['estimate_composition']['max_calls']);
+        self::assertSame(array_sum(array_column($plan['roles'], 'max_calls')), $plan['maximum_calls']);
+        $queuedBefore = Queue::pushed(GenerateEstimateDraftJob::class)->count();
+        $this->postJson($url.'/generate', ['request_id' => $operation, 'quote_id' => $quote['quote_id'],
+            'state_version' => $session->fresh()->state_version, 'generation_mode' => 'ai_assisted'], $headers)->assertSuccessful();
+        self::assertSame('generating', $session->fresh()->status->value);
+        self::assertSame($savedDraft, $session->fresh()->draft_payload);
+        $during = $this->workTechnologyQuestion($project, $session, $headers);
+        self::assertSame([], $during['actions']);
+        $this->postJson($url.'/questions/'.$question['code'].'/answer', ['response' => 'other',
+            'other' => 'Новая запись во время генерации запрещена.', 'idempotency_key' => (string) Str::uuid(),
+            'expected_source_version' => $during['source_version'], 'answer_fingerprint' => $during['answer_fingerprint']], $headers)->assertConflict();
+        $jobs = Queue::pushed(GenerateEstimateDraftJob::class)->slice($queuedBefore);
+        self::assertCount(1, $jobs);
+        $job = $jobs->sole();
+        foreach (ProcessingStage::cases() as $stage) {
+            try {
+                $job->handle(app(RunEstimateGenerationDraft::class));
+            } catch (\Throwable $error) {
+                throw $this->recordingFailure ?? $error;
+            }
+        }
+        self::assertSame(9, DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
+            ->where('generation_attempt_id', $operation)->where('status', 'completed')->count());
+        self::assertCount(2, $this->composerProjects);
+        $projectInput = $this->composerProjects[1];
+        self::assertCount(1, $projectInput['work_technology_context']);
+        $entry = $projectInput['work_technology_context'][0];
+        self::assertSame($status, $entry['status']);
+        self::assertSame($question['answer']['fact_id'], $entry['answer']['fact_id']);
+        self::assertSame([$status === 'answered' ? 'user_assumption' : 'no_active_claim', 'unresolved', false],
+            [$entry['answer']['trust'], $entry['answer']['engineering_applicability'], $entry['answer']['numeric_parameters_confirmed']]);
+        self::assertNotContains($entry['answer']['fact_id'], array_column($projectInput['facts'], 'id'));
+        $row = $this->installation($session->fresh(), $replacement['work_key'] ?? self::GENERIC_WORK_KEY);
+        self::assertNotSame($oldItem['composition_intent']['candidate_id'], $row['composition_intent']['candidate_id']);
+        self::assertSame([$oldItem['metadata']['scope_entity_id'], null, null, null, null],
+            [$row['metadata']['scope_entity_id'], $row['quantity'], $row['unit'], $row['unit_price'], $row['total_cost']]);
+        self::assertFalse(isset($row['normative_match']['norm_id']));
+        if ($replaceWork) {
+            self::assertNotSame($oldItem['key'], $row['key']);
+            self::assertFalse(isset($row['metadata']['work_technology_context']));
+            $items = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+            self::assertSame([], array_values(array_filter($items, static fn (array $item): bool =>
+                ($item['code'] ?? null) === $question['code'])));
+            $this->postJson($url.'/questions/'.$question['code'].'/answer', [...$answerInput,
+                'idempotency_key' => (string) Str::uuid()], $headers)->assertConflict();
+        } else {
+            self::assertSame($oldItem['key'], $row['key']);
+            self::assertSame($entry['context']['binding_hash'], $row['metadata']['work_technology_context']['binding_hash']);
+            $current = $this->workTechnologyQuestion($project, $session, $headers);
+            self::assertSame([$question['code'], $status, $question['answer']['fact_id']],
+                [$current['code'], $current['status'], $current['answer']['fact_id']]);
+        }
+        self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertCount(4, $this->wireHistory);
+        $this->getJson($url.'/operations/'.$operation, $headers)->assertOk()
+            ->assertJsonPath('data.operation_id', $operation)->assertJsonPath('data.status', 'settled');
+        self::assertSame($frozen['processing_plan'], DB::table('estimate_generation_credit_operations')->where('operation_id', $operation)->value('processing_plan'));
+        $evaluation = $this->getJson($url.'/evaluation', $headers)->assertOk()->json('data.result');
+        self::assertCount(4, $evaluation['missing_requirements']);
+        self::assertFalse($evaluation['can_confirm_for_apply']);
+        $money = $this->modelMoneySnapshot($session);
+        $job->handle(app(RunEstimateGenerationDraft::class));
+        self::assertSame($money, $this->modelMoneySnapshot($session));
+        Http::assertNothingSent();
+    }
+
+    public static function workTechnologyGenerationCases(): array
+    {
+        return ['active human assumption' => ['answered'], 'revoked human answer' => ['revoked'],
+            'explicitly unresolved' => ['left_unresolved'], 'replacement work excludes old context' => ['answered', true]];
+    }
+
+    public function test_http_work_technology_document_links_remain_assumptions_and_ignored_source_revokes_currentness(): void
+    {
+        $clarification = ['question' => 'Как закрепляется оборудование и какие условия крепления заданы изготовителем?',
+            'reason' => 'Ведомость подтверждает состав и количество, но не условия крепления к основанию.'];
+        [$rights, $project, $session, , $headers, $native] = $this->generatedSession(false, false, 'installation', $clarification);
+        $url = $this->url($project, $session);
+        $question = $this->workTechnologyQuestion($project, $session, $headers);
+        $document = $session->documents()->sole();
+        $originalNative = get_object_vars($native);
+        $other = $this->postJson('/api/v1/admin/projects/'.$project->id.'/estimate-generation/sessions', [
+            'request_id' => (string) Str::uuid(), 'description' => 'Отдельная сессия с собственной ведомостью оборудования.',
+            'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal', 'profile_id' => 'construction',
+            'construction_type' => 'new_construction', 'price_policy' => 'catalog', 'selected_sections' => ['equipment'],
+        ], $headers)->assertCreated()->json('data');
+        $otherSession = EstimateGenerationSession::query()->findOrFail($other['id']);
+        $this->post($this->url($project, $otherSession).'/documents', ['request_id' => (string) Str::uuid(),
+            'state_version' => $otherSession->fresh()->state_version, 'files' => [$this->workbook()]], $headers)->assertOk();
+        $this->app->call([Queue::pushed(ProcessEstimateGenerationDocumentJob::class)->last(), 'handle']);
+        $this->app->call([Queue::pushed(ProcessEstimateGenerationUnitJob::class)->last(), 'handle']);
+        $otherDocument = $otherSession->documents()->sole();
+        self::assertSame($document->fresh()->status, $otherDocument->fresh()->status);
+        $money = $this->modelMoneySnapshot($session);
+        $input = ['response' => 'other', 'other' => 'Пользователь ссылается на ведомость; метод крепления и норматив по ней не подтверждены.',
+            'document_ids' => [(int) $document->id], 'idempotency_key' => (string) Str::uuid(),
+            'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint']];
+        $answerUrl = $url.'/questions/'.$question['code'].'/answer';
+        $this->postJson($answerUrl, [...$input, 'document_ids' => [(int) $otherDocument->id]], $headers)->assertUnprocessable();
+        $receipt = $this->postJson($answerUrl, $input, $headers)->assertOk()->json('data');
+        $readback = $this->workTechnologyQuestion($project, $session, $headers);
+        self::assertSame(['answered', [(int) $document->id], 'user_assumption', 'unresolved', false],
+            [$readback['status'], $readback['answer']['document_ids'], $readback['answer']['trust'],
+                $readback['answer']['engineering_applicability'], $readback['answer']['numeric_parameters_confirmed']]);
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        self::assertSame($originalNative, get_object_vars(app(ProjectModelRepository::class)->factsByIds(...[...$scope, [$native->id]])[0]));
+        $row = $this->installation($session->fresh());
+        self::assertSame(['3', 'count', null, null], [$row['quantity'], $row['unit'], $row['unit_price'], $row['total_cost']]);
+        self::assertFalse(isset($row['normative_match']['norm_id']));
+        self::assertSame($money, $this->modelMoneySnapshot($session));
+        $this->postJson($url.'/documents/'.$document->id.'/ignore', ['state_version' => $session->fresh()->state_version,
+            'reason' => 'Источник исключён: связанное с ним качественное допущение больше не является текущим.'], $headers)->assertOk();
+        $items = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+        self::assertSame([], array_values(array_filter($items, static fn (array $item): bool =>
+            ($item['code'] ?? null) === $question['code'])));
+        $this->postJson($answerUrl, [...$input, 'idempotency_key' => (string) Str::uuid()], $headers)->assertConflict();
+        self::assertCount(1, app(ProjectModelRepository::class)->decisions(...[...$scope, [$receipt['decision_id']]]));
+        $this->assertNoExtraModelWork($session);
+        self::assertSame($money, $this->modelMoneySnapshot($session));
+    }
+
+    #[DataProvider('workTechnologyReadinessCases')]
+    public function test_http_qualitative_work_technology_does_not_block_an_otherwise_complete_synthetic_estimate(bool $withAssumption): void
+    {
+        $clarification = ['question' => 'Как оборудование крепится к основанию согласно проекту или инструкции изготовителя?',
+            'reason' => 'Ведомость сама по себе не задаёт способ крепления.'];
+        [, $project, $session, , $headers, , $revision] = $this->confirmedSession($clarification, $withAssumption);
+        self::assertTrue($revision['result']['can_confirm_for_apply']);
+        self::assertSame([], $revision['result']['missing_requirements']);
+        self::assertSame('ready_to_apply', $session->fresh()->status->value);
+        $question = $this->workTechnologyQuestion($project, $session, $headers);
+        self::assertSame($withAssumption ? 'answered' : 'unanswered', $question['status']);
+        self::assertSame([], $question['actions']);
+        if ($withAssumption) {
+            self::assertSame(['user_assumption', 'unresolved', false], [$question['answer']['trust'],
+                $question['answer']['engineering_applicability'], $question['answer']['numeric_parameters_confirmed']]);
+        } else {
+            self::assertNull($question['answer']);
+        }
+        $money = $this->modelMoneySnapshot($session);
+        $url = $this->url($project, $session);
+        $this->postJson($url.'/questions/'.$question['code'].'/answer', ['response' => 'other',
+            'other' => 'Ответ не разрешён в состоянии готовности к применению.', 'idempotency_key' => (string) Str::uuid(),
+            'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint']], $headers)->assertConflict();
+        $this->getJson($url.'/export?format=json', $headers)->assertOk();
+        self::assertSame($money, $this->modelMoneySnapshot($session));
+        $this->assertNoExtraModelWork($session);
+    }
+
+    public static function workTechnologyReadinessCases(): array
+    {
+        return ['pending qualitative question' => [false], 'current human assumption' => [true]];
+    }
+
     public function test_ignored_uploaded_source_invalidates_the_real_quantity_guard_and_denies_http_export_and_apply(): void
     {
         [, $project, $session, , $headers, $count] = $this->confirmedSession();
@@ -480,10 +795,45 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         Http::assertNothingSent();
     }
 
-    private function confirmedSession(): array
+    private function workTechnologyQuestion(Project $project, EstimateGenerationSession $session, array $headers): array
     {
-        [$rights, $project, $session, $catalog, $headers, $count] = $this->generatedSession();
+        $items = $this->getJson($this->url($project, $session).'/questions', $headers)->assertOk()->json('data.items');
+        $questions = array_values(array_filter($items, static fn (array $question): bool =>
+            ($question['source_locator']['kind'] ?? null) === 'composer_work_technology'));
+        self::assertCount(1, $questions);
+
+        return $questions[0];
+    }
+
+    private function answerLedgerCounts(EstimateGenerationSession $session): array
+    {
+        $counts = [];
+        foreach (['project_model_assertions', 'project_model_corrections', 'evidence'] as $table) {
+            $counts[$table] = DB::table('estimate_generation_'.$table)->where('session_id', $session->id)->count();
+        }
+
+        return $counts;
+    }
+
+    private function modelMoneySnapshot(EstimateGenerationSession $session): array
+    {
+        return ['calls' => count($this->wireHistory), 'balance' => app(AICreditService::class)->balance($session->organization),
+            'usage' => DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson(),
+            'runs' => DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->orderBy('id')->get()->toJson(),
+            'operations' => DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->orderBy('operation_id')->get()->toJson()];
+    }
+
+    private function confirmedSession(?array $technologyClarification = null, bool $withTechnologyAssumption = false): array
+    {
+        [$rights, $project, $session, $catalog, $headers, $count] = $this->generatedSession(technologyClarification: $technologyClarification);
         $url = $this->url($project, $session);
+        if ($withTechnologyAssumption) {
+            $question = $this->workTechnologyQuestion($project, $session, $headers);
+            $this->postJson($url.'/questions/'.$question['code'].'/answer', ['response' => 'other',
+                'other' => 'Пользователь предполагает крепление по инструкции; инженерная применимость отдельно не подтверждена.',
+                'document_ids' => [], 'idempotency_key' => (string) Str::uuid(), 'expected_source_version' => $question['source_version'],
+                'answer_fingerprint' => $question['answer_fingerprint']], $headers)->assertOk();
+        }
         $item = $this->installation($session);
         self::assertSame('3', $item['quantity']);
         self::assertSame('count', $item['unit']);
@@ -533,7 +883,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count, $revision];
     }
 
-    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null): array
+    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null): array
     {
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
@@ -617,7 +967,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         } else {
             self::assertFalse($session->fresh()->input_payload['input_confirmed'] ?? false);
         }
-        $this->transport($session, descriptionOnly: $descriptionOnly, requirementKey: $requirementKey);
+        $this->transport($session, descriptionOnly: $descriptionOnly, requirementKey: $requirementKey, technologyClarification: $technologyClarification);
         app(AICreditService::class)->grant($rights->organization, 1000000, 'purchase', null, 'test:http-money-acceptance');
         $operation = (string) Str::uuid();
         $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation, 'state_version' => $session->fresh()->state_version,
@@ -644,11 +994,11 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count];
     }
 
-    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false, ?string $requirementKey = null): void
+    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, ?array $workOverride = null): void
     {
         $descriptor = json_decode(file_get_contents(base_path('tests/Fixtures/EstimateGeneration/universal-replay/xlsx-floor-finishing-v1.json')), true, 64, JSON_THROW_ON_ERROR);
         $responses = $descriptor['recordings'];
-        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly, $requirementKey): Response {
+        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly, $requirementKey, $technologyClarification, $workOverride): Response {
             try {
                 $wire = json_decode((string) $request->getBody(), true, 128, JSON_THROW_ON_ERROR);
                 $project = null;
@@ -658,6 +1008,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                     }
                 }
                 self::assertIsArray($project);
+                $this->composerProjects[] = $project;
                 self::assertSame((int) $session->id, $project['scope']['session_id']);
                 if ($descriptionOnly) {
                     $descriptions = array_values(array_filter($project['facts'], static fn (array $fact): bool =>
@@ -716,11 +1067,12 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                     self::assertSame([$directQuantity['fact_id'], $directQuantity['decision_id'], $directQuantity['work_item_key']],
                         [$binding['fact_id'], $binding['decision_id'], $binding['work_item_key']]);
                 }
-                $intent = ['kind' => 'supplementary', 'work_key' => $descriptionOnly ? self::GENERIC_WORK_KEY : 'equipment.install',
-                    'name' => $descriptionOnly ? 'Подготовка экспозиции из имущества заказчика' : 'Монтаж насоса по ведомости',
+                $intent = ['kind' => 'supplementary', 'work_key' => $workOverride['work_key'] ?? ($descriptionOnly ? self::GENERIC_WORK_KEY : 'equipment.install'),
+                    'name' => $workOverride['name'] ?? ($descriptionOnly ? 'Подготовка экспозиции из имущества заказчика' : 'Монтаж насоса по ведомости'),
                     'derived_quantity_id' => $quantities[0]['id'] ?? null, 'source_fact_ids' => array_values(array_unique([$contextId, $sourceId])),
                     'entity_id' => $entityId, 'technology_package_candidate' => null, 'unit' => 'count', 'work_section' => 'equipment',
                     ...($requirementKey !== null ? ['requirement_key' => $requirementKey] : []),
+                    ...($technologyClarification !== null ? ['technology_clarification' => $technologyClarification] : []),
                     'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
                 $response = $responses[0]['response'];
                 $response['choices'][0]['message']['content'] = json_encode(['work_intents' => [$intent]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
