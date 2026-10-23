@@ -13,6 +13,7 @@ use App\Models\Material;
 use App\Models\MeasurementUnit;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
@@ -91,6 +92,57 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
         $this->assertSame(1.25 * $count, (float) $sheet->getCell('P'.(27 + $count))->getValue());
         $this->assertSame('Всего:', $sheet->getCell('A'.(28 + $count))->getValue());
         $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+    }
+
+    public function test_m17_repeats_document_identity_and_page_numbers_on_continuations(): void
+    {
+        [$material, $warehouse, $movements] = $this->fixture(true, 45);
+        $sheet = $this->sheet(app(M17ExportStrategy::class)->export([
+            'material' => $material, 'warehouse' => $warehouse, 'movements' => $movements,
+        ]));
+
+        $this->assertSame([19, 25], array_map('intval', $sheet->getPageSetup()->getRowsToRepeatAtTop()));
+        $this->assertStringContainsString($material->organization->legal_name ?: $material->organization->name, $sheet->getCell('A19')->getValue());
+        $this->assertStringContainsString($material->name, $sheet->getCell('A20')->getValue());
+        $this->assertStringContainsString($material->code, $sheet->getCell('A20')->getValue());
+        $this->assertStringContainsString($warehouse->name, $sheet->getCell('A21')->getValue());
+        $this->assertStringContainsString($warehouse->code, $sheet->getCell('A21')->getValue());
+        $this->assertStringContainsString('Страница &P из &N', $sheet->getHeaderFooter()->getOddFooter());
+        $this->assertSame('Нач. ост:', $sheet->getCell('M26')->getValue());
+        $this->assertSame(56.25, (float) $sheet->getCell('P73')->getValue());
+    }
+
+    public static function m17BusinessDateCases(): array
+    {
+        return [
+            'next-business-day' => ['Europe/Moscow', '2026-10-31 22:30:00', '2026-11-01'],
+            'previous-business-day' => ['Pacific/Honolulu', '2026-11-01 05:30:00', '2026-10-31'],
+        ];
+    }
+
+    #[DataProvider('m17BusinessDateCases')]
+    public function test_m17_uses_one_organization_business_date_in_header_and_filename(
+        string $timezone, string $utc, string $expectedDate,
+    ): void {
+        [$material, $warehouse, $movements] = $this->fixture(false, 1);
+        $material->loadMissing('organization');
+        $material->organization->forceFill(['multi_org_settings' => ['default_timezone' => $timezone]]);
+        $this->travelTo(Carbon::parse($utc, 'UTC'));
+
+        try {
+            $path = app(M17ExportStrategy::class)->export([
+                'material' => $material, 'warehouse' => $warehouse, 'movements' => $movements,
+            ]);
+            $sheet = $this->sheet($path);
+            [$year, $month, $day] = explode('-', $expectedDate);
+
+            $this->assertSame($day, (string) $sheet->getCell('Q6')->getValue());
+            $this->assertSame($month, (string) $sheet->getCell('R6')->getValue());
+            $this->assertSame($year, (string) $sheet->getCell('S6')->getValue());
+            $this->assertStringEndsWith('_'.str_replace('-', '', $expectedDate).'.xlsx', $path);
+        } finally {
+            $this->travelBack();
+        }
     }
 
     public function test_m7_leaves_document_quantity_and_discrepancies_blank_without_valid_source_data(): void
