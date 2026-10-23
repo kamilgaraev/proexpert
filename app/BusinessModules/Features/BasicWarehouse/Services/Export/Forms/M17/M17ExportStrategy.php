@@ -8,7 +8,10 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
 use App\Models\Material;
+use App\Services\Storage\FileService;
+use App\Support\OrganizationBusinessTimezone;
 use Brick\Math\BigDecimal;
+use DateTimeInterface;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -18,6 +21,13 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 class M17ExportStrategy extends BaseWarehouseExportStrategy
 {
+    public function __construct(
+        FileService $fileService,
+        private readonly OrganizationBusinessTimezone $businessTimezone,
+    ) {
+        parent::__construct($fileService);
+    }
+
     public function export($data): string
     {
         /** @var Material $material */
@@ -27,19 +37,20 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         /** @var Collection<int, WarehouseMovement> $movements */
         $movements = $data['movements'];
         $material->loadMissing(['organization', 'measurementUnit']);
+        $printedAt = now($this->businessTimezone->resolve($material->organization));
 
         $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('М-17');
         $sheet->setShowGridlines(false);
 
-        $this->setHeader($sheet, $material, $warehouse);
+        $this->setHeader($sheet, $material, $warehouse, $printedAt);
         $lastRow = $this->setTable($sheet, $movements, $warehouse);
         $this->applyStyles($sheet, $lastRow);
 
         $materialCode = $this->filenameFragment($material->code ?? $material->name, 'material');
         $warehouseCode = $this->filenameFragment($warehouse?->code ?? $warehouse?->name, 'warehouse');
-        $filename = "M17_{$materialCode}_{$warehouseCode}_".now()->format('Ymd').'.xlsx';
+        $filename = "M17_{$materialCode}_{$warehouseCode}_".$printedAt->format('Ymd').'.xlsx';
         $path = "exports/warehouse/m17/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $material->organization);
@@ -50,10 +61,14 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         return 'm17';
     }
 
-    private function setHeader(Worksheet $sheet, Material $material, ?OrganizationWarehouse $warehouse): void
-    {
+    private function setHeader(
+        Worksheet $sheet,
+        Material $material,
+        ?OrganizationWarehouse $warehouse,
+        DateTimeInterface $printedAt,
+    ): void {
         $organization = $material->organization;
-        $organizationName = $organization->legal_name ?? $organization->name;
+        $organizationName = $organization->legal_name ?: $organization->name;
         $okpo = $organization->okpo ?? '';
         $unit = $material->measurementUnit;
 
@@ -68,9 +83,9 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('P5', 'по ОКПО');
         $sheet->setCellValue('Q5', $okpo);
         $sheet->setCellValue('P6', 'Дата распечатки');
-        $sheet->setCellValue('Q6', now()->format('d'));
-        $sheet->setCellValue('R6', now()->format('m'));
-        $sheet->setCellValue('S6', now()->format('Y'));
+        $sheet->setCellValue('Q6', $printedAt->format('d'));
+        $sheet->setCellValue('R6', $printedAt->format('m'));
+        $sheet->setCellValue('S6', $printedAt->format('Y'));
         $this->applyTableStyle($sheet, 'Q3:S6');
         $this->setCenter($sheet, 'Q3:S6');
 
@@ -91,6 +106,15 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $this->setUnderline($sheet, 'C9:O9');
 
         $this->buildMaterialHeader($sheet, $material, $warehouse, $unit?->short_name ?? $unit?->name ?? '');
+
+        foreach ([
+            19 => 'Организация: '.$organizationName,
+            20 => 'Материал: '.$material->name.'; код: '.($material->code ?? '').'; единица: '.($unit?->short_name ?? $unit?->name ?? ''),
+            21 => 'Склад: '.($warehouse?->name ?? 'не указан').'; код: '.($warehouse?->code ?? ''),
+        ] as $row => $identity) {
+            $sheet->mergeCells("A{$row}:S{$row}");
+            $sheet->setCellValue("A{$row}", $identity);
+        }
     }
 
     private function buildMaterialHeader(
@@ -337,7 +361,7 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getStyle("N28:P{$lastRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $sheet->getStyle('A22:S27')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         $sheet->getStyle("A28:S{$lastRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-        foreach (['N1:S1', 'N2:S2', 'B8:O8', 'E14:F14', 'M14', 'O14', 'D17:K17'] as $range) {
+        foreach (['N1:S1', 'N2:S2', 'B8:O8', 'E14:F14', 'M14', 'O14', 'D17:K17', 'A19:S19', 'A20:S20', 'A21:S21'] as $range) {
             $this->fitWrappedCell($sheet, $range, 16);
         }
         for ($row = 28; $row < $lastRow; $row++) {
@@ -345,6 +369,7 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
             $this->fitWrappedCell($sheet, "D{$row}:L{$row}", 16);
         }
         $sheet->getStyle("N28:P{$lastRow}")->getAlignment()->setWrapText(false)->setShrinkToFit(true);
-        $sheet->getPageSetup()->setRowsToRepeatAtTop([22, 25]);
+        $sheet->getPageSetup()->setRowsToRepeatAtTop([19, 25]);
+        $sheet->getHeaderFooter()->setOddFooter('&L&8М-17&R&8Страница &P из &N');
     }
 }
