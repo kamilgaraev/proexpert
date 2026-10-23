@@ -693,6 +693,88 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->assertSame('9999999999999.99', WarehouseMovement::findOrFail($priceResponse->json('data.id'))->price);
     }
 
+    public function test_receipt_rejects_batch_quantity_overflow_without_partial_changes(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Limit warehouse', 'STOCK-LIMIT');
+        $this->allowAdminAccess();
+
+        foreach ([false, true] as $withVat) {
+            $material = $this->createMaterial($context->organization->id, $unit->id, 'Limit material', 'STOCK-LIMIT-'.(int) $withVat);
+            $balance = WarehouseBalance::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'available_quantity' => '999999999999.999',
+                'unit_price' => '0.00',
+            ]);
+            $payload = [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+                'quantity' => '0.001', 'price' => '0',
+            ];
+            if ($withVat) {
+                $payload['vat_mode'] = 'none';
+            }
+
+            for ($attempt = 0; $attempt < 2; $attempt++) {
+                $this->withHeaders($context->authHeaders())
+                    ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)
+                    ->assertUnprocessable()
+                    ->assertJsonPath('message', trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+                $this->assertSame('999999999999.999', $balance->fresh()->available_quantity);
+                $this->assertSame(0, WarehouseMovement::query()->where('material_id', $material->id)->count());
+            }
+        }
+
+        $newMaterial = $this->createMaterial($context->organization->id, $unit->id, 'Oversized new batch', 'NEW-BATCH-LIMIT');
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id, 'material_id' => $newMaterial->id,
+            'quantity' => '1000000000000', 'price' => '0',
+        ])->assertUnprocessable()
+            ->assertJsonPath('message', trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+        $this->assertSame(0, WarehouseBalance::query()->where('material_id', $newMaterial->id)->count());
+        $this->assertDatabaseCount('warehouse_movements', 0);
+    }
+
+    public function test_receipt_adds_exact_quantity_at_batch_limit_and_replays_without_another_addition(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Exact limit warehouse', 'EXACT-LIMIT');
+        $this->allowAdminAccess();
+
+        foreach ([false, true] as $withVat) {
+            $material = $this->createMaterial($context->organization->id, $unit->id, 'Exact limit material', 'EXACT-LIMIT-'.(int) $withVat);
+            $balance = WarehouseBalance::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'available_quantity' => '999999999999.998',
+                'unit_price' => '0.00',
+            ]);
+            $payload = [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+                'quantity' => '0.001', 'price' => '0',
+            ];
+            if ($withVat) {
+                $payload['vat_mode'] = 'none';
+            }
+
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)->assertCreated();
+            $this->assertSame('999999999999.999', $balance->fresh()->available_quantity);
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)
+                ->assertCreated()->assertJsonPath('data.id', $response->json('data.id'));
+            $this->assertSame('999999999999.999', $balance->fresh()->available_quantity);
+            $this->assertSame(1, WarehouseMovement::query()->where('material_id', $material->id)->count());
+        }
+    }
+
     public function test_transfer_to_contractor_uses_scoped_ids_and_preserves_project_on_movements(): void
     {
         $context = AdminApiTestContext::create();

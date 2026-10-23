@@ -45,6 +45,8 @@ use function trans_message;
  */
 class WarehouseService implements WarehouseReportDataProvider
 {
+    private const MAXIMUM_RECEIPT_BATCH_QUANTITY = '999999999999.999';
+
     protected LoggingService $logging;
 
     public function __construct(
@@ -229,6 +231,10 @@ class WarehouseService implements WarehouseReportDataProvider
             $price = $tax->unitPrice;
             $metadata['receipt_tax'] = $tax->toArray();
         }
+        $receiptQuantity = BigDecimal::of((string) $quantity);
+        if ($receiptQuantity->compareTo(self::MAXIMUM_RECEIPT_BATCH_QUANTITY) > 0) {
+            throw new \InvalidArgumentException(trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+        }
         DB::beginTransaction();
         try {
             $this->lockWarehouses($organizationId, [$warehouseId]);
@@ -310,9 +316,12 @@ class WarehouseService implements WarehouseReportDataProvider
 
             if ($balance) {
                 // Если партия найдена - увеличиваем количество
-                $balance->available_quantity = $vatMode === null
-                    ? $balance->available_quantity + $quantity
-                    : (string) BigDecimal::of((string) $balance->getRawOriginal('available_quantity'))->plus($quantity);
+                $updatedQuantity = BigDecimal::of((string) $balance->getRawOriginal('available_quantity'))
+                    ->plus((string) $receiptQuantity);
+                if ($updatedQuantity->compareTo(self::MAXIMUM_RECEIPT_BATCH_QUANTITY) > 0) {
+                    throw new \InvalidArgumentException(trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+                }
+                $balance->available_quantity = (string) $updatedQuantity;
                 $balance->last_movement_at = now();
                 $balance->save();
             } else {
