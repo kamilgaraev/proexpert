@@ -80,6 +80,11 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
         $this->continuationHeader($reverse, $reservation, 'Оборотная сторона');
         $this->setReturnsAndSignatures($reverse);
         $this->finishSheet($reverse, 33);
+        $pageCount = $spreadsheet->getSheetCount();
+        foreach ($spreadsheet->getAllSheets() as $pageIndex => $page) {
+            $page->getPageSetup()->setFirstPageNumber($pageIndex + 1);
+            $page->getHeaderFooter()->setOddFooter('&R&8Страница &P из '.$pageCount);
+        }
         $spreadsheet->setActiveSheetIndex(0);
 
         $materialCode = $this->filenameFragment(
@@ -294,8 +299,7 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
     {
         $sheet->getStyle("A1:L{$lastRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
         $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_PORTRAIT)
-            ->setPaperSize(PageSetup::PAPERSIZE_A4)->setFitToWidth(1)->setFitToHeight(0)
+            ->setPaperSize(PageSetup::PAPERSIZE_A4)->setFitToWidth(1)->setFitToHeight(1)
             ->setPrintArea("A1:L{$lastRow}");
-        $sheet->getHeaderFooter()->setOddFooter('&R&8Страница &P из &N');
     }
 }

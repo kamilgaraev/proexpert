@@ -284,9 +284,12 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         $this->assertNotNull($book);
         $this->assertGreaterThan(2, $book->getSheetCount());
         $exportedIssues = [];
-        foreach ($book->getAllSheets() as $part) {
+        foreach ($book->getAllSheets() as $pageIndex => $part) {
             $this->assertSame('portrait', $part->getPageSetup()->getOrientation());
             $this->assertSame(1, $part->getPageSetup()->getFitToWidth());
+            $this->assertSame(1, $part->getPageSetup()->getFitToHeight());
+            $this->assertSame($pageIndex + 1, $part->getPageSetup()->getFirstPageNumber());
+            $this->assertSame('&R&8Страница &P из '.$book->getSheetCount(), $part->getHeaderFooter()->getOddFooter());
             $this->assertStringContainsString('М8-МНОГОСТРОЧНЫЙ', json_encode($part->toArray(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
             foreach ($part->toArray(null, false, false, true) as $cells) {
                 if (str_starts_with((string) $cells['C'], 'Выдача-')) {
