@@ -129,8 +129,9 @@ class PermissionResolver
         try {
             $startTime = microtime(true);
 
-            $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context,
-                $this->extractOrganizationId($assignment, $context));
+            $organizationId = $this->extractOrganizationId($assignment, $context);
+            $cacheKey = $this->currentChecks ? null : $this->getVersionedCacheKey(
+                $assignment->user_id, $assignment->role_slug, $permission, $context, $organizationId);
             $cachedResult = $this->currentChecks ? null : Cache::get($cacheKey);
 
             if ($cachedResult !== null) {
