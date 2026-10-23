@@ -105,6 +105,18 @@ final class NativeSpreadsheetUploadHttpPostgresTest extends EstimateGenerationCa
         self::assertSame(hash('sha256', json_encode('102', JSON_THROW_ON_ERROR)), $descriptor['raw_value_hash']);
         self::assertSame([], array_intersect(array_keys($descriptor), ['minimum', 'trust', 'applicability', 'engineering_status', 'definition_id', 'parameter_id']));
         self::assertSame($descriptor, $factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        $originalChecksum = $document->fresh()->checksum_sha256;
+        $driftedChecksum = $originalChecksum === str_repeat('d', 64) ? str_repeat('e', 64) : str_repeat('d', 64);
+        $document->update(['checksum_sha256' => $driftedChecksum]);
+        try {
+            self::assertSame($context->sourceVersion, $document->fresh()->source_version);
+            self::assertSame($context->locator, $unit->fresh()->locator);
+            self::assertSame($rawBefore, $rawRows->value('payload'));
+            self::assertNull($factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        } finally {
+            $document->update(['checksum_sha256' => $originalChecksum]);
+        }
+        self::assertSame($descriptor, $factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
         self::assertSame('0.102', $factory->readLengthOperand($context, $content, $byValue['0.102']->id, $models, $evidence)['value']);
         self::assertNull($factory->readLengthOperand($context, $content, $byValue['102.5']->id, $models, $evidence));
         self::assertNull($factory->readLengthOperand($context, $content.' ', $fact->id, $models, $evidence));
