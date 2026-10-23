@@ -206,6 +206,51 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
         $this->assertSame(0, DB::table('workforce_work_schedule_days')->where('organization_id', $context->organization->id)->count());
     }
 
+    public function test_work_schedule_creation_rejects_empty_days_and_explicit_null_required_columns(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $responses = [];
+
+        foreach ([
+            [],
+            ['work_date' => '2026-05-23', 'day_type' => null],
+            ['work_date' => '2026-05-23', 'planned_hours' => null],
+        ] as $index => $day) {
+            $responses[] = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/workforce/work-schedules', [
+                    'code' => 'ATOMIC-EMPTY-'.$index, 'name' => 'Не должен сохраниться',
+                    'initial_day' => $day,
+                ]);
+        }
+
+        $this->assertSame([422, 422, 422], array_map(static fn ($response): int => $response->status(), $responses));
+        $responses[0]->assertJsonValidationErrors('initial_day.work_date');
+        $responses[1]->assertJsonValidationErrors('initial_day.day_type');
+        $responses[2]->assertJsonValidationErrors('initial_day.planned_hours');
+        $this->assertSame(0, DB::table('workforce_work_schedules')->where('organization_id', $context->organization->id)->count());
+        $this->assertSame(0, DB::table('workforce_work_schedule_days')->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_work_schedule_initial_day_uses_defaults_for_omitted_optional_fields(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'ATOMIC-DEFAULTS', 'name' => 'График с обычным рабочим днём',
+                'initial_day' => ['work_date' => '2026-05-23'],
+            ]);
+
+        $response->assertCreated();
+        $this->assertDatabaseHas('workforce_work_schedule_days', [
+            'organization_id' => $context->organization->id,
+            'work_schedule_id' => $response->json('data.id'),
+            'work_date' => '2026-05-23', 'day_type' => 'work', 'planned_hours' => 8,
+        ]);
+    }
+
     private function employee(AdminApiTestContext $context, string $personnelNumber): WorkforceEmployee
     {
         return WorkforceEmployee::create([

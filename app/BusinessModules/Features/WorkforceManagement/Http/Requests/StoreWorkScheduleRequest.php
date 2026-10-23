@@ -26,9 +26,9 @@ final class StoreWorkScheduleRequest extends FormRequest
             'week_pattern.work_days.*' => ['required', 'integer', 'between:1,7', 'distinct'],
             'is_active' => ['nullable', 'boolean'],
             'initial_day' => ['nullable', 'array:work_date,day_type,planned_hours,comment'],
-            'initial_day.work_date' => ['required_with:initial_day', 'date_format:Y-m-d'],
-            'initial_day.day_type' => ['nullable', Rule::in(['work', 'weekend', 'holiday'])],
-            'initial_day.planned_hours' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'initial_day.work_date' => [Rule::requiredIf(fn (): bool => $this->input('initial_day') !== null), 'date_format:Y-m-d'],
+            'initial_day.day_type' => ['sometimes', 'required', Rule::in(['work', 'weekend', 'holiday'])],
+            'initial_day.planned_hours' => ['sometimes', 'required', 'numeric', 'min:0', 'max:24'],
             'initial_day.comment' => ['nullable', 'string', 'max:255'],
         ];
     }
