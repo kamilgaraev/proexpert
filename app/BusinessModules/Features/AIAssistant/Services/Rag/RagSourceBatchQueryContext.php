@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
+use App\Services\Monitoring\RagSourceBatchIdentityMetadata;
 
 final class RagSourceBatchQueryContext
 {
@@ -13,6 +14,7 @@ final class RagSourceBatchQueryContext
         private readonly bool $expectedProjection,
         private readonly ?array $sourceTypes,
         private readonly ?string $entityType,
+        private readonly ?array $candidateIdentities = null,
     ) {}
 
     public function run(callable $operation): mixed
@@ -55,8 +57,23 @@ final class RagSourceBatchQueryContext
             }
         }
 
-        return ['aggregation_ordinal' => $this->ordinal, 'mode' => $this->expectedProjection ? 'expected' : 'stored',
+        $metadata = ['aggregation_ordinal' => $this->ordinal, 'mode' => $this->expectedProjection ? 'expected' : 'stored',
             'phase' => 'source_batch_consume', 'source_types' => $this->sourceTypes === null ? null : array_values($this->sourceTypes),
             'entity_type' => $this->entityType];
+        if ($this->candidateIdentities !== null) {
+            try {
+                [$pairs, $complete] = RagSourceBatchIdentityMetadata::fromIdentities($this->candidateIdentities);
+                $scopedPairs = array_values(array_filter($pairs, fn (array $pair): bool =>
+                    ($this->sourceTypes === null || in_array($pair['source_type'], $this->sourceTypes, true))
+                        && ($this->entityType === null || $pair['entity_type'] === $this->entityType)));
+            } catch (\Throwable) {
+                $pairs = $scopedPairs = [];
+                $complete = false;
+            }
+            $metadata['candidate_identities'] = $scopedPairs;
+            $metadata['candidate_identities_complete'] = $complete && count($pairs) === count($scopedPairs);
+        }
+
+        return $metadata;
     }
 }

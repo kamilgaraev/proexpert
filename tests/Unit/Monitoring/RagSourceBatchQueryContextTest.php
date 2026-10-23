@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Monitoring;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceBatchQueryContext;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
 use App\Services\Monitoring\SlowQueryContext;
 use App\Services\Monitoring\TracingService;
 use Fiber;
@@ -52,6 +53,58 @@ final class RagSourceBatchQueryContextTest extends TestCase
         });
         self::assertSame(['private-result'], $result);
         self::assertNull($this->query()['rag_source_batch']);
+    }
+
+    public function test_background_slow_query_has_catalogue_candidate_pairs_without_request(): void
+    {
+        self::assertFalse(app()->bound('request'));
+        $result = (new RagSourceBatchQueryContext(4, false, ['project'], null,
+            ['project' => ['project' => 'private-value']]))->run(fn () => $this->query());
+
+        self::assertArrayHasKey('candidate_identities', $result['rag_source_batch']);
+        self::assertSame([['entity_type' => 'project', 'source_type' => 'project']], $result['rag_source_batch']['candidate_identities']);
+        self::assertTrue($result['rag_source_batch']['candidate_identities_complete']);
+        self::assertStringNotContainsString('private-', json_encode($result['rag_source_batch'], JSON_THROW_ON_ERROR));
+        self::assertNull($this->query()['rag_source_batch']);
+    }
+
+    public function test_background_candidate_pairs_keep_caps_and_mark_invalid_input_incomplete(): void
+    {
+        $definitions = AssistantEntityAccessCatalog::entityDefinitions();
+        $many = [];
+        foreach (array_slice($definitions, 0, 40, true) as $entity => $definition) { $many[$entity] = [$definition[0] => true]; }
+        self::assertCount(40, $many);
+        $invalid = array_fill_keys(array_map(static fn (int $index): string => 'private-'.$index, range(0, 999)), []);
+        $cases = [
+            [$many, 32, false], [[], 0, true], [$invalid, 0, false],
+            [['project' => 'private-value'], 0, false],
+            [['project' => ['file_document' => true, 'private-source' => true]], 0, false],
+            [['project' => ['project' => ['private-value']], 'private-entity' => ['private-source' => true]], 1, false],
+        ];
+        foreach ($cases as [$identities, $count, $complete]) {
+            $result = (new RagSourceBatchQueryContext(4, false, null, null, $identities))->run(fn () => $this->query());
+            self::assertArrayHasKey('candidate_identities', $result['rag_source_batch']);
+            self::assertCount($count, $result['rag_source_batch']['candidate_identities']);
+            self::assertSame($complete, $result['rag_source_batch']['candidate_identities_complete']);
+            $encoded = json_encode($result['rag_source_batch'], JSON_THROW_ON_ERROR);
+            self::assertStringNotContainsString('private-', $encoded);
+            self::assertLessThan(32768, strlen($encoded));
+        }
+        self::assertNull($this->query()['rag_source_batch']);
+    }
+
+    public function test_candidate_pairs_outside_the_context_scope_are_omitted_and_incomplete(): void
+    {
+        $identities = ['assistant_document' => ['file_document' => true], 'project' => ['project' => true]];
+        $cases = [
+            [['project'], null, ['entity_type' => 'project', 'source_type' => 'project']],
+            [null, 'assistant_document', ['entity_type' => 'assistant_document', 'source_type' => 'file_document']],
+        ];
+        foreach ($cases as [$sources, $entity, $pair]) {
+            $result = (new RagSourceBatchQueryContext(4, false, $sources, $entity, $identities))->run(fn () => $this->query());
+            self::assertSame([$pair], $result['rag_source_batch']['candidate_identities']);
+            self::assertFalse($result['rag_source_batch']['candidate_identities_complete']);
+        }
     }
 
     public function test_nested_context_restores_outer_and_propagates_original_exception(): void

@@ -848,8 +848,9 @@ final class AssistantDataAccessPolicy
                     }
                     $nextProcessingPhase(null);
                     if ($consume !== null) {
-                        ApiQueryMetrics::measureRagSourceBatch(array_filter($batchIdentities, static fn (mixed $sources): bool => $sources !== []), $expectedProjection,
-                            static fn () => (new RagSourceBatchQueryContext(count($compiled), $expectedProjection, $types, $entry['entity']))
+                        $reportedIdentities = array_filter($batchIdentities, static fn (mixed $sources): bool => $sources !== []);
+                        ApiQueryMetrics::measureRagSourceBatch($reportedIdentities, $expectedProjection,
+                            static fn () => (new RagSourceBatchQueryContext(count($compiled), $expectedProjection, $types, $entry['entity'], $reportedIdentities))
                                 ->run(static fn () => $consume($compiled[array_key_last($compiled)])));
                     }
                 }
