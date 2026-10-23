@@ -16,6 +16,9 @@
             <file>tests/Unit/AIAssistant/Rag/OpenAIRagEmbeddingProviderTest.php</file>
             <file>tests/Unit/AIAssistant/Rag/EmbeddingAttemptEvidenceTest.php</file>
         </testsuite>
+        <testsuite name="AIAssistantDocumentFollowupSearch">
+            <file>tests/Feature/AIAssistant/AssistantDocumentFollowupSearchTest.php</file>
+        </testsuite>
         <testsuite name="OrdinaryAssistantDocumentAdmission">
             <file>tests/Feature/AIAssistant/AssistantDocumentAdmissionTest.php</file>
             <file>tests/Unit/AIAssistant/Documents/AssistantDocumentAdmissionContractTest.php</file>
