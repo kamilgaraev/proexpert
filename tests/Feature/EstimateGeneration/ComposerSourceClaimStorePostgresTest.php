@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDra
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationQuestionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnswerEstimateClarificationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
@@ -91,7 +92,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     ['context_payload' => json_encode([], JSON_THROW_ON_ERROR)],
                     ['context_payload' => json_encode(['origin' => null], JSON_THROW_ON_ERROR)],
                     ['context_payload' => json_encode(['origin' => 'other'], JSON_THROW_ON_ERROR)],
-                    ['source_entity_type' => null], ['source_entity_id' => null], ['source_entity_id' => 999999],
+                    ['source_entity_type' => null], ['source_entity_id' => null],
                     ['is_positive' => true], ['accepted_at' => now()], ['norm_code' => 'fake'],
                     ['decision_status' => 'confirmed_by_user'], ['source_claim_key' => null],
                 ] as $change) {
@@ -109,6 +110,12 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     self::assertSame('work_parameter_component_learning_requires_preserved_history', $exception->getMessage());
                 }
                 self::assertTrue(DB::table('estimate_generation_learning_examples')->where('id', $id)->exists());
+                DB::table('estimate_generation_sessions')->where('id', $component['generation_session_id'])->delete();
+                $retained = DB::table('estimate_generation_learning_examples')->where('id', $id)->sole();
+                self::assertNull($retained->generation_session_id);
+                self::assertSame($component['source_entity_id'], $retained->source_entity_id);
+                self::assertEquals(json_decode($component['context_payload'], true, flags: JSON_THROW_ON_ERROR),
+                    json_decode($retained->context_payload, true, flags: JSON_THROW_ON_ERROR));
                 throw new \RuntimeException('rollback_component_test_fixture');
             });
         } catch (\RuntimeException $exception) {
@@ -128,7 +135,13 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         }
     }
 
-    public function test_typed_work_parameter_uses_actual_native_source_and_terminal_learning_in_the_next_composer(): void
+    public static function parameterWorkSections(): array
+    {
+        return ['equipment' => ['equipment'], 'heating' => ['heating']];
+    }
+
+    #[DataProvider('parameterWorkSections')]
+    public function test_typed_work_parameter_uses_actual_native_source_and_terminal_learning_in_the_next_composer(string $workSection): void
     {
         Queue::fake();
         config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
@@ -137,7 +150,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'estimate_generation.view', 'estimate_generation.review', 'estimate_generation.upload_documents']], 'system_permissions' => ['admin.access']]);
         $rights->member->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
         [$actor, $session, $initialAnswer, $sources] = $this->answeredSourceFixture(naturalInitial: true, targetMode: 'selected',
-            realActor: $rights->member, lengthOperand: true);
+            selectedSections: array_values(array_unique(['equipment', $workSection])), realActor: $rights->member, lengthOperand: true);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $organization = Organization::query()->findOrFail($scope[0]);
         $project = Project::query()->findOrFail($scope[1]);
@@ -155,9 +168,9 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         foreach ([0, 1, 2, 3] as $phase) {
             [$session, $operationId] = $this->paidReceipt(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, [], true,
                 [$organization, $project, $actor, $session->fresh()], false,
-                function (EstimateGenerationSession $current, string $operationId) use ($actor, $scope, $sources, $initialAnswer, $phase, &$inputs): int {
+                function (EstimateGenerationSession $current, string $operationId) use ($actor, $scope, $sources, $initialAnswer, $phase, $workSection, &$inputs): int {
                     $work = ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.installation',
-                        'name' => 'Монтаж неизвестной установки', 'work_section' => 'equipment', 'unit' => 'count',
+                        'name' => 'Монтаж неизвестной установки', 'work_section' => $workSection, 'unit' => 'count',
                         'derived_quantity_id' => null, 'source_fact_ids' => [$initialAnswer->id, $sources[0]->id],
                         'entity_id' => $sources[0]->entityId, 'technology_package_candidate' => null,
                         'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
@@ -297,6 +310,28 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     $document->update(['checksum_sha256' => $checksum]);
                 }
                 self::assertArrayHasKey('component', $factory()->workTechnologyContext[0]['answer']['parameter']);
+                $derivedIds = [$card['answer']['parameter']['observed_fact_id'], $card['answer']['parameter']['requirement_fact_id']];
+                $history = fn () => DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])
+                    ->whereIn('stable_key', $derivedIds)->orderBy('stable_key')->get()->toJson();
+                $storedHistory = $history();
+                DB::beginTransaction();
+                try {
+                    self::assertSame(1, app(EvidenceRepository::class)->invalidate(...[...$scope,
+                        [(int) substr($source['reference'], 9)], 'parameter_source_invalidated_fixture']));
+                    $staleSnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    self::assertSame([], array_values(array_filter($staleSnapshot->facts,
+                        static fn (Fact $fact): bool => str_starts_with($fact->type, 'engineering_parameter_'))));
+                    self::assertSame([], $models->factsByIds(...[...$scope, $derivedIds]));
+                    $invalidatedCard = array_values(array_filter($this->getJson($baseUrl.'/questions', $headers)->assertOk()->json('data.items'),
+                        static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                    self::assertSame('other', $invalidatedCard['answer']['response']);
+                    self::assertSame([], $invalidatedCard['parameter_checks']);
+                    self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['parameter']);
+                    self::assertSame(0, app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId]));
+                    self::assertSame($storedHistory, $history());
+                } finally {
+                    DB::rollBack();
+                }
                 $reanswer = [...$answerInput, 'idempotency_key' => 'typed-below-minimum', 'answer_fingerprint' => $card['answer_fingerprint'],
                     'parameter' => [...$parameter, 'value' => '101', 'unit' => 'mm']];
                 $this->postJson($baseUrl.'/questions/'.$card['code'].'/answer', $reanswer, $headers)->assertOk();

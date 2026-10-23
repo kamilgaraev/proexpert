@@ -1492,6 +1492,11 @@ SQL, [
             $decoded = $this->decode($row->fact_value);
             $payload = $this->decode($row->payload);
             $semanticAttributes = $this->semanticAttributes($payload);
+            $definitionEvidence = $semanticAttributes['engineering_parameter']['definition_source']['evidence_id'] ?? null;
+            if (str_starts_with((string) $row->assertion_type, 'engineering_parameter_')
+                && is_string($definitionEvidence) && ! in_array($definitionEvidence, $evidenceIds, true)) {
+                continue;
+            }
             $facts[] = new Fact(
                 (string) $row->stable_key,
                 (int) $row->organization_id,

@@ -268,8 +268,31 @@ final readonly class ComposerSourceClaimValidationService
     public function parameterComponents(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $input,
         ?string $localEstimateKey = null, array &$cache = []): array
     {
-        $entries = $this->currentWorkSourceClaimContexts($scope, $snapshot, $decisions, $input, $localEstimateKey);
-        $entries = array_filter($entries, static fn (array $entry): bool => isset($entry['answer']['parameter']));
+        $policy = ResolveCurrentEstimateClarification::composerPolicy($input);
+        if ($this->clarifications === null || count($scope) !== 3 || $policy === null) {
+            return [];
+        }
+        $catalog = ($this->clarifications)();
+        if (! $catalog instanceof \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog) {
+            return [];
+        }
+        $entries = $duplicates = [];
+        foreach ($catalog->currentWorkContexts(...[...$scope, $snapshot, $decisions, $localEstimateKey]) as $entry) {
+            $answer = $entry['answer'] ?? null;
+            if (($entry['status'] ?? null) !== 'answered' || ! is_array($answer) || ! is_array($answer['parameter'] ?? null)
+                || ($answer['response'] ?? null) !== 'other' || ($answer['trust'] ?? null) !== 'user_assumption'
+                || ($answer['engineering_applicability'] ?? null) !== 'unresolved' || ($answer['numeric_parameters_confirmed'] ?? null) !== false
+                || ! is_string($answer['fact_id'] ?? null) || ! is_array($answer['document_ids'] ?? null)
+                || $answer['document_ids'] === [] || count($answer['document_ids']) > self::MAX_CLAIMS
+                || CanonicalPipelineJson::encode($entry['context']['policy'] ?? null) !== CanonicalPipelineJson::encode($policy)) {
+                continue;
+            }
+            if (isset($entries[$answer['fact_id']])) {
+                $duplicates[$answer['fact_id']] = true;
+            }
+            $entries[$answer['fact_id']] = $entry;
+        }
+        $entries = array_diff_key($entries, $duplicates);
         if (count($entries) > self::MAX_CLAIMS) {
             return [];
         }
@@ -284,6 +307,9 @@ final readonly class ComposerSourceClaimValidationService
             try {
                 $typed = ResolveCurrentEstimateClarification::workParameterInput($parameter['input'] ?? []);
             } catch (\InvalidArgumentException) {
+                continue;
+            }
+            if ($typed === null) {
                 continue;
             }
             $pins = array_values(array_filter($entry['documents'], static fn (array $pin): bool => in_array($pin['document_id'], $entry['answer']['document_ids'], true)));

@@ -23,7 +23,6 @@ return new class extends Migration
                     AND norm_code IS NULL AND estimate_norm_id IS NULL AND normative_dataset_version_id IS NULL
                     AND source_claim_key IS NOT NULL AND source_claim_key ~ '^[a-f0-9]{64}$'
                     AND source_entity_type IS NOT DISTINCT FROM 'estimate_session' AND source_entity_id IS NOT NULL
-                    AND generation_session_id IS NOT NULL AND source_entity_id IS NOT DISTINCT FROM generation_session_id
                     AND context_payload->>'origin' IS NOT DISTINCT FROM 'work_parameter_component:v1'
                     AND decision_status = 'proposed' AND is_positive = false AND accepted_at IS NULL)
             )
