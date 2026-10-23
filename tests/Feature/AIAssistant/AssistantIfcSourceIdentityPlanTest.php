@@ -7,14 +7,17 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceIdentityQueryBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagExpectedSourceProjection;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\DesignAdditionalRagSource;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
+use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
 use App\BusinessModules\Features\DesignManagement\Models\DesignReviewRound;
@@ -34,6 +37,24 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
     public static function identityProjectionCases(): array
     {
         return ['stored' => [false], 'expected' => [true]];
+    }
+
+    public function test_expected_identity_scope_is_reused_only_for_the_exact_prefiltered_pair(): void
+    {
+        $builder = new AssistantSourceIdentityQueryBuilder;
+        foreach ([null, ['other_source', 'design_ifc_model_element'], ['design_additional', 'other_entity']] as $scope) {
+            $branch = $builder->identityBranch(DesignIfcModelElement::query(), 'design_additional', 'design_ifc_model_element',
+                DB::table('ai_rag_expected_sources'), 'ai_rag_expected_sources', expectedProjection: true, prefilteredExpectedIdentity: $scope);
+            self::assertStringContainsString('"ai_rag_expected_sources"."source_type" = ?', $branch->toSql());
+            self::assertStringContainsString('"ai_rag_expected_sources"."entity_type" = ?', $branch->toSql());
+            self::assertSame(['design_additional', 'design_ifc_model_element'], $branch->getBindings());
+        }
+        $prefiltered = DB::table('ai_rag_expected_sources')->where('source_type', 'design_additional')->where('entity_type', 'design_ifc_model_element');
+        $branch = $builder->identityBranch(DesignIfcModelElement::query(), 'design_additional', 'design_ifc_model_element',
+            $prefiltered, 'ai_rag_expected_sources', expectedProjection: true, prefilteredExpectedIdentity: ['design_additional', 'design_ifc_model_element']);
+        self::assertSame(['design_additional', 'design_ifc_model_element'], $branch->getBindings());
+        self::assertStringNotContainsString('"ai_rag_expected_sources"."source_type" = ?', $branch->toSql());
+        self::assertStringNotContainsString('"ai_rag_expected_sources"."entity_type" = ?', $branch->toSql());
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('identityProjectionCases')]
@@ -203,7 +224,98 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
                 self::assertLessThanOrEqual(21000, $scanned, 'Counting a dense IFC corpus must not reread every source row to recover its counters.');
             }, fresh: true);
             $this->assertMixedCorpusCounterPlan($policy, $fixture, $project, $package);
+        } else {
+            $this->assertDenseExpectedCounts($policy, $fixture, $project, $generation, $firstId, $version, $derivative, $otherProject);
         }
+    }
+
+    private function assertDenseExpectedCounts(AssistantDataAccessPolicy $policy, AssistantRealAuthorizationFixture $fixture, Project $project, string $generation, int $firstId, DesignArtifactVersion $version, DesignModelDerivative $derivative, Project $otherProject): void
+    {
+        $organizationId = (int) $fixture->organization->id;
+        DB::statement("INSERT INTO ai_rag_sources (organization_id, project_id, identity_project_id, identity_part_key, source_type, entity_type, entity_id, title, checksum) SELECT organization_id, project_id, identity_project_id, identity_part_key, source_type, entity_type, entity_id, 'IFC', checksum FROM ai_rag_expected_sources WHERE organization_id = ? AND generation = CAST(? AS uuid)", [$organizationId, $generation]);
+        $source = RagSource::query()->where('organization_id', $organizationId)->where('entity_id', (string) $firstId)
+            ->where('identity_part_key', '')->firstOrFail();
+        DB::table('ai_rag_chunks')->insert([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'source_id' => $source->id,
+            'chunk_index' => 0, 'content' => 'Indexed IFC', 'content_hash' => hash('sha256', 'Indexed IFC'),
+            'embedding' => json_encode(RagTestEmbedding::fromLeadingValues([1.0]), JSON_THROW_ON_ERROR),
+        ]);
+        $pendingSince = now()->subHours(2)->startOfSecond()->toDateTimeString();
+        RagExpectedSource::query()->where('organization_id', $organizationId)->where('generation', $generation)
+            ->where('identity_part_key', 'second-part')->update(['pending_since' => $pendingSince]);
+        foreach (['ai_rag_sources', 'ai_rag_status_sources', 'ai_rag_expected_sources'] as $table) {
+            DB::statement('ANALYZE '.$table);
+        }
+        DB::statement("SET LOCAL work_mem = '16MB'");
+        DB::statement('SET LOCAL jit = off');
+        DB::statement("SET LOCAL statement_timeout = '2s'");
+        $projection = new RagExpectedSourceProjection(Mockery::mock(RagIndexer::class));
+        $read = function (bool $collectProof) use ($projection, $policy, $fixture, $organizationId, $generation): array {
+            return $policy->withCurrentChecks($fixture->owner, $organizationId, function () use ($projection, $policy, $fixture, $organizationId, $generation, $collectProof): array {
+                return $projection->actorCounts($organizationId, $fixture->owner, $policy, ['design_additional'], $generation, collectProof: $collectProof);
+            }, fresh: true);
+        };
+        DB::enableQueryLog();
+        try {
+            $started = hrtime(true);
+            $counts = $read(false);
+            $pipelineMs = (hrtime(true) - $started) / 1000000;
+            $queries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'matched_source_cache AS MATERIALIZED')));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame(20005, (int) $counts['design_additional']->expected_count);
+        self::assertSame(1, (int) $counts['design_additional']->indexed_count);
+        self::assertSame(\Illuminate\Support\Carbon::parse($pendingSince)->getTimestamp(), \Illuminate\Support\Carbon::parse($counts['design_additional']->pending_since)->getTimestamp());
+        $full = $read(true);
+        foreach (['expected_count', 'indexed_count', 'pending_since'] as $field) {
+            self::assertEquals($full['design_additional']->{$field}, $counts['design_additional']->{$field}, $field);
+        }
+        self::assertCount(1, $queries);
+        $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$queries[0]['query'], $queries[0]['bindings']);
+        $plan = json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
+        $materialized = [];
+        $matchedScanWork = 0;
+        $collect = static function (array $node) use (&$collect, &$materialized, &$matchedScanWork): void {
+            if (($node['Subplan Name'] ?? null) === 'CTE matched_source_cache') {
+                $materialized[] = ($node['Actual Rows'] ?? 0) * ($node['Actual Loops'] ?? 1);
+            }
+            if (($node['Node Type'] ?? null) === 'CTE Scan' && ($node['CTE Name'] ?? null) === 'matched_source_cache') {
+                $matchedScanWork += (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1);
+            }
+            foreach ($node['Plans'] ?? [] as $child) {
+                $collect($child);
+            }
+        };
+        $collect($plan['Plan']);
+        self::assertSame([20014], $materialized, 'The complete matched-source materialization must be preserved.');
+        self::assertGreaterThan(0, $matchedScanWork);
+        self::assertLessThanOrEqual(40028, $matchedScanWork, 'Expected counters must not rescan the complete matched-source cache for each identity.');
+        if (getenv('MOST_RAG_STORED_QUERY_PROFILE') === '1') {
+            fwrite(STDERR, 'IFC_EXPECTED_COUNTS_PROFILE '.json_encode([
+                'expected_count' => 20005, 'indexed_count' => 1, 'pipeline_ms' => round($pipelineMs, 3),
+                'planning_ms' => $plan['Planning Time'], 'execution_ms' => $plan['Execution Time'],
+                'materialized_rows' => $materialized, 'temp_read_blocks' => $plan['Plan']['Temp Read Blocks'] ?? 0,
+                'work_mem' => '16MB', 'jit' => 'off', 'matched_cache_rows_processed' => $matchedScanWork,
+            ], JSON_THROW_ON_ERROR).PHP_EOL);
+        }
+        DB::table('ai_rag_status_sources')->where('organization_id', $organizationId)->update(['chunk_count' => 1, 'indexed_chunk_count' => 1]);
+        $fullyIndexed = $read(false)['design_additional'];
+        self::assertSame(20005, (int) $fullyIndexed->expected_count);
+        self::assertSame(20005, (int) $fullyIndexed->indexed_count);
+        self::assertNull($fullyIndexed->pending_since);
+        $derivative->updateQuietly(['project_id' => $otherProject->id]);
+        self::assertSame(2, (int) $read(false)['design_additional']->expected_count);
+        $derivative->updateQuietly(['project_id' => $project->id]);
+        $version->updateQuietly(['project_id' => $otherProject->id]);
+        self::assertSame([], $read(false));
+        $version->updateQuietly(['project_id' => $project->id]);
+        $project->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
+        self::assertSame([], $read(false));
+        $project->updateQuietly(['organization_id' => $organizationId]);
+        $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => false]);
+        self::assertSame([], $read(false));
     }
 
     private function assertMixedCorpusCounterPlan(AssistantDataAccessPolicy $policy, AssistantRealAuthorizationFixture $fixture, Project $project, DesignPackage $package): void
