@@ -4,16 +4,23 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\ComposedQuantityProvenance;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
@@ -24,6 +31,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ExtractQuantitiesStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\CanonicalWorkItemQuantityBinder;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
@@ -40,6 +50,112 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_current_human_direct_quantity_reaches_an_unlisted_work_without_native_or_price_authority(): void
+    {
+        $workKey = 'assembly.user_reviewed';
+        self::assertFalse((new WorkItemQuantityMapper)->isKnownWorkKey($workKey));
+        [$actor, $session, $target] = $this->planningFixture($workKey);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $receipt = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2],
+            [...$this->input(), 'work_item_key' => $workKey, 'state_version' => (int) $session->state_version, 'unit' => 'count']);
+        $output = $this->extractQuantities($session->fresh());
+        $quantities = $output['building_quantities']['quantities'];
+        $input = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], $quantities, []]);
+        self::assertArrayHasKey($receipt['quantity_key'], $input->directQuantityBindings);
+        $selection = $session->fresh()->input_payload['quantity_selections'][$workKey];
+        $intent = ['kind' => 'supplementary', 'candidate_id' => 'supplementary:reviewed-assembly', 'work_key' => $workKey,
+            'name' => 'Сборка оборудования по принятому объёму', 'entity_id' => $target, 'unit' => 'count',
+            'derived_quantity_id' => $receipt['quantity_key'], 'source_fact_ids' => [$selection['source_fact_id']],
+            'technology_package_candidate' => null];
+        $provenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts, $input->directQuantityBindings);
+        $binding = $provenance->binding($intent);
+        self::assertTrue($binding['eligible']);
+        self::assertSame('estimated', $provenance->basis($binding)['source']);
+        $estimates = (new EstimateCompositionProjector)->apply([], [$intent], $input->derivedQuantities, $input->facts, $input->directQuantityBindings);
+        $item = $estimates[0]['sections'][0]['work_items'][0];
+        self::assertSame('3', $item['quantity']);
+        self::assertSame('count', $item['unit']);
+        self::assertSame($workKey, $item['key']);
+        $canonical = array_column(array_map(QuantityData::fromArray(...), $quantities), null, 'key');
+        $estimates[0]['sections'][0]['work_items'][0] = (new CanonicalWorkItemQuantityBinder)->bind($item, $canonical);
+        $draft = (new UniversalDraftProjector)->project(['local_estimates' => $estimates],
+            static fn (array $row): bool => ($row['metadata']['quantity_key'] ?? null) === $receipt['quantity_key'] && $provenance->binding($intent)['eligible']);
+        $item = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('3', $item['quantity']);
+        self::assertSame('assumed', $item['quantity_status']);
+        self::assertSame('estimated', $item['quantity_basis_details']['source']);
+        self::assertSame([$selection['source_fact_id']], $item['quantity_basis_details']['assumptions']);
+        self::assertSame($receipt['decision_id'], $item['quantity_basis_details']['formula_inputs']['operands'][0]['quantity_binding']['decision_id']);
+        self::assertNull($item['total_cost']);
+        self::assertNull($item['unit_price']);
+        self::assertSame('not_calculated', $item['pricing_status']);
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $source = array_column($snapshot->facts, null, 'id')[$selection['source_fact_id']];
+        self::assertSame('user_assumption', $source->origin);
+        foreach ($snapshot->evidence as $evidence) {
+            self::assertFalse((new NativeNumericFactProof)->matches($source, $evidence));
+        }
+        $without = new EstimateComposerInput(...[...$scope, $input->snapshotToken, $input->facts, $input->derivedQuantities,
+            $input->decisions, [], [], $input->contractVersion]);
+        self::assertSame($without->canonicalPayload(), $input->canonicalPayload());
+        self::assertSame($without->fingerprint(), $input->fingerprint());
+        $planner = new EstimateComposerBatchPlanner;
+        $parts = $planner->plan($input);
+        $baseline = $planner->plan($without);
+        self::assertCount(count($baseline), $parts);
+        foreach ($parts as $index => $part) {
+            self::assertSame($baseline[$index]->canonicalPayload(), $part->canonicalPayload());
+            self::assertSame($baseline[$index]->fingerprint(), $part->fingerprint());
+            self::assertArrayNotHasKey('direct_quantity_bindings', $part->canonicalPayload());
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
+    public function test_direct_quantity_admission_rejects_other_work_and_tampered_or_replaced_current_choices(): void
+    {
+        $workKey = 'assembly.user_reviewed';
+        [$actor, $session, $target] = $this->planningFixture($workKey);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $receipt = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2],
+            [...$this->input(), 'work_item_key' => $workKey, 'state_version' => (int) $session->state_version, 'unit' => 'count']);
+        $quantities = $this->extractQuantities($session->fresh())['building_quantities']['quantities'];
+        $quantities = array_values(array_filter($quantities, static fn (array $quantity): bool => $quantity['key'] === $receipt['quantity_key']));
+        $factory = app(EstimateComposerInputFactory::class);
+        $input = $factory->capture(...[...$scope, [], $quantities, []]);
+        $intent = ['work_key' => $workKey, 'entity_id' => $target, 'unit' => 'count',
+            'derived_quantity_id' => $receipt['quantity_key'], 'source_fact_ids' => []];
+        $proof = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts, $input->directQuantityBindings);
+        self::assertTrue($proof->binding($intent)['eligible']);
+        self::assertFalse($proof->binding([...$intent, 'work_key' => 'assembly.other'])['eligible']);
+        self::assertFalse((new ComposedQuantityProvenance($input->derivedQuantities, $input->facts))->binding($intent)['eligible']);
+        foreach (['entity_id' => 'entity:forged', 'work_item_key' => 'assembly.other', 'binding_fact_id' => 'fact:forged',
+            'decision_id' => 'decision:forged', 'quantity_hash' => str_repeat('0', 64)] as $field => $value) {
+            $forged = $input->directQuantityBindings;
+            $forged[$receipt['quantity_key']][$field] = $value;
+            self::assertFalse((new ComposedQuantityProvenance($input->derivedQuantities, $input->facts, $forged))->binding($intent)['eligible'], $field);
+        }
+        foreach ([['amount', '4'], ['unit', 'm3'], ['source', 'evidenced'], ['model_version', str_repeat('0', 64)],
+            ['formula_inputs.operands.0.quantity_binding.fact_version', 2], ['formula_inputs.operands.0.quantity_binding.decision_id', 'decision:forged'],
+            ['formula_inputs.operands.0.source_version', 'sha256:'.str_repeat('0', 64)]] as [$path, $value]) {
+            $forged = $quantities;
+            data_set($forged[0], $path, $value);
+            self::assertSame([], $factory->capture(...[...$scope, [], $forged, []])->directQuantityBindings, $path);
+        }
+        foreach ([['unit' => 'm3'], ['entity_id' => $receipt['entity_id']]] as $mismatch) {
+            try {
+                $proof->binding([...$intent, ...$mismatch]);
+                self::fail('An incompatible direct quantity was admitted.');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        app(UserEvaluationChoiceWriter::class)->write($actor, $session->fresh(), 'work:'.$workKey, 'evaluation_answer',
+            ['answer_kind' => 'leave_unresolved', 'work_item_key' => $workKey], 'Прежняя привязка количества больше не подтверждается', (string) Str::uuid());
+        self::assertSame([], $factory->capture(...[...$scope, [], $quantities, []])->directQuantityBindings);
+        $selection = $session->fresh()->input_payload['quantity_selections'][$workKey];
+        self::assertNotNull(app(ProjectModelRepository::class)->fact(...[...$scope, $selection['source_fact_id']]));
+    }
+
     public function test_manual_quantity_refreshes_current_planning_before_the_next_generation_quantity_stage(): void
     {
         Http::fake(static fn () => throw new \RuntimeException('Unexpected provider call.'));
@@ -326,7 +442,7 @@ final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonic
         }
     }
 
-    private function planningFixture(): array
+    private function planningFixture(string $workKey = 'equipment:purchase'): array
     {
         [$actor, $session] = $this->fixture();
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
@@ -338,6 +454,7 @@ final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonic
         $session->input_payload = [...$session->input_payload, 'price_policy' => 'catalog'];
         $draft = $session->draft_payload;
         $draft['generation_contract'] = UniversalDraftProjector::CONTRACT;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['key'] = $workKey;
         $draft['local_estimates'][0]['sections'][0]['work_items'][0]['unit'] = null;
         $draft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata'] = ['scope_entity_id' => $target];
         $draft['local_estimates'][0]['sections'][0]['work_items'][0]['validation_flags'] = ['unit_requires_confirmation'];
