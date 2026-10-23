@@ -183,7 +183,7 @@ final class FsnbXmlParser
                 code: $code,
                 name: $name,
                 unit: $this->firstValue($child, ['measureunit', 'measure_unit', 'unit', 'measure', 'measurement', 'единица', 'едизм', 'измеритель']),
-                quantity: $this->toFloat($this->firstValue($child, ['quantity', 'qty', 'volume', 'count', 'количество', 'объем', 'объём'])),
+                quantity: $this->toDecimal($this->firstValue($child, ['quantity', 'qty', 'volume', 'count', 'количество', 'объем', 'объём'])),
                 resourceType: $this->firstValue($child, ['type', 'kind', 'resource_type', 'тип', 'вид']),
                 rawData: [
                     'source_tag' => $child->getName(),
@@ -420,7 +420,7 @@ final class FsnbXmlParser
         return $attributes;
     }
 
-    private function toFloat(?string $value): ?float
+    private function toDecimal(?string $value): ?string
     {
         if ($value === null) {
             return null;
@@ -428,7 +428,7 @@ final class FsnbXmlParser
 
         $normalized = str_replace([' ', ','], ['', '.'], $value);
 
-        return is_numeric($normalized) ? (float) $normalized : null;
+        return is_numeric($normalized) ? $normalized : null;
     }
 
     private function cleanValue(string $value): ?string
