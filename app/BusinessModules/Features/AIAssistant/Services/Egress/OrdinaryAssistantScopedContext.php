@@ -82,7 +82,8 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     public function allowsExpansion(string $capability): bool
     {
         if ($capability !== 'document_rag' || $this->guarded !== true
-            || $this->cohort?->policy_version !== OrdinaryAssistantDocumentProjection::VERSION) {
+            || ! in_array($this->cohort?->policy_version,
+                [OrdinaryAssistantDocumentProjection::VERSION, OrdinaryAssistantSourceProjection::MIXED_VERSION], true)) {
             return false;
         }
         $this->assertFresh();
@@ -117,7 +118,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             if (! is_array($tool) || ! in_array($tool['name'] ?? null, $this->allowedToolNames(), true)) {
                 continue;
             }
-            if ($this->allowsExpansion('document_rag')) {
+            if ($tool['name'] === OrdinaryAssistantDocumentProjection::TOOL && $this->allowsExpansion('document_rag')) {
                 $tool['parameters'] = ['type' => 'object', 'additionalProperties' => false,
                     'required' => ['query', 'project_id', 'source_types', 'limit', 'retrieval_mode'], 'properties' => [
                         'query' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 200],
@@ -174,7 +175,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     {
         $this->assertFresh();
         $source = $this->source($name, $arguments);
-        if ($this->allowsExpansion('document_rag')) {
+        if ($name === OrdinaryAssistantDocumentProjection::TOOL) {
             $this->assertSourcesFresh();
             $projected = app(OrdinaryAssistantDocumentProjection::class)->subset($result, $source, $this->actor,
                 (int) $this->cohort->organization_id, (int) $this->cohort->project_id);
@@ -212,7 +213,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             if (($item['type'] ?? null) === 'function_call') {
                 $arguments = json_decode($item['arguments'], true, 512, JSON_THROW_ON_ERROR);
                 $source = $this->source($item['name'], $arguments);
-                $this->calls[$item['call_id']] = ['tool' => $item['name'], 'arguments' => $this->allowsExpansion('document_rag')
+                $this->calls[$item['call_id']] = ['tool' => $item['name'], 'arguments' => $item['name'] === OrdinaryAssistantDocumentProjection::TOOL
                     ? $this->projection->arguments($item['name'], $arguments, (int) $this->cohort->project_id) : $source['arguments']];
             }
             $this->modelItems[OrdinaryAssistantSourceProjection::hash($item)] = true;
@@ -241,24 +242,25 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     public function assertPublication(array $references): void
     {
         $this->assertSourcesFresh();
-        if ($this->allowsExpansion('document_rag')) {
-            $versions = array_merge(...array_column($this->enrollment->sources, 'source_versions'));
-            foreach ($references as $ref) {
-                if (($ref['egress_projection_version'] ?? null) !== OrdinaryAssistantDocumentProjection::VERSION
-                    || ! in_array(OrdinaryAssistantDocumentProjection::referenceHash($ref), $versions, true)) {
-                    throw new AssistantEgressDenied('source_unknown');
-                }
-            }
-            if (! app(AssistantSourceReferenceGuard::class)->fresh($this->actor, (int) $this->cohort->organization_id, $references)) {
-                throw new AssistantEgressDenied('source_stale');
-            }
-            return;
-        }
+        $documents = array_values(array_filter($this->enrollment->sources,
+            static fn (array $source): bool => $source['tool'] === OrdinaryAssistantDocumentProjection::TOOL));
+        $documentVersions = $documents === [] ? [] : array_merge(...array_column($documents, 'source_versions'));
+        $hasSql = array_intersect(array_column($this->enrollment->sources, 'tool'), OrdinaryAssistantSourceProjection::TOOLS) !== [];
+        $documentReferences = [];
         foreach ($references as $ref) {
-            if ($ref !== ['entity_type' => 'project', 'entity_id' => (int) $this->cohort->project_id,
+            if ($hasSql && $ref === ['entity_type' => 'project', 'entity_id' => (int) $this->cohort->project_id,
                 'project_id' => (int) $this->cohort->project_id, 'organization_id' => (int) $this->cohort->organization_id]) {
+                continue;
+            }
+            if ($documents === [] || ($ref['egress_projection_version'] ?? null) !== OrdinaryAssistantDocumentProjection::VERSION
+                || ! in_array(OrdinaryAssistantDocumentProjection::referenceHash($ref), $documentVersions, true)) {
                 throw new AssistantEgressDenied('source_unknown');
             }
+            $documentReferences[] = $ref;
+        }
+        if ($documentReferences !== []
+            && ! app(AssistantSourceReferenceGuard::class)->fresh($this->actor, (int) $this->cohort->organization_id, $documentReferences)) {
+            throw new AssistantEgressDenied('source_stale');
         }
     }
 
@@ -312,8 +314,8 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     {
         $arguments = $this->projection->arguments($name, $arguments, (int) $this->cohort->project_id);
         foreach ($this->enrollment->sources as $source) {
-            if ($source['tool'] === $name && (($this->cohort->policy_version === OrdinaryAssistantDocumentProjection::VERSION
-                && ($source['projection_version'] ?? null) === OrdinaryAssistantDocumentProjection::VERSION)
+            if ($source['tool'] === $name && (($name === OrdinaryAssistantDocumentProjection::TOOL
+                && $source['projection_version'] === OrdinaryAssistantSourceProjection::projectionVersionForTool($name))
                 || hash_equals(OrdinaryAssistantSourceProjection::hash($source['arguments']), OrdinaryAssistantSourceProjection::hash($arguments)))) {
                 return $source;
             }
@@ -361,8 +363,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             'cohort_generation' => $current->generation, 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources]);
         if ($manifest === null || ! hash_equals((string) $current->generation, (string) $this->cohort->generation)
             || array_diff(array_column($manifest->sources, 'tool'), $current->allowed_tools) !== []
-            || array_filter($manifest->sources, static fn (array $source): bool => ($source['projection_version'] ?? null) !== $current->policy_version) !== []
-            || ($current->policy_version === OrdinaryAssistantDocumentProjection::VERSION && count($manifest->sources) !== 1)
+            || ! OrdinaryAssistantSourceProjection::allowsSources($current->policy_version, $manifest->sources)
             || ! hash_equals((string) $manifest->manifest_hash, (string) $this->enrollment->manifest_hash)
             || $expectedHash === null || ! hash_equals((string) $manifest->manifest_hash, $expectedHash)
             || ! hash_equals((string) $manifest->input_hash, (string) $this->inputHash)
