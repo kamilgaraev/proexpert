@@ -28,6 +28,7 @@ use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
+use App\Models\Credits\AICreditProviderUsage;
 use App\Services\Credits\AICreditService;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -51,6 +52,7 @@ final class AssistantMixedSourceAdmissionTest extends TestCase
     private array $chunks = [];
     private OrdinaryAssistantEnrollmentService $enrollments;
     private const POLICY = 'ordinary-project-sql-document/1';
+    private const THREE_POLICY = 'ordinary-project-sql-document/2';
     private const SENTINEL = 'APPROVED_FRAGMENT_SENTINEL';
     private const ACCOUNT = 'PRIVATE_ACCOUNT_NOT_APPROVED';
 
@@ -345,6 +347,203 @@ final class AssistantMixedSourceAdmissionTest extends TestCase
         } catch (AssistantEgressDenied|AuthorizationException) { self::assertSame(1, $calls); }
     }
 
+    public function test_platform_can_assign_the_explicit_three_source_policy_without_expanding_an_old_manifest(): void
+    {
+        [$old, $payload, $manifest] = $this->enroll();
+        $generation = $old->generation;
+        $this->withoutMiddleware();
+        $this->actingAs($this->operator)->postJson('/api/v1/admin/ai-assistant/egress/cohorts', [
+            'organization_id' => $old->organization_id, 'actor_id' => $this->fixture->owner->id,
+            'project_id' => $this->project->id, 'tools' => array_column($this->threeSources(), 'tool'),
+            'policy_version' => self::THREE_POLICY,
+        ])->assertCreated()->assertJsonPath('data.policy_version', self::THREE_POLICY);
+        self::assertNotSame($generation, $old->refresh()->generation);
+        self::assertSame('revoked', AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id'])->status);
+        $calls = 0;
+        $provider = $this->responses(function () use (&$calls): never { $calls++; self::fail('An old two-source approval reached transport'); });
+        try {
+            AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $old->organization_id, app(OrdinaryAssistantScopedContext::class))
+                ->ask($payload['message'], $old->organization_id, $this->fixture->owner, null, $payload);
+            self::fail('Reassignment reused an old manifest');
+        } catch (AssistantEgressDenied) { self::assertSame(0, $calls); }
+    }
+
+    public static function threeSourceSequences(): iterable
+    {
+        yield 'attention schedule document' => [['get_project_attention', 'get_project_production_schedule_summary', OrdinaryAssistantDocumentProjection::TOOL]];
+        yield 'document schedule attention' => [[OrdinaryAssistantDocumentProjection::TOOL, 'get_project_production_schedule_summary', 'get_project_attention']];
+        yield 'none' => [[]];
+        yield 'document subset' => [[OrdinaryAssistantDocumentProjection::TOOL]];
+        yield 'two SQL subset' => [OrdinaryAssistantSourceProjection::TOOLS];
+    }
+
+    #[DataProvider('threeSourceSequences')]
+    public function test_three_source_native_model_controls_order_subset_and_final_with_existing_quote_four(array $sequence): void
+    {
+        [$cohort, $payload, $manifest] = $this->enrollThree();
+        self::assertSame('normal', $payload['profile']);
+        $previews = array_column($manifest['sources'], 'projection', 'tool');
+        self::assertCount(3, $previews);
+        $calls = 0;
+        $final = 'Учебные источники позволяют обсудить наблюдения и условия проекта.';
+        $provider = $this->responses(function (array $input, array $options) use (&$calls, $sequence, $previews, $final): array {
+            self::assertSame('auto', $options['tool_choice']);
+            self::assertSame(4, $options['budget_limits']['max_calls']);
+            self::assertEqualsCanonicalizing(array_keys($previews), array_column($options['tools'], 'name'));
+            self::assertStringNotContainsString(self::ACCOUNT, json_encode([$input, $options], JSON_THROW_ON_ERROR));
+            $outputs = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call_output'));
+            $native = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call'));
+            self::assertCount($calls, $outputs);
+            self::assertCount($calls, $native);
+            foreach ($outputs as $index => $output) {
+                $name = $sequence[$index];
+                self::assertSame('fc_mixed_'.$index, $native[$index]['id']);
+                self::assertSame('call_mixed_'.$index, $native[$index]['call_id']);
+                self::assertSame($name, $native[$index]['name']);
+                self::assertSame($this->modelArgs($name), json_decode($native[$index]['arguments'], true, 512, JSON_THROW_ON_ERROR));
+                self::assertSame('call_mixed_'.$index, $output['call_id']);
+                self::assertSame($previews[$name], json_decode($output['output'], true, 512, JSON_THROW_ON_ERROR));
+            }
+            self::assertSame(count($native), count(array_unique(array_column($native, 'id'))));
+            self::assertSame(count($native), count(array_unique(array_column($native, 'call_id'))));
+            if ($calls < count($sequence)) {
+                $name = $sequence[$calls];
+                return $this->nativeCall($name, $this->modelArgs($name), $calls++);
+            }
+            $calls++;
+            return $this->answer($sequence === [] ? '{"kind":"clarification","missing":"goal"}' : $final);
+        });
+        $result = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+            app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertSame(count($sequence) + 1, $calls);
+        $request = AssistantRequest::query()->where('request_id', $result['request_id'])->sole();
+        self::assertSame(4, $request->max_calls);
+        self::assertSame($calls, $request->calls_used);
+        self::assertSame($calls, AICreditProviderUsage::query()->where('organization_id', $cohort->organization_id)->count());
+        if ($sequence === []) {
+            self::assertSame(trans_message('ai_assistant.clarification_goal'), $result['message']['content']);
+            self::assertTrue($result['message']['metadata']['needs_clarification']);
+            self::assertSame([], $result['message']['metadata']['source_refs']);
+        } else {
+            self::assertSame($final, $result['message']['content']);
+            $types = array_column($result['message']['metadata']['source_refs'], 'entity_type');
+            self::assertSame(array_intersect($sequence, OrdinaryAssistantSourceProjection::TOOLS) !== [], in_array('project', $types, true));
+            self::assertSame(in_array(OrdinaryAssistantDocumentProjection::TOOL, $sequence, true), in_array('assistant_document', $types, true));
+        }
+    }
+
+    public function test_three_quoted_calls_have_no_hidden_fourth_send_or_model_final_after_terminal_third_read(): void
+    {
+        [$cohort, $payload] = $this->enrollThree('short');
+        $sequence = [OrdinaryAssistantDocumentProjection::TOOL, ...OrdinaryAssistantSourceProjection::TOOLS];
+        $context = app(OrdinaryAssistantScopedContext::class);
+        $calls = 0;
+        $provider = $this->responses(function (array $input, array $options) use (&$calls, $sequence): array {
+            self::assertLessThan(3, $calls);
+            self::assertSame(3, $options['budget_limits']['max_calls']);
+            $outputs = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call_output'));
+            self::assertCount($calls, $outputs);
+            foreach ($outputs as $index => $output) { self::assertSame('call_mixed_'.$index, $output['call_id']); }
+            $name = $sequence[$calls];
+            return $this->nativeCall($name, $this->modelArgs($name), $calls++);
+        });
+        $result = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id, $context)
+            ->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertSame(3, $calls);
+        $request = AssistantRequest::query()->where('request_id', $result['request_id'])->sole();
+        self::assertSame(3, $request->max_calls);
+        self::assertSame(3, $request->calls_used);
+        self::assertSame(3, AICreditProviderUsage::query()->where('organization_id', $cohort->organization_id)->count());
+        self::assertSame(trans_message('ai_assistant_facts.live_proof_required'), $result['message']['content']);
+        self::assertFalse($result['message']['metadata']['model_invoked']);
+        self::assertTrue($result['message']['metadata']['needs_clarification']);
+        self::assertCount(3, array_filter($result['message']['metadata']['evidence'],
+            static fn (array $item): bool => ($item['source'] ?? null) === 'assistant_tool'));
+    }
+
+    public static function threeUnusedSourceChanges(): iterable
+    {
+        yield 'document before first send' => ['document', 0];
+        yield 'attention before next send' => ['attention', 1];
+        yield 'schedule before publication' => ['schedule', 2];
+    }
+
+    #[DataProvider('threeUnusedSourceChanges')]
+    public function test_three_source_whole_set_freshness_blocks_stale_unused_sources_and_keeps_usage(string $source, int $phase): void
+    {
+        [$cohort, $payload] = $this->enrollThree();
+        if ($phase === 0) { $this->changeSource($source === 'document' ? 'document' : 'sql'); }
+        $calls = 0;
+        $provider = $this->responses(function (array $input) use (&$calls, $source, $phase): array {
+            $calls++;
+            if (($phase === 1 && $calls === 1) || ($phase === 2 && $calls === 2)) { $this->changeSource($source === 'document' ? 'document' : 'sql'); }
+            if ($calls === 1) { return $this->nativeCall(OrdinaryAssistantDocumentProjection::TOOL, $this->documentArgs(), 0); }
+            self::assertCount(1, array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call_output'));
+            return $this->answer('{"kind":"clarification","missing":"goal"}');
+        });
+        try {
+            AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+                app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+            self::fail('A stale unused source passed the three-source boundary');
+        } catch (AssistantEgressDenied) {
+            self::assertSame($phase, $calls);
+            self::assertSame($calls, AICreditProviderUsage::query()->where('organization_id', $cohort->organization_id)->count());
+            self::assertFalse(Message::query()->where('role', 'assistant')->whereIn('conversation_id',
+                \App\BusinessModules\Features\AIAssistant\Models\Conversation::query()->where('organization_id', $cohort->organization_id)->select('id'))->exists());
+        }
+    }
+
+    public static function invalidThreeSelections(): iterable
+    {
+        yield 'missing source' => ['missing'];
+        yield 'foreign project' => ['project'];
+        yield 'unapproved chunk' => ['chunk'];
+    }
+
+    #[DataProvider('invalidThreeSelections')]
+    public function test_three_source_joint_preview_never_accepts_missing_or_foreign_entries(string $kind): void
+    {
+        $cohort = $this->enrollments->assign($this->operator, $this->fixture->organization->id, $this->fixture->owner,
+            $this->project->id, array_column($this->threeSources(), 'tool'), self::THREE_POLICY);
+        $payload = $this->payload('normal');
+        $sources = $this->threeSources();
+        if ($kind === 'missing') { array_pop($sources); }
+        if ($kind === 'project') { $sources[1]['arguments']['project_id'] = 99999999; }
+        if ($kind === 'chunk') { $sources[2]['arguments']['chunk_ids'] = [99999999]; }
+        $before = AssistantEgressEnrollment::query()->count();
+        try {
+            $this->enrollments->preview($this->fixture->owner, $cohort->organization_id, $cohort->id, $payload['quote_id'], $payload, $sources);
+            self::fail('An incomplete or foreign three-source selection passed preview');
+        } catch (AssistantEgressDenied) { self::assertSame($before, AssistantEgressEnrollment::query()->count()); }
+    }
+
+    private function threeSources(): array
+    {
+        return [$this->sources('get_project_attention')[0], $this->sources('get_project_production_schedule_summary')[0],
+            $this->sources('get_project_attention')[1]];
+    }
+
+    private function enrollThree(string $profile = 'normal'): array
+    {
+        $cohort = $this->enrollments->assign($this->operator, $this->fixture->organization->id, $this->fixture->owner,
+            $this->project->id, array_column($this->threeSources(), 'tool'), self::THREE_POLICY);
+        $payload = $this->payload($profile);
+        $manifest = $this->enrollments->preview($this->fixture->owner, $cohort->organization_id, $cohort->id, $payload['quote_id'], $payload, $this->threeSources());
+        self::assertCount(3, $manifest['sources']);
+        self::assertSame(self::THREE_POLICY, $manifest['policy_version']);
+        foreach (AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id'])->sources as $source) {
+            self::assertSame($source['tool'] === OrdinaryAssistantDocumentProjection::TOOL
+                ? OrdinaryAssistantDocumentProjection::VERSION : OrdinaryAssistantSourceProjection::VERSION, $source['projection_version']);
+        }
+        $this->enrollments->confirm($this->fixture->owner, $cohort->organization_id, $manifest['enrollment_id'], $manifest['manifest_hash'], OrdinaryAssistantEnrollmentService::DECLARATION);
+        return [$cohort, $payload, $manifest];
+    }
+
+    private function modelArgs(string $tool): array
+    {
+        return $tool === OrdinaryAssistantDocumentProjection::TOOL ? $this->documentArgs() : $this->sqlArgs($tool);
+    }
+
     private function modelText(array $sequence): string
     {
         return count($sequence) === 2 ? 'Учебный график и текст дают основание обсудить сроки работ.'
@@ -357,10 +556,10 @@ final class AssistantMixedSourceAdmissionTest extends TestCase
         else { AIAssistantDocumentUnit::query()->whereKey($this->chunks[0]->metadata['unit_id'])->update(['text' => 'changed']); }
     }
 
-    private function payload(): array
+    private function payload(string $profile = 'short'): array
     {
         $payload = ['request_id' => (string) Str::uuid(), 'message' => 'Сопоставь учебное наблюдение по графику и утверждённый текст выбранного проекта.',
-            'conversation_id' => null, 'profile' => 'short', 'allow_actions' => false];
+            'conversation_id' => null, 'profile' => $profile, 'allow_actions' => false];
         $payload['quote_id'] = app(AICreditService::class)->quote($this->fixture->organization, $this->fixture->owner, $payload)['quote_id'];
         return $payload;
     }
