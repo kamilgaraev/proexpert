@@ -110,6 +110,10 @@ final class SlowQueryContext
                 'emulate_prepares' => $handle['emulate_prepares'], 'disable_prepares' => $handle['disable_prepares']];
         }
 
+        if (($runtime['statement_transport'] ?? null) === 'pgsql_native_parameters') {
+            $safe['statement_transport'] = 'pgsql_native_parameters';
+        }
+
         return $safe;
     }
 
@@ -160,6 +164,7 @@ final class SlowQueryContext
                 continue;
             }
             if ($file !== __FILE__ && $relative !== 'app/Providers/AppServiceProvider.php'
+                && $relative !== 'app/Database/NativeParameterPostgresConnection.php'
                 && $relative !== 'app/BusinessModules/Features/AIAssistant/Services/Rag/RagCollectorQueryContext.php'
                 && $relative !== 'app/BusinessModules/Features/AIAssistant/Services/Rag/RagSourceBatchQueryContext.php'
                 && preg_match('#^(?:app/|database/|tests/|routes/|artisan$)#', $relative) === 1) {
