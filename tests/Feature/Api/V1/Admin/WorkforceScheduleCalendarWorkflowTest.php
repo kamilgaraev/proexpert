@@ -11,6 +11,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -124,6 +125,130 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
                 'week_pattern.work_days.1',
                 'week_pattern.work_days.2',
             ]);
+    }
+
+    public function test_work_schedule_creation_atomically_includes_an_optional_day(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'ATOMIC-DAY', 'name' => 'Учебный график с исключением',
+                'hours_per_day' => 8,
+                'initial_day' => [
+                    'work_date' => '2026-05-23', 'day_type' => 'work',
+                    'planned_hours' => 6, 'comment' => 'Учебное исключение',
+                ],
+            ]);
+
+        $response->assertCreated()->assertJsonPath('data.organization_id', $context->organization->id);
+        $this->assertDatabaseHas('workforce_work_schedule_days', [
+            'organization_id' => $context->organization->id,
+            'work_schedule_id' => $response->json('data.id'),
+            'work_date' => '2026-05-23', 'day_type' => 'work',
+            'planned_hours' => 6, 'comment' => 'Учебное исключение',
+        ]);
+        $this->assertSame(1, DB::table('workforce_work_schedules')->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_work_schedule_creation_rolls_back_when_its_day_is_in_a_locked_period(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        DB::table('workforce_payroll_periods')->insert([
+            'organization_id' => $context->organization->id,
+            'period_start' => '2026-05-01', 'period_end' => '2026-05-31',
+            'status' => 'locked', 'created_by_user_id' => $context->user->id,
+            'locked_by_user_id' => $context->user->id, 'locked_at' => now(),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'ATOMIC-LOCKED', 'name' => 'Не должен сохраниться',
+                'initial_day' => ['work_date' => '2026-05-23', 'day_type' => 'weekend', 'planned_hours' => 0],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_locked'));
+
+        $this->assertDatabaseMissing('workforce_work_schedules', ['organization_id' => $context->organization->id, 'code' => 'ATOMIC-LOCKED']);
+        $this->assertSame(0, DB::table('workforce_work_schedule_days')->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_work_schedule_creation_rejects_invalid_initial_day_without_saving_a_schedule(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'ATOMIC-INVALID', 'name' => 'Не должен сохраниться',
+                'initial_day' => ['day_type' => 'invalid', 'planned_hours' => 25],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['initial_day.work_date', 'initial_day.day_type', 'initial_day.planned_hours']);
+
+        $this->assertDatabaseMissing('workforce_work_schedules', ['organization_id' => $context->organization->id, 'code' => 'ATOMIC-INVALID']);
+    }
+
+    public function test_work_schedule_creation_without_initial_day_keeps_the_existing_contract(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'ATOMIC-NO-DAY', 'name' => 'График без исключения', 'initial_day' => null,
+            ])
+            ->assertCreated()->assertJsonPath('data.code', 'ATOMIC-NO-DAY');
+
+        $this->assertSame(0, DB::table('workforce_work_schedule_days')->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_work_schedule_creation_rejects_empty_days_and_explicit_null_required_columns(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $responses = [];
+
+        foreach ([
+            [],
+            ['work_date' => '2026-05-23', 'day_type' => null],
+            ['work_date' => '2026-05-23', 'planned_hours' => null],
+        ] as $index => $day) {
+            $responses[] = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/workforce/work-schedules', [
+                    'code' => 'ATOMIC-EMPTY-'.$index, 'name' => 'Не должен сохраниться',
+                    'initial_day' => $day,
+                ]);
+        }
+
+        $this->assertSame([422, 422, 422], array_map(static fn ($response): int => $response->status(), $responses));
+        $responses[0]->assertJsonValidationErrors('initial_day.work_date');
+        $responses[1]->assertJsonValidationErrors('initial_day.day_type');
+        $responses[2]->assertJsonValidationErrors('initial_day.planned_hours');
+        $this->assertSame(0, DB::table('workforce_work_schedules')->where('organization_id', $context->organization->id)->count());
+        $this->assertSame(0, DB::table('workforce_work_schedule_days')->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_work_schedule_initial_day_uses_defaults_for_omitted_optional_fields(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'ATOMIC-DEFAULTS', 'name' => 'График с обычным рабочим днём',
+                'initial_day' => ['work_date' => '2026-05-23'],
+            ]);
+
+        $response->assertCreated();
+        $this->assertDatabaseHas('workforce_work_schedule_days', [
+            'organization_id' => $context->organization->id,
+            'work_schedule_id' => $response->json('data.id'),
+            'work_date' => '2026-05-23', 'day_type' => 'work', 'planned_hours' => 8,
+        ]);
     }
 
     private function employee(AdminApiTestContext $context, string $personnelNumber): WorkforceEmployee

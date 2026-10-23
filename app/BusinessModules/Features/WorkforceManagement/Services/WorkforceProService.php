@@ -255,6 +255,24 @@ final class WorkforceProService
         });
     }
 
+    public function storeWorkSchedule(int $organizationId, array $payload, ?User $actor = null): array
+    {
+        $this->assertAttendanceActor($organizationId, $actor);
+
+        return DB::transaction(function () use ($organizationId, $payload, $actor): array {
+            $this->lockOrganization($organizationId);
+            $initialDay = $payload['initial_day'] ?? null;
+            unset($payload['initial_day']);
+            $schedule = $this->store('workforce_work_schedules', $organizationId, $payload, $actor);
+
+            if ($initialDay !== null) {
+                $this->storeScheduleDay($organizationId, (int) $schedule['id'], $initialDay);
+            }
+
+            return $schedule;
+        });
+    }
+
     public function storeScheduleDay(int $organizationId, int $scheduleId, array $payload): array
     {
         return DB::transaction(function () use ($organizationId, $scheduleId, $payload): array {
