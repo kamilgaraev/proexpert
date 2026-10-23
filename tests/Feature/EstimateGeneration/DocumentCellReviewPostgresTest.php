@@ -64,6 +64,32 @@ use Tests\Support\AssistantRealAuthorizationFixture;
 
 final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_repository_container_and_current_cell_projection_do_not_resolve_the_work_catalog_factory(): void
+    {
+        [, $session, , $document, $headers] = $this->realHttpReview();
+        $catalogReads = 0;
+        $validation = new \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService(
+            app(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class), app(DocumentProcessingUnitStore::class),
+            app(SpreadsheetCellReviewSource::class), app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+            function () use (&$catalogReads) {
+                $catalogReads++;
+
+                return app(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class);
+            });
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::class, $validation);
+        $this->app->forgetInstance(ProjectModelRepository::class);
+        $models = app(ProjectModelRepository::class);
+        self::assertInstanceOf(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository::class, $models);
+        self::assertSame(0, $catalogReads);
+        $url = '/api/v1/admin/projects/'.$session->project_id.'/estimate-generation/sessions/'.$session->id.'/documents/'.$document->id.'/cell-reviews';
+        $proposal = $this->getJson($url, $headers)->assertOk()->json('data.items.0');
+        $this->postJson($url, $this->reviewRequest($session->fresh(), $proposal), $headers)->assertOk();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $projected = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertCount(1, array_filter($projected->facts, static fn ($fact): bool => $fact->type === 'equipment_specification' && $fact->origin === 'document'));
+        self::assertSame(0, $catalogReads);
+    }
+
     public function test_actual_snapshot_stays_readable_after_accepting_a_current_cell_interpretation(): void
     {
         [, $session, , $document, $headers] = $this->realHttpReview();

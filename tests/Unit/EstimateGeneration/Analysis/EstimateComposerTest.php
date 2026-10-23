@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
@@ -33,6 +34,215 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    public function test_current_work_answer_can_propose_only_its_attached_entity_source_without_becoming_a_numeric_fact(): void
+    {
+        $input = $this->workSourceClaimInput();
+        $source = $input->facts[0];
+        self::assertSame(['fact:work-answer'], $input->claimAnswerFactIds);
+        self::assertNotContains('fact:work-answer', array_column($input->facts, 'id'));
+        $candidate = ['source_answer_fact_id' => 'fact:work-answer', 'entity_id' => $source['entity_id'],
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => $source['value']],
+            'unit' => null, 'document_fact_ids' => [$source['id']]];
+        $runs = new ComposerRoleRunMemoryRepository;
+        $model = new RecordedEstimateComposerModel(['work_intents' => [], 'claim_candidates' => [$candidate]]);
+        $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna');
+        $composer->runDetailed($input);
+        self::assertSame([$candidate], $runs->lastResult->payload['claim_candidates']);
+        $composer->runDetailed($input);
+        self::assertSame(1, $model->calls);
+        self::assertSame([], $input->derivedQuantities);
+    }
+    #[DataProvider('workSourceClaimContracts')]
+    public function test_work_claim_capability_is_new_identity_only_and_historical_receipts_do_not_gain_it(string $old, string $active): void
+    {
+        $runs = new \Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
+        $fingerprints = [];
+        foreach ([$old, $active] as $contract) {
+            $input = $this->workSourceClaimInput($contract);
+            $fingerprints[] = $input->fingerprint();
+            self::assertTrue($input->acceptsTechnologyQuestions());
+            self::assertTrue($input->acceptsWorkRequirements());
+            self::assertTrue($input->acceptsSourceClaims());
+            self::assertSame($contract === $active, $input->acceptsWorkSourceClaims());
+            self::assertSame($contract === $active ? ['fact:work-answer'] : [], $input->claimAnswerFactIds);
+            $candidate = $this->workSourceClaimCandidate();
+            $model = new RecordedEstimateComposerModel(['work_intents' => [], 'claim_candidates' => [$candidate],
+                ...($input->nativeCellContext !== [] ? ['cell_mapping_proposals' => []] : [])]);
+            $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna');
+            $outcome = $composer->runDetailed($input);
+            self::assertSame($outcome, $composer->runDetailed($input));
+            self::assertSame(1, $model->calls);
+            $claim = $runs->claim(new AiRoleRunInput(10, 20, 30, null, null, 'estimate_session', '30', $input->snapshotToken,
+                \App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole::EstimateComposer,
+                'openai/gpt-6-luna', $contract, $input->fingerprint()), '11111111-1111-4111-8111-111111111111');
+            self::assertSame($contract === $active ? [$candidate] : [], $claim->result->payload['claim_candidates']);
+        }
+        self::assertNotSame($fingerprints[0], $fingerprints[1]);
+    }
+
+    public static function workSourceClaimContracts(): iterable
+    {
+        yield ['estimate-composer:answers:v4', 'estimate-composer:answers:v5'];
+        yield ['estimate-composer:legacy-answers:v4', 'estimate-composer:legacy-answers:v5'];
+        yield ['estimate-composer:answer-cells:v3', 'estimate-composer:answer-cells:v4'];
+        yield ['estimate-composer:legacy-answer-cells:v3', 'estimate-composer:legacy-answer-cells:v4'];
+    }
+
+    public function test_historical_and_future_valid_identity_replays_cannot_smuggle_a_work_answer_candidate(): void
+    {
+        foreach (['estimate-composer:answers:v4', 'estimate-composer:answers:v999'] as $contract) {
+            $base = $this->workSourceClaimInput();
+            $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, $base->facts, [], [], [], [], $contract,
+                allowedWorkSections: ['equipment'], workTechnologyContext: $contract === 'estimate-composer:answers:v4' ? $base->workTechnologyContext : []);
+            $runs = new \Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
+            $identity = new AiRoleRunInput(10, 20, 30, null, null, 'estimate_session', '30', $input->snapshotToken,
+                \App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole::EstimateComposer,
+                'openai/gpt-6-luna', $contract, $input->fingerprint());
+            $owner = '11111111-1111-4111-8111-111111111111';
+            $claim = $runs->claim($identity, $owner);
+            $runs->complete($claim->runId, $owner, new AiRoleRunResult(['schema_version' => 2, 'role' => 'estimate_composer',
+                'work_intents' => [], 'quarantined_intents' => [], 'result_state' => 'ready',
+                'claim_candidates' => [$this->workSourceClaimCandidate()]], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'));
+            $model = new RecordedEstimateComposerModel([]);
+            try {
+                (new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna'))->runDetailed($input);
+                self::fail('An unsupported receipt acquired work-source privilege.');
+            } catch (\RuntimeException $error) {
+                self::assertSame('estimate_composer_replay_invalid', $error->getMessage());
+            }
+            self::assertSame(0, $model->calls);
+        }
+    }
+
+    public function test_work_claim_split_keeps_context_only_with_its_sources_and_replays_without_missing_raw_answer(): void
+    {
+        $base = $this->workSourceClaimInput();
+        $facts = [...$base->facts, ...array_map(static fn (int $id): array => ['id' => 'fact:noise-'.$id,
+            'entity_id' => 'entity:noise-'.$id, 'value' => str_repeat('context ', 150)], range(1, 12))];
+        $candidate = $this->workSourceClaimCandidate();
+        $reference = ['learning_example_id' => 123, ...$candidate, 'interpretation_status' => 'proposed',
+            'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved'];
+        $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, $facts, [], [], [], [], $base->contractVersion,
+            allowedWorkSections: ['equipment'], sourceClaimReferences: [$reference], workTechnologyContext: $base->workTechnologyContext);
+        $planner = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner(4000);
+        $parts = $planner->plan($input);
+        self::assertGreaterThan(1, count($parts));
+        self::assertSame(1, array_sum(array_map(static fn ($part): int => count($part->sourceClaimReferences), $parts)));
+        foreach ($parts as $part) {
+            self::assertNotContains('fact:work-answer', array_column($part->facts, 'id'));
+            self::assertSame(in_array('fact:document', array_column($part->facts, 'id'), true), in_array('fact:work-answer', $part->claimAnswerFactIds, true));
+        }
+        $model = new RecordedEstimateComposerModel(['work_intents' => [], 'claim_candidates' => [$candidate]]);
+        $composer = new RunEstimateComposer(new MultipartComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna', $planner);
+        $first = $composer->runDetailed($input);
+        self::assertSame($first, $composer->runDetailed($input));
+        self::assertSame(count($parts), $model->calls);
+        $allowance = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance::class);
+        $allowance->method('partLimit')->willReturn(1);
+        $blocked = $this->createMock(EstimateComposerModel::class);
+        $blocked->expects(self::never())->method('compose');
+        try {
+            (new RunEstimateComposer(new MultipartComposerRoleRunMemoryRepository, $blocked, 'openai/gpt-6-luna', $planner, $allowance))->runDetailed($input);
+            self::fail('Work context bypassed the frozen part limit.');
+        } catch (InvalidArgumentException $error) {
+            self::assertSame('estimate_composer_parts_exceed_approved_plan', $error->getMessage());
+        }
+    }
+
+    #[DataProvider('workSourceClaimContracts')]
+    public function test_work_claim_instructions_are_new_contract_only_and_use_the_same_single_pass(string $old, string $active): void
+    {
+        foreach ([$old, $active] as $contract) {
+            $input = $this->workSourceClaimInput($contract);
+            $wire = $this->createMock(RerankWireClient::class);
+            $wire->method('provider')->willReturn('timeweb');
+            $wire->expects(self::once())->method('call')->willReturnCallback(static function (string $model, array $sent) use ($input, $contract, $active): array {
+                if ($contract === $active) {
+                    self::assertStringContainsString('active ответы из work_technology_context', $sent[0]['content']);
+                } else {
+                    self::assertStringNotContainsString('active ответы из work_technology_context', $sent[0]['content']);
+                }
+                self::assertSame($input->canonicalPayload(), json_decode($sent[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project']);
+
+                return ['content' => json_encode(['work_intents' => [], 'claim_candidates' => [],
+                    ...($input->nativeCellContext === [] ? [] : ['cell_mapping_proposals' => []])], JSON_THROW_ON_ERROR),
+                    'model' => $model, 'usage_available' => true, 'input_tokens' => 100, 'output_tokens' => 10];
+            });
+            $usage = $this->createMock(AiUsageStore::class);
+            $usage->expects(self::once())->method('record');
+            $prices = $this->createMock(AiPriceSnapshotResolver::class);
+            $prices->method('resolve')->willReturn(AiPriceSnapshot::fromArray([]));
+            (new RunEstimateComposer(new ComposerRoleRunMemoryRepository,
+                new TimewebEstimateComposerModel($wire, $usage, $prices, 'openai/gpt-6-luna', 100000, 4000, 60), 'openai/gpt-6-luna'))->runDetailed($input);
+        }
+    }
+
+    public function test_factory_selects_new_answered_family_for_eligible_work_context_without_a_legacy_answer_fact(): void
+    {
+        $entries = [];
+        $catalog = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class);
+        $catalog->method('currentWorkContexts')->willReturnCallback(static function () use (&$entries): array {
+            return $entries;
+        });
+        $models = new InMemoryProjectModelRepository;
+        $source = 'sha256:'.str_repeat('d', 64);
+        $entity = new Entity('equipment:child', 10, 20, 30, $source, 'equipment', 'child');
+        $models->saveSourceModel([$entity], [new Fact('fact:document', 10, 20, 30, $source, $entity->id,
+            'equipment_specification', 'Корпус AISI 316', null, 1.0, 'document', 'confirmed', ['evidence:document'])],
+            [new Evidence('evidence:document', 10, 20, 30, $source, 'document:17', 'document', nativeReference: 'xlsx:Sheet1!C2')]);
+        $factory = new EstimateComposerInputFactory($models, 10000, clarifications: $catalog);
+        $capture = static fn () => $factory->capture(10, 20, 30, [], [], [], null, ['equipment'], 'universal');
+        self::assertSame(RunEstimateComposer::PROMPT_CONTRACT, $capture()->contractVersion);
+        $entries = $this->workSourceClaimInput()->workTechnologyContext;
+        $current = $capture();
+        self::assertSame(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, $current->contractVersion);
+        self::assertTrue($current->acceptsWorkSourceClaims());
+        self::assertSame(['fact:work-answer'], $current->claimAnswerFactIds);
+        self::assertSame(['fact:document'], array_column($current->facts, 'id'));
+        $entries[0]['status'] = 'revoked';
+        self::assertSame(RunEstimateComposer::PROMPT_CONTRACT, $capture()->contractVersion);
+    }
+
+    public function test_future_fresh_work_claim_payload_cannot_acquire_an_answered_schema(): void
+    {
+        $base = $this->workSourceClaimInput();
+        $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, $base->facts, [], [], [], [], 'estimate-composer:answers:v999');
+        $model = new RecordedEstimateComposerModel(['work_intents' => [], 'claim_candidates' => [$this->workSourceClaimCandidate()]]);
+        try {
+            (new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna'))->runDetailed($input);
+            self::fail('Future contract acquired source-claim eligibility.');
+        } catch (InvalidArgumentException $error) {
+            self::assertSame('estimate_composer_result_shape_invalid', $error->getMessage());
+        }
+        self::assertSame(1, $model->calls);
+    }
+
+    public function test_inactive_or_unpinned_work_answers_and_wrong_entity_literal_do_not_become_candidates(): void
+    {
+        $base = $this->workSourceClaimInput();
+        $entry = $base->workTechnologyContext[0];
+        foreach ([['status' => 'revoked'], ['answer' => [...$entry['answer'], 'response' => 'leave_unresolved']],
+            ['answer' => [...$entry['answer'], 'document_ids' => []]], ['documents' => []],
+            ['answer' => [...$entry['answer'], 'engineering_applicability' => 'passed']],
+            ['documents' => [[...$entry['documents'][0], 'status' => 'ignored']]]] as $patch) {
+            $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, $base->facts, [], [], [], [], $base->contractVersion,
+                allowedWorkSections: ['equipment'], workTechnologyContext: [array_replace($entry, $patch)]);
+            self::assertSame([], $input->claimAnswerFactIds);
+        }
+        foreach ([['entity_id' => 'equipment:foreign'], ['value' => ['type' => 'string', 'data' => 'Другой текст']],
+            ['document_fact_ids' => ['fact:foreign']]] as $patch) {
+            self::assertFalse(EstimateComposerInput::sourceClaimCandidate(array_replace($this->workSourceClaimCandidate(), $patch),
+                $base->facts, $base->claimAnswerFactIds, $base->workTechnologyContext));
+        }
+    }
+
+    private function workSourceClaimCandidate(): array
+    {
+        return ['source_answer_fact_id' => 'fact:work-answer', 'entity_id' => 'equipment:child',
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => 'Корпус AISI 316'],
+            'unit' => null, 'document_fact_ids' => ['fact:document']];
+    }
+
     #[DataProvider('technologyQuestionContracts')]
     public function test_question_capability_is_explicit_and_preserves_historical_semantic_and_receipt_contracts(string $historical, string $active): void
     {
@@ -218,6 +428,26 @@ final class EstimateComposerTest extends TestCase
         self::assertSame($outcome, $composer->runDetailed($input));
         self::assertSame(1, $model->calls);
         self::assertSame([], $input->derivedQuantities);
+    }
+
+    private function workSourceClaimInput(string $contract = RunEstimateComposer::ANSWER_PROMPT_CONTRACT): EstimateComposerInput
+    {
+        $base = $this->sourceClaimInput();
+        $source = [...$base->facts[1], 'source_version' => 'sha256:'.str_repeat('d', 64)];
+        $binding = ['work_key' => 'custom.installation', 'name' => 'Монтаж неизвестной установки', 'entity_id' => $source['entity_id'],
+            'work_section' => 'equipment', 'unit' => null, 'requirement_key' => 'installation',
+            'technology_package_candidate' => null, 'source_fact_ids' => [$source['id']]];
+        $entry = ['context' => ['schema_version' => 1, 'binding' => $binding,
+                'binding_hash' => hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($binding)),
+                'dependencies' => [], 'question' => ['question' => 'Какой способ монтажа предусмотрен?', 'reason' => 'Не указан в источнике.']],
+            'answer' => ['response' => 'other', 'other' => 'Следовать приложенному основанию как допущению.',
+                'fact_id' => 'fact:work-answer', 'decision_id' => 'decision:work-answer', 'document_ids' => [17],
+                'trust' => 'user_assumption', 'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false],
+            'documents' => [['document_id' => 17, 'status' => 'ready', 'source_version' => $source['source_version'], 'checksum_sha256' => str_repeat('d', 64)]],
+            'status' => 'answered'];
+        $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, [$source], [], [], [], [], $contract,
+            allowedWorkSections: ['equipment'], workTechnologyContext: [$entry]);
+        return str_contains($contract, 'cells:') ? $input->withNativeCellContext([$this->cellContext()]) : $input;
     }
 
     private function sourceClaimInput(string $contract = 'estimate-composer:answers:v2'): EstimateComposerInput

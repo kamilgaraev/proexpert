@@ -87,6 +87,7 @@ final readonly class EstimateComposerInputFactory
         if (! hash_equals((string) $capture['token'], (string) $verified['token']) || $workContexts !== $verifiedWorkContexts) {
             throw new InvalidArgumentException('estimate_composer_snapshot_changed');
         }
+        $sourceDecisions = $decisions;
 
         $answerContexts = [];
         $checkedAnswers = [];
@@ -188,7 +189,7 @@ final readonly class EstimateComposerInputFactory
             $allowedWorkSections = EstimateComposerInput::WORK_SECTIONS;
             $contractVersion = RunEstimateComposer::LEGACY_PROMPT_CONTRACT;
         }
-        if ($answerContexts !== []) {
+        if ($answerContexts !== [] || EstimateComposerInput::workSourceClaimContexts($workContexts) !== []) {
             $contractVersion = $contractVersion === RunEstimateComposer::LEGACY_PROMPT_CONTRACT
                 ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::ANSWER_PROMPT_CONTRACT;
         }
@@ -211,9 +212,10 @@ final readonly class EstimateComposerInputFactory
             workTechnologyContext: $workContexts,
         );
         if ($input->claimAnswerFactIds !== [] && $this->learning !== null) {
-            $references = $this->learning->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot, $decisions, $answerPolicy);
+            $references = $this->learning->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot, $sourceDecisions, $answerPolicy, $localEstimateKey);
             $references = array_values(array_filter(array_slice($references, 0, EstimateComposerInput::MAX_SOURCE_CLAIMS),
-                static fn (mixed $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $facts, $input->claimAnswerFactIds)));
+                static fn (mixed $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $facts, $input->claimAnswerFactIds,
+                    $input->acceptsWorkSourceClaims() ? $input->workTechnologyContext : [])));
             $input = $input->withSourceClaimReferences($references);
         }
         if ($reviewContexts !== [] && $this->learning !== null) {

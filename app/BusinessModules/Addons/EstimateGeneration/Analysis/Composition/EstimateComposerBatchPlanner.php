@@ -168,6 +168,9 @@ final readonly class EstimateComposerBatchPlanner
 
     private function batch(EstimateComposerInput $input, array $candidates, array $facts, array $decisions, array $quantities): EstimateComposerInput
     {
+        $workContexts = array_values(array_filter($input->workTechnologyContext,
+            static fn (array $entry): bool => array_diff($entry['context']['binding']['source_fact_ids'], array_column($facts, 'id')) === []));
+        $workAnswerIds = $input->acceptsWorkSourceClaims() ? array_keys(EstimateComposerInput::workSourceClaimContexts($workContexts)) : [];
         $parent = $input->fingerprint();
         $key = hash('sha256', CanonicalPipelineJson::encode([
             'parent' => $parent, 'snapshot' => $input->snapshotToken, 'candidates' => array_column($candidates, 'candidate_id'),
@@ -179,10 +182,9 @@ final readonly class EstimateComposerBatchPlanner
             ['contract' => 'composer-context:v1', 'parent_input_fingerprint' => $parent,
                 'parent_counts' => ['facts' => count($input->facts), 'quantities' => count($input->derivedQuantities),
                     'decisions' => count($input->decisions), 'candidates' => count($input->candidates), 'missing_documents' => count($input->missingDocuments)]],
-            $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, array_column($facts, 'id'))),
+            $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, [...array_column($facts, 'id'), ...$workAnswerIds])),
             directQuantityBindings: array_intersect_key($input->directQuantityBindings, array_fill_keys(array_column($quantities, 'id'), true)),
-            workTechnologyContext: array_values(array_filter($input->workTechnologyContext,
-                static fn (array $entry): bool => array_diff($entry['context']['binding']['source_fact_ids'], array_column($facts, 'id')) === [])));
+            workTechnologyContext: $workContexts);
     }
 
     private function withAnswerContext(array $batches, EstimateComposerInput $input): array
@@ -216,7 +218,7 @@ final readonly class EstimateComposerBatchPlanner
                 }
             }
             foreach (array_unique([...$preferred, ...$anchorIds]) as $id) {
-                if (in_array($id, $factIds, true)) {
+                if (in_array($id, $factIds, true) || ! isset($answers[$id])) {
                     continue;
                 }
                 $decisions = $batch->decisions;
@@ -228,7 +230,8 @@ final readonly class EstimateComposerBatchPlanner
                 }
                 $candidate = $this->batch($input, $batch->candidates, [...$batch->facts, $answers[$id]], $decisions, $batch->derivedQuantities);
                 $reserved = array_values(array_filter($input->sourceClaimReferences,
-                    static fn (array $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $batch->facts, $batch->claimAnswerFactIds)));
+                    static fn (array $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $batch->facts, $batch->claimAnswerFactIds,
+                        $batch->acceptsWorkSourceClaims() ? $batch->workTechnologyContext : [])));
                 if ($this->fits($candidate->withSourceClaimReferences($reserved))) {
                     $batch = $candidate;
                     $factIds[] = $id;
@@ -249,7 +252,8 @@ final readonly class EstimateComposerBatchPlanner
         foreach ($batches as $index => $batch) {
             $references = array_values(array_filter($input->sourceClaimReferences,
                 static fn (array $reference): bool => ! isset($included[$reference['learning_example_id']])
-                    && EstimateComposerInput::sourceClaimReference($reference, $batch->facts, $batch->claimAnswerFactIds)));
+                    && EstimateComposerInput::sourceClaimReference($reference, $batch->facts, $batch->claimAnswerFactIds,
+                        $batch->acceptsWorkSourceClaims() ? $batch->workTechnologyContext : [])));
             do {
                 $candidate = $batch->withSourceClaimReferences($references);
                 if ($this->fits($candidate)) {
