@@ -33,6 +33,7 @@ class MobileScheduleService
         }
 
         $baseQuery = ProjectEvent::query()
+            ->where('recurrence_suppressed', false)
             ->whereIn('project_id', $this->projectAccess->query($user, $organizationId)->select('projects.id'));
 
         if ($projectId !== null) {

@@ -13,6 +13,10 @@ use Illuminate\Validation\ValidationException;
 
 class ProjectEventService
 {
+    public function __construct(private readonly ProjectEventRecurrenceService $recurrence)
+    {
+    }
+
     /**
      * Получить события для календарного представления
      */
@@ -23,7 +27,8 @@ class ProjectEventService
         array $filters = []
     ): Collection {
         $query = ProjectEvent::query()
-            ->with(['createdBy'])
+            ->with(['createdBy', 'recurrenceSeries.segments', 'recurringParent'])
+            ->where('recurrence_suppressed', false)
             ->forProject($projectId)
             ->inDateRange($startDate, $endDate);
 
@@ -58,7 +63,8 @@ class ProjectEventService
         array $filters = []
     ): LengthAwarePaginator {
         $query = ProjectEvent::query()
-            ->with(['createdBy'])
+            ->with(['createdBy', 'recurrenceSeries.segments', 'recurringParent'])
+            ->where('recurrence_suppressed', false)
             ->forProject($projectId);
 
         // Применяем фильтры
@@ -101,13 +107,9 @@ class ProjectEventService
             ]);
 
             // Если событие повторяющееся, создаем экземпляры
-            if ($event->is_recurring && isset($data['recurrence_until'])) {
-                $until = Carbon::parse($data['recurrence_until']);
-                $recurringEvents = $event->generateRecurringEvents($until);
-                
-                foreach ($recurringEvents as $recurringEvent) {
-                    $recurringEvent->save();
-                }
+            if ($event->is_recurring) {
+                $event->refresh();
+                $this->recurrence->create($event, $data, auth()->id(), fn (array $plan) => $this->validateEventData($plan));
             }
 
             // Планируем напоминание
@@ -133,41 +135,27 @@ class ProjectEventService
      */
     public function updateEvent(ProjectEvent $event, array $data): ProjectEvent
     {
-        DB::transaction(function () use ($event, $data) {
+        if ($event->series_id !== null || $event->is_recurring || $event->recurring_parent_id !== null || ($data['is_recurring'] ?? false)) {
+            return $this->recurrence->update($event, $data, auth()->id(), fn (array $patch, ?ProjectEvent $current = null) => $this->validateEventData($patch, $current));
+        }
+
+        $result = DB::transaction(function () use ($event, $data): ?ProjectEvent {
             $current = ProjectEvent::query()->whereKey($event->getKey())
                 ->forOrganization($event->organization_id)->forProject($event->project_id)
                 ->lockForUpdate()->firstOrFail();
             $event->setRawAttributes($current->getAttributes(), true);
+            if ($current->series_id !== null || $current->is_recurring || $current->recurring_parent_id !== null) {
+                return $this->recurrence->update($current, $data, auth()->id(), fn (array $patch, ?ProjectEvent $selected = null) => $this->validateEventData($patch, $selected));
+            }
             $this->validateEventData($data, $event);
             $event->fill($data);
-            $recurrenceChanged = $event->isDirty(['recurrence_pattern', 'recurrence_config']);
-            $rebuildRecurrence = $event->is_recurring
-                && (isset($data['recurrence_pattern']) || isset($data['recurrence_config']))
-                && ($recurrenceChanged || isset($data['recurrence_until']));
-
-            if ($rebuildRecurrence && !isset($data['recurrence_until'])) {
-                throw ValidationException::withMessages([
-                    'recurrence_until' => trans_message('schedule_management.event_recurrence_end_required'),
-                ]);
-            }
-
             $event->save();
 
             // Если изменили дату и есть напоминание, пересоздаем его
             if (isset($data['event_date']) && $event->reminder_before_hours && !$event->reminder_sent) {
                 $event->scheduleReminder();
             }
-
-            if ($rebuildRecurrence) {
-                $event->recurringChildren()->delete();
-
-                $until = Carbon::parse($data['recurrence_until']);
-                $recurringEvents = $event->generateRecurringEvents($until);
-
-                foreach ($recurringEvents as $recurringEvent) {
-                    $recurringEvent->save();
-                }
-            }
+            return null;
         });
 
         \Log::info('schedule.event.updated', [
@@ -175,7 +163,7 @@ class ProjectEventService
             'project_id' => $event->project_id,
         ]);
 
-        return $event->fresh();
+        return $result ?? $event->fresh();
     }
 
     /**
@@ -183,12 +171,11 @@ class ProjectEventService
      */
     public function deleteEvent(ProjectEvent $event, bool $deleteRecurring = false): bool
     {
-        return DB::transaction(function () use ($event, $deleteRecurring) {
-            // Если это родительское повторяющееся событие
-            if ($event->is_recurring && $deleteRecurring) {
-                $event->recurringChildren()->delete();
-            }
+        if ($event->series_id !== null || $event->is_recurring || $event->recurring_parent_id !== null) {
+            return $this->recurrence->delete($event, $deleteRecurring, auth()->id());
+        }
 
+        return DB::transaction(function () use ($event, $deleteRecurring) {
             $deleted = $event->delete();
 
             \Log::info('schedule.event.deleted', [
@@ -207,7 +194,7 @@ class ProjectEventService
     public function getUpcomingEvents(int $projectId, int $days = 7): Collection
     {
         return ProjectEvent::query()
-            ->with(['createdBy'])
+            ->with(['createdBy', 'recurrenceSeries.segments', 'recurringParent'])
             ->forProject($projectId)
             ->upcoming($days)
             ->orderBy('event_date')
@@ -221,7 +208,8 @@ class ProjectEventService
     public function getTodayEvents(int $projectId): Collection
     {
         return ProjectEvent::query()
-            ->with(['createdBy'])
+            ->with(['createdBy', 'recurrenceSeries.segments', 'recurringParent'])
+            ->where('recurrence_suppressed', false)
             ->forProject($projectId)
             ->whereDate('event_date', today())
             ->whereIn('status', ['scheduled', 'in_progress'])
@@ -238,7 +226,9 @@ class ProjectEventService
         Carbon $endDate
     ): Collection {
         return ProjectEvent::query()
+            ->with(['recurrenceSeries.segments', 'recurringParent'])
             ->forProject($projectId)
+            ->where('recurrence_suppressed', false)
             ->blocking()
             ->inDateRange($startDate, $endDate)
             ->whereIn('status', ['scheduled', 'in_progress'])
@@ -251,6 +241,9 @@ class ProjectEventService
      */
     public function checkEventConflicts(ProjectEvent $event): array
     {
+        if ($event->recurrence_suppressed) {
+            return ['has_conflicts' => false, 'conflicts' => collect()];
+        }
         $start = $this->getIntervalStart($event);
         $end = $this->getIntervalEnd($event);
         if ($end->lessThanOrEqualTo($start)) {
@@ -258,7 +251,9 @@ class ProjectEventService
         }
 
         $conflicts = ProjectEvent::query()
+            ->with(['recurrenceSeries.segments', 'recurringParent'])
             ->forProject($event->project_id)
+            ->where('recurrence_suppressed', false)
             ->where('id', '!=', $event->id)
             ->where('is_blocking', true)
             ->inDateRange(
@@ -313,6 +308,7 @@ class ProjectEventService
     {
         $events = ProjectEvent::query()
             ->forProject($projectId)
+            ->where('recurrence_suppressed', false)
             ->inDateRange($startDate, $endDate)
             ->get();
 

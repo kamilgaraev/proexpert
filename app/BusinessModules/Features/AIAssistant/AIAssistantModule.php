@@ -47,6 +47,7 @@ class AIAssistantModule implements ModuleInterface
             'ai_assistant.settings.manage',
             'ai_assistant.usage.view',
             'ai_assistant.conversations.manage',
+            'ai_assistant.egress.manage',
             'admin.ai_assistant.rag.view',
             'admin.ai_assistant.rag.manage',
             'admin.ai_assistant.project_pulse.view',

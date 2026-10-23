@@ -19,7 +19,7 @@ final class ImmutableAuditEventIndexRequest extends FormRequest
         return [
             'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-            'domain' => ['sometimes', 'string', Rule::in(['payments', 'budgeting', 'mdm', 'rbac', 'one_c_exchange', 'warehouse', 'crm', 'period_close', 'procurement', 'sod'])],
+            'domain' => ['sometimes', 'string', Rule::in(['payments', 'budgeting', 'mdm', 'rbac', 'one_c_exchange', 'warehouse', 'crm', 'period_close', 'procurement', 'sod', 'schedule_management'])],
             'event_type' => ['sometimes', 'string', 'max:160'],
             'action' => ['sometimes', 'string', 'max:64'],
             'result' => ['sometimes', 'string', 'max:64'],
