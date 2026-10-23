@@ -208,7 +208,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer, Legal
                 ->select('projects.id')
             : null;
         $roleSlugs = $canAccessInternal
-            ? $this->authorization->forCurrentChecks(true)->getUserRoleSlugs($user, ['organization_id' => $organizationId])
+            ? $this->authorization->getCurrentUserRoleSlugs($user, ['organization_id' => $organizationId])
             : [];
 
         return $query->where(function (Builder $accessible) use (

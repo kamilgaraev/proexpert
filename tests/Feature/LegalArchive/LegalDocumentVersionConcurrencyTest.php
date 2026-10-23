@@ -974,6 +974,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn(true);
         $authorization->method('getUserRoleSlugs')->willReturn([]);
+        $authorization->method('getCurrentUserRoleSlugs')->willReturn([]);
         $authorization->method('forCurrentChecks')->willReturnSelf();
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturn(Project::query()->whereRaw('1 = 0'));
@@ -1052,6 +1053,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn(true);
         $authorization->method('getUserRoleSlugs')->willReturn([]);
+        $authorization->method('getCurrentUserRoleSlugs')->willReturn([]);
         $authorization->method('forCurrentChecks')->willReturnSelf();
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturn(Project::query()->whereRaw('1 = 0'));

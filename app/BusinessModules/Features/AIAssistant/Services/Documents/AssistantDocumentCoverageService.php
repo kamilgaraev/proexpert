@@ -88,7 +88,11 @@ final class AssistantDocumentCoverageService
         if ($checkpoint !== null) { $checkpoint(); }
         $canManage = $this->canManageSettings($organizationId, $actor);
         if ($checkpoint !== null) { $checkpoint(); }
-        $fileCandidates = $this->policy->accessibleFilesWithTypes($actor, $organizationId, false);
+        $reuseSnapshot = false;
+        $fileCandidates = $this->policy->accessibleFilesWithTypes($actor, $organizationId, false,
+            partitionTypes: function (Builder $query, array $types) use (&$reuseSnapshot): bool {
+                return $reuseSnapshot = $this->canReuseFileTypes($query, $types);
+            });
         $files = $fileCandidates['query'];
         $operations = app(AssistantOperationsNativeFileAdapter::class);
         foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeFileType) {
@@ -103,7 +107,6 @@ final class AssistantDocumentCoverageService
         $documents = $documents->getModel()->newQueryWithoutScopes()->from('assistant_coverage_documents as ai_assistant_documents');
         $types = [];
         if ($checkpoint !== null) { $checkpoint(); }
-        $reuseSnapshot = $this->canReuseFileTypes($files, $fileCandidates['types']);
         $fileTypes = $reuseSnapshot
             ? $fileCandidates['types']
             : (clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type')->all();
@@ -273,6 +276,16 @@ final class AssistantDocumentCoverageService
                 $addNativeCoverage($type, $expectedCount, $nativeResults->get($type, []));
             }
         }
+        $nativeMappingQueries = [];
+        $nativeMappingTypes = [];
+        $addNativeMappingCoverage = static function (string $type, int $expectedNative, int $missing) use (&$coverage, &$nativeCoverage, &$unmappedNativeCount): void {
+            if ($expectedNative === 0) { return; }
+            $unmappedNativeCount += $missing;
+            $coverage['total'] += $missing;
+            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
+            $nativeCoverage[$type] = ['expected_file_count' => $expectedNative, 'unmapped_file_count' => $missing,
+                'status' => $missing > 0 ? 'needs_access_review' : 'mapped', 'manual_ingestion_available' => $missing > 0];
+        };
         foreach (['design_artifact_version', ...AssistantNativeFileMetadata::types(), ...AssistantLegalNativeFileMetadata::types()] as $type) {
             if ($guard !== null) { $guard(); }
             if (! isset($nativeCandidates[$type])) { continue; }
@@ -288,17 +301,39 @@ final class AssistantDocumentCoverageService
                 $native->whereNotNull($table.'.'.AssistantLegalNativeFileMetadata::definitions()[$type]['path']);
             }
             if ($checkpoint !== null) { $checkpoint(); }
+            $modelTypes = [$model::class, $model->getMorphClass()];
+            if ($reuseSnapshot && $native->getQuery()->getConnection() === DB::connection()) {
+                $key = $native->getQuery()->getGrammar()->wrap($model->getQualifiedKeyName());
+                $nativeMappingQueries[] = (clone $native)->select([])->selectRaw(
+                    '? AS native_type, COUNT(*) AS expected_count, COALESCE(pg_catalog.SUM(CASE WHEN CAST('.$key.' AS TEXT) NOT IN
+                        (SELECT mapped_id FROM assistant_coverage_mapped_files WHERE fileable_type IN (?, ?)) THEN 1 ELSE 0 END), 0) AS missing_count',
+                    [$type, ...$modelTypes],
+                )->toBase();
+                $nativeMappingTypes = [...$nativeMappingTypes, ...$modelTypes];
+                continue;
+            }
             $expectedNative = (clone $native)->count();
             if ($expectedNative === 0) { continue; }
-            $mapped = (clone $files)->whereIn('files.fileable_type', [$model::class, $model->getMorphClass()])
+            $mapped = (clone $files)->whereIn('files.fileable_type', $modelTypes)
                 ->select([])->selectRaw('CAST(files.fileable_id AS TEXT)');
             if ($checkpoint !== null) { $checkpoint(); }
             $missing = $native->whereNotIn(DB::raw('CAST('.$model->getQualifiedKeyName().' AS TEXT)'), $mapped)->count();
-            $unmappedNativeCount += $missing;
-            $coverage['total'] += $missing;
-            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
-            $nativeCoverage[$type] = ['expected_file_count' => $expectedNative, 'unmapped_file_count' => $missing,
-                'status' => $missing > 0 ? 'needs_access_review' : 'mapped', 'manual_ingestion_available' => $missing > 0];
+            $addNativeMappingCoverage($type, $expectedNative, $missing);
+        }
+        if ($nativeMappingQueries !== []) {
+            $mapped = (clone $files)->whereIn('files.fileable_type', array_values(array_unique($nativeMappingTypes)))
+                ->select(['files.fileable_type'])->selectRaw('CAST(files.fileable_id AS TEXT) AS mapped_id')->toBase();
+            $nativeUnion = array_shift($nativeMappingQueries);
+            foreach ($nativeMappingQueries as $nativeMappingQuery) { $nativeUnion->unionAll($nativeMappingQuery); }
+            if ($guard !== null) { $guard(); }
+            if ($checkpoint !== null) { $checkpoint(); }
+            $nativeResults = DB::query()->fromRaw(
+                '(WITH assistant_coverage_mapped_files AS MATERIALIZED ('.$mapped->toSql().') '.$nativeUnion->toSql().') AS assistant_native_mapping_counts',
+                [...$mapped->getBindings(), ...$nativeUnion->getBindings()],
+            )->select('assistant_native_mapping_counts.*')->get();
+            foreach ($nativeResults as $result) {
+                $addNativeMappingCoverage($result->native_type, (int) $result->expected_count, (int) $result->missing_count);
+            }
         }
         if ($countersOnly) { return ['document_coverage' => $coverage]; }
         if ($checkpoint !== null) { $checkpoint(); }

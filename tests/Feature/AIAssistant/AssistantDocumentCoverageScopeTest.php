@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumen
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader;
 use App\BusinessModules\Features\Tenders\Models\Tender;
 use App\BusinessModules\Features\Tenders\Models\TenderFile;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\File;
@@ -33,6 +34,7 @@ final class AssistantDocumentCoverageScopeTest extends TestCase
         Model::withoutEvents(function () use ($f, $org, &$projects, &$journals): void {
             foreach (['OWN', 'OTHER'] as $number) {
                 $project = Project::factory()->create(['organization_id' => $org]); $projects[] = $project;
+                AuthorizationContext::getProjectContext((int) $project->id, $org);
                 $journal = ConstructionJournal::query()->create(['organization_id' => $org, 'performing_organization_id' => $org, 'project_id' => $project->id,
                     'name' => $number, 'journal_number' => $number, 'start_date' => today(), 'status' => 'active', 'created_by_user_id' => $f->owner->id]); $journals[] = $journal;
                 $entry = ConstructionJournalEntry::query()->create(['journal_id' => $journal->id, 'entry_date' => today(), 'entry_number' => 1,
@@ -58,7 +60,7 @@ final class AssistantDocumentCoverageScopeTest extends TestCase
     {
         $f = $this->fixture(); $org = (int) $f->organization->id;
         $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $org]));
-        Model::withoutEvents(function () use ($f, $org, $project): void {
+        Model::withoutEvents(function () use ($org, $project): void {
             $tender = Tender::query()->create(['organization_id' => $org, 'project_id' => $project->id, 'number' => 'DOC-SCOPE-'.$org, 'title' => 'Тендер']);
             TenderFile::query()->create(['tender_id' => $tender->id, 'category' => 'general', 'original_name' => 'PRIVATE_NAME.pdf',
                 'stored_path' => 'private-native/'.$org.'/document.pdf', 'mime_type' => 'application/pdf', 'size' => 17, 'uploaded_at' => now()]);

@@ -85,6 +85,13 @@ class AuthorizationService
         }
     }
 
+    public function getCurrentUserRoleSlugs(User $user, ?array $context = null): array
+    {
+        $scope = $this->currentChecks && $this->readCache !== null ? $this : $this->forCurrentChecks(true);
+
+        return $scope->getUserRoleSlugs($user, $context);
+    }
+
     public function captureCurrentDecisions(array $trustedInputs, callable $operation): array
     {
         $previous = [$this->currentDecisionObserver, $this->trustedDecisionInputs];
