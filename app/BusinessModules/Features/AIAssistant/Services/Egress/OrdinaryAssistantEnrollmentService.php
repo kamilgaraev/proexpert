@@ -25,13 +25,13 @@ final readonly class OrdinaryAssistantEnrollmentService
     public function __construct(private AuthorizationService $authorization, private AssistantDataAccessPolicy $access,
         private OrdinaryAssistantSourceCatalog $sources, private AICreditService $credits) {}
 
-    public function assign(User $operator, int $organizationId, User $actor, int $projectId, array $tools): AssistantEgressCohort
+    public function assign(User $operator, int $organizationId, User $actor, int $projectId, array $tools, string $policyVersion = OrdinaryAssistantSourceProjection::VERSION): AssistantEgressCohort
     {
         $this->assertPlatform($operator);
         if (! $actor->is_active || (int) $actor->current_organization_id !== $organizationId
             || ! User::query()->whereKey($actor->getKey())->where('is_active', true)->where('current_organization_id', $organizationId)->exists()
             || ! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)
-            || $tools === [] || array_diff($tools, OrdinaryAssistantSourceProjection::TOOLS) !== []) {
+            || $tools === [] || array_diff($tools, OrdinaryAssistantSourceProjection::toolsForPolicy($policyVersion)) !== []) {
             throw new AssistantEgressDenied('access_denied');
         }
         $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
@@ -44,11 +44,11 @@ final readonly class OrdinaryAssistantEnrollmentService
             throw new AssistantEgressDenied('unsupported_purpose');
         }
 
-        return DB::transaction(function () use ($operator, $organizationId, $actor, $projectId, $tools, $provider, $model, $endpoint): AssistantEgressCohort {
+        return DB::transaction(function () use ($operator, $organizationId, $actor, $projectId, $tools, $provider, $model, $endpoint, $policyVersion): AssistantEgressCohort {
             $existing = AssistantEgressCohort::query()->where('organization_id', $organizationId)->where('actor_id', $actor->id)->lockForUpdate()->first();
             $cohort = $existing ?? new AssistantEgressCohort(['id' => (string) Str::uuid()]);
             $cohort->fill(['generation' => (string) Str::uuid(), 'organization_id' => $organizationId, 'actor_id' => $actor->id, 'project_id' => $projectId,
-                'assigned_by' => $operator->id, 'status' => 'active', 'policy_version' => OrdinaryAssistantSourceProjection::VERSION,
+                'assigned_by' => $operator->id, 'status' => 'active', 'policy_version' => $policyVersion,
                 'provider' => $provider, 'model' => $model, 'endpoint' => $endpoint, 'allowed_tools' => array_values(array_unique($tools)), 'expires_at' => now()->addDay()]);
             $cohort->save();
             if ($existing !== null) {
@@ -69,7 +69,8 @@ final readonly class OrdinaryAssistantEnrollmentService
             ->where('user_id', $cohort->actor_id)->where('request_hash', $hash)->where('expires_at', '>', now())->first();
         if ($quote === null || ! is_string($input['message'] ?? null) || trim($input['message']) === ''
             || ! empty($input['attachment_ids']) || ! empty($input['attachment_manifest']) || ($input['allow_actions'] ?? false)
-            || $requestedSources === [] || count($requestedSources) > 6) {
+            || $requestedSources === [] || count($requestedSources) > 6
+            || ($cohort->policy_version === OrdinaryAssistantDocumentProjection::VERSION && count($requestedSources) !== 1)) {
             throw new AssistantEgressDenied('scope_mismatch');
         }
         $proofs = $previews = [];
@@ -151,7 +152,8 @@ final readonly class OrdinaryAssistantEnrollmentService
     {
         $cohort = AssistantEgressCohort::query()->whereKey($id)->where('organization_id', $organizationId)->first();
         if ($cohort === null || ! Str::isUuid($cohort->generation) || (int) $cohort->project_id < 1 || $cohort->status !== 'active' || $cohort->expires_at->isPast()
-            || $cohort->policy_version !== OrdinaryAssistantSourceProjection::VERSION) {
+            || OrdinaryAssistantSourceProjection::toolsForPolicy($cohort->policy_version) === []
+            || $cohort->allowed_tools === [] || array_diff($cohort->allowed_tools, OrdinaryAssistantSourceProjection::toolsForPolicy($cohort->policy_version)) !== []) {
             throw new AssistantEgressDenied('access_denied');
         }
 

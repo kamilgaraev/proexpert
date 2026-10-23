@@ -12,6 +12,8 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLi
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCorpus;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
@@ -42,20 +44,27 @@ final class RagRetriever
      * @param  array<string, mixed>  $requestContext
      * @return array<int, RagSearchResult>
      */
-    public function search(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null): array
+    public function search(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null, ?AssistantDocumentCorpus $corpus = null): array
     {
-        return $this->searchWithDiagnostics($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard)['results'];
+        return $this->searchWithDiagnostics($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard, $corpus)['results'];
     }
 
-    public function searchWithDiagnostics(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null): array
+    public function searchWithDiagnostics(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null, ?AssistantDocumentCorpus $corpus = null): array
     {
         $diagnostics = ['status' => 'available', 'error_code' => null, 'semantic_available' => true, 'lexical_used' => false];
-        $results = $this->executeSearch($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard, $diagnostics);
+        $results = $this->executeSearch($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard, $diagnostics, $corpus);
         return ['results' => $results, 'diagnostics' => $diagnostics];
     }
 
-    private function executeSearch(string $query, int $organizationId, User $user, array $requestContext, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard, array &$diagnostics): array
+    private function executeSearch(string $query, int $organizationId, User $user, array $requestContext, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard, array &$diagnostics, ?AssistantDocumentCorpus $corpus): array
     {
+        if ($corpus !== null) {
+            $corpus->assertActor($user, $organizationId);
+            if (($requestContext['project_id'] ?? null) !== $corpus->projectId
+                || ($requestContext['source_types'] ?? null) !== ['file_document'] || ($requestContext['retrieval_mode'] ?? null) !== 'lexical') {
+                throw new AssistantEgressDenied('scope_mismatch');
+            }
+        }
         $checkpoint?->__invoke();
         if (! $this->belongsToOrganization($user, $organizationId)) {
             return [];
@@ -71,14 +80,16 @@ final class RagRetriever
         $preferredSourceTypes = $this->preferredSourceTypes($query);
         $learningChecks = [];
         $typeCandidates = RagSource::query()->where('ai_rag_sources.organization_id', $organizationId)
-            ->whereExists(static function ($chunks) use ($organizationId, $requestProjectId, $allowedProjectIds): void {
+            ->whereExists(static function ($chunks) use ($organizationId, $requestProjectId, $allowedProjectIds, $corpus): void {
                 $chunks->selectRaw('1')->from('ai_rag_chunks as candidate_chunks')->whereColumn('candidate_chunks.source_id', 'ai_rag_sources.id')
                     ->where('candidate_chunks.organization_id', $organizationId)->where(static function ($projects) use ($requestProjectId, $allowedProjectIds): void {
                         $projects->whereNull('candidate_chunks.project_id');
                         if ($requestProjectId !== null) { $projects->orWhere('candidate_chunks.project_id', $requestProjectId); }
                         elseif ($allowedProjectIds !== []) { $projects->orWhereIn('candidate_chunks.project_id', $allowedProjectIds); }
                     });
+                if ($corpus !== null) { $chunks->whereIn('candidate_chunks.id', $corpus->chunkIds())->where('candidate_chunks.project_id', $corpus->projectId); }
             });
+        if ($corpus !== null) { $typeCandidates->whereIn('ai_rag_sources.id', $corpus->sourceIds()); }
         if (isset($requestContext['source_types']) && is_array($requestContext['source_types'])) {
             $typeCandidates->whereIn('ai_rag_sources.source_type', array_filter($requestContext['source_types'], 'is_string'));
         }
@@ -89,7 +100,7 @@ final class RagRetriever
             $allowedSourceTypes = array_values(array_intersect($allowedSourceTypes, array_filter($requestContext['source_types'], 'is_string')));
         }
         $sourceTypes = $allowedSourceTypes;
-        $includeOrganizationWideSources = $this->includeOrganizationWideSources($sourceTypes);
+        $includeOrganizationWideSources = $corpus === null && $this->includeOrganizationWideSources($sourceTypes);
 
         if ($sourceTypes === []) {
             return [];
@@ -99,7 +110,7 @@ final class RagRetriever
             $diagnostics['semantic_available'] = false;
             $diagnostics['lexical_used'] = true;
             return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit,
-                $sourceTypes, $includeOrganizationWideSources, [], $user, $learningChecks, $checkpoint, $readWrapper, $readGuard);
+                $sourceTypes, $includeOrganizationWideSources, [], $user, $learningChecks, $checkpoint, $readWrapper, $readGuard, corpus: $corpus);
         }
 
         if ($requestProjectId !== null && ! in_array($requestProjectId, $allowedProjectIds, true)) {
@@ -682,14 +693,15 @@ final class RagRetriever
         }));
     }
 
-    private function authorizedSourceIds(int $organizationId, User $actor, array $sourceTypes, array $projectIds, ?int $projectId, bool $includeOrganizationWideSources, ?array $embedding, array $terms, ?callable $checkpoint): array
+    private function authorizedSourceIds(int $organizationId, User $actor, array $sourceTypes, array $projectIds, ?int $projectId, bool $includeOrganizationWideSources, ?array $embedding, array $terms, ?callable $checkpoint, ?AssistantDocumentCorpus $corpus = null): array
     {
         $policy = $this->accessPolicy();
-        return $policy->withCurrentChecks($actor, $organizationId, function () use ($policy, $organizationId, $actor, $sourceTypes, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms, $checkpoint): array {
+        return $policy->withCurrentChecks($actor, $organizationId, function () use ($policy, $organizationId, $actor, $sourceTypes, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms, $checkpoint, $corpus): array {
             $candidates = RagSource::query()->where('ai_rag_sources.organization_id', $organizationId)->whereIn('ai_rag_sources.source_type', $sourceTypes)
-                ->whereExists(function ($chunks) use ($organizationId, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms): void {
+                ->whereExists(function ($chunks) use ($organizationId, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms, $corpus): void {
                     $chunks->selectRaw('1')->from('ai_rag_chunks as candidate_chunks')
                         ->whereColumn('candidate_chunks.source_id', 'ai_rag_sources.id')->where('candidate_chunks.organization_id', $organizationId);
+                    if ($corpus !== null) { $chunks->whereIn('candidate_chunks.id', $corpus->chunkIds()); }
                     if ($projectId !== null) {
                         $chunks->where(function ($projects) use ($projectId, $includeOrganizationWideSources): void {
                             $projects->where('candidate_chunks.project_id', $projectId);
@@ -706,16 +718,19 @@ final class RagRetriever
                             ->where('candidate_chunks.embedding_model', $this->embeddingProvider->model());
                         if (DB::connection()->getDriverName() === 'pgsql') { $chunks->whereRaw('vector_dims(candidate_chunks.embedding) = ?', [count($embedding)]); }
                     } elseif ($terms !== []) {
-                        $chunks->where(function ($matches) use ($terms): void {
+                        $chunks->where(function ($matches) use ($terms, $corpus): void {
+                            $contentExpression = $corpus === null ? 'candidate_chunks.content' : 'left(candidate_chunks.content, '.AssistantDocumentCorpus::CONTENT_CHARS.')';
+                            $titleExpression = $corpus === null ? 'ai_rag_sources.title' : 'left(ai_rag_sources.title, '.AssistantDocumentCorpus::TITLE_CHARS.')';
                             foreach ($terms as $term) {
                                 $pattern = $this->lexicalPattern($term);
                                 $titlePattern = $this->lexicalPattern(mb_convert_case($term, MB_CASE_TITLE, 'UTF-8'));
-                                $matches->orWhereRaw("replace(lower(candidate_chunks.content), 'ё', 'е') like ?", [$pattern])->orWhereRaw("replace(lower(ai_rag_sources.title), 'ё', 'е') like ?", [$pattern])
-                                    ->orWhere('candidate_chunks.content', 'like', $titlePattern)->orWhere('ai_rag_sources.title', 'like', $titlePattern);
+                                $matches->orWhereRaw("replace(lower($contentExpression), 'ё', 'е') like ?", [$pattern])->orWhereRaw("replace(lower($titleExpression), 'ё', 'е') like ?", [$pattern])
+                                    ->orWhereRaw("$contentExpression like ?", [$titlePattern])->orWhereRaw("$titleExpression like ?", [$titlePattern]);
                             }
                         });
                     }
                 });
+            if ($corpus !== null) { $candidates->whereIn('ai_rag_sources.id', $corpus->sourceIds()); }
             $ids = [];
             $branches = 0;
             $maxSqlBytes = 0;
@@ -822,7 +837,8 @@ final class RagRetriever
         ?callable $readWrapper = null,
         ?callable $readGuard = null,
         ?array &$candidateIdentities = null,
-        ?int $rankLimit = null
+        ?int $rankLimit = null,
+        ?AssistantDocumentCorpus $corpus = null
     ): array {
         if ($candidateIdentities !== null) {
             $candidateIdentities = [];
@@ -834,10 +850,12 @@ final class RagRetriever
         }
 
         $checkpoint?->__invoke();
-        $accessibleSources = $this->timed('lexical_source_acl', $organizationId, $actor, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $actor, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, null, $terms, $readCheckpoint), $checkpoint, $organizationId, $readWrapper, $readGuard));
+        $accessibleSources = $this->timed('lexical_source_acl', $organizationId, $actor, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $actor, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, null, $terms, $readCheckpoint, $corpus), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $accessibleSources = RagSource::query()->whereIntegerInRaw('id', $accessibleSources)->select('id');
         $checkpoint?->__invoke();
-        $order = implode(' + ', array_fill(0, count($terms), "CASE WHEN replace(lower(c.content || ' ' || s.title), 'ё', 'е') LIKE ? THEN 1 ELSE 0 END"));
+        $contentExpression = $corpus === null ? 'c.content' : 'left(c.content, '.AssistantDocumentCorpus::CONTENT_CHARS.')';
+        $titleExpression = $corpus === null ? 's.title' : 'left(s.title, '.AssistantDocumentCorpus::TITLE_CHARS.')';
+        $order = implode(' + ', array_fill(0, count($terms), "CASE WHEN replace(lower($contentExpression || ' ' || $titleExpression), 'ё', 'е') LIKE ? THEN 1 ELSE 0 END"));
         $orderBindings = array_map($this->lexicalPattern(...), $terms);
         $candidates = DB::table('ai_rag_chunks as c')
             ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
@@ -865,16 +883,16 @@ final class RagRetriever
                     }
                 })
             )
-            ->where(function ($builder) use ($terms): void {
+            ->where(function ($builder) use ($terms, $contentExpression, $titleExpression): void {
                 foreach ($terms as $term) {
                     $lowerPattern = $this->lexicalPattern($term);
                     $titlePattern = $this->lexicalPattern(mb_convert_case($term, MB_CASE_TITLE, 'UTF-8'));
 
                     $builder
-                        ->orWhereRaw("replace(lower(c.content), 'ё', 'е') like ?", [$lowerPattern])
-                        ->orWhereRaw("replace(lower(s.title), 'ё', 'е') like ?", [$lowerPattern])
-                        ->orWhere('c.content', 'like', $titlePattern)
-                        ->orWhere('s.title', 'like', $titlePattern);
+                        ->orWhereRaw("replace(lower($contentExpression), 'ё', 'е') like ?", [$lowerPattern])
+                        ->orWhereRaw("replace(lower($titleExpression), 'ё', 'е') like ?", [$lowerPattern])
+                        ->orWhereRaw("$contentExpression like ?", [$titlePattern])
+                        ->orWhereRaw("$titleExpression like ?", [$titlePattern]);
                 }
             })
             ->select([
@@ -894,13 +912,14 @@ final class RagRetriever
             ])
             ->orderByRaw('('.$order.') DESC', $orderBindings)
             ->orderBy('c.id');
+        if ($corpus !== null) { $candidates->whereIn('c.id', $corpus->chunkIds())->where('s.project_id', $corpus->projectId); }
         $candidateLimit = max($limit * 12, 48);
         $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(
             fn () => (clone $candidates)->limit($candidateLimit)->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $checkpoint?->__invoke();
         $learningRejected = false;
         $rows = $this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
-        $eligible = array_filter($rows, fn (object $row): bool => $this->lexicalScore($row, $terms) > 0);
+        $eligible = array_filter($rows, fn (object $row): bool => $this->lexicalScore($row, $terms, $corpus) > 0);
         if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < ($rankLimit ?? $limit)) {
             $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(
                 fn () => (clone $candidates)->limit($candidateLimit * 2)->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
@@ -908,8 +927,8 @@ final class RagRetriever
         }
 
         return collect($rows)
-            ->map(function (object $row) use ($terms): object {
-                $row->lexical_score = $this->lexicalScore($row, $terms);
+            ->map(function (object $row) use ($terms, $corpus): object {
+                $row->lexical_score = $this->lexicalScore($row, $terms, $corpus);
 
                 return $row;
             })
@@ -1290,9 +1309,11 @@ SQL;
     /**
      * @param  array<int, string>  $terms
      */
-    private function lexicalScore(object $row, array $terms): int
+    private function lexicalScore(object $row, array $terms, ?AssistantDocumentCorpus $corpus = null): int
     {
-        $haystack = str_replace('ё', 'е', mb_strtolower((string) $row->title.' '.(string) $row->content));
+        $title = $corpus === null ? (string) $row->title : mb_substr((string) $row->title, 0, AssistantDocumentCorpus::TITLE_CHARS);
+        $content = $corpus === null ? (string) $row->content : mb_substr((string) $row->content, 0, AssistantDocumentCorpus::CONTENT_CHARS);
+        $haystack = str_replace('ё', 'е', mb_strtolower($title.' '.$content));
         $score = 0;
 
         foreach ($terms as $term) {
