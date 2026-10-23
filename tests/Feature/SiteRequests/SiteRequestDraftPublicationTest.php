@@ -405,6 +405,50 @@ final class SiteRequestDraftPublicationTest extends TestCase
         $this->assertDatabaseCount('site_request_calendar_events', 0);
     }
 
+    public function test_equipment_time_only_updates_reconcile_through_service_event_listener(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext();
+        $request->update([
+            'request_type' => SiteRequestTypeEnum::EQUIPMENT_REQUEST->value,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+            'required_date' => null,
+            'equipment_type' => 'generator',
+            'equipment_count' => 1,
+            'rental_start_date' => '2026-10-27',
+            'rental_end_date' => '2026-10-28',
+            'equipment_start_at' => '2026-10-27T06:15:00Z',
+            'equipment_end_at' => '2026-10-28T07:45:00Z',
+        ]);
+        $calendarService->createCalendarEvent($request->fresh());
+        $calendarId = SiteRequestCalendarEvent::query()->where('site_request_id', $request->id)->sole()->id;
+
+        foreach ([
+            [['equipment_start_at' => '2026-10-27T07:15:00Z'], '10:15:00', '2026-10-28', '10:45:00', false],
+            [['equipment_end_at' => '2026-10-28T08:45:00Z'], '10:15:00', '2026-10-28', '11:45:00', false],
+            [['equipment_end_at' => null], '10:15:00', null, null, false],
+            [['equipment_start_at' => null], null, '2026-10-28', null, true],
+        ] as [$changes, $startTime, $endDate, $endTime, $allDay]) {
+            Event::fake([SiteRequestUpdated::class]);
+            app(SiteRequestService::class)->update($request->fresh(), $request->user_id, $changes);
+            $updates = Event::dispatched(SiteRequestUpdated::class);
+            $this->assertCount(1, $updates);
+            $update = $updates->first()[0];
+            $this->assertInstanceOf(SiteRequestUpdated::class, $update);
+            $this->assertSame(array_keys($changes), array_keys($update->oldValues));
+            $this->assertSame(SiteRequestStatusEnum::PENDING->value, $update->statusAtDispatch);
+
+            (new UpdateCalendarEventOnSiteRequest($calendarService))->handle($update);
+            $calendarEvent = SiteRequestCalendarEvent::query()->where('site_request_id', $request->id)->sole();
+            $this->assertSame($calendarId, $calendarEvent->id);
+            $this->assertSame('2026-10-27', $calendarEvent->start_date->toDateString());
+            $this->assertSame($startTime, $calendarEvent->start_time);
+            $this->assertSame($endDate, $calendarEvent->end_date?->toDateString());
+            $this->assertSame($endTime, $calendarEvent->end_time);
+            $this->assertSame($allDay, $calendarEvent->all_day);
+            $this->assertDatabaseCount('site_request_calendar_events', 1);
+        }
+    }
+
     public function test_legacy_equipment_dates_and_material_delivery_times_remain_available(): void
     {
         [$request, , $calendarService] = $this->publicationContext();
