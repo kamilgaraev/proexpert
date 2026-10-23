@@ -25,6 +25,7 @@ final readonly class EstimateWorkIntent
         public ?string $workSection = null,
         public ?string $entityId = null,
         public ?string $requirementKey = null,
+        public ?array $technologyClarification = null,
     ) {
         if (! in_array($kind, ['existing', 'supplementary'], true)
             || ! self::identifier($candidateId)
@@ -38,6 +39,18 @@ final readonly class EstimateWorkIntent
         self::assertStringList($assumptions, 20, 500, false);
         self::assertStringList($exclusions, 20, 500, false);
         self::assertStringList($missingDocumentRecommendations, 20, 800, false);
+        if ($technologyClarification !== null) {
+            if ($kind !== 'supplementary' || $workSection === null
+                || count($technologyClarification) !== 2 || ! isset($technologyClarification['question'], $technologyClarification['reason'])) {
+                throw new InvalidArgumentException('estimate_work_intent_technology_question_invalid');
+            }
+            self::assertStringList([$technologyClarification['question']], 1, 1000, false);
+            self::assertStringList([$technologyClarification['reason']], 1, 1600, false);
+            if (mb_strlen($technologyClarification['question']) > 500 || mb_strlen($technologyClarification['reason']) > 800) {
+                throw new InvalidArgumentException('estimate_work_intent_technology_question_invalid');
+            }
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationQuestion::assertWorkTechnologyText($technologyClarification);
+        }
         if (($unit === null) !== ($workSection === null)
             || ($unit !== null && \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit::parse($unit) === null)
             || ($workSection !== null && ! in_array($workSection, ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage',
@@ -106,6 +119,12 @@ final readonly class EstimateWorkIntent
                 throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
             }
         }
+        if (array_key_exists('technology_clarification', $payload)) {
+            $expectedKeys[] = 'technology_clarification';
+            if ($payload['technology_clarification'] !== null && ! is_array($payload['technology_clarification'])) {
+                throw new InvalidArgumentException('estimate_work_intent_technology_question_invalid');
+            }
+        }
         sort($actualKeys, SORT_STRING);
         sort($expectedKeys, SORT_STRING);
         if ($actualKeys !== $expectedKeys) {
@@ -131,6 +150,7 @@ final readonly class EstimateWorkIntent
             workSection: $payload['work_section'] ?? null,
             entityId: $payload['entity_id'] ?? null,
             requirementKey: $payload['requirement_key'] ?? null,
+            technologyClarification: $payload['technology_clarification'] ?? null,
         );
     }
 
@@ -151,6 +171,7 @@ final readonly class EstimateWorkIntent
             ...($this->unit === null ? [] : ['unit' => $this->unit, 'work_section' => $this->workSection]),
             ...($this->entityId === null ? [] : ['entity_id' => $this->entityId]),
             ...($this->requirementKey === null ? [] : ['requirement_key' => $this->requirementKey]),
+            ...($this->technologyClarification === null ? [] : ['technology_clarification' => $this->technologyClarification]),
         ];
     }
 

@@ -66,6 +66,12 @@ final class ListEstimateClarificationsTest extends TestCase
 
 final readonly class FixedClarificationCatalog implements EstimateClarificationCatalog
 {
+    public function currentWorkContexts(int $organizationId, int $projectId, int $sessionId,
+        ?\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot = null, ?array $decisions = null): array
+    {
+        return [];
+    }
+
     /** @param list<CurrentEstimateClarification> $items */
     public function __construct(private array $items) {}
 

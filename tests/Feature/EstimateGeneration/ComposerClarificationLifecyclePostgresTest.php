@@ -48,6 +48,77 @@ use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
 
 final class ComposerClarificationLifecyclePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_work_technology_answers_are_append_only_project_context_with_current_document_pins(): void
+    {
+        [$actor, $session, $project] = $this->publish('universal', true);
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $controller = app(EstimateGenerationQuestionController::class);
+        $request = Request::create('/', 'GET');
+        $request->setUserResolver(static fn (): User => $actor);
+        $cards = fn (): array => $controller->index($request, $project, $session->fresh())->getData(true)['data']['items'];
+        $actualCards = $cards();
+        self::assertCount(1, $actualCards);
+        $card = $actualCards[0];
+        self::assertSame('composer_work_technology', $card['source_locator']['kind']);
+        self::assertSame(['answer'], $card['actions']);
+        $models = app(ProjectModelRepository::class);
+        $originals = array_column($models->snapshot(...$scope)->facts, null, 'id');
+        $document = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()->create([
+            'organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2], 'user_id' => $actor->id,
+            'filename' => 'Инструкция.pdf', 'mime_type' => 'application/pdf', 'storage_path' => 'private/instruction.pdf',
+            'status' => 'ready', 'checksum_sha256' => str_repeat('c', 64), 'source_version' => 'sha256:'.str_repeat('c', 64)]);
+        $previous = null;
+        foreach (['other', 'other', 'revoke', 'leave_unresolved', 'other'] as $index => $response) {
+            $card = $cards()[0];
+            $input = ['response' => $response, 'idempotency_key' => 'work-technology-answer-000'.$index,
+                'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint'],
+                ...($response === 'other' ? ['other' => 'Способ монтажа выбран пользователем для текущего проекта.', 'document_ids' => [(int) $document->id]] : [])];
+            $result = $controller->answer($this->answerRequest($actor, $project, $input), $project, $session->fresh(), $card['code']);
+            self::assertSame(200, $result->getStatusCode(), $result->getContent());
+            self::assertSame($result->getData(true), $controller->answer($this->answerRequest($actor, $project, $input), $project,
+                $session->fresh(), $card['code'])->getData(true));
+            $current = $cards()[0];
+            self::assertSame($card['code'], $current['code']);
+            self::assertSame($response, $current['answer']['response']);
+            self::assertSame($response === 'other' ? 'user_assumption' : 'no_active_claim', $current['answer']['trust']);
+            self::assertFalse($current['answer']['numeric_parameters_confirmed']);
+            self::assertSame('unresolved', $current['answer']['engineering_applicability']);
+            $fact = $models->fact(...[...$scope, $current['answer']['fact_id']]);
+            self::assertSame($previous, $fact->supersedesFactId);
+            self::assertSame($index + 1, $fact->version);
+            self::assertSame([], $fact->nativeNumericProofs);
+            $previous = $fact->id;
+            $capture = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null,
+                $session->input_payload['selected_sections'], 'universal', $session->input_payload]);
+            self::assertSame($current['answer'], $capture->canonicalPayload()['work_technology_context'][0]['answer']);
+            self::assertCount($response === 'other' ? 1 : 0, $capture->canonicalPayload()['work_technology_context'][0]['documents']);
+            if ($response === 'other') {
+                self::assertSame('sha256:'.str_repeat('c', 64), $capture->canonicalPayload()['work_technology_context'][0]['documents'][0]['source_version']);
+            }
+            self::assertNotContains($fact->id, array_column($capture->facts, 'id'));
+            self::assertNotContains($fact->id, $capture->claimAnswerFactIds);
+            foreach ($originals as $id => $original) {
+                self::assertSame($original->value, $models->fact(...[...$scope, $id])->value);
+            }
+        }
+        $document->update(['ignored_at' => now(), 'status' => 'ignored']);
+        $invalidated = $cards()[0];
+        self::assertNull($invalidated['answer']);
+        $capture = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null,
+            $session->input_payload['selected_sections'], 'universal', $session->input_payload]);
+        self::assertNull($capture->workTechnologyContext[0]['answer']);
+        $afterDrift = ['response' => 'other', 'other' => 'Новое допущение без отозванного документа.', 'document_ids' => [],
+            'idempotency_key' => 'work-technology-answer-after-drift', 'expected_source_version' => $invalidated['source_version'],
+            'answer_fingerprint' => $invalidated['answer_fingerprint']];
+        $updated = $controller->answer($this->answerRequest($actor, $project, $afterDrift), $project, $session->fresh(), $invalidated['code']);
+        self::assertSame(200, $updated->getStatusCode(), $updated->getContent());
+        $after = $cards()[0];
+        self::assertSame([], $after['answer']['document_ids']);
+        self::assertSame($previous, $models->fact(...[...$scope, $after['answer']['fact_id']])->supersedesFactId);
+        self::assertSame(6, $models->fact(...[...$scope, $after['answer']['fact_id']])->version);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     #[DataProvider('modes')]
     public function test_published_null_result_has_one_answerable_card_and_preserves_the_original_request(string $mode): void
     {
@@ -212,7 +283,7 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
         return [['legacy'], ['universal']];
     }
 
-    private function publish(string $mode): array
+    private function publish(string $mode, bool $workQuestion = false): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         Http::fake();
@@ -237,8 +308,15 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
             'generation_evaluation_input_hash' => $inputHash]])->save();
         $source = app(ProjectModelRepository::class)->snapshot((int) $organization->id, (int) $project->id, (int) $session->id)->facts[0];
         $model = $this->createMock(EstimateComposerModel::class);
-        $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $captured, callable $reserved) use ($source): array {
+        $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $captured, callable $reserved) use ($source, $workQuestion): array {
             $reserved((string) Str::uuid());
+            if ($workQuestion) {
+                return ['work_intents' => [['kind' => 'supplementary', 'work_key' => 'custom_equipment_installation',
+                    'name' => 'Монтаж неизвестной установки', 'work_section' => 'equipment', 'unit' => 'count', 'derived_quantity_id' => null,
+                    'source_fact_ids' => [$source->id], 'entity_id' => $source->entityId, 'technology_package_candidate' => null,
+                    'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+                    'technology_clarification' => ['question' => 'Как выполняется крепление этой установки?', 'reason' => 'В исходных данных не указан способ монтажа.']]]];
+            }
 
             return ['work_intents' => array_map(static fn (array $work): array => [
                 'kind' => 'supplementary', 'candidate_id' => null, 'work_key' => $work[0], 'name' => $work[1],
@@ -247,9 +325,9 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
             ], [['heating.unit', 'Монтаж неизвестной установки', 'heating', 'count'], ['roof.area', 'Монтаж неизвестного покрытия', 'roofing', 'm2']])];
         });
         [$plan, $results, $payloads] = $this->plan($session, $model);
-        self::assertCount(2, $plan['estimate_composition']['request_info']);
+        self::assertCount($workQuestion ? 0 : 2, $plan['estimate_composition']['request_info']);
         $published = $this->publishPlan($session, $plan, $results, $payloads);
-        self::assertSame('input_review_required', $published->status->value);
+        self::assertSame($workQuestion ? 'estimate_review_required' : 'input_review_required', $published->status->value);
 
         return [$actor, $published, $project];
     }

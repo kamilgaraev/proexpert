@@ -56,7 +56,52 @@ final readonly class EloquentEstimateClarificationSource implements EstimateClar
                 $questions[] = $composer;
             }
         }
+        if ($session !== null && $session->status === EstimateGenerationStatus::EstimateReviewRequired) {
+            $entries = $this->currentWorkContexts($organizationId, $projectId, $sessionId, $capture['snapshot']);
+            $questions = [...$questions, ...$this->resolver->workTechnologyQuestions($entries, $capture['token'], (int) $session->state_version)];
+        }
 
         return $questions;
+    }
+
+    public function currentWorkContexts(int $organizationId, int $projectId, int $sessionId,
+        ?\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot = null, ?array $decisions = null): array
+    {
+        $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)->whereKey($sessionId)->first();
+        if ($session === null || ! is_array($session->draft_payload)
+            || ! str_contains(json_encode($session->draft_payload, JSON_THROW_ON_ERROR), 'work_technology_context')) {
+            return [];
+        }
+        $snapshot ??= $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts)['snapshot'];
+        $decisions ??= $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
+
+        return $this->resolver->workTechnologyContexts($session->draft_payload, $session->input_payload ?? [], $snapshot, $decisions,
+            [$organizationId, $projectId, $sessionId], self::currentDocuments($organizationId, $projectId, $sessionId));
+    }
+
+    public static function currentDocuments(int $organizationId, int $projectId, int $sessionId, bool $lock = false, ?array $ids = null): array
+    {
+        $query = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
+            ->whereNull('ignored_at')->whereIn('status', ['ready', 'needs_review'])->orderBy('id');
+        if ($ids !== null) {
+            $query->whereIn('id', $ids);
+        }
+        if ($lock) {
+            $query->sharedLock();
+        }
+        $result = [];
+        foreach ($query->get(['id', 'status', 'source_version', 'checksum_sha256']) as $document) {
+            $checksum = strtolower(trim((string) $document->checksum_sha256));
+            if (preg_match('/\A[a-f0-9]{64}\z/D', $checksum) !== 1
+                || ! hash_equals('sha256:'.$checksum, (string) $document->source_version)) {
+                continue;
+            }
+            $result[] = ['document_id' => (int) $document->id, 'source_version' => $document->source_version,
+                'checksum_sha256' => $checksum, 'status' => $document->status];
+        }
+
+        return $result;
     }
 }

@@ -18,24 +18,31 @@ use Throwable;
 
 final readonly class RunEstimateComposer
 {
-    public const PROMPT_CONTRACT = 'estimate-composer:v5';
+    public const PROMPT_CONTRACT = 'estimate-composer:v6';
 
-    public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v2';
+    public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v3';
 
-    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v3';
+    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v4';
 
-    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v3';
+    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v4';
 
     public const CELL_PROMPT_CONTRACTS = [
-        self::PROMPT_CONTRACT => 'estimate-composer:cells:v2',
-        self::LEGACY_PROMPT_CONTRACT => 'estimate-composer:legacy-cells:v2',
-        self::ANSWER_PROMPT_CONTRACT => 'estimate-composer:answer-cells:v2',
-        self::LEGACY_ANSWER_PROMPT_CONTRACT => 'estimate-composer:legacy-answer-cells:v2',
+        self::PROMPT_CONTRACT => 'estimate-composer:cells:v3',
+        self::LEGACY_PROMPT_CONTRACT => 'estimate-composer:legacy-cells:v3',
+        self::ANSWER_PROMPT_CONTRACT => 'estimate-composer:answer-cells:v3',
+        self::LEGACY_ANSWER_PROMPT_CONTRACT => 'estimate-composer:legacy-answer-cells:v3',
         'estimate-composer:v4' => 'estimate-composer:cells:v1',
         'estimate-composer:legacy:v1' => 'estimate-composer:legacy-cells:v1',
         'estimate-composer:answers:v2' => 'estimate-composer:answer-cells:v1',
         'estimate-composer:legacy-answers:v2' => 'estimate-composer:legacy-answer-cells:v1',
     ];
+
+    public const CELL_RECEIPT_CONTRACTS = ['estimate-composer:cells:v1', 'estimate-composer:legacy-cells:v1',
+        'estimate-composer:answer-cells:v1', 'estimate-composer:legacy-answer-cells:v1',
+        'estimate-composer:cells:v2', 'estimate-composer:legacy-cells:v2',
+        'estimate-composer:answer-cells:v2', 'estimate-composer:legacy-answer-cells:v2',
+        'estimate-composer:cells:v3', 'estimate-composer:legacy-cells:v3',
+        'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3'];
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -164,6 +171,9 @@ final readonly class RunEstimateComposer
                     throw new RuntimeException('estimate_composer_replay_invalid');
                 }
                 if (($intent['requirement_key'] ?? null) !== null && ! $input->acceptsWorkRequirements()) {
+                    throw new RuntimeException('estimate_composer_replay_invalid');
+                }
+                if (($intent['technology_clarification'] ?? null) !== null && ! $input->acceptsTechnologyQuestions()) {
                     throw new RuntimeException('estimate_composer_replay_invalid');
                 }
                 $typed = EstimateWorkIntent::fromArray($intent);
@@ -357,6 +367,12 @@ final readonly class RunEstimateComposer
                         throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
                     }
                     $projected['requirement_key'] = $record['requirement_key'];
+                }
+                if (array_key_exists('technology_clarification', $record)) {
+                    if ($record['technology_clarification'] !== null && ! $input->acceptsTechnologyQuestions()) {
+                        throw new InvalidArgumentException('estimate_work_intent_technology_question_invalid');
+                    }
+                    $projected['technology_clarification'] = $record['technology_clarification'];
                 }
                 $intent = EstimateWorkIntent::fromArray($projected);
                 if (isset($seenCandidateIds[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {

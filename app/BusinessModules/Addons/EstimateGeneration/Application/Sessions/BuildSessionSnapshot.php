@@ -369,6 +369,9 @@ final class BuildSessionSnapshot
             (int) $session->project_id,
             (int) $session->getKey(),
         ) as $current) {
+            if (($current->question->sourceLocator['kind'] ?? null) === 'composer_work_technology') {
+                continue;
+            }
             if (! isset($answered[$current->question->code])) {
                 $count++;
             }
