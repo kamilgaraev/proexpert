@@ -35,6 +35,47 @@ final class PostgresNativeSelectConnectionTest extends TestCase
         yield 'Laravel statement parameters' => [true];
     }
 
+    public function test_opt_in_transport_profile_uses_balanced_warm_laravel_selects(): void
+    {
+        if (getenv('MOST_NATIVE_SELECT_PROFILE') !== '1') {
+            self::markTestSkipped('Transport profile is opt-in');
+        }
+        $connections = [$this->manager(false)->connection(), $this->manager(true)->connection()];
+        $sql = 'SELECT CAST(? AS integer) AS ordinal, CAST(? AS text) AS text_value, CAST(? AS boolean) AS enabled';
+        foreach ($connections as $connection) {
+            for ($i = 0; $i < 10; $i++) {
+                $connection->selectOne($sql, [$i, 'transport-control', true]);
+            }
+            self::assertInstanceOf(Pgsql::class, $connection->getRawReadPdo());
+            self::assertInstanceOf(\Closure::class, $connection->getRawPdo());
+        }
+        $blocks = [];
+        foreach ([0, 1, 1, 0, 1, 0, 0, 1] as $mode) {
+            $connection = $connections[$mode];
+            $sum = 0;
+            $started = hrtime(true);
+            for ($i = 0; $i < 333; $i++) {
+                $row = $connection->selectOne($sql, [$i, 'transport-control', true]);
+                $sum += $row->ordinal;
+            }
+            $milliseconds = (hrtime(true) - $started) / 1_000_000;
+            self::assertSame(55278, $sum);
+            self::assertSame('transport-control', $row->text_value);
+            self::assertTrue($row->enabled);
+            $blocks[] = ['native' => (bool) $mode, 'selects' => 333, 'milliseconds' => round($milliseconds, 3)];
+        }
+        foreach ($connections as $connection) {
+            self::assertFalse($connection->getReadPdo()->getAttribute(PDO::ATTR_EMULATE_PREPARES));
+            self::assertFalse($connection->getReadPdo()->getAttribute(Pgsql::ATTR_DISABLE_PREPARES));
+            self::assertInstanceOf(\Closure::class, $connection->getRawPdo());
+        }
+        fwrite(STDOUT, 'NATIVE_SELECT_PROFILE '.json_encode([
+            'php_version_id' => PHP_VERSION_ID, 'server_version_num' => (int) $connections[0]->getReadPdo()->query('SHOW server_version_num')->fetchColumn(),
+            'synthetic_transport_only' => true, 'warmup_per_mode' => 10, 'sql_bytes' => strlen($sql), 'bindings' => 3,
+            'blocks' => $blocks,
+        ], JSON_THROW_ON_ERROR).PHP_EOL);
+    }
+
     protected function tearDown(): void
     {
         foreach ($this->managers as $manager) {
