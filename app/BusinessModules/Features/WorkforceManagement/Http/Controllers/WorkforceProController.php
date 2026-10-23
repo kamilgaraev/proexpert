@@ -10,6 +10,7 @@ use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceProServic
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -183,6 +184,21 @@ final class WorkforceProController extends Controller
     public function workSchedules(Request $request): JsonResponse
     {
         return $this->list($request, 'workforce_work_schedules');
+    }
+
+    public function workScheduleDays(Request $request, int $scheduleId): JsonResponse
+    {
+        try {
+            return $this->paginated($this->service->scheduleDays(
+                $this->organizationId($request), $scheduleId, $request->user(), $this->perPage($request)
+            ));
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('workforce.errors.hr_access_denied'), 403);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'schedule_days.index');
+        }
     }
 
     public function storeWorkSchedule(StoreWorkScheduleRequest $request): JsonResponse
