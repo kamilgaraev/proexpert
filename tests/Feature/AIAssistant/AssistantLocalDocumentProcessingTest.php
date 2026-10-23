@@ -563,6 +563,62 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
         yield 'assign expected denial' => ['assign', false];
         yield 'revoke expected denial' => ['revoke', false];
     }
+
+    private function nativeQualityDocument(): AIAssistantDocument
+    {
+        $defect = \App\BusinessModules\Features\QualityControl\Models\QualityDefect::withoutEvents(fn () =>
+            \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create(['organization_id' => $this->fixture->organization->id,
+                'project_id' => $this->project->id, 'defect_number' => 'B3-NATIVE', 'title' => 'Учебный дефект', 'severity' => 'major', 'status' => 'open']));
+        $path = 'org-'.$this->fixture->organization->id.'/quality-control/defects/'.$defect->id.'/'.\Illuminate\Support\Str::uuid().'.png';
+        $body = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
+        Storage::disk('s3')->put($path, $body);
+        $photo = \App\BusinessModules\Features\QualityControl\Models\QualityDefectPhoto::withoutEvents(fn () =>
+            \App\BusinessModules\Features\QualityControl\Models\QualityDefectPhoto::query()->create(['organization_id' => $this->fixture->organization->id,
+                'quality_defect_id' => $defect->id, 'uploaded_by' => $this->fixture->owner->id, 'type' => 'before', 'url' => $path,
+                'storage_identity_verified' => true, 'storage_etag' => hash('md5', $body), 'storage_sha256' => hash('sha256', $body),
+                'size_bytes' => strlen($body), 'mime_type' => 'image/png']));
+        return app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class)
+            ->map($this->fixture->owner, $this->fixture->organization->id, 'quality_defect_photo', $photo->id);
+    }
+
+    public function test_actual_native_machine_denial_is_typed_at_the_processing_source_boundary(): void
+    {
+        $document = $this->nativeQualityDocument();
+        $member = $this->fixture->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']]);
+        $member->assignedProjects()->attach($this->project->id, ['role' => 'member', 'is_active' => true]);
+        self::assertNull($document->file_id);
+        self::assertFalse(app(\App\Domain\Authorization\Services\AuthorizationService::class)->canCurrent($member, 'quality-control.view', ['organization_id' => $document->organization_id]));
+        $adapter = \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeDocumentRegistry::forDocument($document);
+        self::assertInstanceOf(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class, $adapter);
+        try { $adapter->assertReadable($member, $document->organization_id, $document); self::fail('Native content ACL was bypassed'); }
+        catch (\RuntimeException $failure) {
+            self::assertSame(\RuntimeException::class, $failure::class);
+            self::assertSame('ai_assistant_document_access_denied', $failure->getMessage());
+        }
+        $actual = null;
+        try { $this->documents->assertProcessingSource($member, $document); }
+        catch (\Throwable $failure) { $actual = $failure; }
+        self::assertInstanceOf(AssistantEgressDenied::class, $actual);
+        self::assertNull($actual->getPrevious());
+        self::assertSame('access_denied', $actual->reason);
+    }
+
+    public function test_fileless_native_documents_cannot_receive_a_processing_policy(): void
+    {
+        $document = $this->nativeQualityDocument();
+        self::assertNull($document->file_id);
+        self::assertSame($this->project->id, $document->project_id);
+        $this->operator->updateQuietly(['current_organization_id' => $document->organization_id]);
+        $this->withoutMiddleware();
+        $this->actingAs($this->operator);
+        \Illuminate\Support\Facades\Exceptions::fake();
+        $this->postJson('/api/v1/admin/ai-assistant/documents/'.$document->id.'/local-processing', [
+            'project_id' => $document->project_id, 'actor_user_id' => $this->fixture->owner->id,
+            'policy_version' => AssistantDocumentProcessingPolicyService::VERSION])->assertForbidden();
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentProcessingPolicy::query()->where('document_id', $document->id)->exists());
+        \Illuminate\Support\Facades\Exceptions::assertReportedCount(0);
+        Http::assertNothingSent();
+    }
 }
 
 final class LocalProcessingRecordingEmbeddings implements RagEmbeddingProviderInterface

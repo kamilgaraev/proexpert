@@ -475,6 +475,11 @@ final class AssistantDocumentService
             }, true);
         } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException|\Illuminate\Auth\Access\AuthorizationException) {
             throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('access_denied');
+        } catch (RuntimeException $failure) {
+            if ($failure::class !== RuntimeException::class || $failure->getMessage() !== 'ai_assistant_document_access_denied') {
+                throw $failure;
+            }
+            throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('access_denied');
         }
     }
 
