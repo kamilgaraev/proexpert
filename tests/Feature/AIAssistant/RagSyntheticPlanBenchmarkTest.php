@@ -217,11 +217,18 @@ final class RagSyntheticPlanBenchmarkTest extends TestCase
                 return [];
             }
         };
+        $previousApplication = DB::getFacadeApplication();
+        $previousRoot = DB::getFacadeRoot();
+        DB::setFacadeApplication(null);
         DB::swap($capture);
         try {
             $method->invoke($retriever, [1.0, ...array_fill(0, 1023, 0.0)], $provider, 1, self::LIMIT, ['file_document'], [1], 1, false, [1]);
         } finally {
             DB::clearResolvedInstance('db');
+            if ($previousRoot !== null) {
+                DB::swap($previousRoot);
+            }
+            DB::setFacadeApplication($previousApplication);
         }
         $queries = $capture->queries;
         self::assertCount(1, $queries);
