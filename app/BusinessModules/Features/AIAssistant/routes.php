@@ -18,6 +18,7 @@ use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Route;
 
 $assistantRoutes = static function (): void {
+    Route::get('egress/capability', [AssistantEgressEnrollmentController::class, 'capability'])->name('egress.capability');
     Route::post('attachments', [AssistantAttachmentController::class, 'upload'])->name('attachments.upload');
     Route::get('attachments/{attachment}/content', [AssistantAttachmentController::class, 'content'])->whereUuid('attachment')->name('attachments.content');
     Route::get('rag/status', [AIAssistantRagController::class, 'status'])->name('rag.status');
