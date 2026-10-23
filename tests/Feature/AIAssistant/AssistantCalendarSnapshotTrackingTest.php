@@ -85,6 +85,52 @@ final class AssistantCalendarSnapshotTrackingTest extends TestCase
         }
     }
 
+    public function test_calendar_tracking_repairs_existing_malformed_triggers(): void
+    {
+        $epoch = new AssistantStatusSnapshotEpoch;
+        $capture = fn (): array => $this->readOnly(fn (): array => $epoch->capture(self::RELATIONS));
+        $migration = require base_path('database/migrations/2026_10_23_160000_track_assistant_calendar_snapshot_mutations.php');
+        $relation = self::RELATIONS[0];
+        $events = 'AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON '.$relation.' FOR EACH STATEMENT';
+        $execute = ' EXECUTE FUNCTION public.'.AssistantStatusSnapshotEpoch::FUNCTION_NAME.'()';
+        $definitions = [
+            'disabled' => null,
+            'row' => 'AFTER INSERT OR UPDATE OR DELETE ON '.$relation.' FOR EACH ROW'.$execute,
+            'event_mask' => 'AFTER INSERT ON '.$relation.' FOR EACH STATEMENT'.$execute,
+            'function' => $events.' EXECUTE FUNCTION public.assistant_calendar_snapshot_wrong_trigger_test()',
+            'predicate' => $events.' WHEN (false)'.$execute,
+            'arguments' => $events.' EXECUTE FUNCTION public.'.AssistantStatusSnapshotEpoch::FUNCTION_NAME."('unexpected')",
+            'columns' => 'AFTER INSERT OR UPDATE OF updated_at OR DELETE OR TRUNCATE ON '.$relation.' FOR EACH STATEMENT'.$execute,
+        ];
+
+        try {
+            DB::statement('CREATE FUNCTION public.assistant_calendar_snapshot_wrong_trigger_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$');
+            foreach ($definitions as $case => $definition) {
+                self::assertTrue($capture()['cacheable'], $case);
+                if ($definition === null) {
+                    DB::statement('ALTER TABLE '.$relation.' DISABLE TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME);
+                } else {
+                    DB::statement('DROP TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME.' ON '.$relation);
+                    DB::statement('CREATE TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME.' '.$definition);
+                    DB::statement('ALTER TABLE '.$relation.' ENABLE ALWAYS TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME);
+                }
+                $invalid = $capture();
+                self::assertFalse($invalid['cacheable'], $case);
+                self::assertFalse($invalid['proof_checks']['global_mutation_triggers'], $case);
+                $migration->up();
+                $repaired = $capture();
+                self::assertTrue($repaired['proof_checks']['global_mutation_triggers'], $case);
+                self::assertTrue($repaired['cacheable'], $case);
+            }
+        } finally {
+            foreach (self::RELATIONS as $relation) {
+                DB::statement('DROP TRIGGER IF EXISTS '.AssistantStatusSnapshotEpoch::TRIGGER_NAME.' ON '.$relation);
+            }
+            $migration->up();
+            DB::statement('DROP FUNCTION IF EXISTS public.assistant_calendar_snapshot_wrong_trigger_test()');
+        }
+    }
+
     private function readOnly(callable $operation): mixed
     {
         DB::beginTransaction();
