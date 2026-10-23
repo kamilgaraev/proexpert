@@ -89,6 +89,141 @@ class RagRetrieverTest extends TestCase
         $this->assertSame('Close source', $results[0]->title);
     }
 
+    public function test_hybrid_gives_multiple_embedding_profiles_one_semantic_vote_against_lexical_rank(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        config()->set('ai-assistant.rag.min_similarity', 0.72);
+        $this->indexChunk($organization->id, $project->id, 'Semantic distractor', 'Unrelated context', [1.0, 0.0, 0.0]);
+        $source = RagSource::query()->where('title', 'Semantic distractor')->firstOrFail();
+        $mirror = $source->replicate();
+        $mirror->identity_part_key = 'profile-mirror';
+        $mirror->save();
+        foreach ($source->chunks as $chunk) {
+            $copy = $chunk->replicate();
+            $copy->source_id = $mirror->id;
+            $copy->embedding_provider = 'openai';
+            $copy->embedding_model = 'text-embedding-3-small';
+            $copy->save();
+        }
+        $this->indexChunk($organization->id, $project->id, 'Literal match', 'Документ КС-2 №3', [0.0, 1.0, 0.0]);
+        $first = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        $second = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0], 'openai', 'text-embedding-3-small');
+        $registry = new RagEmbeddingProviderRegistry($first);
+        (new \ReflectionProperty($registry, 'providers'))->setValue($registry, [
+            'openai|text-embedding-3-small|'.RagTestEmbedding::DIMENSIONS => $second,
+        ]);
+
+        $response = (new RagRetriever($first, app(UserProjectAccessService::class), embeddingProviderRegistry: $registry))
+            ->searchWithDiagnostics('КС-2 №3', $organization->id, $user, ['limit' => 2, 'source_types' => ['project']]);
+
+        self::assertSame(['Literal match', 'Semantic distractor'], array_column($response['results'], 'title'));
+        self::assertLessThan(0.72, $response['results'][0]->similarity);
+        self::assertGreaterThanOrEqual(0.72, $response['results'][1]->similarity);
+        self::assertSame(['status' => 'available', 'error_code' => null, 'semantic_available' => true, 'lexical_used' => true], $response['diagnostics']);
+        self::assertSame(1, $first->queryCalls);
+        self::assertSame(1, $second->queryCalls);
+    }
+
+    #[DataProvider('shortIdentifierQueries')]
+    public function test_lexical_retrieval_keeps_short_identifiers_and_escapes_sql_wildcards(string $identifier, string $unrelated): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        $this->indexChunk($organization->id, $project->id, 'Literal source', 'Документ '.$identifier, [0.0, 1.0, 0.0]);
+        $this->indexChunk($organization->id, $project->id, 'Unrelated source', $unrelated, [0.0, 1.0, 0.0]);
+        $provider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = $this->retriever($provider)->search($identifier, $organization->id, $user,
+                ['retrieval_mode' => 'lexical', 'source_types' => ['project']]);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        self::assertSame(['Literal source'], array_column($results, 'title'));
+        self::assertSame(0, $provider->queryCalls);
+        $lexicalQueries = array_values(array_filter($queries, static fn (array $query): bool =>
+            str_contains($query['query'], 'from "ai_rag_chunks" as "c"') && str_contains($query['query'], 'order by')));
+        self::assertCount(1, $lexicalQueries);
+        $binding = '%'.addcslashes(mb_strtolower($identifier), '\\%_').'%';
+        self::assertContains($binding, $lexicalQueries[0]['bindings']);
+    }
+
+    public static function shortIdentifierQueries(): array
+    {
+        return [
+            'short document code' => ['КС-2', 'Инструкция по бетонированию'],
+            'short number' => ['№3', 'Инструкция по бетонированию'],
+            'short acronym' => ['КС', 'Инструкция по бетонированию'],
+            'underscore and percent' => ['AB_1%', 'ABX1anything'],
+            'backslash and percent' => ['AB\\2%', 'AB2anything'],
+        ];
+    }
+
+    public function test_hybrid_and_lexical_keep_actor_organization_project_and_source_scopes(): void
+    {
+        [$organization, $user, $projectA, $projectB] = $this->createOrganizationUserWithProjects(UserProjectAccessMode::ASSIGNED_PROJECTS->value);
+        $user->assignedProjects()->attach($projectA->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $foreign = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->id]);
+        $this->indexChunk($organization->id, $projectA->id, 'Allowed literal', 'КС-2 №3', [0.0, 1.0, 0.0]);
+        $this->indexChunk($organization->id, $projectA->id, 'Allowed semantic', 'Unrelated context', [1.0, 0.0, 0.0]);
+        $this->indexChunk($organization->id, $projectB->id, 'Blocked project', 'КС-2 №3', [1.0, 0.0, 0.0]);
+        $this->indexChunk($foreign->id, $foreignProject->id, 'Foreign organization', 'КС-2 №3', [1.0, 0.0, 0.0]);
+        $this->indexChunk($organization->id, $projectA->id, 'Excluded contract', 'КС-2 №3', [1.0, 0.0, 0.0], 'contract', 'contract');
+        $this->indexChunk($organization->id, null, 'Excluded reference', 'КС-2 №3', [1.0, 0.0, 0.0], 'estimate_reference', 'estimate_catalog_item');
+        config()->set('ai-assistant.rag.min_similarity', 0.72);
+        foreach (['semantic', 'lexical'] as $mode) {
+            $context = ['project_id' => $projectA->id, 'source_types' => ['project'], 'retrieval_mode' => $mode];
+            $results = $this->retriever([1.0, 0.0, 0.0])->search('КС-2 №3', $organization->id, $user, $context);
+            self::assertSame($mode === 'lexical' ? ['Allowed literal'] : ['Allowed literal', 'Allowed semantic'], array_column($results, 'title'));
+            self::assertSame([], $this->retriever([1.0, 0.0, 0.0])->search('КС-2 №3', $organization->id, $user,
+                array_replace($context, ['project_id' => $projectB->id])));
+        }
+    }
+
+    public function test_hybrid_deduplicates_channels_without_collapsing_chunks_of_one_entity(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        $this->indexChunk($organization->id, $project->id, 'Chunked source',
+            'КС-2 '.str_repeat('alpha ', 140)."\n\n".'КС-2 '.str_repeat('beta ', 140), [1.0, 0.0, 0.0]);
+        $source = RagSource::query()->where('title', 'Chunked source')->firstOrFail();
+        self::assertCount(2, $source->chunks);
+
+        foreach (['semantic', 'lexical'] as $mode) {
+            $results = $this->retriever([1.0, 0.0, 0.0])->search('КС-2', $organization->id, $user,
+                ['retrieval_mode' => $mode, 'source_types' => ['project']]);
+            self::assertCount(2, $results);
+            self::assertSame([(string) $project->id], array_values(array_unique(array_column($results, 'entityId'))));
+            self::assertEqualsCanonicalizing([0, 1], array_column(array_column($results, 'metadata'), 'chunk_index'));
+            self::assertNotSame($results[0]->excerpt, $results[1]->excerpt);
+        }
+    }
+
+    public function test_hybrid_bounds_result_and_candidate_pools_even_with_an_oversized_config_limit(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        config()->set('ai-assistant.rag.max_chunks', 1000);
+        $paragraphs = array_map(static fn (int $index): string => 'КС-2 '.$index.' '.str_repeat('evidence ', 90), range(1, 25));
+        $this->indexChunk($organization->id, $project->id, 'Bounded source', implode("\n\n", $paragraphs), [1.0, 0.0, 0.0]);
+        self::assertGreaterThan(20, RagSource::query()->where('title', 'Bounded source')->firstOrFail()->chunks()->count());
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = $this->retriever([1.0, 0.0, 0.0])->search('КС-2', $organization->id, $user,
+                ['limit' => 1000, 'source_types' => ['project']]);
+            $queries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        self::assertCount(20, $results);
+        self::assertCount(2, $queries);
+        self::assertSame(80, $queries[0]['bindings'][array_key_last($queries[0]['bindings'])]);
+        self::assertStringContainsString('limit 240', $queries[1]['query']);
+    }
+
     public function test_search_applies_request_project_filter_after_access_scope(): void
     {
         [$organization, $user, $projectA, $projectB] = $this->createOrganizationUserWithProjects(
@@ -415,17 +550,166 @@ class RagRetrieverTest extends TestCase
         }
         self::assertSame([(string) $valid->id], array_column($results, 'entityId'));
         $candidateQueries = $this->candidateQueries($queries);
-        self::assertCount(2, $candidateQueries);
+        self::assertCount($mode === 'lexical' ? 2 : 4, $candidateQueries);
         if ($mode === 'lexical') {
             self::assertStringContainsString('limit 96', $candidateQueries[0]['query']);
             self::assertStringContainsString('limit 192', $candidateQueries[1]['query']);
         } else {
             self::assertSame(32, $candidateQueries[0]['bindings'][array_key_last($candidateQueries[0]['bindings'])]);
             self::assertSame(64, $candidateQueries[1]['bindings'][array_key_last($candidateQueries[1]['bindings'])]);
+            self::assertStringContainsString('limit 96', $candidateQueries[2]['query']);
+            self::assertStringContainsString('limit 192', $candidateQueries[3]['query']);
         }
         self::assertSame($mode === 'lexical' ? 0 : 1, $provider->queryCalls);
         $currentExampleReads = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "estimate_generation_learning_examples"') && str_starts_with($query['query'], 'select *'));
         self::assertCount(2, $currentExampleReads);
+    }
+
+    #[DataProvider('semanticFusionCandidatePools')]
+    public function test_hybrid_semantic_refill_uses_the_fusion_rank_limit_without_growing_past_the_cap(int $limit, array $expectedLimits): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        config()->set('ai-assistant.rag.max_chunks', $limit);
+        foreach (range(1, 8) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'semantic current '.$index);
+            $this->indexLearning($example);
+        }
+        foreach (range(1, $limit * 4 - 8) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'semantic stale '.$index);
+            $this->indexLearning($example, [1.0, 0.01, 0.0]);
+            $example->update(['quality_flags' => ['do_not_index']]);
+        }
+        $lateIds = [];
+        foreach (range(1, 24) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'semanticneedle late '.$index);
+            $this->indexLearning($example, [0.8, 0.6, 0.0]);
+            $lateIds[] = (string) $example->id;
+        }
+        $provider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = $this->retriever($provider)->search('semanticneedle', $organization->id, $user,
+                ['project_id' => $project->id, 'source_types' => ['estimate_generation_learning'], 'limit' => $limit]);
+            $queries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        $semanticQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'WITH compatible_chunks AS MATERIALIZED')));
+        self::assertSame($expectedLimits, array_map(static fn (array $query): int => (int) $query['bindings'][array_key_last($query['bindings'])], $semanticQueries));
+        self::assertCount($limit, $results);
+        self::assertSame([], array_diff(array_column($results, 'entityId'), $lateIds));
+        self::assertSame(1, $provider->queryCalls);
+    }
+
+    public static function semanticFusionCandidatePools(): iterable
+    {
+        yield 'refill rank32 after eight current candidates' => [8, [32, 64]];
+        yield 'existing maximum eighty then one hundred sixty candidates' => [20, [80, 160]];
+    }
+
+    public function test_hybrid_lexical_refill_uses_the_fusion_rank_limit_after_stale_candidates(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        $currentIds = [];
+        foreach (range(1, 8) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'rankneedle current '.$index);
+            $this->indexLearning($example, [0.0, 1.0, 0.0]);
+            $currentIds[] = (string) $example->id;
+        }
+        foreach (range(1, 88) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'rankneedle stale '.$index);
+            $this->indexLearning($example, [0.0, 1.0, 0.0]);
+            $example->update(['quality_flags' => ['do_not_index']]);
+        }
+        $late = $this->learningExample($organization->id, $project->id, 'rankneedle late');
+        $this->indexLearning($late);
+        $provider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = $this->retriever($provider)->search('rankneedle', $organization->id, $user,
+                ['project_id' => $project->id, 'source_types' => ['estimate_generation_learning'], 'limit' => 8]);
+            $queries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        $lexicalQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "ai_rag_chunks" as "c"')));
+        self::assertCount(2, $lexicalQueries);
+        self::assertStringContainsString('limit 96', $lexicalQueries[0]['query']);
+        self::assertStringContainsString('limit 192', $lexicalQueries[1]['query']);
+        self::assertCount(8, $results);
+        self::assertSame((string) $late->id, $results[0]->entityId);
+        self::assertSame([], array_diff(array_column($results, 'entityId'), [...$currentIds, (string) $late->id]));
+        self::assertSame(1, $provider->queryCalls);
+
+        $lexicalProvider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $lexicalResults = $this->retriever($lexicalProvider)->search('rankneedle', $organization->id, $user,
+                ['project_id' => $project->id, 'source_types' => ['estimate_generation_learning'], 'limit' => 8, 'retrieval_mode' => 'lexical']);
+            $lexicalQueries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        self::assertSame($currentIds, array_column($lexicalResults, 'entityId'));
+        self::assertCount(1, $lexicalQueries);
+        self::assertStringContainsString('limit 96', $lexicalQueries[0]['query']);
+        self::assertSame(0, $lexicalProvider->queryCalls);
+    }
+
+    public function test_hybrid_lexical_refill_counts_unique_candidates_across_embedding_profiles(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        foreach (range(1, 16) as $index) {
+            $title = 'mirrorneedle current '.$index;
+            $this->indexChunk($organization->id, $project->id, $title, $title, [0.0, 1.0, 0.0]);
+            $source = RagSource::query()->where('title', $title)->firstOrFail();
+            $mirror = $source->replicate();
+            $mirror->identity_part_key = 'profile-mirror-'.$index;
+            $mirror->save();
+            foreach ($source->chunks as $chunk) {
+                $copy = $chunk->replicate();
+                $copy->source_id = $mirror->id;
+                $copy->embedding_provider = 'openai';
+                $copy->embedding_model = 'text-embedding-3-small';
+                $copy->save();
+            }
+        }
+        foreach (range(1, 64) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'mirrorneedle stale '.$index);
+            $this->indexLearning($example, [0.0, 1.0, 0.0]);
+            $example->update(['quality_flags' => ['do_not_index']]);
+        }
+        $this->indexChunk($organization->id, $project->id, 'mirrorneedle late', 'mirrorneedle late', [1.0, 0.0, 0.0]);
+        $first = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        $second = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0], 'openai', 'text-embedding-3-small');
+        $registry = new RagEmbeddingProviderRegistry($first);
+        (new \ReflectionProperty($registry, 'providers'))->setValue($registry, [
+            'openai|text-embedding-3-small|'.RagTestEmbedding::DIMENSIONS => $second,
+        ]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = (new RagRetriever($first, app(UserProjectAccessService::class), embeddingProviderRegistry: $registry))
+                ->search('mirrorneedle', $organization->id, $user,
+                    ['project_id' => $project->id, 'source_types' => ['project', 'estimate_generation_learning'], 'limit' => 8]);
+            $queries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        $lexicalQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "ai_rag_chunks" as "c"')));
+        self::assertCount(2, $lexicalQueries);
+        self::assertStringContainsString('limit 96', $lexicalQueries[0]['query']);
+        self::assertStringContainsString('limit 192', $lexicalQueries[1]['query']);
+        self::assertCount(8, $results);
+        self::assertSame('mirrorneedle late', $results[0]->title);
+        self::assertCount(8, array_unique(array_column($results, 'title')));
+        self::assertSame(['project'], array_values(array_unique(array_column($results, 'sourceType'))));
+        self::assertSame([$project->id], array_values(array_unique(array_column($results, 'projectId'))));
+        self::assertSame(1, $first->queryCalls);
+        self::assertSame(1, $second->queryCalls);
     }
 
     public static function learningCandidatePools(): iterable
@@ -451,7 +735,10 @@ class RagRetrieverTest extends TestCase
         }
         self::assertNotEmpty($results);
         self::assertSame([(string) $example->id], array_values(array_unique(array_column($results, 'entityId'))));
-        self::assertCount(1, $this->candidateQueries($queries));
+        $candidates = $this->candidateQueries($queries);
+        self::assertCount(2, $candidates);
+        self::assertSame(32, $candidates[0]['bindings'][array_key_last($candidates[0]['bindings'])]);
+        self::assertStringContainsString('limit 96', $candidates[1]['query']);
         self::assertCount(1, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "estimate_generation_learning_examples"') && str_starts_with($query['query'], 'select *')));
     }
 
@@ -485,8 +772,10 @@ class RagRetrieverTest extends TestCase
             DB::disableQueryLog();
         }
         self::assertSame([(string) $valid->id], array_column($results, 'entityId'));
-        self::assertCount(4, $queries);
-        self::assertSame([32, 64, 32, 64], array_map(static fn (array $query): int => (int) $query['bindings'][array_key_last($query['bindings'])], $queries));
+        self::assertCount(6, $queries);
+        self::assertSame([32, 64, 32, 64], array_map(static fn (array $query): int => (int) $query['bindings'][array_key_last($query['bindings'])], array_slice($queries, 0, 4)));
+        self::assertStringContainsString('limit 96', $queries[4]['query']);
+        self::assertStringContainsString('limit 192', $queries[5]['query']);
         self::assertSame(1, $first->queryCalls);
         self::assertSame(1, $second->queryCalls);
     }
