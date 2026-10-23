@@ -393,6 +393,16 @@ class ProjectEvent extends Model
                   $subQuery->where('event_date', '<=', $startDate)
                            ->whereNotNull('end_date')
                            ->where('end_date', '>=', $startDate);
+              })
+              ->orWhere(function ($subQuery) use ($startDate) {
+                  $subQuery->where('event_date', '<', $startDate)
+                           ->whereNull('end_date')
+                           ->where('is_all_day', false)
+                           ->where('duration_minutes', '>', 0)
+                           ->whereRaw(
+                               "(event_date + COALESCE(event_time, TIME '00:00:00') + duration_minutes * INTERVAL '1 minute') > CAST(? AS DATE)",
+                               [$startDate->toDateString()]
+                           );
               });
         });
     }
