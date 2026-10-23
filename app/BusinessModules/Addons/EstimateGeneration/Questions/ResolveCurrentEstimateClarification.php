@@ -24,6 +24,30 @@ final readonly class ResolveCurrentEstimateClarification
 {
     private const MAX_COMPOSER_DEPENDENCIES = 200;
 
+    public static function workParameterInput(?array $parameter): ?array
+    {
+        if ($parameter === null) {
+            return null;
+        }
+        $keys = ['name', 'value', 'unit', 'basis', 'source_operand_ref', 'condition'];
+        if (count($parameter) !== count($keys) || array_diff(array_keys($parameter), $keys) !== []
+            || count(array_filter($parameter, is_string(...))) !== count($keys)
+            || trim($parameter['name']) !== $parameter['name'] || $parameter['name'] === '' || mb_strlen($parameter['name']) > 160
+            || preg_match('/[\x00-\x1F\x7F]/u', $parameter['name']) !== 0
+            || ! in_array($parameter['basis'], ['input', 'measurement', 'assumption'], true)
+            || $parameter['condition'] !== 'minimum_length'
+            || preg_match('/\A[a-f0-9]{64}\z/D', $parameter['source_operand_ref']) !== 1) {
+            throw new InvalidArgumentException('estimate_generation.question_response_invalid');
+        }
+        try {
+            FactVocabulary::meetsMinimumLength($parameter['value'], $parameter['unit'], $parameter['value'], $parameter['unit']);
+        } catch (InvalidArgumentException) {
+            throw new InvalidArgumentException('estimate_generation.question_response_invalid');
+        }
+
+        return array_intersect_key($parameter, array_flip($keys));
+    }
+
     private Closure $translate;
 
     public function __construct(private ProjectUnderstandingQuestionProjector $projector, ?Closure $translate = null)
@@ -233,10 +257,27 @@ final readonly class ResolveCurrentEstimateClarification
             }
         }
 
+        $parameter = null;
+        if ($value['response'] === 'other' && is_array($value['parameter'] ?? null)) {
+            try {
+                $input = self::workParameterInput($value['parameter']['input'] ?? []);
+                $observed = $value['parameter']['observed_fact_id'] ?? null;
+                $requirement = $value['parameter']['requirement_fact_id'] ?? null;
+                if ($input !== null && is_string($observed) && is_string($requirement)) {
+                    $parameter = ['input' => $input, 'observed_fact_id' => $observed, 'requirement_fact_id' => $requirement,
+                        'interpretation_status' => 'user_assumption', 'engineering_applicability' => 'unresolved',
+                        'numeric_parameters_confirmed' => false];
+                }
+            } catch (InvalidArgumentException) {
+                $parameter = null;
+            }
+        }
+
         return ['response' => $value['response'], 'other' => $value['other'] ?? null, 'decision_id' => $selected[0]->id,
             'fact_id' => $fact->id, 'document_ids' => array_column($value['documents'], 'document_id'),
             'trust' => $value['response'] === 'other' ? 'user_assumption' : 'no_active_claim',
-            'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false];
+            'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false,
+            ...($parameter === null ? [] : ['parameter' => $parameter])];
     }
 
     public function workTechnologyQuestions(array $entries, string $token, int $stateVersion): array

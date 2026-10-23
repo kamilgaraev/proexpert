@@ -47,9 +47,21 @@ final class AnswerEstimateClarification
         ?string $other = null,
         ?string $targetEntityId = null,
         array $documentIds = [],
+        ?array $parameter = null,
     ): EstimateClarificationAnswer {
         $this->authorize($actor, $session, $context);
         $workQuestion = str_starts_with($questionKey, 'composer_work_technology_');
+        $parameter = ResolveCurrentEstimateClarification::workParameterInput($parameter);
+        if ($parameter !== null) {
+            if (! $workQuestion || $response !== 'other' || $documentIds === []) {
+                throw new InvalidArgumentException('estimate_generation.question_response_invalid');
+            }
+            if (! $this->authorization->can($actor, 'estimate_generation.view', [
+                'organization_id' => $context->organizationId, 'project_id' => $context->projectId,
+            ])) {
+                throw new AuthorizationException(($this->translate)('estimate_generation.access_denied'));
+            }
+        }
         if (! array_is_list($documentIds) || count($documentIds) > 8 || count(array_unique($documentIds, SORT_REGULAR)) !== count($documentIds)
             || count(array_filter($documentIds, static fn ($id): bool => is_int($id) && $id > 0)) !== count($documentIds)
             || ($documentIds !== [] && (! $workQuestion || $response !== 'other'))
@@ -79,6 +91,7 @@ final class AnswerEstimateClarification
                 $other,
                 $targetEntityId,
                 $documentIds,
+                $parameter,
             );
             if ($this->models->currentCompleteness(
                 $context->organizationId,
@@ -91,7 +104,7 @@ final class AnswerEstimateClarification
             return $this->replayResult($decision, $selected);
         }
         if ($workQuestion || str_starts_with($questionKey, 'composer_source_')) {
-            $answer = DB::transaction(function () use ($actor, $session, $context, $questionKey, $response, $other, $targetEntityId, $decisionId, $workQuestion, $documentIds): EstimateClarificationAnswer {
+            $answer = DB::transaction(function () use ($actor, $session, $context, $questionKey, $response, $other, $targetEntityId, $decisionId, $workQuestion, $documentIds, $parameter): EstimateClarificationAnswer {
                 $locked = EstimateGenerationSession::query()->where('organization_id', $context->organizationId)
                     ->where('project_id', $context->projectId)->whereKey($session->getKey())->lockForUpdate()->first();
                 if ($locked === null) {
@@ -99,7 +112,7 @@ final class AnswerEstimateClarification
                 }
                 $existing = $this->models->decisions($context->organizationId, $context->projectId, (int) $locked->getKey(), [$decisionId]);
                 if ($existing !== []) {
-                    [$decision, $selected] = $this->replay($existing[0], $context, $questionKey, $response, $other, $targetEntityId, $documentIds);
+                    [$decision, $selected] = $this->replay($existing[0], $context, $questionKey, $response, $other, $targetEntityId, $documentIds, $parameter);
 
                     return $this->replayResult($decision, $selected);
                 }
@@ -121,7 +134,7 @@ final class AnswerEstimateClarification
                     [$normalized, $label, $normalizedOther] = $this->answer($current->question, $response, $other);
                 }
                 $decision = ($this->choices ?? app(UserEvaluationChoiceWriter::class))->writeComposerAnswer(
-                    $actor, $locked, $current, $normalized, $normalizedOther, $context->idempotencyKey, $decisionId, $targetEntityId, $documentIds);
+                    $actor, $locked, $current, $normalized, $normalizedOther, $context->idempotencyKey, $decisionId, $targetEntityId, $documentIds, $parameter);
 
                 return $this->result($current, $decision, $normalized, $label, $normalizedOther, $targetEntityId);
             });
@@ -218,6 +231,7 @@ final class AnswerEstimateClarification
         ?string $other,
         ?string $targetEntityId = null,
         array $documentIds = [],
+        ?array $parameter = null,
     ): array {
         $selected = $decision->selectedFactId === null ? null : $this->models->fact(
             $context->organizationId,
@@ -233,6 +247,8 @@ final class AnswerEstimateClarification
             || ($selected->value['other'] ?? null) !== $normalizedOther
             || ($selected->value['target_entity_id'] ?? null) !== $targetEntityId
             || array_column($selected->value['documents'] ?? [], 'document_id') !== $documentIds
+            || \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([$selected->value['parameter']['input'] ?? null])
+                !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([$parameter])
             || ($selected->value['question_fingerprint'] ?? null) !== $context->expectedValueFingerprint
             || ! hash_equals($decision->sourceVersion, $context->expectedSourceVersion)
             || $decision->organizationId !== $context->organizationId

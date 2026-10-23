@@ -15,6 +15,28 @@ final class ResolveCurrentEstimateClarificationTest extends TestCase
 {
     private const SOURCE_VERSION = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
+    public function test_work_parameter_input_is_closed_exact_decimal_and_has_no_source_authority_fields(): void
+    {
+        $parameter = ['name' => 'Свободный зазор B', 'value' => '102', 'unit' => 'mm', 'basis' => 'measurement',
+            'source_operand_ref' => str_repeat('a', 64), 'condition' => 'minimum_length'];
+        self::assertSame($parameter, ResolveCurrentEstimateClarification::workParameterInput($parameter));
+        self::assertSame(null, ResolveCurrentEstimateClarification::workParameterInput(null));
+        foreach ([
+            [...$parameter, 'engineering_applicability' => 'passed'],
+            [...$parameter, 'value' => 102], [...$parameter, 'value' => '1e2'],
+            [...$parameter, 'value' => '0'], [...$parameter, 'unit' => 'count'],
+            [...$parameter, 'basis' => 'document_verified'], [...$parameter, 'condition' => 'maximum_length'],
+            [...$parameter, 'source_operand_ref' => 'document:7'], [...$parameter, 'name' => ' B '],
+        ] as $invalid) {
+            try {
+                ResolveCurrentEstimateClarification::workParameterInput($invalid);
+                self::fail('Malformed parameter must not enter the work answer.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_generation.question_response_invalid', $exception->getMessage());
+            }
+        }
+    }
+
     public function test_large_ai_choice_set_is_bounded_at_questions_ai_and_bound_to_exact_fact(): void
     {
         $resolver = new ResolveCurrentEstimateClarification($this->projector());

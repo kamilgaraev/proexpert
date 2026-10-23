@@ -60,6 +60,7 @@ final readonly class GetClarificationAnswerReceipt
             return [...$result, 'status' => 'saved', 'decision_id' => $id,
                 'response' => $fact->value['choice_value'], 'other' => $fact->value['other'] ?? null,
                 ...(str_starts_with($question, 'composer_work_technology_') ? ['document_ids' => $input['document_ids']] : []),
+                ...(isset($fact->value['parameter']['input']) ? ['parameter' => $fact->value['parameter']['input']] : []),
                 ...(isset($fact->value['target_entity_id']) ? ['target_entity_id' => $fact->value['target_entity_id']] : [])];
         });
     }

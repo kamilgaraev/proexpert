@@ -979,6 +979,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::class),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
                 static fn () => $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader::class),
+                static fn () => $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             ));
         $this->app->singleton(EstimateGenerationLearningEvidenceService::class, static fn ($app) => new EstimateGenerationLearningEvidenceService(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier::class),
