@@ -11,6 +11,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentPr
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof;
 use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
@@ -18,6 +20,168 @@ use PHPUnit\Framework\TestCase;
 
 final class ProjectModelV2ContractTest extends TestCase
 {
+    #[Test]
+    public function engineering_parameter_namespace_requires_a_definition_despite_confirmed_status_and_a_document_link(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        new Fact('fact:parameter', 1, 2, 3, $this->sourceVersion('a'), 'equipment:1',
+            'engineering_parameter_'.str_repeat('a', 40), '102', 'mm', 1.0, 'document', 'confirmed', ['evidence:1']);
+    }
+
+    #[Test]
+    public function named_parameters_keep_exact_scalars_and_separate_unknown_input_from_a_document_threshold(): void
+    {
+        $attributes = $this->engineeringAttributes();
+        $input = $this->engineeringFact($attributes);
+        self::assertSame('102', $input->value);
+        self::assertSame('mm', $input->unit);
+        self::assertSame('candidate', $input->status);
+        self::assertSame('user_input', $input->origin);
+        self::assertSame($attributes['engineering_parameter']['definition_id'], $input->semanticAttributes['engineering_parameter']['definition_id']);
+        $unknown = $this->engineeringFact($attributes, null, null, 'unresolved', 'unresolved');
+        self::assertNull($unknown->value);
+        self::assertSame('unresolved', $unknown->status);
+        $threshold = $this->engineeringAttributes(role: 'minimum_length_requirement');
+        self::assertSame($attributes['engineering_parameter']['parameter_id'], $threshold['engineering_parameter']['parameter_id']);
+        self::assertNotSame($input->type, FactVocabulary::engineeringParameterType($threshold));
+        self::assertNotSame($input->type, FactVocabulary::engineeringParameterType($this->engineeringAttributes('Другой размер')));
+        self::assertSame(62, strlen($input->type));
+        self::assertArrayHasKey('semantic_attributes', json_decode(json_encode($input, JSON_THROW_ON_ERROR), true));
+        self::assertArrayNotHasKey('semanticAttributes', json_decode(json_encode($input, JSON_THROW_ON_ERROR), true));
+    }
+
+    #[Test]
+    public function generic_parameters_reject_malformed_foreign_and_prefix_only_definitions(): void
+    {
+        $attributes = $this->engineeringAttributes();
+        $invalid = [];
+        $invalid[] = [...$attributes, 'trusted' => true];
+        $invalid[] = ['engineering_parameter' => [...$attributes['engineering_parameter'], 'confirmed' => true]];
+        foreach ([['dimension', 'pressure'], ['schema_version', 2], ['parameter_id', str_repeat('b', 64)],
+            ['definition_id', substr($attributes['engineering_parameter']['definition_id'], 0, 40).str_repeat('f', 24)]] as [$key, $value]) {
+            $row = $attributes;
+            $row['engineering_parameter'][$key] = $value;
+            $invalid[] = $row;
+        }
+        $foreign = $attributes;
+        $foreign['engineering_parameter']['binding']['entity_id'] = 'equipment:other';
+        $invalid[] = $foreign;
+        foreach ($invalid as $row) {
+            try {
+                $this->engineeringFact($row);
+                self::fail('Invalid or foreign definition was accepted.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        foreach ([[102.0, 'mm', 'candidate'], ['NaN', 'mm', 'candidate'], ['1e2', 'mm', 'candidate'],
+            ['0', 'mm', 'candidate'], ['-1', 'mm', 'candidate'], ['1.00001', 'mm', 'candidate'],
+            ['1000000000000.0001', 'mm', 'candidate'], ['102', 'm2', 'candidate'], [null, null, 'confirmed']] as [$value, $unit, $status]) {
+            try {
+                $this->engineeringFact($attributes, $value, $unit, 'user_input', $status);
+                self::fail('Invalid scalar was accepted.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        $this->expectException(InvalidArgumentException::class);
+        new Fact('fact:foreign', 99, 2, 3, $this->sourceVersion('a'), 'equipment:1',
+            FactVocabulary::engineeringParameterType($attributes), '102', 'mm', 0, 'user_input', 'candidate', ['evidence:1'],
+            semanticAttributes: $attributes);
+    }
+
+    #[Test]
+    public function generic_native_contract_requires_all_definition_pins_and_rejects_human_origin(): void
+    {
+        $attributes = $this->engineeringAttributes();
+        $definition = $attributes['engineering_parameter'];
+        $evidence = new Evidence('evidence:1', 1, 2, 3, $this->sourceVersion('a'), 'document:1', 'document', 1,
+            producerName: 'native_numeric_parser', fingerprint: str_repeat('b', 64));
+        $proof = ['entity_id' => 'equipment:1', 'source_version' => $this->sourceVersion('a'),
+            'parameter' => FactVocabulary::engineeringParameterType($attributes), 'evidence_fingerprint' => str_repeat('b', 64),
+            'measurement' => 'm:0.102'];
+        $checker = new NativeNumericFactProof;
+        self::assertFalse($checker->matches($this->engineeringFact($attributes, origin: 'document', status: 'confirmed'), $evidence));
+        self::assertFalse($checker->matches($this->engineeringFact($attributes, origin: 'document', proofs: ['evidence:1' => $proof]), $evidence));
+        $proof += ['definition_id' => $definition['definition_id'], 'parameter_id' => $definition['parameter_id'],
+            'definition_source' => $definition['definition_source']];
+        self::assertFalse($checker->matches($this->engineeringFact($attributes, proofs: ['evidence:1' => $proof]), $evidence));
+        self::assertTrue($checker->matches($this->engineeringFact($attributes, origin: 'document', proofs: ['evidence:1' => $proof]), $evidence));
+        foreach (['definition_id', 'parameter_id', 'definition_source'] as $key) {
+            $incomplete = $proof;
+            unset($incomplete[$key]);
+            self::assertFalse($checker->matches($this->engineeringFact($attributes, origin: 'document', proofs: ['evidence:1' => $incomplete]), $evidence));
+        }
+        $changed = $proof;
+        $changed['definition_id'] = substr($definition['definition_id'], 0, 40).str_repeat('f', 24);
+        self::assertFalse($checker->matches($this->engineeringFact($attributes, origin: 'document', proofs: ['evidence:1' => $changed]), $evidence));
+        $foreign = new Evidence('evidence:1', 99, 2, 3, $this->sourceVersion('a'), 'document:1', 'document', 1,
+            producerName: 'native_numeric_parser', fingerprint: str_repeat('b', 64));
+        self::assertFalse($checker->matches($this->engineeringFact($attributes, origin: 'document', proofs: ['evidence:1' => $proof]), $foreign));
+        $malformed = $proof;
+        $malformed['definition_source']['evidence_fingerprint'] = "\xB1";
+        self::assertFalse($checker->matches($this->engineeringFact($attributes, origin: 'document', proofs: ['evidence:1' => $malformed]), $evidence));
+        foreach (['ai_inference', 'user_assumption', 'ai_technology_recommendation'] as $origin) {
+            self::assertFalse($checker->matches($this->engineeringFact($attributes, origin: $origin, proofs: ['evidence:1' => $proof]), $evidence));
+        }
+    }
+
+    #[Test]
+    public function threshold_source_version_is_separate_from_the_target_entity_and_never_inferred_from_the_value(): void
+    {
+        $binding = ['entity_id' => 'equipment:1', 'entity_source_version' => $this->sourceVersion('a'),
+            'work_key' => 'generic.install', 'work_binding_hash' => str_repeat('c', 64)];
+        $source = ['evidence_id' => 'evidence:1', 'source_version' => $this->sourceVersion('b'), 'evidence_fingerprint' => str_repeat('d', 64)];
+        $observed = FactVocabulary::engineeringParameterAttributes(1, 2, 3, $binding, 'Размер B', 'observed_value', $source);
+        $minimum = FactVocabulary::engineeringParameterAttributes(1, 2, 3, $binding, 'Размер B', 'minimum_length_requirement', $source);
+        $input = $this->engineeringFact($observed);
+        $condition = new Fact('fact:condition', 1, 2, 3, $this->sourceVersion('b'), 'quantity:document1',
+            FactVocabulary::engineeringParameterType($minimum), '102', 'mm', 0.0, 'document', 'candidate', ['evidence:1'],
+            semanticAttributes: $minimum);
+        self::assertNotSame($input->sourceVersion, $condition->sourceVersion);
+        self::assertNotSame($input->entityId, $condition->entityId);
+        self::assertSame($observed['engineering_parameter']['parameter_id'], $minimum['engineering_parameter']['parameter_id']);
+        self::assertSame('candidate', $condition->status);
+        $native = new Evidence('evidence:1', 1, 2, 3, $this->sourceVersion('b'), 'document:1', 'document', 28,
+            producerName: 'native_numeric_parser', fingerprint: str_repeat('d', 64));
+        self::assertFalse((new NativeNumericFactProof)->matches($condition, $native));
+        $this->expectException(InvalidArgumentException::class);
+        new Fact('fact:wrong-source', 1, 2, 3, $this->sourceVersion('a'), 'quantity:document1',
+            FactVocabulary::engineeringParameterType($minimum), '102', 'mm', 0.0, 'document', 'candidate', ['evidence:1'],
+            semanticAttributes: $minimum);
+    }
+
+    #[Test]
+    public function legacy_native_measurement_proof_keeps_its_existing_contract(): void
+    {
+        $proof = ['entity_id' => 'equipment:1', 'source_version' => $this->sourceVersion('a'),
+            'parameter' => 'equipment_count', 'evidence_fingerprint' => str_repeat('b', 64), 'measurement' => 'count:3'];
+        $fact = new Fact('fact:count', 1, 2, 3, $this->sourceVersion('a'), 'equipment:1', 'equipment_count', '3', 'count',
+            0, 'document', 'confirmed', ['evidence:1'], nativeNumericProofs: ['evidence:1' => $proof]);
+        $native = new Evidence('evidence:1', 1, 2, 3, $this->sourceVersion('a'), 'document:1', 'document', 1,
+            producerName: 'native_numeric_parser', fingerprint: str_repeat('b', 64));
+        self::assertTrue((new NativeNumericFactProof)->matches($fact, $native));
+        $changed = new Evidence('evidence:1', 1, 2, 3, $this->sourceVersion('a'), 'document:1', 'document', 1,
+            producerName: 'native_numeric_parser', fingerprint: str_repeat('c', 64));
+        self::assertFalse((new NativeNumericFactProof)->matches($fact, $changed));
+    }
+
+    private function engineeringAttributes(string $name = 'Размер B', string $role = 'observed_value'): array
+    {
+        return FactVocabulary::engineeringParameterAttributes(1, 2, 3,
+            ['entity_id' => 'equipment:1', 'entity_source_version' => $this->sourceVersion('a'),
+                'work_key' => 'generic.install', 'work_binding_hash' => str_repeat('c', 64)], $name, $role,
+            ['evidence_id' => 'evidence:1', 'source_version' => $this->sourceVersion('a'), 'evidence_fingerprint' => str_repeat('b', 64)]);
+    }
+
+    private function engineeringFact(array $attributes, mixed $value = '102', ?string $unit = 'mm',
+        string $origin = 'user_input', string $status = 'candidate', array $proofs = []): Fact
+    {
+        return new Fact('fact:parameter', 1, 2, 3, $this->sourceVersion('a'), 'equipment:1',
+            FactVocabulary::engineeringParameterType($attributes), $value, $unit, 0.0, $origin, $status, ['evidence:1'],
+            nativeNumericProofs: $proofs, semanticAttributes: $attributes);
+    }
+
     #[Test]
     public function canonical_entities_cover_estimate_relevant_project_objects(): void
     {

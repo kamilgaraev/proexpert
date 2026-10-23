@@ -21,6 +21,21 @@ final class NativeNumericFactProof
             return false;
         }
         try {
+            if (str_starts_with($fact->type, 'engineering_parameter_')) {
+                FactVocabulary::assertEngineeringParameter($fact);
+                $definition = $fact->semanticAttributes['engineering_parameter'] ?? null;
+                if (! is_array($definition) || $fact->origin !== 'document'
+                    || ! in_array($fact->status, ['candidate', 'confirmed'], true)
+                    || ($proof['definition_id'] ?? null) !== $definition['definition_id']
+                    || ($proof['parameter_id'] ?? null) !== $definition['parameter_id']
+                    || ! is_array($proof['definition_source'] ?? null)
+                    || DerivedQuantityIdentity::canonicalJson($proof['definition_source']) !== DerivedQuantityIdentity::canonicalJson($definition['definition_source'])
+                    || ($definition['role'] === 'minimum_length_requirement'
+                        && [$evidence->id, $evidence->sourceVersion, $evidence->fingerprint]
+                            !== [$definition['definition_source']['evidence_id'], $definition['definition_source']['source_version'], $definition['definition_source']['evidence_fingerprint']])) {
+                    return false;
+                }
+            }
             return ($proof['measurement'] ?? null) === FactVocabulary::measurementSignature((string) $fact->value, $fact->unit);
         } catch (\Throwable) {
             return false;

@@ -685,13 +685,7 @@ SQL, [
                     }
                     $projectionScopeId = $this->projectionScopeId($fact);
                     $entity = $this->entityRow($fact);
-                    $payload = ['source' => $this->legacySource($fact->origin), 'value' => $fact->value];
-                    if ($fact->nativeNumericProofs !== []) {
-                        $payload['native_numeric_proofs'] = $fact->nativeNumericProofs;
-                    }
-                    if ($fact->unit !== null) {
-                        $payload['unit'] = $fact->unit;
-                    }
+                    $payload = $this->factPayload($fact);
                     $this->database->table('estimate_generation_project_model_assertions')->insertOrIgnore([
                         'building_model_id' => $projectionScopeId,
                         'organization_id' => $fact->organizationId,
@@ -1497,6 +1491,7 @@ SQL, [
             }
             $decoded = $this->decode($row->fact_value);
             $payload = $this->decode($row->payload);
+            $semanticAttributes = $this->semanticAttributes($payload);
             $facts[] = new Fact(
                 (string) $row->stable_key,
                 (int) $row->organization_id,
@@ -1505,7 +1500,7 @@ SQL, [
                 (string) $row->source_version,
                 (string) $row->entity_stable_key,
                 (string) $row->assertion_type,
-                $decoded['value'] ?? $decoded,
+                $this->factValue($decoded, $semanticAttributes),
                 is_string($row->fact_unit) ? $row->fact_unit : null,
                 (float) $row->confidence,
                 (string) $row->fact_origin,
@@ -1516,6 +1511,7 @@ SQL, [
                     ? null
                     : ($supersededKeys[(int) $row->supersedes_assertion_id] ?? null),
                 is_array($payload['native_numeric_proofs'] ?? null) ? $payload['native_numeric_proofs'] : [],
+                $semanticAttributes,
             );
         }
 
@@ -1590,6 +1586,8 @@ SQL, [
             $facts = [];
             foreach ($factRows as $factRow) {
                 $value = $this->decode($factRow->fact_value);
+                $payload = $this->decode($factRow->payload);
+                $semanticAttributes = $this->semanticAttributes($payload);
                 $facts[] = new Fact(
                     (string) $factRow->stable_key,
                     (int) $factRow->organization_id,
@@ -1598,13 +1596,15 @@ SQL, [
                     (string) $factRow->source_version,
                     (string) $factRow->entity_stable_key,
                     (string) $factRow->assertion_type,
-                    $value['value'] ?? $value,
+                    $this->factValue($value, $semanticAttributes),
                     is_string($factRow->fact_unit) ? $factRow->fact_unit : null,
                     (float) $factRow->confidence,
                     (string) $factRow->fact_origin,
                     (string) $factRow->fact_status,
                     $evidenceByFact[(int) $factRow->id] ?? [],
                     (int) $factRow->fact_version,
+                    nativeNumericProofs: $semanticAttributes !== [] && is_array($payload['native_numeric_proofs'] ?? null) ? $payload['native_numeric_proofs'] : [],
+                    semanticAttributes: $semanticAttributes,
                 );
             }
             if (count($facts) >= 2) {
@@ -1641,6 +1641,8 @@ SQL, [
             ->orderBy('binding.evidence_id')->pluck('binding.evidence_id')
             ->map(static fn ($id): string => 'evidence:'.$id)->all();
         $value = $this->decode($row->fact_value);
+        $payload = $this->decode($row->payload);
+        $semanticAttributes = $this->semanticAttributes($payload);
 
         return new Fact(
             (string) $row->stable_key,
@@ -1650,7 +1652,7 @@ SQL, [
             (string) $row->source_version,
             (string) $row->entity_stable_key,
             (string) $row->assertion_type,
-            $value['value'] ?? $value,
+            $this->factValue($value, $semanticAttributes),
             is_string($row->fact_unit) ? $row->fact_unit : null,
             (float) $row->confidence,
             (string) $row->fact_origin,
@@ -1658,6 +1660,8 @@ SQL, [
             $evidenceIds,
             (int) $row->fact_version,
             $row->supersedes_assertion_id === null ? null : $this->factStableKey((int) $row->supersedes_assertion_id),
+            nativeNumericProofs: $semanticAttributes !== [] && is_array($payload['native_numeric_proofs'] ?? null) ? $payload['native_numeric_proofs'] : [],
+            semanticAttributes: $semanticAttributes,
         );
     }
 
@@ -1948,7 +1952,7 @@ SQL, [
                 'projection.id as projection_id', 'projection.projection_version',
                 'projection.entity_stable_key', 'fact.id', 'fact.entity_id as entity_database_id', 'fact.stable_key', 'fact.source_version',
                 'fact.fact_version', 'fact.fact_status', 'fact.fact_value', 'fact.assertion_type',
-                'fact.fact_unit', 'fact.confidence', 'fact.fact_origin',
+                'fact.fact_unit', 'fact.confidence', 'fact.fact_origin', 'fact.payload',
             ]);
         $facts = $facts->reject(function ($fact) use ($organizationId, $projectId, $sessionId): bool {
             $value = $this->decode($fact->fact_value);
@@ -2032,14 +2036,7 @@ SQL, [
                 'projection_version' => (int) $fact->projection_version,
                 'status' => (string) $fact->fact_status,
                 'value_hash' => hash('sha256', $this->json($this->decode($fact->fact_value))),
-                'semantic_hash' => hash('sha256', $this->json([
-                    'entity_stable_key' => $fact->entity_stable_key,
-                    'type' => $fact->assertion_type,
-                    'value' => $this->decode($fact->fact_value),
-                    'unit' => $fact->fact_unit,
-                    'confidence' => $fact->confidence,
-                    'origin' => $fact->fact_origin,
-                ])),
+                'semantic_hash' => $this->factSemanticHash($fact),
             ];
             $sourceVersions[] = (string) $fact->source_version;
         }
@@ -3004,6 +3001,50 @@ SQL, [
     private function factDatabaseId(object $scope, string $stableKey): int
     {
         return (int) $this->factRow($scope, $stableKey)->id;
+    }
+
+    private function factPayload(Fact $fact): array
+    {
+        $payload = ['source' => $this->legacySource($fact->origin), 'value' => $fact->value];
+        if ($fact->nativeNumericProofs !== []) {
+            $payload['native_numeric_proofs'] = $fact->nativeNumericProofs;
+        }
+        if ($fact->unit !== null) {
+            $payload['unit'] = $fact->unit;
+        }
+        if ($fact->semanticAttributes !== []) {
+            $payload['semantic_attributes'] = $fact->semanticAttributes;
+        }
+
+        return $payload;
+    }
+
+    private function semanticAttributes(array $payload): array
+    {
+        $attributes = array_key_exists('semantic_attributes', $payload) ? $payload['semantic_attributes'] : [];
+        if (! is_array($attributes)) {
+            throw new InvalidArgumentException('engineering_parameter_definition_invalid');
+        }
+
+        return $attributes;
+    }
+
+    private function factValue(array $decoded, array $semanticAttributes): mixed
+    {
+        return $semanticAttributes !== [] && array_key_exists('value', $decoded) ? $decoded['value'] : ($decoded['value'] ?? $decoded);
+    }
+
+    private function factSemanticHash(object $fact): string
+    {
+        $semantic = ['entity_stable_key' => $fact->entity_stable_key, 'type' => $fact->assertion_type,
+            'value' => $this->decode($fact->fact_value), 'unit' => $fact->fact_unit,
+            'confidence' => $fact->confidence, 'origin' => $fact->fact_origin];
+        $attributes = $this->semanticAttributes($this->decode($fact->payload));
+        if ($attributes !== []) {
+            $semantic['semantic_attributes'] = json_decode(DerivedQuantityIdentity::canonicalJson($attributes), true, 512, JSON_THROW_ON_ERROR);
+        }
+
+        return hash('sha256', $this->json($semantic));
     }
 
     private function assertExactFactReplay(Fact $fact, object $stored, int $entityId, array $payload): void

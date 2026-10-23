@@ -6,10 +6,102 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use Brick\Math\BigDecimal;
+use InvalidArgumentException;
 
 final class FactVocabulary
 {
     public const VERSION = 'project-facts:v1';
+
+    public static function engineeringParameterAttributes(int $organizationId, int $projectId, int $sessionId,
+        array $binding, string $name, string $role, array $definitionSource): array
+    {
+        if (! self::exactKeys($binding, ['entity_id', 'entity_source_version', 'work_key', 'work_binding_hash'])
+            || ! self::exactKeys($definitionSource, ['evidence_id', 'source_version', 'evidence_fingerprint'])
+            || ! is_string($binding['entity_id']) || ! is_string($binding['entity_source_version'])
+            || ! is_string($binding['work_key']) || ! is_string($binding['work_binding_hash'])
+            || ! is_string($definitionSource['evidence_id']) || ! is_string($definitionSource['source_version'])
+            || ! is_string($definitionSource['evidence_fingerprint'])
+            || ! in_array($role, ['observed_value', 'minimum_length_requirement'], true)
+            || trim($name) !== $name || $name === '' || mb_strlen($name) > 160
+            || preg_match('/[\x00-\x1F\x7F]/u', $name) !== 0
+            || preg_match('/\A[a-f0-9]{64}\z/', $binding['work_binding_hash']) !== 1
+            || preg_match('/\A[a-f0-9]{64}\z/', $definitionSource['evidence_fingerprint']) !== 1) {
+            throw new InvalidArgumentException('engineering_parameter_definition_invalid');
+        }
+        ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $binding['entity_source_version']);
+        ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $definitionSource['source_version']);
+        ProjectModelInvariant::id($binding['entity_id'], 'Engineering parameter entity');
+        ProjectModelInvariant::id($binding['work_key'], 'Engineering parameter work');
+        ProjectModelInvariant::id($definitionSource['evidence_id'], 'Engineering parameter evidence');
+        if (! str_starts_with($definitionSource['evidence_id'], 'evidence:')) {
+            throw new InvalidArgumentException('engineering_parameter_definition_invalid');
+        }
+        $identity = ['schema_version' => 1, 'scope' => [$organizationId, $projectId, $sessionId],
+            'name' => $name, 'dimension' => 'length', 'binding' => $binding, 'definition_source' => $definitionSource];
+        $parameterId = hash('sha256', DerivedQuantityIdentity::canonicalJson($identity));
+
+        return ['engineering_parameter' => ['schema_version' => 1, 'parameter_id' => $parameterId,
+            'definition_id' => hash('sha256', DerivedQuantityIdentity::canonicalJson([...$identity, 'role' => $role])),
+            'name' => $name, 'dimension' => 'length', 'role' => $role, 'binding' => $binding, 'definition_source' => $definitionSource]];
+    }
+
+    public static function engineeringParameterType(array $attributes): string
+    {
+        $definition = $attributes['engineering_parameter'] ?? null;
+        $definitionId = is_array($definition) ? ($definition['definition_id'] ?? null) : null;
+        if (! is_string($definitionId) || preg_match('/\A[a-f0-9]{64}\z/', $definitionId) !== 1) {
+            throw new InvalidArgumentException('engineering_parameter_definition_invalid');
+        }
+
+        return 'engineering_parameter_'.substr($definitionId, 0, 40);
+    }
+
+    public static function assertEngineeringParameter(Fact $fact): void
+    {
+        if ($fact->semanticAttributes === [] && ! str_starts_with($fact->type, 'engineering_parameter_')) {
+            return;
+        }
+        $attributes = $fact->semanticAttributes;
+        $definition = $attributes['engineering_parameter'] ?? null;
+        if (! self::exactKeys($attributes, ['engineering_parameter']) || ! is_array($definition)
+            || ! self::exactKeys($definition, ['schema_version', 'parameter_id', 'definition_id', 'name', 'dimension', 'role', 'binding', 'definition_source'])
+            || $definition['schema_version'] !== 1 || $definition['dimension'] !== 'length'
+            || ! is_array($definition['binding']) || ! is_array($definition['definition_source'])
+            || ! is_string($definition['name']) || ! is_string($definition['role'])) {
+            throw new InvalidArgumentException('engineering_parameter_definition_invalid');
+        }
+        $expected = self::engineeringParameterAttributes($fact->organizationId, $fact->projectId, $fact->sessionId,
+            $definition['binding'], $definition['name'], $definition['role'], $definition['definition_source']);
+        if (DerivedQuantityIdentity::canonicalJson($expected) !== DerivedQuantityIdentity::canonicalJson($attributes)
+            || self::engineeringParameterType($expected) !== $fact->type
+            || ! in_array($definition['definition_source']['evidence_id'], $fact->evidenceIds, true)
+            || ($definition['role'] === 'observed_value'
+                && [$fact->entityId, $fact->sourceVersion] !== [$definition['binding']['entity_id'], $definition['binding']['entity_source_version']])
+            || ($definition['role'] === 'minimum_length_requirement' && $fact->sourceVersion !== $definition['definition_source']['source_version'])
+            || ($fact->unit !== null && self::factor('length', $fact->unit) === null)
+            || ($fact->value !== null && (! CanonicalSourceDecimal::isPositive($fact->value) || $fact->unit === null))
+            || ($fact->value === null && ! in_array($fact->status, ['candidate', 'unresolved', 'invalidated'], true))) {
+            throw new InvalidArgumentException('engineering_parameter_fact_invalid');
+        }
+    }
+
+    public static function meetsMinimumLength(mixed $value, ?string $unit, mixed $minimum, ?string $minimumUnit): bool
+    {
+        $factor = self::factor('length', $unit);
+        $minimumFactor = self::factor('length', $minimumUnit);
+        if (! CanonicalSourceDecimal::isPositive($value) || ! CanonicalSourceDecimal::isPositive($minimum)
+            || $factor === null || $minimumFactor === null) {
+            throw new InvalidArgumentException('engineering_length_operand_invalid');
+        }
+
+        return BigDecimal::of($value)->multipliedBy($factor)
+            ->isGreaterThanOrEqualTo(BigDecimal::of($minimum)->multipliedBy($minimumFactor));
+    }
+
+    private static function exactKeys(array $value, array $keys): bool
+    {
+        return count($value) === count($keys) && array_diff(array_keys($value), $keys) === [];
+    }
 
     /** Direct measurements only; a circuit length never supplies tray or grounding lengths. */
     private const ENGINEERING_MEASUREMENTS = [
