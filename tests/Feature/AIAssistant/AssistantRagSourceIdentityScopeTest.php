@@ -353,7 +353,9 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         } catch (\RuntimeException $caught) { self::assertSame($failure, $caught); }
         self::assertSame(['file_document' => 1], $executed);
         self::assertSame([['aggregation_ordinal' => 1, 'mode' => 'stored', 'phase' => 'source_batch_consume',
-            'source_types' => ['file_document'], 'entity_type' => null]], $executionContexts);
+            'source_types' => ['file_document'], 'entity_type' => null,
+            'candidate_identities' => [['entity_type' => 'assistant_document', 'source_type' => 'file_document']],
+            'candidate_identities_complete' => true]], $executionContexts);
         self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceBatchQueryContext::current());
         $summary = $metrics->summary();
         self::assertSame(1, $summary['processing_phases']['rag_acl_batch_compile']['count']);

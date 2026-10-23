@@ -23,7 +23,6 @@ final class ApiQueryMetrics
 
     private const MAX_SOURCE_BATCHES = 16;
 
-    private const MAX_BATCH_IDENTITIES = 32;
 
     private int $count = 0;
 
@@ -154,7 +153,7 @@ final class ApiQueryMetrics
                 || $metrics->count < $checkpoint['sql_count']) { return; }
             $cpu = self::processCpuMilliseconds();
             try {
-                [$pairs, $complete] = self::sourceBatchIdentities($identities);
+                [$pairs, $complete] = RagSourceBatchIdentityMetadata::fromIdentities($identities);
             } catch (\Throwable) {
                 [$pairs, $complete] = [[], false];
             }
@@ -169,32 +168,6 @@ final class ApiQueryMetrics
             $metrics->sourceBatches[$ordinal] = $measurement;
         } catch (\Throwable) {
         }
-    }
-
-    private static function sourceBatchIdentities(array $identities): array
-    {
-        $definitions = AssistantEntityAccessCatalog::entityDefinitions();
-        $pairs = [];
-        $complete = true;
-        $entitiesExamined = 0;
-        $pairsExamined = 0;
-        foreach ($identities as $entityType => $sources) {
-            if (++$entitiesExamined > 128) { $complete = false; break; }
-            if (! is_string($entityType) || preg_match('/^[a-z][a-z0-9_]{0,127}$/D', $entityType) !== 1
-                || ! is_array($sources)) { $complete = false; continue; }
-            $canonicalSource = $definitions[$entityType][0] ?? null;
-            $allowedSources = $entityType === 'assistant_document' ? ['file_document']
-                : (is_string($canonicalSource) ? AssistantEntityAccessCatalog::indexedSourceTypes($entityType, $canonicalSource) : []);
-            foreach ($sources as $sourceType => $_) {
-                if (++$pairsExamined > 128) { $complete = false; break 2; }
-                if (! is_string($sourceType) || preg_match('/^[a-z][a-z0-9_]{0,127}$/D', $sourceType) !== 1
-                    || ! in_array($sourceType, $allowedSources, true)) { $complete = false; continue; }
-                if (count($pairs) >= self::MAX_BATCH_IDENTITIES) { $complete = false; break 2; }
-                $pairs[] = ['entity_type' => $entityType, 'source_type' => $sourceType];
-            }
-        }
-
-        return [$pairs, $complete];
     }
 
     public static function recordAccessRead(string $event, ?object $frame = null, ?object $store = null, ?int $organizationId = null): void
