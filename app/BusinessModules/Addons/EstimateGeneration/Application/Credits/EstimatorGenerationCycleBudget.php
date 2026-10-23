@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Credits;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use Brick\Math\BigDecimal;
 use Brick\Math\BigInteger;
 use DomainException;
 use Illuminate\Validation\ValidationException;
@@ -14,7 +15,7 @@ final class EstimatorGenerationCycleBudget
     public function assertFits(string $kind, array $plan, string $errorKey = 'quote'): ?array
     {
         try {
-            $forecast = self::forecast($kind, $plan);
+            $forecast = self::forecastForValidation($kind, $plan, $errorKey);
             if (isset($plan['generation_cycle_preflight'])
                 && CanonicalPipelineJson::encode($plan['generation_cycle_preflight']) !== CanonicalPipelineJson::encode($forecast)) {
                 throw new DomainException('estimator_generation_cycle_preflight_unavailable');
@@ -22,16 +23,19 @@ final class EstimatorGenerationCycleBudget
 
             return $forecast;
         } catch (DomainException $error) {
-            $key = match ($error->getMessage()) {
-                'estimator_generation_cycle_budget_insufficient' => 'generation_cycle_budget_insufficient',
-                'estimator_generation_cycle_preflight_unavailable' => 'generation_cycle_preflight_unavailable',
-                default => throw $error,
-            };
-            throw ValidationException::withMessages([$errorKey => trans_message('estimate_generation.'.$key)]);
+            if ($error->getMessage() !== 'estimator_generation_cycle_preflight_unavailable') {
+                throw $error;
+            }
+            throw ValidationException::withMessages([$errorKey => trans_message('estimate_generation.generation_cycle_preflight_unavailable')]);
         }
     }
 
     public static function forecast(string $kind, array $plan): ?array
+    {
+        return self::forecastForValidation($kind, $plan);
+    }
+
+    private static function forecastForValidation(string $kind, array $plan, ?string $errorKey = null): ?array
     {
         if ($kind !== 'generation' || isset($plan['retained_pipeline_prefix'])) {
             return null;
@@ -72,6 +76,18 @@ final class EstimatorGenerationCycleBudget
         }
         $available = BigInteger::of($maximum)->minus($documents);
         if ($required->isGreaterThan($available)) {
+            if ($errorKey !== null) {
+                $limit = null;
+                try {
+                    $limit = FrozenWorkItemLimit::fromPlan($plan);
+                } catch (\InvalidArgumentException) {
+                }
+                throw ValidationException::withMessages([$errorKey => trans_message('estimate_generation.generation_cycle_budget_insufficient', [
+                    'required_rub' => self::rubles($required),
+                    'available_rub' => self::rubles($available),
+                    'work_limit' => $limit === null ? '' : trans_message('estimate_generation.generation_cycle_budget_work_limit', ['limit' => $limit]),
+                ])]);
+            }
             throw new DomainException('estimator_generation_cycle_budget_insufficient');
         }
         $roleBudgets = [];
@@ -88,5 +104,12 @@ final class EstimatorGenerationCycleBudget
             'maximum_calls' => $calls, 'role_budgets' => $roleBudgets,
             'corrections_included' => true, 'retries_included' => true,
             'replay_discount_micro_rub' => 0, 'completion_guaranteed' => false];
+    }
+
+    private static function rubles(BigInteger $microRub): string
+    {
+        $decimal = BigDecimal::of((string) $microRub)->dividedByExact('1000000')->strippedOfTrailingZeros();
+
+        return str_replace('.', ',', (string) $decimal);
     }
 }
