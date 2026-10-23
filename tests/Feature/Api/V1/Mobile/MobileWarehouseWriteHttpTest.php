@@ -84,10 +84,15 @@ final class MobileWarehouseWriteHttpTest extends TestCase
             'project_id' => $project->id,
             'quantity' => 10,
             'price' => 10,
+            'vat_mode' => 'none',
         ]);
         $this->assertMobileResponseStatus($receipt, 200);
         $this->assertResponsePathNotNull($receipt, 'data.movement_id');
         $this->assertResponsePathNotNull($receipt, 'data.photo_gallery');
+        $receipt->assertJsonPath('data.receipt_tax.mode', 'none')
+            ->assertJsonPath('data.receipt_tax.net_amount', '100.00')
+            ->assertJsonPath('data.receipt_tax.vat_amount', '0.00')
+            ->assertJsonPath('data.receipt_tax.gross_amount', '100.00');
         $this->assertWarehouseQuantity($warehouse, $material, 60);
         $this->assertDatabaseHas('warehouse_movements', [
             'id' => $receipt->json('data.movement_id'),

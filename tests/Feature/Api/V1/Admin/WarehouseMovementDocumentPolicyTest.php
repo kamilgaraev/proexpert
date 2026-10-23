@@ -136,7 +136,8 @@ final class WarehouseMovementDocumentPolicyTest extends TestCase
         file_put_contents($temporaryPath, Storage::disk('s3')->get(rawurldecode($path)));
         $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
 
-        self::assertSame('Кому: ООО Монтаж', $sheet->getCell('A15')->getValue());
+        self::assertSame('ООО Монтаж', $sheet->getCell('C16')->getValue());
+        self::assertSame('ООО Монтаж', $sheet->getCell('Y13')->getValue());
         @unlink($temporaryPath);
     }
 
@@ -156,6 +157,48 @@ final class WarehouseMovementDocumentPolicyTest extends TestCase
 
             self::assertInstanceOf(Route::class, $route, $routeName);
             self::assertContains($middleware, $route->gatherMiddleware(), $routeName);
+        }
+    }
+
+    public function test_m4_export_groups_lines_by_the_business_day_and_supplier_document(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $context->organization->update(['multi_org_settings' => ['default_timezone' => 'Europe/Moscow']]);
+        $this->allowAdminAccess();
+        [$warehouse, $material] = $this->warehouseMaterial($context->organization->id);
+        $selected = $this->movement($context->organization->id, $warehouse, $material, WarehouseMovement::TYPE_RECEIPT);
+        $identity = ['supplier_name' => 'Учебный поставщик А', 'invoice_number' => 'УЧ-СОПР-А'];
+        $selected->update(['document_number' => 'M4-BUSINESS-DAY', 'movement_date' => '2026-10-31 22:30:00', 'metadata' => $identity]);
+        foreach (['2026-11-01 12:00:00', '2026-10-31 20:59:59', '2026-11-01 21:00:00'] as $date) {
+            $line = $this->movement($context->organization->id, $warehouse, $material, WarehouseMovement::TYPE_RECEIPT);
+            $line->update(['document_number' => $selected->document_number, 'movement_date' => $date, 'metadata' => $identity]);
+        }
+        foreach ([
+            ['supplier_name' => 'Учебный поставщик Б', 'invoice_number' => 'УЧ-СОПР-А'],
+            ['supplier_name' => 'Учебный поставщик А', 'invoice_number' => 'УЧ-СОПР-Б'],
+            ['metadata' => $identity],
+        ] as $metadata) {
+            $line = $this->movement($context->organization->id, $warehouse, $material, WarehouseMovement::TYPE_RECEIPT);
+            $line->update(['document_number' => $selected->document_number, 'movement_date' => '2026-11-01 13:00:00', 'metadata' => $metadata]);
+        }
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/movements/{$selected->id}/export-m4")
+            ->assertOk();
+        $path = ltrim((string) parse_url((string) $response->json('data.url'), PHP_URL_PATH), '/');
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'm4_business_day_').'.xlsx';
+        try {
+            file_put_contents($temporaryPath, Storage::disk('s3')->get(rawurldecode($path)));
+            $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
+            self::assertSame('01.11.2026', $sheet->getCell('J11')->getValue());
+            self::assertSame(1.0, (float) $sheet->getCell('F23')->getValue());
+            self::assertSame(1.0, (float) $sheet->getCell('F24')->getValue());
+            self::assertSame(31, $sheet->getHighestRow());
+            self::assertSame(1.0, (float) $sheet->getCell('F25')->getValue());
+            self::assertSame('Принял', $sheet->getCell('A27')->getValue());
+        } finally {
+            @unlink($temporaryPath);
         }
     }
 

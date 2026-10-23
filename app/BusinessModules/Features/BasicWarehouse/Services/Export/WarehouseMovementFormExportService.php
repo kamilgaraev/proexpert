@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Services\Export;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\Support\OrganizationBusinessTimezone;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use InvalidArgumentException;
 
@@ -38,7 +39,8 @@ final readonly class WarehouseMovementFormExportService
             throw new InvalidArgumentException('warehouse_movement_form_is_not_available');
         }
 
-        $movements = $this->documentResolver->resolve($movement);
+        $timezone = $form === 'm4' ? (new OrganizationBusinessTimezone)->resolve($movement->organization) : null;
+        $movements = $this->documentResolver->resolve($movement, $timezone, $form === 'm4' ? ['supplier_name', 'invoice_number'] : []);
         $movements->loadMissing([
             'organization',
             'warehouse',
