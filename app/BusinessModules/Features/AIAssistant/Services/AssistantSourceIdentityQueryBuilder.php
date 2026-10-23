@@ -31,14 +31,14 @@ final class AssistantSourceIdentityQueryBuilder
         return $planned;
     }
 
-    public function identityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table, bool $expectedProjection = false, ?array $sourceColumns = null, bool $boundedSourceMembership = false): QueryBuilder
+    public function identityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table, bool $expectedProjection = false, ?array $sourceColumns = null, bool $boundedSourceMembership = false, ?array $prefilteredExpectedIdentity = null): QueryBuilder
     {
         $key = $entities->getModel()->getQualifiedKeyName();
         if ($identitySources === null) {
             return $entities->select([])->selectRaw('? AS source_type, ? AS entity_type, CAST('.$key.' AS TEXT) AS entity_id', [$sourceType, $entityType])->toBase();
         }
         if ($expectedProjection) {
-            return $this->expectedIdentityBranch($entities, $sourceType, $entityType, $identitySources, $table);
+            return $this->expectedIdentityBranch($entities, $sourceType, $entityType, $identitySources, $table, $prefilteredExpectedIdentity === [$sourceType, $entityType]);
         }
         $sources = (clone $identitySources)->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType)
             ->selectRaw($table.'.id AS admitted_source_id, '.$table.'.entity_id AS admitted_entity_id');
@@ -79,11 +79,14 @@ final class AssistantSourceIdentityQueryBuilder
                 ->whereRaw($grammar->wrap('eligible_identity_source.admitted_entity_id').' COLLATE "C" = CAST('.$grammar->wrap($key).' AS TEXT)'))->toBase();
     }
 
-    private function expectedIdentityBranch(Builder $entities, string $sourceType, string $entityType, QueryBuilder $identitySources, string $table): QueryBuilder
+    private function expectedIdentityBranch(Builder $entities, string $sourceType, string $entityType, QueryBuilder $identitySources, string $table, bool $prefiltered = false): QueryBuilder
     {
         $key = $entities->getModel()->getQualifiedKeyName();
         $grammar = $entities->getQuery()->getGrammar();
-        $sources = (clone $identitySources)->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType);
+        $sources = clone $identitySources;
+        if (! $prefiltered) {
+            $sources->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType);
+        }
         $columns = array_map(static fn (string $column): string => 'eligible_identity_source.'.$column,
             ['id', 'organization_id', 'project_id', 'generation', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum', 'pending_since', 'created_at', 'updated_at']);
         if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'design_ifc_model_element', 'core_normative_resource', 'estimate_template', 'estimate_library_item', 'normative_rate', 'estimate_catalog_item', 'estimate_item', 'estimate_item_resource'], true)) {
