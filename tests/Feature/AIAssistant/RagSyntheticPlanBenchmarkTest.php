@@ -54,20 +54,25 @@ final class RagSyntheticPlanBenchmarkTest extends TestCase
         self::assertEqualsWithDelta(1.0, (float) $corpus->max_norm, 0.000001);
         [$currentSql, $currentBindings] = $this->currentQuery();
         [$directSql, $directBindings] = $this->directQuery($currentSql, $currentBindings);
+        $initialSettings = $this->settings($connection);
         $strategies = [
             'flat_exact_oracle' => [$directSql, $directBindings, ['enable_indexscan' => 'off', 'enable_bitmapscan' => 'off']],
             'current_materialized' => [$currentSql, $currentBindings, []],
             'direct_aligned_default' => [$directSql, $directBindings, []],
             'direct_aligned_forced_hnsw' => [$directSql, $directBindings, ['enable_seqscan' => 'off', 'hnsw.ef_search' => '40', 'hnsw.iterative_scan' => 'off']],
+            'direct_hnsw_strict_scan_100' => [$directSql, $directBindings, ['enable_seqscan' => 'off', 'hnsw.ef_search' => '40', 'hnsw.iterative_scan' => 'strict_order', 'hnsw.max_scan_tuples' => '100']],
+            'direct_hnsw_strict_scan_2000' => [$directSql, $directBindings, ['enable_seqscan' => 'off', 'hnsw.ef_search' => '40', 'hnsw.iterative_scan' => 'strict_order', 'hnsw.max_scan_tuples' => '2000']],
         ];
         $results = [];
         $oracleIds = [];
         foreach ($strategies as $name => [$sql, $bindings, $settings]) {
             $connection->beginTransaction();
             try {
+                $connection->statement("SET LOCAL statement_timeout = '30s'");
                 foreach ($settings as $setting => $value) {
                     $connection->statement('SET LOCAL '.$setting.' = '.$value);
                 }
+                $effectiveSettings = $this->settings($connection);
                 $connection->select($sql, $bindings);
                 $durations = [];
                 $rows = [];
@@ -92,6 +97,7 @@ final class RagSyntheticPlanBenchmarkTest extends TestCase
                 sort($durations);
                 $results[$name] = [
                     'settings' => $settings,
+                    'effective_settings' => $effectiveSettings,
                     'ids' => $ids,
                     'returned_rows' => count($ids),
                     'unique_ids' => count(array_unique($ids)),
@@ -107,6 +113,7 @@ final class RagSyntheticPlanBenchmarkTest extends TestCase
             } finally {
                 $connection->rollBack();
             }
+            $results[$name]['settings_after_rollback'] = $this->settings($connection);
         }
         $artifact = [
             'scope' => 'synthetic SQL shape; fixed source allowlist; not production actor authorization, latency, semantic quality or hybrid end-to-end',
@@ -118,22 +125,44 @@ final class RagSyntheticPlanBenchmarkTest extends TestCase
             'index_bytes' => (int) $connection->selectOne("SELECT pg_relation_size('c5_embedding_1024_hnsw') AS bytes")->bytes,
             'fixture_distribution' => '64 approved-source rows; others alternate same-project unapproved source, other project, other organization. Four approved vectors nearest; distractors nearer than remaining approved vectors. Dense deterministic unit vectors, synthetic ordering gold only.',
             'samples' => 'one warmup, three client samples, then separate EXPLAIN ANALYZE per strategy; ordered, warm-cache evidence, insufficient for p95 or production speed claims',
+            'iterative_budget_scope' => 'max_scan_tuples is approximate, excludes the initial scan, and is not a hard I/O or latency cap; work_mem and scan_mem_multiplier are not increased',
+            'initial_settings' => $initialSettings,
             'retriever_sha256' => hash_file('sha256', dirname(__DIR__, 3).'/app/BusinessModules/Features/AIAssistant/Services/Rag/RagRetriever.php'),
             'pgvector_version' => $connection->selectOne("SELECT extversion FROM pg_extension WHERE extname = 'vector'")->extversion,
             'postgres_version' => $connection->selectOne('SHOW server_version')->server_version,
             'results' => $results,
         ];
         self::assertNotFalse(file_put_contents($output, json_encode($artifact, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR).PHP_EOL));
-        fwrite(STDOUT, PHP_EOL.'C5 synthetic benchmark artifact: '.$output.PHP_EOL);
+        fwrite(STDOUT, PHP_EOL.'Synthetic SQL/HNSW benchmark artifact: '.$output.PHP_EOL);
         self::assertCount(self::LIMIT, $oracleIds);
         self::assertFalse($results['flat_exact_oracle']['hnsw_index_used']);
         self::assertSame($oracleIds, $results['current_materialized']['ids']);
         self::assertTrue($results['direct_aligned_forced_hnsw']['hnsw_index_used']);
+        self::assertTrue($results['direct_hnsw_strict_scan_100']['hnsw_index_used']);
+        self::assertTrue($results['direct_hnsw_strict_scan_2000']['hnsw_index_used']);
         foreach ($results as $result) {
             self::assertSame($result['returned_rows'], $result['unique_ids']);
             self::assertLessThanOrEqual(self::LIMIT, $result['returned_rows']);
             self::assertSame(0, $result['scope_violations']);
+            self::assertSame($initialSettings, $result['settings_after_rollback']);
+            self::assertSame($initialSettings['work_mem'], $result['effective_settings']['work_mem']);
+            self::assertSame($initialSettings['hnsw.scan_mem_multiplier'], $result['effective_settings']['hnsw.scan_mem_multiplier']);
+            self::assertSame('30s', $result['effective_settings']['statement_timeout']);
+            foreach ($result['settings'] as $setting => $value) {
+                self::assertSame($value, $result['effective_settings'][$setting]);
+            }
         }
+    }
+
+    /** @return array<string, string> */
+    private function settings(Connection $connection): array
+    {
+        $settings = [];
+        foreach (['enable_seqscan', 'enable_indexscan', 'enable_bitmapscan', 'hnsw.ef_search', 'hnsw.iterative_scan', 'hnsw.max_scan_tuples', 'hnsw.scan_mem_multiplier', 'work_mem', 'statement_timeout', 'plan_cache_mode'] as $setting) {
+            $settings[$setting] = (string) $connection->selectOne('SHOW '.$setting)->{$setting};
+        }
+
+        return $settings;
     }
 
     private function seed(Connection $connection): void
