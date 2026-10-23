@@ -273,6 +273,19 @@ final class WorkforceProService
         });
     }
 
+    public function scheduleDays(int $organizationId, int $scheduleId, ?User $actor, int $perPage = 25): LengthAwarePaginator
+    {
+        app(HrAccess::class)->assert($organizationId, $actor, 'workforce.view');
+        if (! DB::table('workforce_work_schedules')->where('organization_id', $organizationId)
+            ->where('id', $scheduleId)->whereNull('deleted_at')->exists()) {
+            throw new DomainException(trans_message('workforce.errors.record_not_found'));
+        }
+
+        return DB::table('workforce_work_schedule_days')
+            ->where('organization_id', $organizationId)->where('work_schedule_id', $scheduleId)
+            ->orderBy('work_date')->orderBy('id')->paginate(min(max($perPage, 1), 100));
+    }
+
     public function storeScheduleDay(int $organizationId, int $scheduleId, array $payload): array
     {
         return DB::transaction(function () use ($organizationId, $scheduleId, $payload): array {

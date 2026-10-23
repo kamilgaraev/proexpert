@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceProService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
+use App\Models\Organization;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Mockery\MockInterface;
@@ -249,6 +252,88 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
             'work_schedule_id' => $response->json('data.id'),
             'work_date' => '2026-05-23', 'day_type' => 'work', 'planned_hours' => 8,
         ]);
+    }
+
+    public function test_unassigned_schedule_days_are_readable_in_date_order_with_pagination(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/work-schedules', [
+            'code' => 'READ-DAYS', 'name' => 'График без назначения',
+            'initial_day' => ['work_date' => '2026-05-25', 'day_type' => 'weekend', 'planned_hours' => 0],
+        ]);
+        $response->assertCreated();
+        $scheduleId = $response->json('data.id');
+        foreach (['2026-05-23', '2026-05-24'] as $date) {
+            $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/workforce/work-schedules/{$scheduleId}/days", [
+                'work_date' => $date, 'day_type' => 'work', 'planned_hours' => 6.5,
+            ])->assertCreated();
+        }
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/work-schedules', [
+            'code' => 'READ-SIBLING', 'name' => 'Другой график',
+            'initial_day' => ['work_date' => '2026-05-27'],
+        ])->assertCreated();
+        $foreignOrganization = Organization::factory()->create();
+        DB::table('workforce_work_schedule_days')->insert([
+            'organization_id' => $foreignOrganization->id, 'work_schedule_id' => $scheduleId,
+            'work_date' => '2026-05-26', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/work-schedules/{$scheduleId}/days?per_page=2")
+            ->assertOk()->assertJsonPath('meta.total', 3)->assertJsonPath('meta.last_page', 2)
+            ->assertJsonCount(2, 'data')->assertJsonPath('data.0.work_date', '2026-05-23')
+            ->assertJsonPath('data.1.work_date', '2026-05-24')->assertJsonPath('data.0.planned_hours', '6.50');
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/work-schedules/{$scheduleId}/days?per_page=2&page=2")
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.work_date', '2026-05-25')
+            ->assertJsonPath('data.0.day_type', 'weekend')->assertJsonPath('data.0.planned_hours', '0.00')
+            ->assertJsonPath('data.0.organization_id', $context->organization->id);
+        $this->assertSame(0, DB::table('workforce_employee_assignments')->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_schedule_days_read_rejects_foreign_deleted_and_missing_parents(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $foreignOrganization = Organization::factory()->create();
+        $foreignId = DB::table('workforce_work_schedules')->insertGetId([
+            'organization_id' => $foreignOrganization->id, 'code' => 'FOREIGN', 'name' => 'Чужой график',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $deletedId = DB::table('workforce_work_schedules')->insertGetId([
+            'organization_id' => $context->organization->id, 'code' => 'DELETED', 'name' => 'Удалённый график',
+            'deleted_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        foreach ([$foreignId, $deletedId, 999999] as $id) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/workforce/work-schedules/{$id}/days")
+                ->assertNotFound()->assertJsonPath('message', trans_message('workforce.errors.record_not_found'));
+        }
+    }
+
+    public function test_schedule_days_read_returns_a_paginated_empty_list_for_an_ordinary_schedule(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/work-schedules', [
+            'code' => 'READ-NO-DAYS', 'name' => 'Обычный график',
+        ]);
+        $response->assertCreated();
+        $id = $response->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/work-schedules/{$id}/days")
+            ->assertOk()->assertJsonCount(0, 'data')->assertJsonPath('meta.total', 0);
+    }
+
+    public function test_schedule_days_service_requires_an_actor_with_organization_access(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $this->expectException(AuthorizationException::class);
+
+        app(WorkforceProService::class)->scheduleDays($context->organization->id, 1, null);
     }
 
     private function employee(AdminApiTestContext $context, string $personnelNumber): WorkforceEmployee

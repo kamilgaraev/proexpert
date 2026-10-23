@@ -136,6 +136,9 @@ Route::prefix('api/v1/admin/workforce')
             ->middleware('authorize:workforce.view');
         Route::post('/work-schedules', [WorkforceProController::class, 'storeWorkSchedule'])
             ->middleware('authorize:workforce.attendance.manage');
+        Route::get('/work-schedules/{scheduleId}/days', [WorkforceProController::class, 'workScheduleDays'])
+            ->whereNumber('scheduleId')
+            ->middleware('authorize:workforce.view');
         Route::post('/work-schedules/{scheduleId}/days', [WorkforceProController::class, 'storeWorkScheduleDay'])
             ->whereNumber('scheduleId')
             ->middleware('authorize:workforce.attendance.manage');
