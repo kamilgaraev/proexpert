@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'validation_error' => 'The site request data is invalid.',
     'errors' => [
         'equipment_end_after_start' => 'The rental must end after it starts.',
         'delivery_end_after_start' => 'The delivery end time must be later than its start time.',

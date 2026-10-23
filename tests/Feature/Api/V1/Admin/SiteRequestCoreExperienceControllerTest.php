@@ -884,6 +884,38 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->assertSame('11:00:00', $request->fresh()->delivery_time_to);
     }
 
+    public function test_interval_errors_include_a_localized_summary_with_english_fallback(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $request = $this->createSiteRequest($context, $project);
+        $request->update(['status' => 'pending', 'delivery_time_from' => '09:00', 'delivery_time_to' => '10:00']);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $previousFallback = config('app.fallback_locale');
+        config()->set('app.fallback_locale', 'en');
+        $translator = app('translator');
+        $previousTranslatorFallback = $translator->getFallback();
+        $translator->setFallback('en');
+        $previousLocale = app()->getLocale();
+        app()->setLocale('en');
+        try {
+            $this->assertSame('en', app()->getLocale());
+            $this->assertSame('en', $translator->getFallback());
+            $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/site-requests/{$request->id}", ['delivery_time_from' => '11:00'])
+                ->assertUnprocessable()
+                ->assertJsonPath('message', 'The site request data is invalid.')
+                ->assertJsonPath('errors.delivery_time_to.0', 'The delivery end time must be later than its start time.');
+            $this->assertSame('09:00:00', $request->fresh()->delivery_time_from);
+            $this->assertSame('10:00:00', $request->fresh()->delivery_time_to);
+        } finally {
+            app()->setLocale($previousLocale);
+            config()->set('app.fallback_locale', $previousFallback);
+            $translator->setFallback($previousTranslatorFallback);
+        }
+    }
+
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest
     {
         return SiteRequest::query()->create([

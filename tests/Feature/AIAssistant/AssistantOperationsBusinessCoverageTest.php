@@ -301,6 +301,34 @@ final class AssistantOperationsBusinessCoverageTest extends TestCase
         }
     }
 
+    public function test_project_event_rag_preserves_exact_and_unknown_end_times_with_tenant_scope(): void
+    {
+        $fixture = $this->fixture();
+        $project = $this->project($fixture->organization);
+        $foreignProject = $this->project($fixture->foreignOrganization);
+        $attributes = [
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id, 'created_by_user_id' => $fixture->owner->id,
+            'event_type' => 'meeting', 'title' => 'Exact event RAG fixture', 'event_date' => '2026-10-27', 'event_time' => '09:15:30',
+            'end_date' => '2026-10-28', 'end_time' => '10:45:15', 'duration_minutes' => null, 'is_all_day' => false,
+        ];
+        $create = static fn (array $changes = []): \App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent =>
+            Model::withoutEvents(static fn () => \App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent::query()->create(array_replace($attributes, $changes)));
+        $exact = $create();
+        $unknown = $create(['end_date' => null, 'end_time' => null]);
+        $foreign = $create(['organization_id' => $fixture->foreignOrganization->id, 'project_id' => $foreignProject->id, 'created_by_user_id' => $fixture->foreignOwner->id]);
+        $collector = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\OperationsScheduleRagSource::class);
+        foreach ([[$exact, '10:45:15'], [$unknown, null]] as [$event, $expectedEnd]) {
+            $chunks = [...$collector->collectEntity($fixture->organization->id, 'project_event', $event->id)];
+            self::assertCount(1, $chunks);
+            self::assertSame($fixture->organization->id, $chunks[0]->organizationId);
+            self::assertSame($project->id, $chunks[0]->projectId);
+            self::assertArrayHasKey('end_time', $chunks[0]->metadata);
+            self::assertSame($expectedEnd, $chunks[0]->metadata['end_time']);
+            self::assertNull($chunks[0]->metadata['duration_minutes']);
+        }
+        self::assertSame([], [...$collector->collectEntity($fixture->organization->id, 'project_event', $foreign->id)]);
+    }
+
     private function fixture(): AssistantRealAuthorizationFixture
     {
         Queue::fake();
