@@ -7,6 +7,7 @@ namespace Tests\Feature\Authorization;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\PermissionResolver;
 use App\Models\Module;
 use App\Models\Organization;
 use App\Models\Project;
@@ -297,11 +298,10 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $fixture->memberAssignment->update(['is_active' => true]);
         $fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.usage.view']]]);
 
-        $sharedDecisionKey = 'permission_v4_r'.Cache::get('authorization_roles_revision', 0).'_'
-            .$fixture->member->id.'_'.$fixture->memberRole->slug.'_'.$permission.'_'
-            .md5(json_encode($context)).'_v'
-            .Cache::get('user_permission_version_'.$fixture->member->id, 0).'_'
-            .Cache::get('permission_global_version', 0);
+        $sharedDecisionKey = (new \ReflectionMethod(PermissionResolver::class, 'getVersionedCacheKey'))->invoke(
+            app(PermissionResolver::class), $fixture->member->id, $fixture->memberRole->slug,
+            $permission, $context, (int) $fixture->organization->id,
+        );
         Cache::forget($sharedDecisionKey);
 
         $this->assertFalse($authorization->forCurrentChecks(true)->canCurrent($fixture->member, $permission, $context));
@@ -313,6 +313,52 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $fixture->subscription->update(['current_period_end_at' => now()->subSecond()]);
         $this->assertFalse($authorization->forCurrentChecks(true)->canCurrent($fixture->member, $permission, $context));
         $this->assertFalse($authorization->canCurrent($fixture->member, $permission, $context));
+    }
+
+    public static function unloadedPermissionContextCases(): array
+    {
+        return ['assignment context' => [false], 'parent context' => [true]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unloadedPermissionContextCases')]
+    public function test_current_permission_loads_assignment_context_before_matching(bool $contextLoaded): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create([]);
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]);
+        $projectContext = AuthorizationContext::query()->create([
+            'type' => 'project', 'resource_id' => $project->id,
+            'parent_context_id' => AuthorizationContext::getOrganizationContext($fixture->organization->id)->id,
+        ]);
+        $assignment = $fixture->ownerAssignment->fresh();
+        $assignment->context_id = $projectContext->id;
+        $assignment->unsetRelation('context');
+        if ($contextLoaded) { $assignment->setRelation('context', $projectContext->fresh()); }
+        $resolver = new class(app(\App\Domain\Authorization\Services\RoleScanner::class),
+            app(\App\Domain\Authorization\Services\ModulePermissionChecker::class), app(\App\Services\Logging\LoggingService::class)) extends PermissionResolver {
+            public int $expectedOrganizationId;
+
+            public function hasSystemPermission(\App\Domain\Authorization\Models\UserRoleAssignment $assignment, string $permission): bool
+            {
+                \PHPUnit\Framework\Assert::assertTrue($assignment->relationLoaded('context'));
+                \PHPUnit\Framework\Assert::assertTrue($assignment->context->relationLoaded('parentContext'));
+                \PHPUnit\Framework\Assert::assertSame($this->expectedOrganizationId, $assignment->context->parentContext->resource_id);
+
+                return true;
+            }
+        };
+        $resolver->expectedOrganizationId = (int) $fixture->organization->id;
+        $scope = $resolver->forCurrentChecks();
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            self::assertTrue($scope->hasPermission($assignment, 'reports.view'));
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertCount($contextLoaded ? 1 : 2, array_filter($queries,
+            static fn (array $query): bool => str_contains($query['query'], 'from "authorization_contexts"')));
     }
 
     public function test_assistant_policy_discards_compiled_authorization_after_each_operation(): void
