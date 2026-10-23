@@ -16,6 +16,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSo
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEnrollmentService;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantProjectAttentionReader;
+use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
@@ -184,7 +186,8 @@ final class AssistantMixedSourceAdmissionTest extends TestCase
             self::assertSame('insufficient_data', $response['message']['metadata']['outcome']);
         } else {
             self::assertSame($this->modelText($sequence), $response['message']['content']);
-            self::assertSame(in_array('sql', $sequence, true), in_array('project', array_column($response['message']['metadata']['source_refs'], 'entity_type'), true));
+            $sqlType = $sql === 'get_project_attention' ? AssistantProjectAttentionReader::TYPE : AssistantProjectProductionScheduleReader::TYPE;
+            self::assertSame(in_array('sql', $sequence, true), in_array($sqlType, array_column($response['message']['metadata']['source_refs'], 'entity_type'), true));
             self::assertSame(in_array('document', $sequence, true), in_array('assistant_document', array_column($response['message']['metadata']['source_refs'], 'entity_type'), true));
         }
         $stored = Message::query()->findOrFail($response['message']['id']);
@@ -427,7 +430,10 @@ final class AssistantMixedSourceAdmissionTest extends TestCase
         } else {
             self::assertSame($final, $result['message']['content']);
             $types = array_column($result['message']['metadata']['source_refs'], 'entity_type');
-            self::assertSame(array_intersect($sequence, OrdinaryAssistantSourceProjection::TOOLS) !== [], in_array('project', $types, true));
+            foreach (['get_project_attention' => AssistantProjectAttentionReader::TYPE,
+                'get_project_production_schedule_summary' => AssistantProjectProductionScheduleReader::TYPE] as $sqlTool => $sqlType) {
+                self::assertSame(in_array($sqlTool, $sequence, true), in_array($sqlType, $types, true));
+            }
             self::assertSame(in_array(OrdinaryAssistantDocumentProjection::TOOL, $sequence, true), in_array('assistant_document', $types, true));
         }
     }

@@ -11,9 +11,13 @@ use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEx
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
+use JsonException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Throwable;
 
 final class AssistantEgressEnrollmentController extends AbstractAssistantApiController
@@ -23,7 +27,7 @@ final class AssistantEgressEnrollmentController extends AbstractAssistantApiCont
     public function capability(Request $request): JsonResponse
     {
         try {
-            if ($request->all() !== []) {
+            if ($this->hasClientInput($request)) {
                 throw new AssistantEgressDenied('unsupported_purpose');
             }
             $response = $this->success($request, $this->enrollments->capability($this->actor($request), $this->organizationId($request)));
@@ -43,15 +47,17 @@ final class AssistantEgressEnrollmentController extends AbstractAssistantApiCont
     {
         try {
             $operator = $this->actor($request);
-            $this->enrollments->assertPlatform($operator);
             $data = $request->validated();
-            $cohort = $this->enrollments->assign($operator, $data['organization_id'], User::query()->findOrFail($data['actor_id']), $data['project_id'], $data['tools'],
+            $this->enrollments->assertIssuer($operator, $data['organization_id']);
+            $cohort = $this->enrollments->assign($operator, $data['organization_id'], User::query()->where('current_organization_id', $data['organization_id'])->findOrFail($data['actor_id']), $data['project_id'], $data['tools'],
                 $data['policy_version'] ?? \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSourceProjection::VERSION);
 
             return $this->success($request, ['cohort_id' => $cohort->id, 'status' => $cohort->status, 'policy_version' => $cohort->policy_version,
                 'expires_at' => $cohort->expires_at->toISOString()], 201);
         } catch (AssistantEgressDenied) {
             return $this->error($request, 403);
+        } catch (Throwable $failure) {
+            return $this->safeFailure($request, $failure);
         }
     }
 
@@ -60,12 +66,14 @@ final class AssistantEgressEnrollmentController extends AbstractAssistantApiCont
         try {
             $owner = $this->actor($request);
             $organizationId = $this->organizationId($request);
-            $this->enrollments->assertOwner($owner, $organizationId);
+            $this->enrollments->assertOrganizationManager((int) $owner->id, $organizationId);
             $data = $request->validated();
 
             return $this->success($request, $this->enrollments->preview($owner, $organizationId, $data['cohort_id'], $data['quote_id'], $data['input'], $data['sources']), 201);
         } catch (AssistantEgressDenied) {
             return $this->error($request, 403);
+        } catch (Throwable $failure) {
+            return $this->safeFailure($request, $failure);
         }
     }
 
@@ -79,6 +87,8 @@ final class AssistantEgressEnrollmentController extends AbstractAssistantApiCont
                 'expires_at' => $record->expires_at->toISOString()]);
         } catch (AssistantEgressDenied) {
             return $this->error($request, 403);
+        } catch (Throwable $failure) {
+            return $this->safeFailure($request, $failure);
         }
     }
 
@@ -90,6 +100,8 @@ final class AssistantEgressEnrollmentController extends AbstractAssistantApiCont
             return $this->success($request);
         } catch (AssistantEgressDenied) {
             return $this->error($request, 403);
+        } catch (Throwable $failure) {
+            return $this->safeFailure($request, $failure);
         }
     }
 
@@ -101,6 +113,41 @@ final class AssistantEgressEnrollmentController extends AbstractAssistantApiCont
             return $this->success($request);
         } catch (AssistantEgressDenied) {
             return $this->error($request, 403);
+        } catch (Throwable $failure) {
+            return $this->safeFailure($request, $failure);
+        }
+    }
+
+    private function safeFailure(Request $request, Throwable $failure): JsonResponse
+    {
+        if ($failure instanceof AccessDeniedHttpException || $failure instanceof AuthorizationException) {
+            return $this->error($request, 403);
+        }
+        if ($failure instanceof AuthenticationException || $failure instanceof ModelNotFoundException
+            || $failure instanceof ValidationException || $failure instanceof NotFoundHttpException) {
+            throw $failure;
+        }
+        report(OrdinaryAssistantExceptionBoundary::sanitize($failure));
+
+        return $this->error($request, 500, 'ai_assistant.request_failed');
+    }
+
+    private function hasClientInput(Request $request): bool
+    {
+        if ((string) $request->server->get('QUERY_STRING', '') !== '' || $request->files->all() !== []) {
+            return true;
+        }
+        $content = $request->getContent();
+        if ($content === '') {
+            return false;
+        }
+        if (! $request->isJson() || strlen($content) > 256) {
+            return true;
+        }
+        try {
+            return json_decode($content, true, 2, JSON_THROW_ON_ERROR) !== [];
+        } catch (JsonException) {
+            return true;
         }
     }
 }

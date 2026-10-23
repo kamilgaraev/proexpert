@@ -22,6 +22,8 @@ final readonly class OrdinaryAssistantEnrollmentService
 {
     public const PLATFORM_PERMISSION = 'admin.ai_assistant.egress.manage';
 
+    public const ORGANIZATION_PERMISSION = 'ai_assistant.egress.manage';
+
     public const DECLARATION = 'owner_declared_synthetic_input_and_sources/1';
 
     public function __construct(private AuthorizationService $authorization, private AssistantDataAccessPolicy $access,
@@ -58,7 +60,7 @@ final readonly class OrdinaryAssistantEnrollmentService
             return ['mode' => 'guarded', 'state' => 'unavailable', 'can_review_sources' => false, 'cohort' => null];
         }
         try {
-            $this->assertOwner($actor, $organizationId);
+            $this->assertOrganizationManager((int) $actor->id, $organizationId);
             $canReview = true;
         } catch (AssistantEgressDenied) {
             $canReview = false;
@@ -72,7 +74,7 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function assign(User $operator, int $organizationId, User $actor, int $projectId, array $tools, string $policyVersion = OrdinaryAssistantSourceProjection::VERSION): AssistantEgressCohort
     {
-        $this->assertPlatform($operator);
+        $this->assertIssuer($operator, $organizationId);
         if (! $actor->is_active || (int) $actor->current_organization_id !== $organizationId
             || ! User::query()->whereKey($actor->getKey())->where('is_active', true)->where('current_organization_id', $organizationId)->exists()
             || ! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)
@@ -106,7 +108,7 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function preview(User $owner, int $organizationId, string $cohortId, string $quoteId, array $input, array $requestedSources): array
     {
-        $this->assertOwner($owner, $organizationId);
+        $this->assertOrganizationManager((int) $owner->id, $organizationId);
         $cohort = $this->cohort($cohortId, $organizationId);
         $actor = User::query()->findOrFail($cohort->actor_id);
         $hash = $this->credits->canonicalAssistantRequest($input);
@@ -150,7 +152,7 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function confirm(User $owner, int $organizationId, string $enrollmentId, string $manifestHash, string $declaration): AssistantEgressEnrollment
     {
-        $this->assertOwner($owner, $organizationId);
+        $this->assertOrganizationManager((int) $owner->id, $organizationId);
         $enrollment = AssistantEgressEnrollment::query()->findOrFail($enrollmentId);
         $cohort = $this->cohort((string) $enrollment->cohort_id, $organizationId);
         if ($declaration !== self::DECLARATION || (int) $enrollment->reviewed_by !== (int) $owner->id || $enrollment->status !== 'pending_review'
@@ -187,16 +189,18 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function revoke(User $owner, int $organizationId, string $id): void
     {
-        $this->assertOwner($owner, $organizationId);
+        $this->assertOrganizationManager((int) $owner->id, $organizationId);
         AssistantEgressEnrollment::query()->whereKey($id)->whereIn('cohort_id',
             AssistantEgressCohort::query()->where('organization_id', $organizationId)->select('id'))->firstOrFail()->update(['status' => 'revoked']);
     }
 
     public function revokeCohort(User $operator, string $id): void
     {
-        $this->assertPlatform($operator);
-        DB::transaction(function () use ($id): void {
-            AssistantEgressCohort::query()->whereKey($id)->lockForUpdate()->firstOrFail()->update(['status' => 'revoked']);
+        $cohort = AssistantEgressCohort::query()->whereKey($id)->firstOrFail();
+        $organizationId = (int) $cohort->organization_id;
+        $this->assertIssuer($operator, $organizationId);
+        DB::transaction(function () use ($id, $organizationId): void {
+            AssistantEgressCohort::query()->whereKey($id)->where('organization_id', $organizationId)->lockForUpdate()->firstOrFail()->update(['status' => 'revoked']);
             AssistantEgressEnrollment::query()->where('cohort_id', $id)->update(['status' => 'revoked', 'updated_at' => now()]);
         });
     }
@@ -213,14 +217,33 @@ final readonly class OrdinaryAssistantEnrollmentService
         return $cohort;
     }
 
-    public function assertOwner(User $owner, int $organizationId): void
+    public function assertOrganizationManager(?int $managerId, int $organizationId): void
     {
-        if (! $owner->is_active || (int) $owner->current_organization_id !== $organizationId
-            || ! User::query()->whereKey($owner->getKey())->where('is_active', true)->where('current_organization_id', $organizationId)->exists()
-            || ! $this->authorization->canCurrent($owner, 'ai_assistant.settings.manage', ['organization_id' => $organizationId])
-            || ! $owner->organizations()->where('organizations.id', $organizationId)
-                ->wherePivot('is_active', true)->wherePivot('is_owner', true)->exists()) {
-            throw new AssistantEgressDenied('access_denied');
+        try {
+            $manager = $this->sources->freshReviewer($managerId, $organizationId);
+            if (! $this->authorization->canCurrent($manager, self::ORGANIZATION_PERMISSION, ['organization_id' => $organizationId])) {
+                throw new AssistantEgressDenied('access_denied');
+            }
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
+        }
+    }
+
+    public function assertIssuer(User $operator, int $organizationId): void
+    {
+        try {
+            try {
+                $this->assertPlatform($operator);
+                return;
+            } catch (AssistantEgressDenied) {
+                $this->assertOrganizationManager((int) $operator->id, $organizationId);
+            }
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
         }
     }
 

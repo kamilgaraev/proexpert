@@ -389,7 +389,7 @@ final class AssistantClarificationContinuationTest extends TestCase
     {
         [$cohort, $parent, $parentManifest] = $this->parent();
         $reviewer = $this->otherOwner();
-        $this->enrollments->assertOwner($reviewer, $cohort->organization_id);
+        $this->enrollments->assertOrganizationManager((int) $reviewer->id, $cohort->organization_id);
         $sourceReview = app(\App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSourceCatalog::class)
             ->captureForReview($this->fixture->owner, (int) $reviewer->id, $cohort->organization_id, $this->project->id, 'get_project_attention', $this->args());
         self::assertSame($parentManifest['sources'][0]['projection_hash'], $sourceReview['proof']['projection_hash']);
