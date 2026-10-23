@@ -177,6 +177,62 @@ final class EstimateComposerTest extends TestCase
         }
     }
 
+    public function test_only_the_exact_attached_document_claim_survives_when_a_twin_has_the_same_source_version(): void
+    {
+        $base = $this->workSourceClaimInput();
+        $source = [...$base->facts[0], 'source_document_id' => 17];
+        $twin = [...$source, 'id' => 'fact:twin', 'source_document_id' => 18];
+        $entry = $base->workTechnologyContext[0];
+        $entry['documents'][] = [...$entry['documents'][0], 'document_id' => 18];
+        $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, [$source, $twin], [], [], [], [], $base->contractVersion,
+            allowedWorkSections: ['equipment'], workTechnologyContext: [$entry]);
+        $valid = $this->workSourceClaimCandidate();
+        $wrong = [...$valid, 'document_fact_ids' => [$twin['id']]];
+        self::assertTrue(EstimateComposerInput::sourceClaimCandidate($valid, $input->facts, $input->claimAnswerFactIds, $input->workTechnologyContext));
+        self::assertFalse(EstimateComposerInput::sourceClaimCandidate($wrong, $input->facts, $input->claimAnswerFactIds, $input->workTechnologyContext));
+        $model = new RecordedEstimateComposerModel(['work_intents' => [], 'claim_candidates' => [$wrong, $valid]]);
+        $runs = new ComposerRoleRunMemoryRepository;
+        $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna');
+        $result = $composer->runDetailed($input);
+        self::assertSame([$valid], $runs->lastResult->payload['claim_candidates']);
+        self::assertSame($result, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+    }
+
+    public function test_factory_document_identity_requires_unambiguous_current_scoped_evidence(): void
+    {
+        foreach (['artifact', 'reference', 'same_document', 'missing', 'stale', 'wrong_type', 'contradiction', 'multiple', 'invalid', 'overflow'] as $mode) {
+            $source = 'sha256:'.str_repeat('d', 64);
+            $entity = new Entity('equipment:child', 10, 20, 30, $source, 'equipment', 'child');
+            $fact = new Fact('fact:document', 10, 20, 30, $source, $entity->id, 'equipment_specification', 'Корпус AISI 316', null,
+                1.0, 'document', 'confirmed', in_array($mode, ['multiple', 'same_document'], true) ? ['evidence:first', 'evidence:second'] : ['evidence:first']);
+            $reference = match ($mode) {
+                'invalid' => 'document:017', 'overflow' => 'document:'.str_repeat('9', 40), default => null,
+            };
+            $proofs = $mode === 'missing' ? [] : [new Evidence('evidence:first', 10, 20, 30,
+                $mode === 'stale' ? 'sha256:'.str_repeat('f', 64) : $source,
+                $mode === 'reference' ? 'artifact:unit' : ($mode === 'contradiction' ? 'document:18' : 'document:17'),
+                $mode === 'wrong_type' ? 'user_input' : 'document', nativeReference: 'xlsx:Sheet1!C2',
+                sourceReference: in_array($mode, ['reference', 'contradiction'], true) ? 'document:17' : $reference)];
+            if (in_array($mode, ['multiple', 'same_document'], true)) {
+                $proofs[] = new Evidence('evidence:second', 10, 20, 30, $source, $mode === 'multiple' ? 'document:18' : 'document:17',
+                    'document', nativeReference: 'xlsx:Sheet1!C2');
+            }
+            $snapshot = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([$entity], [$fact], $proofs, []);
+            $models = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
+            $models->method('snapshotForPlanning')->willReturn(['snapshot' => $snapshot, 'token' => str_repeat('a', 64)]);
+            $models->method('decisionsForSelectedFacts')->willReturn([]);
+            $catalog = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class);
+            $catalog->method('currentWorkContexts')->willReturn($this->workSourceClaimInput()->workTechnologyContext);
+            $input = (new EstimateComposerInputFactory($models, 10000, clarifications: $catalog))->capture(10, 20, 30, [], [], [], null, ['equipment'], 'universal');
+            if (in_array($mode, ['artifact', 'reference', 'same_document'], true)) {
+                self::assertSame(17, $input->facts[0]['source_document_id'], $mode);
+            } else {
+                self::assertArrayNotHasKey('source_document_id', $input->facts[0], $mode);
+            }
+        }
+    }
+
     public function test_factory_selects_new_answered_family_for_eligible_work_context_without_a_legacy_answer_fact(): void
     {
         $entries = [];
@@ -193,14 +249,17 @@ final class EstimateComposerTest extends TestCase
         $factory = new EstimateComposerInputFactory($models, 10000, clarifications: $catalog);
         $capture = static fn () => $factory->capture(10, 20, 30, [], [], [], null, ['equipment'], 'universal');
         self::assertSame(RunEstimateComposer::PROMPT_CONTRACT, $capture()->contractVersion);
+        self::assertArrayNotHasKey('source_document_id', $capture()->facts[0]);
         $entries = $this->workSourceClaimInput()->workTechnologyContext;
         $current = $capture();
         self::assertSame(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, $current->contractVersion);
         self::assertTrue($current->acceptsWorkSourceClaims());
         self::assertSame(['fact:work-answer'], $current->claimAnswerFactIds);
         self::assertSame(['fact:document'], array_column($current->facts, 'id'));
+        self::assertSame(17, $current->facts[0]['source_document_id']);
         $entries[0]['status'] = 'revoked';
         self::assertSame(RunEstimateComposer::PROMPT_CONTRACT, $capture()->contractVersion);
+        self::assertArrayNotHasKey('source_document_id', $capture()->facts[0]);
     }
 
     public function test_future_fresh_work_claim_payload_cannot_acquire_an_answered_schema(): void
@@ -433,7 +492,8 @@ final class EstimateComposerTest extends TestCase
     private function workSourceClaimInput(string $contract = RunEstimateComposer::ANSWER_PROMPT_CONTRACT): EstimateComposerInput
     {
         $base = $this->sourceClaimInput();
-        $source = [...$base->facts[1], 'source_version' => 'sha256:'.str_repeat('d', 64)];
+        $source = [...$base->facts[1], 'source_version' => 'sha256:'.str_repeat('d', 64),
+            ...(in_array($contract, EstimateComposerInput::WORK_SOURCE_CLAIM_CONTRACTS, true) ? ['source_document_id' => 17] : [])];
         $binding = ['work_key' => 'custom.installation', 'name' => 'Монтаж неизвестной установки', 'entity_id' => $source['entity_id'],
             'work_section' => 'equipment', 'unit' => null, 'requirement_key' => 'installation',
             'technology_package_candidate' => null, 'source_fact_ids' => [$source['id']]];

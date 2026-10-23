@@ -71,6 +71,31 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_identical_native_uploads_keep_distinct_document_provenance_in_the_project_model(): void
+    {
+        [, , , $session] = $this->fixture();
+        $this->publishBinarySource($session, duplicate: true);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $documents = EstimateGenerationDocument::query()->where('organization_id', $scope[0])->where('project_id', $scope[1])->where('session_id', $scope[2])->orderBy('id')->get();
+        self::assertCount(2, $documents);
+        self::assertSame($documents[0]->source_version, $documents[1]->source_version);
+        self::assertSame($documents[0]->checksum_sha256, $documents[1]->checksum_sha256);
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $facts = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_specification'));
+        self::assertCount(4, $facts);
+        self::assertCount(4, array_unique(array_column($facts, 'entityId')));
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $counts = [];
+        foreach ($facts as $fact) {
+            self::assertCount(1, $fact->evidenceIds);
+            $reference = $proofs[$fact->evidenceIds[0]]->sourceReference;
+            self::assertContains($reference, ['document:'.$documents[0]->id, 'document:'.$documents[1]->id]);
+            $counts[$reference] = ($counts[$reference] ?? 0) + 1;
+        }
+        self::assertSame(2, $counts['document:'.$documents[0]->id]);
+        self::assertSame(2, $counts['document:'.$documents[1]->id]);
+    }
+
     #[DataProvider('workSourceFinalModes')]
     public function test_active_work_answer_uses_independent_attached_native_literal_through_terminal_learning_and_next_composer(bool $replaceWork): void
     {
@@ -1471,7 +1496,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'usage_available' => true, 'input_tokens' => 1000, 'output_tokens' => 100];
     }
 
-    private function publishBinarySource(EstimateGenerationSession $session, bool $numericSecond = false): void
+    private function publishBinarySource(EstimateGenerationSession $session, bool $numericSecond = false, bool $duplicate = false): void
     {
         $spreadsheet = new Spreadsheet;
         $spreadsheet->getActiveSheet()->setTitle('Оборудование')->fromArray([
@@ -1544,15 +1569,25 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                         'expected_version' => 0, 'idempotency_key' => (string) Str::uuid(),
                     ]));
             }
-            (new Documents\DocumentFileAdmission)->stored($document, EffectiveEstimateGenerationSettings::fromRecord([
-                'snapshot_id' => 1, 'scope' => 'organization', 'organization_id' => (int) $session->organization_id, 'version' => 1,
-                'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
-            ], (int) $session->organization_id));
-            $units = app(Documents\DocumentUnitDetector::class)->detect($document, $version);
-            self::assertCount(1, $units);
-            $unit = app(Documents\DocumentProcessingUnitStore::class)->create((int) $session->organization_id, (int) $session->project_id,
-                (int) $session->id, (int) $document->id, $units[0]);
-            self::assertSame(Documents\DocumentProcessingUnitClaimStatus::Acquired, app(Documents\ProcessDocumentUnit::class)->handle($unit->id, $version)->status);
+            $documents = [$document];
+            if ($duplicate) {
+                $twin = $document->replicate();
+                $twin->filename = 'equipment-twin.xlsx';
+                $twin->storage_path .= '.twin';
+                $twin->save();
+                $documents[] = $twin;
+            }
+            foreach ($documents as $document) {
+                (new Documents\DocumentFileAdmission)->stored($document, EffectiveEstimateGenerationSettings::fromRecord([
+                    'snapshot_id' => 1, 'scope' => 'organization', 'organization_id' => (int) $session->organization_id, 'version' => 1,
+                    'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
+                ], (int) $session->organization_id));
+                $units = app(Documents\DocumentUnitDetector::class)->detect($document, $version);
+                self::assertCount(1, $units);
+                $unit = app(Documents\DocumentProcessingUnitStore::class)->create((int) $session->organization_id, (int) $session->project_id,
+                    (int) $session->id, (int) $document->id, $units[0]);
+                self::assertSame(Documents\DocumentProcessingUnitClaimStatus::Acquired, app(Documents\ProcessDocumentUnit::class)->handle($unit->id, $version)->status);
+            }
         } finally {
             unlink($path);
         }

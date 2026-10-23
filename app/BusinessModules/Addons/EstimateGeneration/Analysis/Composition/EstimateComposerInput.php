@@ -265,7 +265,9 @@ final readonly class EstimateComposerInput
             return self::sourceClaimDocument($document) && $document['entity_id'] === $candidate['entity_id']
                 && $candidate['entity_id'] === $work['context']['binding']['entity_id']
                 && ($document['value'] ?? null) === $candidate['value']['data']
-                && in_array($document['source_version'] ?? null, array_column($pins, 'source_version'), true);
+                && is_int($document['source_document_id'] ?? null)
+                && array_filter($pins, static fn (array $pin): bool => $pin['document_id'] === $document['source_document_id']
+                    && $pin['source_version'] === ($document['source_version'] ?? null)) !== [];
         }
 
         return isset($byId[$candidate['source_answer_fact_id']])
