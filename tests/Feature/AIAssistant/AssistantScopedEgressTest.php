@@ -166,6 +166,7 @@ final class AssistantScopedEgressTest extends TestCase
             ['tool' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => $this->project->id]]];
         $query = $outsideRequiredRead ? 'Кто работал на текущем проекте за октябрь 2026 года?' : 'Сопоставь эти учебные наблюдения и объясни главное.';
         if ($outsideRequiredRead) {
+            config(['ai-assistant.read_tool_discovery_enabled' => true]);
             $required = AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $query,
                 'context' => ['entity_refs' => [['type' => 'project', 'id' => $this->project->id]]]]]);
             self::assertSame('get_project_workforce_summary', $required['name'] ?? null);

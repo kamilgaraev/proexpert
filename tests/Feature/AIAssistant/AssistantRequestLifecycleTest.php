@@ -1577,7 +1577,9 @@ final class AssistantRequestLifecycleTest extends TestCase
             $this->assertEmpty($options['tools'] ?? []);
             $this->assertStringContainsString(trans_message('ai_assistant.image_discussion_instructions'), $messages[0]['content']);
             $this->assertStringContainsString(trans_message('ai_assistant.image_instruction_boundary'), $messages[0]['content']);
-            $this->assertStringNotContainsString(trans_message('ai_assistant.tool_first_instructions'), $messages[0]['content']);
+            $this->assertStringNotContainsString(trans_message('ai_assistant.tool_first_instructions', [
+                'discovery_instructions' => trans_message('ai_assistant.legacy_tool_discovery_instructions'),
+            ]), $messages[0]['content']);
             if ($call === 1) {
                 $this->assertIsArray($messages[array_key_last($messages)]['content']);
             } else {
@@ -2189,9 +2191,9 @@ final class LifecycleProviderAIAssistantService extends AIAssistantService
 
     public ?array $egressFixtureToolDefinitions = null;
 
-    protected function resolveToolDefinitions(array $taskPlan): array
+    protected function resolveToolDefinitions(array $taskPlan, array $selectedReadTools = []): array
     {
-        return $this->egressFixtureToolDefinitions ?? parent::resolveToolDefinitions($taskPlan);
+        return $this->egressFixtureToolDefinitions ?? parent::resolveToolDefinitions($taskPlan, $selectedReadTools);
     }
 
     protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array

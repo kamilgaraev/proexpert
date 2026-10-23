@@ -536,7 +536,8 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         (new ReflectionProperty(AIAssistantService::class, 'activeActor'))->setValue($this->service, $this->actor);
         (new ReflectionProperty(AIAssistantService::class, 'permissionChecker'))->setValue($this->service, new AIPermissionChecker($authorization));
         $registry = new AIToolRegistry;
-        $registry->registerTool(new DiscoverAssistantDomainCapabilitiesTool($catalog, $this->policy, $authorization));
+        $registry->registerTool(new DiscoverAssistantDomainCapabilitiesTool($catalog, $this->policy, $registry,
+            new AIPermissionChecker($authorization), new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy));
         $stockTool = $this->createMock(AIToolInterface::class);
         $stockTool->method('getName')->willReturn('get_material_stock');
         $stockTool->method('getDescription')->willReturn('Current material stock');

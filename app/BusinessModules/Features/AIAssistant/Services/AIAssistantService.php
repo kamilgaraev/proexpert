@@ -727,6 +727,14 @@ class AIAssistantService
                         $reportClarification = is_array($toolResult) && ($toolResult['needs_clarification'] ?? false) === true
                             ? $toolResult : null;
                     }
+                    if (AssistantReadToolCatalog::enabled() && $toolName === 'assistant_domain_discover_capabilities' && is_array($toolResult)
+                        && array_key_exists('selected_read_tools', $toolResult)) {
+                        $selection = AssistantReadToolCatalog::selection($this->toolRegistry->getToolNames(),
+                            $toolResult['selected_read_tools'], $this->toolEligibilityPolicy);
+                        $tools = $this->readPhase(fn (): array => $this->resolveToolDefinitions($taskPlan, $selection), $user, $organizationId);
+                        $options['tools'] = $tools;
+                        $toolResult['activated_read_tools'] = array_values(array_intersect($selection, array_column($tools, 'name')));
+                    }
                     $providerResult = $this->toolResultForProvider($toolName, $toolResult);
                     $toolContent = is_string($providerResult)
                         ? $providerResult
@@ -3935,7 +3943,10 @@ class AIAssistantService
         if ($taskPlan['image_discussion'] ?? false) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_discussion_instructions');
         } elseif (! $conversationNumberRequest) {
-            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions', [
+                'discovery_instructions' => trans_message(AssistantReadToolCatalog::enabled()
+                    ? 'ai_assistant.read_tool_discovery_instructions' : 'ai_assistant.legacy_tool_discovery_instructions'),
+            ]);
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.model_tool_selection');
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
         }
@@ -4276,7 +4287,7 @@ class AIAssistantService
         return $metadata;
     }
 
-    protected function resolveToolDefinitions(array $taskPlan): array
+    protected function resolveToolDefinitions(array $taskPlan, array $selectedReadTools = []): array
     {
         $guarded = $this->scopedContext?->isGuarded() ?? false;
         if (! $guarded && $this->isConversationNumberRequest($taskPlan)) {
@@ -4291,6 +4302,10 @@ class AIAssistantService
                     && $this->toolEligibilityPolicy->isReadOnlyTool($name)));
         } else {
             $toolNames = $this->resolveRelevantToolNames($taskPlan);
+            if (AssistantReadToolCatalog::enabled() && $this->activeActor !== null && ! ($taskPlan['image_discussion'] ?? false)) {
+                $toolNames = array_values(array_unique([...$toolNames, ...AssistantReadToolCatalog::selection(
+                    $this->toolRegistry->getToolNames(), $selectedReadTools, $this->toolEligibilityPolicy)]));
+            }
         }
         if ($this->documentContextBlocked) {
             $toolNames = array_values(array_filter($toolNames,
