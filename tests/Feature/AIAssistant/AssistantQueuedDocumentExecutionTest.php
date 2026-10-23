@@ -68,6 +68,7 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
     private array $chunks = [];
     private OrdinaryAssistantEnrollmentService $enrollments;
     private ?Closure $wireObserver = null;
+    private ?float $jobDurationMs = null;
     private const SENTINEL = 'APPROVED_FRAGMENT_SENTINEL';
     private const ACCOUNT = 'PRIVATE_ACCOUNT_NOT_APPROVED';
     private const ANSWER = 'В утверждённом фрагменте указано 17 тонн арматуры.';
@@ -160,6 +161,7 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
     {
         $pending = 0;
         $checks = [];
+        $delays = [];
         DB::listen(static function (QueryExecuted $query) use (&$pending): void {
             $sql = strtolower($query->sql);
             if (! str_contains($sql, 'assistant_coverage_documents') || ! str_contains($sql, 'expected_units')
@@ -173,12 +175,22 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
                 }
             }
         });
-        $this->wireObserver = static function () use (&$pending, &$checks): void {
+        $this->wireObserver = static function () use (&$pending, &$checks, &$delays): void {
             $checks[] = $pending;
             $pending = 0;
+            $started = hrtime(true);
+            usleep(100_000);
+            $delays[] = (hrtime(true) - $started) / 1_000_000;
         };
         $this->runQueuedDocument();
         self::assertSame([2, 2], $checks);
+        self::assertCount(2, $delays);
+        foreach ($delays as $delay) { self::assertGreaterThan(0, $delay); }
+        self::assertNotNull($this->jobDurationMs);
+        self::assertGreaterThanOrEqual(200, $this->jobDurationMs);
+        fwrite(STDERR, 'QUEUED_DISPATCH_REGRESSION '.json_encode(['source_current_checks' => $checks,
+            'sdk_mock_delays_ms' => array_map(static fn (float $delay): float => round($delay, 2), $delays),
+            'actual_job_ms' => round($this->jobDurationMs, 2)], JSON_THROW_ON_ERROR).PHP_EOL);
     }
 
     #[DataProvider('preWireRevocations')]
@@ -307,6 +319,7 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
         self::assertNull($started['request']->started_at);
         self::assertFalse(app()->bound(AssistantRequestExecutionContext::class));
         $escaped = null;
+        $jobStarted = hrtime(true);
         try {
             (new ExecuteAssistantChatJob($started['request']->id))->handle(app(AssistantRequestLifecycle::class), app(AssistantDataAccessPolicy::class));
         } catch (Throwable $failure) {
@@ -324,6 +337,7 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
                 ? AssistantEgressDenied::class : AuthorizationException::class, $failure);
             $escaped = $failure;
         }
+        $this->jobDurationMs = (hrtime(true) - $jobStarted) / 1_000_000;
         self::assertFalse(app()->bound(AssistantRequestExecutionContext::class));
         if ($beforeWireRevocation !== null) {
             self::assertTrue($beforeWireFired);

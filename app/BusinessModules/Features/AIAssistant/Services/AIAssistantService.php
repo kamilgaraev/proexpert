@@ -2990,9 +2990,6 @@ class AIAssistantService
                 ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
                 : 1;
             $this->executionCheckpoint();
-            if ($egressRequest !== null) {
-                $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel());
-            }
             $providerStarted = true;
             $providerCallStarted = hrtime(true);
             $providerCallFailure = null;
