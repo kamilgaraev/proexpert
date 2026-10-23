@@ -202,8 +202,8 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
             'movements' => collect(),
         ]);
         $emptySheet = $this->sheetFromStorage($emptyPath);
-        $this->assertSame('A1:L15', $emptySheet->getPageSetup()->getPrintArea());
-        $this->assertContains('C15:F15', $emptySheet->getMergeCells());
+        $this->assertSame('A1:L29', $emptySheet->getPageSetup()->getPrintArea());
+        $this->assertContains('C28:F28', $emptySheet->getMergeCells());
 
         $path = app(M8ExportStrategy::class)->export([
             'reservation' => $reservation,
@@ -212,10 +212,11 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         $sheet = $this->sheetFromStorage($path);
 
         $this->assertSame('ЛИМИТНО-ЗАБОРНАЯ КАРТА № б/н', $sheet->getCell('A9')->getValue());
-        $this->assertSame('Материал: Кабель ВВГ', $sheet->getCell('A11')->getValue());
-        $this->assertSame('Лимит: 8.000 м', $sheet->getCell('A12')->getValue());
-        $this->assertSame('31.08.2026', $sheet->getCell('A16')->getValue());
-        $this->assertSame('б/н', $sheet->getCell('C16')->getValue());
+        $this->assertSame('Кабель ВВГ', $sheet->getCell('A21')->getValue());
+        $this->assertSame('м', $sheet->getCell('E23')->getValue());
+        $this->assertSame(8.0, (float) $sheet->getCell('I23')->getValue());
+        $this->assertSame('31.08.2026', $sheet->getCell('A29')->getValue());
+        $this->assertSame('б/н', $sheet->getCell('C29')->getValue());
         $this->assertStringContainsString('kab-vvg_', $path);
         $this->assertStringContainsString('20260830_090000', $path);
         $this->assertStringNotContainsString('Res'.$reservation->id, $path);
@@ -266,6 +267,50 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
             'ЛИМИТНО-ЗАБОРНАЯ КАРТА № QA-M8-01 / 2026',
             $multilineNumberSheet->getCell('A9')->getValue(),
         );
+
+        $reservation->forceFill(['metadata' => ['document_number' => 'М8-МНОГОСТРОЧНЫЙ']])->save();
+        $issues = collect(range(1, 35))->map(function (int $index) use ($movement): WarehouseMovement {
+            $issue = clone $movement;
+            $issue->quantity = 0.1;
+            $issue->document_number = 'Выдача-'.$index.'-'.str_repeat('Длинный-номер-', 5);
+
+            return $issue;
+        });
+        $manySheet = $this->sheetFromStorage(app(M8ExportStrategy::class)->export([
+            'reservation' => $reservation,
+            'movements' => $issues,
+        ]));
+        $book = $manySheet->getParent();
+        $this->assertNotNull($book);
+        $this->assertGreaterThan(2, $book->getSheetCount());
+        $exportedIssues = [];
+        foreach ($book->getAllSheets() as $pageIndex => $part) {
+            $this->assertSame('portrait', $part->getPageSetup()->getOrientation());
+            $this->assertSame(1, $part->getPageSetup()->getFitToWidth());
+            $this->assertSame(1, $part->getPageSetup()->getFitToHeight());
+            $this->assertSame($pageIndex + 1, $part->getPageSetup()->getFirstPageNumber());
+            $this->assertSame('&R&8Страница &P из '.$book->getSheetCount(), $part->getHeaderFooter()->getOddFooter());
+            $this->assertStringContainsString('М8-МНОГОСТРОЧНЫЙ', json_encode($part->toArray(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+            foreach ($part->toArray(null, false, false, true) as $cells) {
+                if (str_starts_with((string) $cells['C'], 'Выдача-')) {
+                    $exportedIssues[] = [$cells['C'], (float) $cells['G'], (float) $cells['H']];
+                }
+            }
+        }
+        $this->assertSame($issues->pluck('document_number')->all(), array_column($exportedIssues, 0));
+        $this->assertEqualsWithDelta(3.5, array_sum(array_column($exportedIssues, 1)), 0.0001);
+        $this->assertEqualsWithDelta(4.5, $exportedIssues[34][2], 0.0001);
+
+        $reservation->forceFill(['reason' => str_repeat('Длинное учебное основание резерва. ', 25)])->save();
+        $material->forceFill(['name' => str_repeat('Длинное наименование ', 10)])->save();
+        $reservation->setRelation('material', $material->load('measurementUnit'));
+        $longEmptySheet = $this->sheetFromStorage(app(M8ExportStrategy::class)->export([
+            'reservation' => $reservation,
+            'movements' => collect(),
+        ]));
+        $this->assertSame('A1:L26', $longEmptySheet->getPageSetup()->getPrintArea());
+        $this->assertSame(3, $longEmptySheet->getParent()->getSheetCount());
+        $this->assertSame('', (string) $longEmptySheet->getParent()->getSheet(1)->getCell('G11')->getValue());
     }
 
     private function warehouseContext(): array
