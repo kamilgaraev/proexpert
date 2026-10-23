@@ -20,10 +20,18 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 
 final readonly class ComposerSourceClaimValidationService
 {
     public const PREDICATE = 'composer-document-correspondence:v1';
+
+    public const PARAMETER_ORIGIN = 'work_parameter_component:v1';
 
     public const MAX_CLAIMS = 8;
 
@@ -36,7 +44,129 @@ final readonly class ComposerSourceClaimValidationService
     public function __construct(private EvidenceRepository $evidence, private DocumentProcessingUnitStore $units,
         private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource $cellSources = null,
         private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization $reviewAuthorization = null,
-        private ?\Closure $clarifications = null) {}
+        private ?\Closure $clarifications = null,
+        private ?DocumentUnitContentReader $contentReader = null,
+        private ?\Closure $models = null) {}
+
+    public function parameterOperands(array $scope, ProjectModelSnapshot $snapshot, array $workContext, array $documents, array &$cache = []): array
+    {
+        if ($this->contentReader === null || $this->models === null || count($scope) !== 3 || count($snapshot->facts) > 10000
+            || count($documents) > 8 || ! is_string($workContext['binding_hash'] ?? null)
+            || ! is_string($workContext['binding']['entity_id'] ?? null)) {
+            return [];
+        }
+        $models = ($this->models)();
+        if (! $models instanceof ProjectModelRepository) {
+            return [];
+        }
+        $key = hash('sha256', CanonicalPipelineJson::encode([$scope, $documents,
+            array_map(static fn (Fact $fact): array => [$fact->id, $fact->version, $fact->sourceVersion, $fact->value], $snapshot->facts),
+            array_map(static fn ($proof): array => [$proof->id, $proof->sourceVersion, $proof->fingerprint], $snapshot->evidence)]));
+        if (! array_key_exists($key, $cache)) {
+            $cache[$key] = $this->nativeParameterOperands($scope, $snapshot, $documents, $models, $cache);
+        }
+        $result = [];
+        foreach ($cache[$key] as $descriptor) {
+            $identity = ['origin' => 'work_parameter_operand:v1', 'scope' => $scope, 'work_context' => $workContext,
+                'source' => $descriptor];
+            $ref = hash('sha256', CanonicalPipelineJson::encode($identity));
+            $result[$ref] = $descriptor;
+        }
+
+        return $result;
+    }
+
+    private function nativeParameterOperands(array $scope, ProjectModelSnapshot $snapshot, array $documents,
+        ProjectModelRepository $models, array &$cache): array
+    {
+        $documentIds = array_column($documents, 'document_id');
+        if ($documentIds === []) {
+            return [];
+        }
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $facts = array_values(array_filter($snapshot->facts, static function (Fact $fact) use ($proofs, $documentIds): bool {
+            if ($fact->origin !== 'document' || $fact->status !== 'confirmed' || $fact->nativeNumericProofs === []
+                || FactVocabulary::factor('length', $fact->unit) === null) {
+                return false;
+            }
+            foreach ($fact->evidenceIds as $id) {
+                $proof = $proofs[$id] ?? null;
+                if ($proof !== null && preg_match('/\Adocument:([1-9][0-9]*)\z/D', $proof->sourceReference ?? '', $match) === 1
+                    && in_array((int) $match[1], $documentIds, true)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }));
+        if (count($facts) > 64) {
+            return [];
+        }
+        $session = EstimateGenerationSession::query()->where('organization_id', $scope[0])->where('project_id', $scope[1])->find($scope[2]);
+        if ($session === null) {
+            return [];
+        }
+        $result = [];
+        foreach ($facts as $fact) {
+            $locators = [];
+            foreach ($fact->evidenceIds as $id) {
+                if (preg_match('/\Aevidence:([1-9][0-9]*)\z/D', $id, $match) !== 1) {
+                    continue;
+                }
+                $node = $this->evidence->node(...[...$scope, (int) $match[1]]);
+                if ($node !== null && $node->invalidatedAt === null && $node->producerName === 'native_numeric_parser'
+                    && in_array($node->locator['document_id'] ?? null, $documentIds, true)
+                    && ($node->locator['unit_type'] ?? null) === 'spreadsheet_sheet') {
+                    $locator = ['document_id' => $node->locator['document_id'], 'index' => $node->locator['unit_index'] ?? null,
+                        'source_version' => $node->sourceVersion];
+                    $locators[CanonicalPipelineJson::encode($locator)] = $locator;
+                }
+            }
+            if (count($locators) !== 1) {
+                continue;
+            }
+            $locator = array_values($locators)[0];
+            $units = EstimateGenerationProcessingUnit::query()->with('document', 'page')->where('organization_id', $scope[0])
+                ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('document_id', $locator['document_id'])
+                ->where('unit_type', 'spreadsheet_sheet')->where('unit_index', $locator['index'])->where('source_version', $locator['source_version'])
+                ->where('status', 'completed')->limit(2)->get();
+            if ($units->count() !== 1) {
+                continue;
+            }
+            $unit = $units->first();
+            $document = $unit->document;
+            $pin = array_values(array_filter($documents, static fn (array $pin): bool => $pin['document_id'] === (int) $unit->document_id));
+            if ($document === null || count($pin) !== 1 || $pin[0]['source_version'] !== $unit->source_version
+                || $pin[0]['checksum_sha256'] !== $document->checksum_sha256) {
+                continue;
+            }
+            $context = new DocumentUnitExecutionContext((int) $unit->id, ...[...$scope, (int) $document->id,
+                DocumentUnitType::SpreadsheetSheet, (int) $unit->unit_index, $unit->source_version, $unit->locator,
+                $document->storage_path, $document->mime_type, $document->filename, '', (int) $unit->attempt_count,
+                (int) $session->state_version, $session->status->value, $unit->page === null ? null : (int) $unit->page->id]);
+            $artifactKey = 'artifact:'.hash('sha256', CanonicalPipelineJson::encode([$scope, $unit->id, $unit->source_version, $unit->locator]));
+            try {
+                if (! array_key_exists($artifactKey, $cache)) {
+                    $cache[$artifactKey] = $this->contentReader->read($context);
+                }
+                if (! is_string($cache[$artifactKey])) {
+                    continue;
+                }
+                $descriptor = (new NativeNumericFactFactory)->readLengthOperand($context, $cache[$artifactKey], $fact->id, $models, $this->evidence);
+            } catch (\RuntimeException|\JsonException|\InvalidArgumentException) {
+                $cache[$artifactKey] = null;
+                continue;
+            }
+            if ($descriptor !== null) {
+                $result[] = $descriptor;
+                if (count($result) > self::MAX_CLAIMS) {
+                    return [];
+                }
+            }
+        }
+
+        return $result;
+    }
 
     public function capture(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $input,
         array $candidate, array $anchors, array &$checkedAnswers = [], ?string $contractVersion = null, ?string $localEstimateKey = null): ?array
@@ -133,6 +263,100 @@ final readonly class ComposerSourceClaimValidationService
 
         return array_filter(EstimateComposerInput::workSourceClaimContexts($entries), static fn (array $entry): bool =>
             CanonicalPipelineJson::encode($entry['context']['policy'] ?? null) === CanonicalPipelineJson::encode($policy));
+    }
+
+    public function parameterComponents(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $input,
+        ?string $localEstimateKey = null, array &$cache = []): array
+    {
+        $policy = ResolveCurrentEstimateClarification::composerPolicy($input);
+        if ($this->clarifications === null || count($scope) !== 3 || $policy === null) {
+            return [];
+        }
+        $catalog = ($this->clarifications)();
+        if (! $catalog instanceof \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog) {
+            return [];
+        }
+        $entries = $duplicates = [];
+        foreach ($catalog->currentWorkContexts(...[...$scope, $snapshot, $decisions, $localEstimateKey]) as $entry) {
+            $answer = $entry['answer'] ?? null;
+            if (($entry['status'] ?? null) !== 'answered' || ! is_array($answer) || ! is_array($answer['parameter'] ?? null)
+                || ($answer['response'] ?? null) !== 'other' || ($answer['trust'] ?? null) !== 'user_assumption'
+                || ($answer['engineering_applicability'] ?? null) !== 'unresolved' || ($answer['numeric_parameters_confirmed'] ?? null) !== false
+                || ! is_string($answer['fact_id'] ?? null) || ! is_array($answer['document_ids'] ?? null)
+                || $answer['document_ids'] === [] || count($answer['document_ids']) > self::MAX_CLAIMS
+                || CanonicalPipelineJson::encode($entry['context']['policy'] ?? null) !== CanonicalPipelineJson::encode($policy)) {
+                continue;
+            }
+            if (isset($entries[$answer['fact_id']])) {
+                $duplicates[$answer['fact_id']] = true;
+            }
+            $entries[$answer['fact_id']] = $entry;
+        }
+        $entries = array_diff_key($entries, $duplicates);
+        if (count($entries) > self::MAX_CLAIMS) {
+            return [];
+        }
+        $facts = array_column($snapshot->facts, null, 'id');
+        $result = [];
+        foreach ($entries as $answerId => $entry) {
+            $answer = $facts[$answerId] ?? null;
+            $parameter = $answer?->value['parameter'] ?? null;
+            if (! is_array($parameter) || ! is_array($parameter['association'] ?? null) || ! is_array($parameter['binding'] ?? null)) {
+                continue;
+            }
+            try {
+                $typed = ResolveCurrentEstimateClarification::workParameterInput($parameter['input'] ?? []);
+            } catch (\InvalidArgumentException) {
+                continue;
+            }
+            if ($typed === null) {
+                continue;
+            }
+            $pins = array_values(array_filter($entry['documents'], static fn (array $pin): bool => in_array($pin['document_id'], $entry['answer']['document_ids'], true)));
+            $fresh = $this->parameterOperands($scope, $snapshot, $entry['context'], $pins, $cache)[$typed['source_operand_ref']] ?? null;
+            $entity = array_column($snapshot->entities, null, 'id')[$entry['context']['binding']['entity_id']] ?? null;
+            if ($fresh === null || $entity === null || CanonicalPipelineJson::encode($fresh) !== CanonicalPipelineJson::encode($parameter['association'])
+                || CanonicalPipelineJson::encode($parameter['binding']) !== CanonicalPipelineJson::encode([
+                    'entity_id' => $entity->id, 'entity_source_version' => $entity->sourceVersion,
+                    'work_key' => $entry['context']['binding']['work_key'], 'work_binding_hash' => $entry['context']['binding_hash']])) {
+                continue;
+            }
+            $definition = ['evidence_id' => $fresh['evidence_id'], 'source_version' => $fresh['document_source_version'],
+                'evidence_fingerprint' => $fresh['evidence_fingerprint']];
+            $operands = [];
+            foreach (['observed_value', 'minimum_length_requirement'] as $role) {
+                $fact = $facts[$parameter[$role === 'observed_value' ? 'observed_fact_id' : 'requirement_fact_id'] ?? ''] ?? null;
+                $attributes = FactVocabulary::engineeringParameterAttributes(...[...$scope, $parameter['binding'], $typed['name'], $role, $definition]);
+                if (! $fact instanceof Fact || $fact->status !== 'unresolved' || $fact->origin !== 'user_assumption' || $fact->nativeNumericProofs !== []
+                    || CanonicalPipelineJson::encode($fact->semanticAttributes) !== CanonicalPipelineJson::encode($attributes)
+                    || $fact->entityId !== ($role === 'observed_value' ? $parameter['binding']['entity_id'] : $fresh['raw_entity_id'])
+                    || $fact->value !== ($role === 'observed_value' ? $typed['value'] : $fresh['value'])
+                    || $fact->unit !== ($role === 'observed_value' ? $typed['unit'] : $fresh['unit'])
+                    || array_diff($answer->evidenceIds, $fact->evidenceIds) !== []
+                    || array_diff($fact->evidenceIds, [...$answer->evidenceIds, $fresh['evidence_id']]) !== []
+                    || ! in_array($fresh['evidence_id'], $fact->evidenceIds, true)) {
+                    break;
+                }
+                $operands[$role] = ['fact_id' => $fact->id, 'version' => $fact->version,
+                    'fingerprint' => hash('sha256', CanonicalPipelineJson::encode(get_object_vars($fact)))];
+            }
+            if (count($operands) !== 2) {
+                continue;
+            }
+            $identity = ['origin' => self::PARAMETER_ORIGIN, 'scope' => $scope, 'work_context' => $entry['context'],
+                'answer' => ['fact_id' => $answer->id, 'version' => $answer->version, 'decision_id' => $entry['answer']['decision_id'],
+                    'value_hash' => hash('sha256', CanonicalPipelineJson::encode($answer->value))],
+                'parameter' => $typed, 'source' => $fresh, 'operands' => $operands, 'document_pins' => $pins];
+            $result[$answerId] = ['source_claim_key' => hash('sha256', CanonicalPipelineJson::encode($identity)), 'identity' => $identity,
+                'answer_state_version' => $answer->value['composer_context']['state_version'],
+                'component' => ['condition' => 'minimum_length', 'value' => $typed['value'], 'unit' => $typed['unit'],
+                    'minimum' => $fresh['value'], 'minimum_unit' => $fresh['unit'],
+                    'meets_minimum' => FactVocabulary::meetsMinimumLength($typed['value'], $typed['unit'], $fresh['value'], $fresh['unit']),
+                    'interpretation_status' => 'user_assumption', 'source_correspondence' => 'passed',
+                    'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false, 'numeric_inputs_verified' => false]];
+        }
+
+        return $result;
     }
 
     public function captureCellReview(array $scope, ProjectModelSnapshot $snapshot, array $decisions, Fact $source): ?array

@@ -433,9 +433,6 @@ final class EstimateGenerationLearningRecorder
             return 0;
         }
         $receipts = $this->sourceClaimCandidatesForOperation($session, $operationId);
-        if ($receipts === []) {
-            return 0;
-        }
         $scope = [$organizationId, $projectId, $sessionId];
         $capture = $this->sourceClaimPlanningSnapshot($scope);
         if ($capture === null) {
@@ -446,6 +443,9 @@ final class EstimateGenerationLearningRecorder
             return 0;
         }
         $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $cache = [];
+        $parameters = $this->sourceClaims->parameterComponents($scope, $snapshot, $decisions, $session->input_payload ?? [],
+            $session->input_payload['rebuild_section_key'] ?? null, $cache);
         $anchors = GeometryInventory::currentDocumentVersions($snapshot);
         $checked = $validated = [];
         foreach ($receipts as $receipt) {
@@ -460,7 +460,7 @@ final class EstimateGenerationLearningRecorder
         if ($verified === null || ! hash_equals($capture['token'], $verified['token'])) {
             return 0;
         }
-        $created = 0;
+        $created = $this->recordParameterComponents($scope, $operationId, $parameters);
         foreach ($validated as $receipt) {
             $candidate = $receipt['candidate'];
             $validation = $receipt['validation'];
@@ -484,6 +484,48 @@ final class EstimateGenerationLearningRecorder
             $stored = is_string($stored) ? json_decode($stored, true, 64, JSON_THROW_ON_ERROR) : null;
             if (! is_array($stored) || CanonicalPipelineJson::encode($stored['source_claim_validation']['identity'] ?? [])
                 !== CanonicalPipelineJson::encode($validation['identity'])) {
+                throw new \DomainException('composer_source_claim_identity_collision');
+            }
+        }
+
+        return $created;
+    }
+
+    private function recordParameterComponents(array $scope, string $operationId, array $parameters): int
+    {
+        if ($parameters === []) {
+            return 0;
+        }
+        $operation = DB::table('estimate_generation_credit_operations')->where('organization_id', $scope[0])
+            ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('operation_id', $operationId)
+            ->where('kind', 'generation')->where('status', 'settled')->whereNotNull('receipt')->first();
+        if ($operation === null) {
+            return 0;
+        }
+        $created = 0;
+        foreach ($parameters as $answerId => $validation) {
+            if ($validation['answer_state_version'] > (int) $operation->approved_state_version) {
+                continue;
+            }
+            $context = ['schema_version' => 1, 'origin' => ComposerSourceClaimValidationService::PARAMETER_ORIGIN,
+                'source_claim_validation' => $validation, 'training_allowed' => false];
+            $created += DB::affectingStatement(<<<'SQL'
+                INSERT INTO estimate_generation_learning_examples (
+                    organization_id, project_id, generation_session_id, source_type, source_entity_type, source_entity_id,
+                    source_claim_key, work_name, norm_code, decision_status, is_positive, accepted_at,
+                    context_payload, source_refs, quality_flags, created_at, updated_at
+                ) VALUES (?, ?, ?, 'composer_source_claim', 'estimate_session', ?, ?, ?, NULL, 'proposed', false, NULL,
+                    ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)
+                ON CONFLICT (organization_id, project_id, generation_session_id, source_claim_key) DO NOTHING
+                SQL, [...$scope, $scope[2], $validation['source_claim_key'], $validation['identity']['parameter']['name'],
+                CanonicalPipelineJson::encode($context),
+                CanonicalPipelineJson::encode(['credit_operation_id' => $operationId, 'source_answer_fact_id' => $answerId,
+                    'document_fact_ids' => [$validation['identity']['source']['raw_fact_id']]]),
+                json_encode(['source_correspondence_only', 'user_interpretation', 'conditional_comparison', 'do_not_index'], JSON_THROW_ON_ERROR), now(), now()]);
+            $stored = DB::table('estimate_generation_learning_examples')->where('organization_id', $scope[0])->where('project_id', $scope[1])
+                ->where('generation_session_id', $scope[2])->where('source_claim_key', $validation['source_claim_key'])->value('context_payload');
+            $stored = is_string($stored) ? json_decode($stored, true, 64, JSON_THROW_ON_ERROR) : null;
+            if (! is_array($stored) || CanonicalPipelineJson::encode($stored) !== CanonicalPipelineJson::encode($context)) {
                 throw new \DomainException('composer_source_claim_identity_collision');
             }
         }

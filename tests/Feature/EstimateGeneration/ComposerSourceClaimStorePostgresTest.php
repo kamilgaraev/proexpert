@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDra
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationQuestionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnswerEstimateClarificationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
@@ -76,6 +77,333 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_parameter_learning_storage_shape_and_rollback_preserve_literal_and_component_history(): void
+    {
+        $literal = $this->row();
+        $literalId = DB::table('estimate_generation_learning_examples')->insertGetId($literal);
+        $component = [...$literal, 'source_entity_type' => 'estimate_session', 'source_entity_id' => $literal['generation_session_id'],
+            'source_claim_key' => str_repeat('b', 64), 'context_payload' => json_encode([
+                'origin' => ComposerSourceClaimValidationService::PARAMETER_ORIGIN, 'training_allowed' => false], JSON_THROW_ON_ERROR)];
+        $migration = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_24_000100_allow_work_parameter_component_learning.php');
+        try {
+            DB::transaction(function () use ($component, $migration): void {
+                $id = DB::table('estimate_generation_learning_examples')->insertGetId($component);
+                foreach ([
+                    ['context_payload' => json_encode([], JSON_THROW_ON_ERROR)],
+                    ['context_payload' => json_encode(['origin' => null], JSON_THROW_ON_ERROR)],
+                    ['context_payload' => json_encode(['origin' => 'other'], JSON_THROW_ON_ERROR)],
+                    ['source_entity_type' => null], ['source_entity_id' => null],
+                    ['is_positive' => true], ['accepted_at' => now()], ['norm_code' => 'fake'],
+                    ['decision_status' => 'confirmed_by_user'], ['source_claim_key' => null],
+                ] as $change) {
+                    try {
+                        DB::transaction(fn () => DB::table('estimate_generation_learning_examples')->insert([...$component, ...$change]));
+                        self::fail('A component escaped the closed nonpositive storage shape.');
+                    } catch (QueryException $exception) {
+                        self::assertSame('23514', $exception->errorInfo[0]);
+                    }
+                }
+                try {
+                    $migration->down();
+                    self::fail('Rollback must preserve component history.');
+                } catch (\RuntimeException $exception) {
+                    self::assertSame('work_parameter_component_learning_requires_preserved_history', $exception->getMessage());
+                }
+                self::assertTrue(DB::table('estimate_generation_learning_examples')->where('id', $id)->exists());
+                DB::table('estimate_generation_sessions')->where('id', $component['generation_session_id'])->delete();
+                $retained = DB::table('estimate_generation_learning_examples')->where('id', $id)->sole();
+                self::assertNull($retained->generation_session_id);
+                self::assertSame($component['source_entity_id'], $retained->source_entity_id);
+                self::assertEquals(json_decode($component['context_payload'], true, flags: JSON_THROW_ON_ERROR),
+                    json_decode($retained->context_payload, true, flags: JSON_THROW_ON_ERROR));
+                throw new \RuntimeException('rollback_component_test_fixture');
+            });
+        } catch (\RuntimeException $exception) {
+            self::assertSame('rollback_component_test_fixture', $exception->getMessage());
+        }
+        $migration->down();
+        try {
+            try {
+                DB::transaction(fn () => DB::table('estimate_generation_learning_examples')->insert($component));
+                self::fail('The restored historical constraint accepted a component.');
+            } catch (QueryException $exception) {
+                self::assertSame('23514', $exception->errorInfo[0]);
+            }
+            self::assertTrue(DB::table('estimate_generation_learning_examples')->where('id', $literalId)->exists());
+        } finally {
+            $migration->up();
+        }
+    }
+
+    public static function parameterWorkSections(): array
+    {
+        return ['equipment' => ['equipment'], 'heating' => ['heating']];
+    }
+
+    #[DataProvider('parameterWorkSections')]
+    public function test_typed_work_parameter_uses_actual_native_source_and_terminal_learning_in_the_next_composer(string $workSection): void
+    {
+        Queue::fake();
+        config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
+        $rights = AssistantRealAuthorizationFixture::create(['working-entry']);
+        $rights->memberRole->update(['module_permissions' => ['ai-estimates' => ['estimate_generation.create', 'estimate_generation.generate',
+            'estimate_generation.view', 'estimate_generation.review', 'estimate_generation.upload_documents']], 'system_permissions' => ['admin.access']]);
+        $rights->member->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
+        [$actor, $session, $initialAnswer, $sources] = $this->answeredSourceFixture(naturalInitial: true, targetMode: 'selected',
+            selectedSections: array_values(array_unique(['equipment', $workSection])), realActor: $rights->member, lengthOperand: true);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $organization = Organization::query()->findOrFail($scope[0]);
+        $project = Project::query()->findOrFail($scope[1]);
+        $models = app(ProjectModelRepository::class);
+        $raw = array_values(array_filter($models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts,
+            static fn (Fact $fact): bool => $fact->type === 'quantity' && $fact->unit === 'mm'));
+        self::assertCount(1, $raw);
+        self::assertNotEmpty($raw[0]->nativeNumericProofs);
+        $original = get_object_vars($raw[0]);
+        $inputs = [];
+        $answerId = null;
+        $parameter = $answerInput = [];
+        $baseUrl = '/api/v1/admin/projects/'.$scope[1].'/estimate-generation/sessions/'.$scope[2];
+        $headers = $this->sourceHeaders($actor);
+        foreach ([0, 1, 2, 3] as $phase) {
+            [$session, $operationId] = $this->paidReceipt(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, [], true,
+                [$organization, $project, $actor, $session->fresh()], false,
+                function (EstimateGenerationSession $current, string $operationId) use ($actor, $scope, $sources, $initialAnswer, $phase, $workSection, &$inputs): int {
+                    $work = ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.installation',
+                        'name' => 'Монтаж неизвестной установки', 'work_section' => $workSection, 'unit' => 'count',
+                        'derived_quantity_id' => null, 'source_fact_ids' => [$initialAnswer->id, $sources[0]->id],
+                        'entity_id' => $sources[0]->entityId, 'technology_package_candidate' => null,
+                        'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+                        ...($phase === 0 ? ['technology_clarification' => ['question' => 'Какой способ монтажа предусмотрен для этой установки?',
+                            'reason' => 'В текущем источнике не описан способ монтажа.']] : [])];
+                    $history = [];
+                    if ($phase >= 2) {
+                        $wire = $this->parameterSdkWire($work, $history);
+                    } else {
+                    $wire = $this->createMock(RerankWireClient::class);
+                    $wire->method('provider')->willReturn('timeweb');
+                    $wire->expects(self::once())->method('call')->willReturnCallback(function (string $model, array $messages, array $options)
+                        use ($scope, $operationId, $work, &$inputs): array {
+                        $payload = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project'];
+                        $inputs[] = $payload;
+                        self::assertSame([], array_values(array_filter($payload['facts'], static fn (array $fact): bool => str_starts_with($fact['type'], 'engineering_parameter_'))));
+                        return $this->composerWireResponse($scope, $operationId, $options,
+                            ['work_intents' => [$work], 'claim_candidates' => []], $model);
+                    });
+                    }
+                    $composer = new RunEstimateComposer(app(AiRoleRunRepository::class),
+                        new TimewebEstimateComposerModel($wire, app(EloquentAiUsageStore::class), app(AiPriceSnapshotResolver::class),
+                            'openai/gpt-6-luna', 524288, 8192, 60), 'openai/gpt-6-luna', allowance: app(EstimateComposerAllowance::class));
+                    [$claim, $result] = $this->naturalQuestionStages($actor, $current, $operationId, $composer, true);
+                    if ($phase >= 2) {
+                        self::assertCount(1, $history);
+                        $payload = json_decode((string) $history[0]['request']->getBody(), true, flags: JSON_THROW_ON_ERROR);
+                        self::assertSame(['type' => 'json_object'], $payload['response_format']);
+                        $inputs[] = json_decode($payload['messages'][1]['content'], true, flags: JSON_THROW_ON_ERROR)['project'];
+                    }
+                    DB::transaction(fn () => app(Pipeline\PublishValidatedDraft::class)->beforeComplete($claim, $result, new \DateTimeImmutable));
+                    return (int) DB::table('estimate_generation_ai_role_runs')->where('organization_id', $scope[0])->where('session_id', $scope[2])
+                        ->where('role', 'estimate_composer')->whereIn('physical_attempt_id', DB::table('estimate_generation_vision_physical_attempts')
+                            ->where('credit_operation_id', $operationId)->select('attempt_id'))->sole()->id;
+                });
+            if ($phase === 0) {
+                $this->useRealQuestionAuthorization();
+                $card = array_values(array_filter($this->getJson($baseUrl.'/questions', $headers)->assertOk()->json('data.items'),
+                    static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                self::assertCount(1, $card['parameter_options'] ?? []);
+                $option = $card['parameter_options'][0];
+                self::assertSame('102', $option['value']);
+                $parameter = ['name' => 'Свободный зазор B', 'value' => '0.102', 'unit' => 'm', 'basis' => 'measurement',
+                    'source_operand_ref' => $option['source_operand_ref'], 'condition' => 'minimum_length'];
+                $answerInput = ['response' => 'other', 'other' => 'Трактовать выбранное число как проектный минимум для этой работы.',
+                    'document_ids' => [$option['source']['document_id']], 'idempotency_key' => 'typed-native-answer-'.$session->id,
+                    'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint'], 'parameter' => $parameter];
+                $answerUrl = $baseUrl.'/questions/'.$card['code'].'/answer';
+                $this->postJson($answerUrl, [...$answerInput, 'parameter' => [...$parameter, 'source_operand_ref' => str_repeat('f', 64)]], $headers)->assertStatus(409);
+                $this->postJson($answerUrl, [...$answerInput, 'document_ids' => []], $headers)->assertStatus(422);
+                $this->postJson($answerUrl, [...$answerInput, 'document_ids' => [999999]], $headers)->assertStatus(409);
+                $this->postJson($answerUrl, [...$answerInput, 'parameter' => [...$parameter, 'value' => 102.5]], $headers)->assertStatus(422);
+                $this->postJson($answerUrl, [...$answerInput, 'target_entity_id' => $sources[1]->entityId], $headers)->assertStatus(422);
+                $this->postJson($answerUrl, $answerInput, $headers)->assertOk();
+                $this->postJson($answerUrl, $answerInput, $headers)->assertOk();
+                $this->postJson($answerUrl, [...$answerInput, 'parameter' => [...$parameter, 'value' => '101']], $headers)->assertStatus(422);
+                $receipt = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetClarificationAnswerReceipt::class)
+                    ->handle($actor, $scope[1], $scope[2], $card['code'], array_intersect_key($answerInput,
+                        array_flip(['idempotency_key', 'expected_source_version', 'answer_fingerprint', 'document_ids'])));
+                self::assertSame('saved', $receipt['status']);
+                self::assertSame(CanonicalPipelineJson::encode($parameter), CanonicalPipelineJson::encode($receipt['parameter']));
+                self::assertSame('0', $receipt['cost_units']);
+                $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                $generic = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => str_starts_with($fact->type, 'engineering_parameter_')));
+                self::assertCount(2, $generic);
+                foreach ($generic as $fact) {
+                    self::assertSame('unresolved', $fact->status);
+                    self::assertSame('user_assumption', $fact->origin);
+                    self::assertSame([], $fact->nativeNumericProofs);
+                }
+                $answer = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_answer'
+                    && is_array($fact->value) && isset($fact->value['parameter'])))[0];
+                $answerId = $answer->id;
+                self::assertSame('confirmed', $answer->status);
+                self::assertSame($raw[0]->id, $answer->value['parameter']['association']['raw_fact_id']);
+                self::assertCount(0, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->get());
+                $approved = (int) DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('approved_state_version');
+                self::assertGreaterThan($approved, $answer->value['composer_context']['state_version']);
+                self::assertSame(0, DB::transaction(fn () => app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId])));
+                self::assertSame($original, get_object_vars($models->factsByIds(...[...$scope, [$raw[0]->id]])[0]));
+            }
+            if ($phase === 2) {
+                $this->useRealQuestionAuthorization();
+                $counts = fn (): array => [DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count(),
+                    DB::table('estimate_generation_ai_role_runs')->where('session_id', $scope[2])->count(),
+                    DB::table('estimate_generation_credit_attempts')->where('session_id', $scope[2])->count(),
+                    EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count()];
+                $beforeRead = $counts();
+                $response = $this->getJson($baseUrl.'/questions', $headers)->assertOk();
+                self::assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
+                $card = array_values(array_filter($response->json('data.items'), static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                self::assertCount(1, $card['parameter_checks']);
+                self::assertSame([], $card['source_checks']);
+                self::assertTrue($card['parameter_checks'][0]['meets_minimum']);
+                $source = $card['parameter_checks'][0]['source'];
+                $viewer = $this->getJson($baseUrl.'/evidence-sources?'.http_build_query(['references' => [$source['reference']]]), $headers)
+                    ->assertOk()->json('data.sources.0');
+                self::assertSame('available', $viewer['status']);
+                self::assertSame($source['document_id'], $viewer['target']['artifact_id']);
+                self::assertStringContainsString($source['value_cell'], $viewer['target']['native_reference']);
+                $reviewer = $rights->addMember(['ai-estimates' => ['estimate_generation.review']], ['admin.access']);
+                $reviewer->organizations()->updateExistingPivot($scope[0], ['project_access_mode' => 'all_projects']);
+                $reviewHeaders = $this->sourceHeaders($reviewer);
+                $review = $this->getJson($baseUrl.'/questions', $reviewHeaders)->assertOk();
+                $reviewCard = array_values(array_filter($review->json('data.items'), static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                self::assertSame($card['answer'], $reviewCard['answer']);
+                self::assertSame([], $reviewCard['parameter_options']);
+                self::assertSame([], $reviewCard['parameter_checks']);
+                self::assertStringNotContainsString($source['reference'], $review->getContent());
+                $this->postJson($baseUrl.'/questions/'.$card['code'].'/answer', [...$answerInput,
+                    'idempotency_key' => 'typed-without-source-view', 'answer_fingerprint' => $card['answer_fingerprint']], $reviewHeaders)->assertForbidden();
+                self::assertContains($this->getJson($baseUrl.'/questions', $this->sourceHeaders($rights->foreignOwner))->status(), [403, 404]);
+                DB::beginTransaction();
+                try {
+                    $nested = $this->getJson($baseUrl.'/questions', $headers)->assertOk()->json('data.items');
+                    $nested = array_values(array_filter($nested, static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                    self::assertSame([], $nested['parameter_options']);
+                    self::assertSame([], $nested['parameter_checks']);
+                    self::assertSame('off', DB::selectOne('SHOW transaction_read_only')->transaction_read_only);
+                } finally {
+                    DB::rollBack();
+                }
+                self::assertSame($beforeRead, $counts());
+                $factory = function (?string $local = null) use ($session, $scope) {
+                    $session->refresh();
+                    return app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null,
+                        $session->input_payload['selected_sections'], 'universal', $session->input_payload, $local]);
+                };
+                self::assertSame([], $factory('foreign-local')->workTechnologyContext);
+                $document = EstimateGenerationDocument::query()->findOrFail($source['document_id']);
+                $checksum = $document->checksum_sha256;
+                try {
+                    $document->update(['checksum_sha256' => str_repeat('f', 64)]);
+                    $drifted = $factory();
+                    self::assertArrayNotHasKey('component', $drifted->workTechnologyContext[0]['answer']['parameter'] ?? []);
+                } finally {
+                    $document->update(['checksum_sha256' => $checksum]);
+                }
+                self::assertArrayHasKey('component', $factory()->workTechnologyContext[0]['answer']['parameter']);
+                $derivedIds = [$card['answer']['parameter']['observed_fact_id'], $card['answer']['parameter']['requirement_fact_id']];
+                $history = fn () => DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])
+                    ->whereIn('stable_key', $derivedIds)->orderBy('stable_key')->get()->toJson();
+                $storedHistory = $history();
+                DB::beginTransaction();
+                try {
+                    self::assertSame(1, app(EvidenceRepository::class)->invalidate(...[...$scope,
+                        [(int) substr($source['reference'], 9)], 'parameter_source_invalidated_fixture']));
+                    $staleSnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    self::assertSame([], array_values(array_filter($staleSnapshot->facts,
+                        static fn (Fact $fact): bool => str_starts_with($fact->type, 'engineering_parameter_'))));
+                    self::assertSame([], $models->factsByIds(...[...$scope, $derivedIds]));
+                    $invalidatedCard = array_values(array_filter($this->getJson($baseUrl.'/questions', $headers)->assertOk()->json('data.items'),
+                        static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                    self::assertSame('other', $invalidatedCard['answer']['response']);
+                    self::assertSame([], $invalidatedCard['parameter_checks']);
+                    self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['parameter']);
+                    self::assertSame(0, app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId]));
+                    self::assertSame($storedHistory, $history());
+                } finally {
+                    DB::rollBack();
+                }
+                $reanswer = [...$answerInput, 'idempotency_key' => 'typed-below-minimum', 'answer_fingerprint' => $card['answer_fingerprint'],
+                    'parameter' => [...$parameter, 'value' => '101', 'unit' => 'mm']];
+                $this->postJson($baseUrl.'/questions/'.$card['code'].'/answer', $reanswer, $headers)->assertOk();
+                $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+                $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($capture['snapshot']->facts, 'id')]);
+                $components = app(ComposerSourceClaimValidationService::class)->parameterComponents($scope, $capture['snapshot'], $decisions, $session->fresh()->input_payload);
+                self::assertCount(1, $components);
+                self::assertFalse(array_values($components)[0]['component']['meets_minimum']);
+                self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['parameter']);
+                $newCard = array_values(array_filter($this->getJson($baseUrl.'/questions', $headers)->assertOk()->json('data.items'),
+                    static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                $this->postJson($baseUrl.'/questions/'.$newCard['code'].'/answer', ['response' => 'revoke',
+                    'idempotency_key' => 'typed-revoke', 'expected_source_version' => $newCard['source_version'],
+                    'answer_fingerprint' => $newCard['answer_fingerprint']], $headers)->assertOk();
+                self::assertArrayNotHasKey('parameter', $factory()->workTechnologyContext[0]['answer']);
+            }
+        }
+        $row = EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->sole();
+        self::assertSame('estimate_session', $row->source_entity_type);
+        self::assertSame('proposed', $row->decision_status);
+        self::assertFalse($row->is_positive);
+        self::assertNull($row->accepted_at);
+        self::assertFalse(EstimateGenerationLearningSourceTrustPolicy::isIndexable($row));
+        self::assertArrayNotHasKey('component', $inputs[1]['work_technology_context'][0]['answer']['parameter']);
+        $component = $inputs[2]['work_technology_context'][0]['answer']['parameter']['component'];
+        self::assertSame((int) $row->id, $component['learning_example_id']);
+        self::assertSame($answerId, $component['source_answer_fact_id']);
+        self::assertTrue($component['meets_minimum']);
+        self::assertFalse($component['numeric_inputs_verified']);
+        self::assertSame('unresolved', $component['engineering_applicability']);
+        self::assertSame([], $inputs[2]['source_claim_refs'] ?? []);
+        self::assertSame('revoke', $inputs[3]['work_technology_context'][0]['answer']['response']);
+        self::assertArrayNotHasKey('parameter', $inputs[3]['work_technology_context'][0]['answer']);
+        self::assertSame($original, get_object_vars($models->factsByIds(...[...$scope, [$raw[0]->id]])[0]));
+        self::assertSame(4, DB::table('estimate_generation_ai_role_runs')->where('organization_id', $scope[0])->where('role', 'estimate_auditor')->count());
+    }
+
+    private function useRealQuestionAuthorization(): void
+    {
+        foreach ([\App\Domain\Authorization\Services\AuthorizationService::class,
+            \App\Services\Entitlements\OrganizationEntitlementService::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\AnswerEstimateClarification::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications::class,
+            UserEvaluationChoiceWriter::class, EstimateGenerationQuestionController::class] as $service) {
+            $this->app->forgetInstance($service);
+        }
+    }
+
+    private function parameterSdkWire(array $work, array &$history): \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient
+    {
+        config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key',
+            'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $body = ['id' => 'chatcmpl-parameter-fixture', 'object' => 'chat.completion', 'created' => 1,
+            'model' => 'openai/gpt-6-luna', 'choices' => [['index' => 0, 'message' => ['role' => 'assistant',
+                'content' => json_encode(['work_intents' => [$work], 'claim_candidates' => []], JSON_THROW_ON_ERROR)],
+                'finish_reason' => 'stop', 'logprobs' => null]],
+            'usage' => ['prompt_tokens' => 1000, 'completion_tokens' => 100, 'total_tokens' => 1100,
+                'prompt_tokens_details' => ['cached_tokens' => 0], 'completion_tokens_details' => ['reasoning_tokens' => 0]]];
+        $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler([
+            new \GuzzleHttp\Psr7\Response(200, ['Content-Type' => 'application/json'], json_encode($body, JSON_THROW_ON_ERROR))]));
+        $handler->push(\GuzzleHttp\Middleware::history($history));
+
+        return new \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient(
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebChatCompletionPayloadFactory,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard(DB::connection(),
+                app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+                app(EstimatorCreditAttemptAdmission::class)),
+            new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore(DB::connection()),
+            httpClient: new \GuzzleHttp\Client(['handler' => $handler]));
+    }
+
     public function test_identical_native_uploads_keep_distinct_document_provenance_in_the_project_model(): void
     {
         [, , , $session] = $this->fixture();
@@ -1260,7 +1588,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [$organization, $project, $actor, $session];
     }
 
-    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false, ?string $uploadMoment = null, string $targetMode = 'unique', array $selectedSections = ['equipment'], ?User $realActor = null): array
+    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false, ?string $uploadMoment = null, string $targetMode = 'unique', array $selectedSections = ['equipment'], ?User $realActor = null, bool $lengthOperand = false): array
     {
         Http::fake();
         Http::preventStrayRequests();
@@ -1279,7 +1607,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'selected_sections' => $selectedSections, 'generation_mode' => 'ai_assisted', 'description' => $description];
         $session = app(CreateEstimateGenerationSession::class)->handle(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'input_payload' => $input], $actor);
-        $this->publishBinarySource($session, $targetMode === 'mixed');
+        $this->publishBinarySource($session, $targetMode === 'mixed', lengthOperand: $lengthOperand);
         $models = app(ProjectModelRepository::class);
         $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
         $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
@@ -1633,7 +1961,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'usage_available' => true, 'input_tokens' => 1000, 'output_tokens' => 100];
     }
 
-    private function publishBinarySource(EstimateGenerationSession $session, bool $numericSecond = false, bool $duplicate = false): void
+    private function publishBinarySource(EstimateGenerationSession $session, bool $numericSecond = false, bool $duplicate = false, bool $lengthOperand = false): void
     {
         $spreadsheet = new Spreadsheet;
         $spreadsheet->getActiveSheet()->setTitle('Оборудование')->fromArray([
@@ -1641,6 +1969,10 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             ['equipment:first', 'equipment_specification', 'Монтаж стендов', ''],
             $numericSecond ? ['equipment:second', 'equipment_count', 2, 'count'] : ['equipment:second', 'equipment_specification', 'Монтаж стендов', ''],
         ]);
+        if ($lengthOperand) {
+            $spreadsheet->getActiveSheet()->fromArray([['quantity:clearance', 'quantity', '102', 'mm']], null, 'A4');
+            $spreadsheet->getActiveSheet()->setCellValueExplicit('C4', '102', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        }
         $path = tempnam(sys_get_temp_dir(), 'most-source-claim-');
         self::assertIsString($path);
         try {
@@ -1692,6 +2024,9 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             $this->app->instance(Documents\DocumentUnitContentReader::class, $storage);
             $this->app->forgetInstance(Documents\DocumentUnitDetector::class);
             $this->app->forgetInstance(Documents\DocumentUnitProcessor::class);
+            if ($lengthOperand) {
+                $this->app->forgetInstance(ComposerSourceClaimValidationService::class);
+            }
             $snapshot = ['schema_version' => 2, 'models' => ['vision' => 'openai/gpt-6-luna', 'classification' => 'openai/gpt-6-luna', 'normative_matching' => 'openai/gpt-6-luna'],
                 'limits' => ['max_files' => 10, 'max_pages_per_file' => 200, 'max_total_pages' => 1000],
                 'timeouts' => ['vision' => 60, 'classification' => 60, 'normative_matching' => 60],

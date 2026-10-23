@@ -30,7 +30,7 @@ final readonly class ListEstimateClarifications
         $answered = array_fill_keys($this->answers->answeredKeys($organizationId, $projectId, $sessionId), true);
         $result = [];
         $canAnswerWork = null;
-        [$questions, $checks] = $this->currentWithSourceChecks($organizationId, $projectId, $sessionId, $actor);
+        [$questions, $checks, $parameterOptions, $parameterChecks] = $this->currentWithSourceChecks($organizationId, $projectId, $sessionId, $actor);
         foreach ($questions as $current) {
             if (($current->question->sourceLocator['kind'] ?? null) === 'composer_work_technology') {
                 $answer = $current->workAnswer;
@@ -46,6 +46,8 @@ final readonly class ListEstimateClarifications
                         'other' => 'answered', 'revoke' => 'revoked', default => 'left_unresolved',
                     },
                     'answer' => $answer, 'source_checks' => $checks[$current->question->code] ?? [],
+                    'parameter_options' => $parameterOptions[$current->question->code] ?? [],
+                    'parameter_checks' => $parameterChecks[$current->question->code] ?? [],
                     'actions' => ! $canAnswerWork ? [] : ($answer === null ? [($current->composerContext['previous_fact_id'] ?? null) === null ? 'answer' : 'reanswer']
                         : ($answer['response'] === 'other' ? ['reanswer', 'revoke'] : ['reanswer']))];
                 continue;
@@ -67,7 +69,7 @@ final readonly class ListEstimateClarifications
 
     private function currentWithSourceChecks(int $organizationId, int $projectId, int $sessionId, ?User $actor): array
     {
-        $fallback = fn (): array => [$this->catalog->allCurrent($organizationId, $projectId, $sessionId), []];
+        $fallback = fn (): array => [$this->catalog->allCurrent($organizationId, $projectId, $sessionId), [], [], []];
         if ($actor === null || $this->models === null || $this->evidence === null || $this->authorization === null
             || $this->database === null || $this->maxFacts < 1 || $this->maxFacts > 10001) {
             return $fallback();
@@ -90,26 +92,36 @@ final readonly class ListEstimateClarifications
                 $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
                 $questions = $this->catalog->allCurrent($organizationId, $projectId, $sessionId);
                 if (array_filter($questions, static fn (CurrentEstimateClarification $current): bool =>
-                    ($current->question->sourceLocator['kind'] ?? null) === 'composer_work_technology'
-                    && ($current->workAnswer['response'] ?? null) === 'other') === []) {
-                    return [$questions, []];
+                    ($current->question->sourceLocator['kind'] ?? null) === 'composer_work_technology') === []) {
+                    return [$questions, [], [], []];
                 }
                 $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)->where('project_id', $projectId)->find($sessionId);
                 if ($session === null) {
-                    return [$questions, []];
+                    return [$questions, [], [], []];
                 }
                 $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts);
                 $snapshot = $capture['snapshot'];
                 if (count($snapshot->facts) >= $this->maxFacts) {
-                    return [$questions, []];
+                    return [$questions, [], [], []];
                 }
                 $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
                 $references = $this->evidence->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot,
                     $decisions, $session->input_payload ?? [], includeSourceDetails: true);
-                $checks = [];
+                $cache = [];
+                $parameters = $this->evidence->parameterReferences([$organizationId, $projectId, $sessionId], $snapshot, $decisions,
+                    $session->input_payload ?? [], includeSourceDetails: true, cache: $cache);
+                $checks = $parameterOptions = $parameterChecks = [];
                 foreach ($questions as $current) {
                     if (($current->question->sourceLocator['kind'] ?? null) !== 'composer_work_technology'
-                        || ($current->workAnswer['response'] ?? null) !== 'other' || $current->snapshotToken !== $capture['token']) {
+                        || $current->snapshotToken !== $capture['token']) {
+                        continue;
+                    }
+                    $parameterOptions[$current->question->code] = $this->evidence->parameterOptions([$organizationId, $projectId, $sessionId], $snapshot, $current, $cache);
+                    $parameter = $parameters[$current->workAnswer['fact_id'] ?? ''] ?? null;
+                    if ($parameter !== null && $parameter['entity_id'] === ($current->question->sourceLocator['entity_id'] ?? null)) {
+                        $parameterChecks[$current->question->code] = [$parameter];
+                    }
+                    if (($current->workAnswer['response'] ?? null) !== 'other') {
                         continue;
                     }
                     $matches = array_values(array_filter($references, static fn (array $reference): bool => isset($reference['source_proof'])
@@ -124,7 +136,7 @@ final readonly class ListEstimateClarifications
                         'source' => $reference['source_proof'], 'interpretation_status' => 'proposed', 'source_correspondence' => 'passed',
                         'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false]];
                 }
-                return [$questions, $checks];
+                return [$questions, $checks, $parameterOptions, $parameterChecks];
             });
         } catch (\Illuminate\Database\QueryException) {
             return $fallback();

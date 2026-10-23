@@ -9,6 +9,9 @@ final class NativeNumericFactProof
 {
     public function matches(Fact $fact, Evidence $evidence): bool
     {
+        if (str_starts_with($fact->type, 'engineering_parameter_')) {
+            return false;
+        }
         $proof = $fact->nativeNumericProofs[$evidence->id] ?? null;
         if (! is_array($proof) || $evidence->sourceType !== 'document' || $evidence->producerName !== 'native_numeric_parser'
             || $evidence->fingerprint === null || ! in_array($evidence->id, $fact->evidenceIds, true)

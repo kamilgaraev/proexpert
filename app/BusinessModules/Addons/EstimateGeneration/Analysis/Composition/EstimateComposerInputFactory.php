@@ -96,6 +96,9 @@ final readonly class EstimateComposerInputFactory
         $eligibleFacts = [];
         $policy = $answerPolicy === [] ? null : ResolveCurrentEstimateClarification::composerPolicy($answerPolicy);
         foreach ($snapshot->facts as $fact) {
+            if (str_starts_with($fact->type, 'engineering_parameter_')) {
+                continue;
+            }
             if ($fact->type === 'evaluation_answer' && is_array($fact->value)
                 && ($fact->value['composer_context']['kind'] ?? null) === 'work_technology') {
                 $hasComposerAnswer = true;
@@ -199,6 +202,20 @@ final readonly class EstimateComposerInputFactory
         }
 
         $quantities = array_map($this->derivedQuantity(...), $derivedQuantities);
+        if ($workContexts !== [] && $this->learning !== null) {
+            $references = $this->learning->parameterReferences([$organizationId, $projectId, $sessionId], $snapshot, $sourceDecisions, $answerPolicy, $localEstimateKey);
+            foreach ($workContexts as &$entry) {
+                $reference = $references[$entry['answer']['fact_id'] ?? ''] ?? null;
+                if ($reference !== null && isset($entry['answer']['parameter'])) {
+                    $entry['answer']['parameter']['component'] = $reference;
+                }
+            }
+            unset($entry);
+            if ($references !== [] && ! hash_equals((string) $capture['token'],
+                (string) $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts + 1)['token'])) {
+                throw new InvalidArgumentException('estimate_composer_snapshot_changed');
+            }
+        }
         $input = new EstimateComposerInput(
             organizationId: $organizationId,
             projectId: $projectId,
