@@ -127,7 +127,7 @@ class AIPermissionChecker
             return false;
         }
 
-        $policy = app(AssistantDataAccessPolicy::class);
+        $policy = app(AssistantDataAccessPolicy::class)->independentAuthorizationScope();
 
         return $policy->withCurrentChecks($user, $organizationId,
             fn (): bool => $policy->canReadDomain($user, $organizationId, 'assistant'), $fresh);
