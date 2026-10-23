@@ -7,6 +7,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantRagCont
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantAttachmentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantCreditsController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantDocumentCandidateController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantDocumentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantEgressEnrollmentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantMemoryController;
@@ -69,6 +70,7 @@ Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
             ->whereNumber('document')->name('documents.local-processing.revoke');
         Route::post('egress/cohorts', [AssistantEgressEnrollmentController::class, 'assign'])->name('egress.cohorts.assign');
         Route::delete('egress/cohorts/{cohort}', [AssistantEgressEnrollmentController::class, 'revokeCohort'])->whereUuid('cohort')->name('egress.cohorts.revoke');
+        Route::get('egress/document-candidates', [AssistantDocumentCandidateController::class, 'index'])->name('egress.document-candidates');
         Route::post('egress/enrollments/preview', [AssistantEgressEnrollmentController::class, 'preview'])->name('egress.enrollments.preview');
         Route::post('egress/enrollments/{enrollment}/confirm', [AssistantEgressEnrollmentController::class, 'confirm'])->whereUuid('enrollment')->name('egress.enrollments.confirm');
         Route::delete('egress/enrollments/{enrollment}', [AssistantEgressEnrollmentController::class, 'revoke'])->whereUuid('enrollment')->name('egress.enrollments.revoke');
