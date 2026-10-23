@@ -72,9 +72,9 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
         app(AICreditService::class)->grant($this->fixture->organization, 1_000_000, 'purchase', null, 'b3-local-processing');
     }
 
-    private function document(string $text = 'Локальный документ: бетон 12 кубов.', string $mime = 'text/plain'): AIAssistantDocument
+    private function document(string $text = 'Локальный документ: бетон 12 кубов.', string $mime = 'text/plain', ?string $filename = null): AIAssistantDocument
     {
-        $name = $mime === 'image/png' ? 'scan.png' : 'document.txt';
+        $name = $filename ?? ($mime === 'image/png' ? 'scan.png' : 'document.txt');
         $path = 'org-'.$this->fixture->organization->id.'/b3/'.$name;
         Storage::disk('s3')->put($path, $text);
         $file = File::withoutEvents(fn () => File::query()->create(['organization_id' => $this->fixture->organization->id,
@@ -188,6 +188,48 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
     {
         yield 'active' => [false];
         yield 'revoked tombstone' => [true];
+    }
+
+    #[DataProvider('deletedDocumentPolicyStates')]
+    public function test_deleted_current_document_cannot_send_a_previously_collected_chunk(string $scope): void
+    {
+        $document = $this->documents->process($this->document(self::SENTINEL)->id);
+        $policies = app(AssistantDocumentProcessingPolicyService::class);
+        if ($scope !== 'never selected') {
+            $policies->assign($this->operator, $document->organization_id, $document->project_id, $document->id, $this->fixture->owner->id);
+        }
+        if ($scope === 'same File fallback') {
+            $file = File::query()->findOrFail($document->file_id);
+            $this->documents->process($this->document('Новая версия '.self::SENTINEL, filename: 'donor.txt')->id);
+            Storage::disk('s3')->put($file->path, 'Новая версия '.self::SENTINEL);
+            $replacement = $this->documents->registerFile($file);
+            self::assertNotSame($document->id, $replacement->id);
+            self::assertSame(AIAssistantDocument::STATUS_READY, $replacement->status);
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentProcessingPolicy::query()->where('document_id', $replacement->id)->first());
+            $document = $replacement;
+        }
+        $chunks = iterator_to_array((new FileRagSource)->collectEntity($document->organization_id, 'assistant_document', $document->id));
+        self::assertCount(1, $chunks);
+        self::assertSame($scope !== 'never selected', $policies->selected($document->id));
+        $document->delete();
+        $embeddings = new LocalProcessingRecordingEmbeddings;
+        $indexer = new RagIndexer($embeddings, new RagSourceRegistry([new FileRagSource]));
+        $denied = null;
+        $previous = ini_set('zend.exception_ignore_args', '0');
+        try {
+            try { $indexer->indexChunk($chunks[0]); }
+            catch (AssistantEgressDenied $failure) { $denied = $failure; }
+        } finally { ini_set('zend.exception_ignore_args', $previous); }
+        self::assertSame(0, $embeddings->calls);
+        self::assertInstanceOf(AssistantEgressDenied::class, $denied);
+        self::assertNull($denied->getPrevious());
+        self::assertStringNotContainsString(self::SENTINEL, (string) $denied);
+        self::assertStringNotContainsString(self::SENTINEL, json_encode($denied->getTrace(), JSON_THROW_ON_ERROR));
+    }
+
+    public static function deletedDocumentPolicyStates(): iterable
+    {
+        foreach (['same File fallback', 'never selected', 'exact selected'] as $scope) { yield $scope => [$scope]; }
     }
 
     #[DataProvider('reuseChanges')]

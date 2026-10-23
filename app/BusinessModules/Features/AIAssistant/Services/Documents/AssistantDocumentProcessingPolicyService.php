@@ -95,7 +95,8 @@ final readonly class AssistantDocumentProcessingPolicyService
             ->when($lock, static fn ($query) => $query->lockForUpdate())->first();
         if ($exact !== null) { return $exact; }
         $document ??= AIAssistantDocument::query()->find($documentId);
-        if ($document?->file_id === null) { return null; }
+        if ($document === null) { $this->deny(); }
+        if ($document->file_id === null) { return null; }
         return AssistantDocumentProcessingPolicy::query()->where('file_id', $document->file_id)->orderBy('id')
             ->when($lock, static fn ($query) => $query->lockForUpdate())->first();
     }
