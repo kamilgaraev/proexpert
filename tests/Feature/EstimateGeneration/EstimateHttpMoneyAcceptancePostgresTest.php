@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
@@ -54,6 +55,8 @@ use Tests\Support\EstimateGeneration\InMemoryS3HttpStorage;
 
 final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    private const GENERIC_WORK_KEY = 'custom.exposition_setup';
+
     private array $wireHistory = [];
 
     private ?\Throwable $recordingFailure = null;
@@ -258,6 +261,135 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         Http::assertNothingSent();
     }
 
+    public function test_http_generic_description_only_work_retains_an_assumed_quantity_on_fresh_generation(): void
+    {
+        self::assertFalse((new WorkItemQuantityMapper)->isKnownWorkKey(self::GENERIC_WORK_KEY));
+        [$rights, $project, $session, $catalog, $headers, $native] = $this->generatedSession(false, true);
+        self::assertNull($native);
+        self::assertSame([], $catalog);
+        self::assertSame(0, $session->documents()->count());
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $descriptions = array_values(array_filter($snapshot->facts, static fn ($fact): bool =>
+            $fact->type === 'evaluation_answer' && ($fact->value['kind'] ?? null) === 'initial_description'));
+        self::assertCount(1, $descriptions);
+        $description = $descriptions[0];
+        self::assertSame('user_input', $description->origin);
+        self::assertFalse($description->value['numeric_parameters_confirmed']);
+        self::assertSame($session->input_payload['description'], $description->value['description']);
+        $originalFact = get_object_vars($description);
+        $originalEntity = get_object_vars(array_column($snapshot->entities, null, 'id')[$description->entityId]);
+        $originalEvidence = array_map(get_object_vars(...), array_values(array_filter($snapshot->evidence,
+            static fn ($evidence): bool => in_array($evidence->id, $description->evidenceIds, true))));
+        $originalDecisions = array_map(get_object_vars(...), $models->decisionsForSelectedFacts(...[...$scope, [$description->id]]));
+        self::assertNotEmpty($originalEvidence);
+        self::assertNotEmpty($originalDecisions);
+        foreach ($snapshot->facts as $fact) {
+            self::assertSame([], $fact->nativeNumericProofs);
+            self::assertNotSame('equipment_count', $fact->type);
+        }
+        $item = $this->installation($session, self::GENERIC_WORK_KEY);
+        self::assertSame($description->entityId, $item['metadata']['scope_entity_id']);
+        self::assertSame([null, null], [$item['quantity'], $item['unit']]);
+        self::assertContains('unit_requires_confirmation', $item['validation_flags']);
+        self::assertSame('count', $item['composition_intent']['unit']);
+        self::assertNull($item['composition_intent']['derived_quantity_id']);
+        self::assertSame([$description->id], $item['composition_intent']['source_fact_ids']);
+        $firstCalls = count($this->wireHistory);
+        self::assertGreaterThan(0, $firstCalls);
+        self::assertSame($firstCalls, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        $manualBalance = app(AICreditService::class)->balance($rights->organization);
+        $manualUsage = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson();
+        $manualOperations = DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count();
+        $url = $this->url($project, $session);
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'work_item_key' => $item['key'], 'value' => '3', 'unit' => 'count',
+            'reason' => 'Пользователь принял предварительное количество и единицу этой работы; документального измерения нет.'];
+        $quantity = $this->postJson($url.'/evaluation/quantity', $input, $headers)->assertOk()->json('data');
+        self::assertSame('0', $quantity['cost_units']);
+        $beforeReplay = $session->fresh()->getAttributes();
+        $ledgerCounts = [];
+        foreach (['project_model_assertions', 'project_model_corrections', 'evidence'] as $table) {
+            $ledgerCounts[$table] = DB::table('estimate_generation_'.$table)->where('session_id', $session->id)->count();
+        }
+        self::assertSame(CanonicalPipelineJson::encode($quantity), CanonicalPipelineJson::encode(
+            $this->postJson($url.'/evaluation/quantity', $input, $headers)->assertOk()->json('data')));
+        self::assertSame($beforeReplay, $session->fresh()->getAttributes());
+        foreach ($ledgerCounts as $table => $count) {
+            self::assertSame($count, DB::table('estimate_generation_'.$table)->where('session_id', $session->id)->count());
+        }
+        self::assertCount($firstCalls, $this->wireHistory);
+        self::assertSame($manualBalance, app(AICreditService::class)->balance($rights->organization));
+        self::assertSame($manualUsage, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson());
+        self::assertSame($manualOperations, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $entered = array_column($snapshot->facts, null, 'id')[$quantity['source_fact_id']];
+        self::assertSame(['3', 'count', $description->entityId, 'user_assumption', []],
+            [$entered->value, $entered->unit, $entered->entityId, $entered->origin, $entered->nativeNumericProofs]);
+        $this->transport($session, [...$quantity, 'work_item_key' => $item['key'], 'target_entity_id' => $description->entityId], true);
+        $operation = (string) Str::uuid();
+        $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation,
+            'state_version' => $session->fresh()->state_version, 'operation_kind' => 'generation',
+            'operation_parameters' => ['max_work_items' => 4]], $headers)->assertOk()->json('data');
+        $queuedBefore = Queue::pushed(GenerateEstimateDraftJob::class)->count();
+        $this->postJson($url.'/generate', ['request_id' => $operation, 'quote_id' => $quote['quote_id'],
+            'state_version' => $session->fresh()->state_version, 'generation_mode' => 'ai_assisted'], $headers)->assertSuccessful();
+        $jobs = Queue::pushed(GenerateEstimateDraftJob::class)->slice($queuedBefore);
+        self::assertCount(1, $jobs);
+        $job = $jobs->sole();
+        foreach (ProcessingStage::cases() as $stage) {
+            try {
+                $job->handle(app(RunEstimateGenerationDraft::class));
+            } catch (\Throwable $error) {
+                throw $this->recordingFailure ?? $error;
+            }
+        }
+        self::assertSame(9, DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
+            ->where('generation_attempt_id', $operation)->where('status', 'completed')->count());
+        $row = $this->installation($session->fresh(), self::GENERIC_WORK_KEY);
+        self::assertSame([$item['key'], $description->entityId, '3', 'count', 'assumed'],
+            [$row['key'], $row['metadata']['scope_entity_id'], $row['quantity'], $row['unit'], $row['quantity_status']],
+            json_encode($row, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        self::assertSame('estimated', $row['quantity_basis_details']['source']);
+        self::assertSame([$entered->id], $row['quantity_basis_details']['assumptions']);
+        $operand = $row['quantity_basis_details']['formula_inputs']['operands'][0];
+        self::assertSame([$entered->id, $quantity['fact_id'], $quantity['decision_id'], $item['key']],
+            [$operand['fact_id'], $operand['quantity_binding']['fact_id'], $operand['quantity_binding']['decision_id'], $operand['quantity_binding']['work_item_key']]);
+        self::assertNull($row['unit_price']);
+        self::assertNull($row['total_cost']);
+        self::assertSame('price_unknown', $row['pricing_status']);
+        self::assertFalse(isset($row['normative_match']['norm_id']));
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $facts = array_column($snapshot->facts, null, 'id');
+        self::assertSame($originalFact, get_object_vars($facts[$description->id]));
+        self::assertSame(get_object_vars($entered), get_object_vars($facts[$entered->id]));
+        self::assertSame($originalEntity, get_object_vars(array_column($snapshot->entities, null, 'id')[$description->entityId]));
+        self::assertSame($originalEvidence, array_map(get_object_vars(...), array_values(array_filter($snapshot->evidence,
+            static fn ($evidence): bool => in_array($evidence->id, $description->evidenceIds, true)))));
+        self::assertSame($originalDecisions, array_map(get_object_vars(...), $models->decisionsForSelectedFacts(...[...$scope, [$description->id]])));
+        $calls = count($this->wireHistory);
+        self::assertGreaterThan($firstCalls, $calls);
+        self::assertSame($calls, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        $balance = app(AICreditService::class)->balance($rights->organization);
+        $receipts = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson();
+        $credit = (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $operation)->sole();
+        foreach ($ledgerCounts as $table => $count) {
+            $ledgerCounts[$table] = DB::table('estimate_generation_'.$table)->where('session_id', $session->id)->count();
+        }
+        $job->handle(app(RunEstimateGenerationDraft::class));
+        self::assertCount($calls, $this->wireHistory);
+        self::assertSame($balance, app(AICreditService::class)->balance($rights->organization));
+        self::assertSame($receipts, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson());
+        self::assertSame($credit, (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $operation)->sole());
+        foreach ($ledgerCounts as $table => $count) {
+            self::assertSame($count, DB::table('estimate_generation_'.$table)->where('session_id', $session->id)->count());
+        }
+        self::assertSame(0, $session->documents()->count());
+        self::assertSame(0, Estimate::query()->where('project_id', $project->id)->count());
+        Http::assertNothingSent();
+    }
+
     public function test_ignored_uploaded_source_invalidates_the_real_quantity_guard_and_denies_http_export_and_apply(): void
     {
         [, $project, $session, , $headers, $count] = $this->confirmedSession();
@@ -370,7 +502,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count, $revision];
     }
 
-    private function generatedSession(bool $withNormativeContext = true): array
+    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false): array
     {
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
@@ -400,7 +532,9 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         $catalog = $withNormativeContext ? $this->catalog() : [];
         $headers = $this->headers($rights->member);
         $created = $this->postJson('/api/v1/admin/projects/'.$project->id.'/estimate-generation/sessions', [
-            'request_id' => (string) Str::uuid(), 'description' => 'Монтаж оборудования по ведомости на промышленной площадке. Технология требует отдельной проверки.',
+            'request_id' => (string) Str::uuid(), 'description' => $descriptionOnly
+                ? 'Подготовить демонстрационную экспозицию из имущества заказчика; состав и технология требуют уточнения.'
+                : 'Монтаж оборудования по ведомости на промышленной площадке. Технология требует отдельной проверки.',
             'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal', 'profile_id' => 'construction',
             'construction_type' => 'new_construction', 'price_policy' => $withNormativeContext ? 'normative' : 'catalog', 'selected_sections' => ['equipment'],
             ...($withNormativeContext ? ['estimate_regional_price_version_id' => $catalog['version_id'], 'normative_dataset_version' => $catalog['dataset_key']] : []),
@@ -414,38 +548,45 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                 'estimate_regional_price_version_id' => $catalog['version_id'], 'conditions' => ['as_of_date' => '2026-10-01',
                     'vat_mode' => 'excluded', 'vat_rate' => '22', 'delivery' => 'outside_scope', 'basis' => 'Синтетическая цена для сквозной проверки расчёта; поставка вне сметы.']], $headers)->assertOk();
         }
-        $file = $this->workbook();
-        $digest = hash_file('sha256', $file->getPathname());
-        $this->post($url.'/documents', ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
-            'files' => [$file]], $headers)->assertOk();
-        $document = $session->documents()->sole();
-        self::assertSame($digest, $document->checksum_sha256);
-        self::assertSame('sha256:'.$digest, $document->source_version);
-        self::assertSame($digest, hash('sha256', Storage::disk('s3')->get($document->storage_path)));
-        $this->app->call([Queue::pushed(ProcessEstimateGenerationDocumentJob::class)->sole(), 'handle']);
-        $this->app->call([Queue::pushed(ProcessEstimateGenerationUnitJob::class)->sole(), 'handle']);
-        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $session->organization_id, (int) $project->id, (int) $session->id, 10001)['snapshot'];
-        $counts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'equipment_count'));
-        self::assertCount(1, $counts);
-        $count = $counts[0];
-        self::assertSame('3', $count->value);
-        self::assertSame('шт', $count->unit);
-        self::assertSame('document', $count->origin);
-        self::assertSame('confirmed', $count->status);
-        self::assertSame([(int) $session->organization_id, (int) $project->id, (int) $session->id, $document->source_version],
-            [$count->organizationId, $count->projectId, $count->sessionId, $count->sourceVersion]);
-        $evidence = array_values(array_filter($snapshot->evidence, static fn ($node): bool => in_array($node->id, $count->evidenceIds, true)));
-        self::assertCount(1, $evidence);
-        self::assertSame('document:'.$document->id, $evidence[0]->sourceArtifactId);
-        self::assertSame('xlsx:sheet:Оборудование!C3', $evidence[0]->nativeReference);
-        self::assertTrue((new NativeNumericFactProof)->matches($count, $evidence[0]));
-        $entities = array_column($snapshot->entities, null, 'id');
-        self::assertSame('equipment:pump', $entities[$count->entityId]->attributes['properties']['source_entity_key']);
+        $count = null;
+        if (! $descriptionOnly) {
+            $file = $this->workbook();
+            $digest = hash_file('sha256', $file->getPathname());
+            $this->post($url.'/documents', ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+                'files' => [$file]], $headers)->assertOk();
+            $document = $session->documents()->sole();
+            self::assertSame($digest, $document->checksum_sha256);
+            self::assertSame('sha256:'.$digest, $document->source_version);
+            self::assertSame($digest, hash('sha256', Storage::disk('s3')->get($document->storage_path)));
+            $this->app->call([Queue::pushed(ProcessEstimateGenerationDocumentJob::class)->sole(), 'handle']);
+            $this->app->call([Queue::pushed(ProcessEstimateGenerationUnitJob::class)->sole(), 'handle']);
+            $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning((int) $session->organization_id, (int) $project->id, (int) $session->id, 10001)['snapshot'];
+            $counts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'equipment_count'));
+            self::assertCount(1, $counts);
+            $count = $counts[0];
+            self::assertSame('3', $count->value);
+            self::assertSame('шт', $count->unit);
+            self::assertSame('document', $count->origin);
+            self::assertSame('confirmed', $count->status);
+            self::assertSame([(int) $session->organization_id, (int) $project->id, (int) $session->id, $document->source_version],
+                [$count->organizationId, $count->projectId, $count->sessionId, $count->sourceVersion]);
+            $evidence = array_values(array_filter($snapshot->evidence, static fn ($node): bool => in_array($node->id, $count->evidenceIds, true)));
+            self::assertCount(1, $evidence);
+            self::assertSame('document:'.$document->id, $evidence[0]->sourceArtifactId);
+            self::assertSame('xlsx:sheet:Оборудование!C3', $evidence[0]->nativeReference);
+            self::assertTrue((new NativeNumericFactProof)->matches($count, $evidence[0]));
+            $entities = array_column($snapshot->entities, null, 'id');
+            self::assertSame('equipment:pump', $entities[$count->entityId]->attributes['properties']['source_entity_key']);
+        }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
-        self::assertSame('input_review_required', $session->fresh()->status->value);
-        $this->postJson($url.'/confirm-input', ['state_version' => $session->fresh()->state_version], $headers)->assertOk();
-        self::assertSame('ready_to_generate', $session->fresh()->status->value);
-        $this->transport($session);
+        self::assertSame($descriptionOnly ? 'draft' : 'input_review_required', $session->fresh()->status->value);
+        if (! $descriptionOnly) {
+            $this->postJson($url.'/confirm-input', ['state_version' => $session->fresh()->state_version], $headers)->assertOk();
+            self::assertSame('ready_to_generate', $session->fresh()->status->value);
+        } else {
+            self::assertFalse($session->fresh()->input_payload['input_confirmed'] ?? false);
+        }
+        $this->transport($session, descriptionOnly: $descriptionOnly);
         app(AICreditService::class)->grant($rights->organization, 1000000, 'purchase', null, 'test:http-money-acceptance');
         $operation = (string) Str::uuid();
         $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation, 'state_version' => $session->fresh()->state_version,
@@ -456,21 +597,27 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         $job = Queue::pushed(GenerateEstimateDraftJob::class)->first();
         self::assertInstanceOf(GenerateEstimateDraftJob::class, $job);
         foreach (ProcessingStage::cases() as $stage) {
-            $job->handle(app(RunEstimateGenerationDraft::class));
+            try {
+                $job->handle(app(RunEstimateGenerationDraft::class));
+            } catch (\Throwable $error) {
+                throw $this->recordingFailure ?? $error;
+            }
         }
         $session->refresh();
         self::assertSame(9, DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
             ->where('generation_attempt_id', $operation)->where('status', 'completed')->count());
-        self::assertCount(2, $this->wireHistory);
+        if (! $descriptionOnly) {
+            self::assertCount(2, $this->wireHistory);
+        }
 
         return [$rights, $project, $session, $catalog, $headers, $count];
     }
 
-    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null): void
+    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false): void
     {
         $descriptor = json_decode(file_get_contents(base_path('tests/Fixtures/EstimateGeneration/universal-replay/xlsx-floor-finishing-v1.json')), true, 64, JSON_THROW_ON_ERROR);
         $responses = $descriptor['recordings'];
-        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity): Response {
+        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly): Response {
             try {
                 $wire = json_decode((string) $request->getBody(), true, 128, JSON_THROW_ON_ERROR);
                 $project = null;
@@ -481,14 +628,29 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                 }
                 self::assertIsArray($project);
                 self::assertSame((int) $session->id, $project['scope']['session_id']);
-                $counts = array_values(array_filter($project['facts'], static fn (array $fact): bool => $fact['type'] === 'equipment_count'));
-                $specifications = array_values(array_filter($project['facts'], static fn (array $fact): bool => $fact['type'] === 'equipment_specification'));
-                self::assertCount(1, $counts);
-                self::assertCount(1, $specifications);
-                $quantities = array_values(array_filter($project['derived_quantities'], static fn (array $quantity): bool =>
-                    ($quantity['formula_key'] ?? null) === 'equipment_count' && ($quantity['entity_id'] ?? null) === $counts[0]['entity_id']
-                    && ($quantity['operand_fact_ids'] ?? []) === [$counts[0]['id']] && ($quantity['review_blockers'] ?? []) === []));
-                $sourceId = $counts[0]['id'];
+                if ($descriptionOnly) {
+                    $descriptions = array_values(array_filter($project['facts'], static fn (array $fact): bool =>
+                        ($fact['context_kind'] ?? null) === 'initial_description'));
+                    self::assertCount(1, $descriptions);
+                    self::assertSame($session->input_payload['description'], $descriptions[0]['value']['description']);
+                    self::assertSame(false, $descriptions[0]['value']['numeric_parameters_confirmed']);
+                    self::assertSame(['equipment'], $descriptions[0]['declared_work_sections']);
+                    self::assertSame([], array_values(array_filter($project['facts'], static fn (array $fact): bool => $fact['type'] === 'equipment_count')));
+                    $entityId = $descriptions[0]['entity_id'];
+                    $contextId = $sourceId = $descriptions[0]['id'];
+                    $quantities = [];
+                } else {
+                    $counts = array_values(array_filter($project['facts'], static fn (array $fact): bool => $fact['type'] === 'equipment_count'));
+                    $specifications = array_values(array_filter($project['facts'], static fn (array $fact): bool => $fact['type'] === 'equipment_specification'));
+                    self::assertCount(1, $counts);
+                    self::assertCount(1, $specifications);
+                    $quantities = array_values(array_filter($project['derived_quantities'], static fn (array $quantity): bool =>
+                        ($quantity['formula_key'] ?? null) === 'equipment_count' && ($quantity['entity_id'] ?? null) === $counts[0]['entity_id']
+                        && ($quantity['operand_fact_ids'] ?? []) === [$counts[0]['id']] && ($quantity['review_blockers'] ?? []) === []));
+                    $sourceId = $counts[0]['id'];
+                    $entityId = $counts[0]['entity_id'];
+                    $contextId = $specifications[0]['id'];
+                }
                 if ($directQuantity !== null) {
                     $facts = array_column($project['facts'], null, 'id');
                     $binding = $facts[$directQuantity['fact_id']] ?? null;
@@ -509,17 +671,24 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                         && ($quantity['entity_id'] ?? null) === $directQuantity['target_entity_id']
                         && ($quantity['operand_fact_ids'] ?? []) === [$sourceId] && ($quantity['review_blockers'] ?? []) === []));
                 }
-                self::assertCount(1, $quantities);
+                if (! $descriptionOnly || $directQuantity !== null) {
+                    self::assertCount(1, $quantities);
+                }
                 if ($directQuantity !== null) {
-                    self::assertSame(['4', 'count'], [$quantities[0]['value'], $quantities[0]['unit']]);
+                    self::assertSame([$descriptionOnly ? '3' : '4', 'count'], [$quantities[0]['value'], $quantities[0]['unit']]);
                     self::assertSame($directQuantity['quantity_key'], $quantities[0]['quantity_key']);
+                    if ($descriptionOnly) {
+                        self::assertSame('estimated', $quantities[0]['source']);
+                        self::assertSame([$sourceId], $quantities[0]['quantity_basis']['assumptions']);
+                    }
                     $binding = $quantities[0]['quantity_basis']['formula_inputs']['operands'][0]['quantity_binding'];
                     self::assertSame([$directQuantity['fact_id'], $directQuantity['decision_id'], $directQuantity['work_item_key']],
                         [$binding['fact_id'], $binding['decision_id'], $binding['work_item_key']]);
                 }
-                $intent = ['kind' => 'supplementary', 'work_key' => 'equipment.install', 'name' => 'Монтаж насоса по ведомости',
-                    'derived_quantity_id' => $quantities[0]['id'], 'source_fact_ids' => [$specifications[0]['id'], $sourceId],
-                    'entity_id' => $counts[0]['entity_id'], 'technology_package_candidate' => null, 'unit' => 'count', 'work_section' => 'equipment',
+                $intent = ['kind' => 'supplementary', 'work_key' => $descriptionOnly ? self::GENERIC_WORK_KEY : 'equipment.install',
+                    'name' => $descriptionOnly ? 'Подготовка экспозиции из имущества заказчика' : 'Монтаж насоса по ведомости',
+                    'derived_quantity_id' => $quantities[0]['id'] ?? null, 'source_fact_ids' => array_values(array_unique([$contextId, $sourceId])),
+                    'entity_id' => $entityId, 'technology_package_candidate' => null, 'unit' => 'count', 'work_section' => 'equipment',
                     'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
                 $response = $responses[0]['response'];
                 $response['choices'][0]['message']['content'] = json_encode(['work_intents' => [$intent]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
@@ -582,13 +751,13 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return '/api/v1/admin/projects/'.$project->id.'/estimate-generation/sessions/'.$session->id;
     }
 
-    private function installation(EstimateGenerationSession $session): array
+    private function installation(EstimateGenerationSession $session, string $workKey = 'equipment.install'): array
     {
         $rows = [];
         foreach ($session->draft_payload['local_estimates'] ?? [] as $estimate) {
             foreach ($estimate['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $item) {
-                    if (($item['composition_intent']['work_key'] ?? null) === 'equipment.install') {
+                    if (($item['composition_intent']['work_key'] ?? null) === $workKey) {
                         $rows[] = $item;
                     }
                 }

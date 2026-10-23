@@ -39,6 +39,8 @@ class UpdateCalendarEventOnSiteRequest implements ShouldQueue
             'work_end_date',
             'rental_start_date',
             'rental_end_date',
+            'equipment_start_at',
+            'equipment_end_at',
             'delivery_time_from',
             'delivery_time_to',
             'priority',
