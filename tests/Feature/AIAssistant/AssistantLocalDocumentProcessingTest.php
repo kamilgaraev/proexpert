@@ -87,6 +87,7 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
     public function test_selected_local_document_is_ready_and_indexed_without_embedding_calls(): void
     {
         $document = $this->document();
+        $queuedIndex = new IndexRagSourceJob($document->organization_id, $document->project_id, 'file_document', entityType: 'assistant_document', entityId: $document->id);
         app(AssistantDocumentProcessingPolicyService::class)->assign($this->operator, $this->fixture->organization->id,
             $this->project->id, $document->id, $this->fixture->owner->id);
         $document = $this->documents->process($document->id);
@@ -104,7 +105,7 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
             self::assertNull($chunk->embedding_created_at);
         }
         self::assertSame(1, $indexer->indexOrganization($document->organization_id, $document->project_id, 'file_document'));
-        (new IndexRagSourceJob($document->organization_id, $document->project_id, 'file_document', entityType: 'assistant_document', entityId: $document->id))->handle($indexer);
+        $queuedIndex->handle($indexer);
         self::assertSame(0, $embeddings->calls);
         $chunks = RagChunk::query()->where('organization_id', $document->organization_id)->get();
         $projection = app(OrdinaryAssistantDocumentProjection::class)->capture($this->fixture->owner, $document->organization_id,
@@ -121,6 +122,105 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
         self::assertFalse(AssistantDocumentCoverageService::isCompleteForAnswer($coverage));
     }
 
+    public function test_unchanged_local_reindex_preserves_approved_chunk_identity_and_source_proof(): void
+    {
+        $document = $this->document();
+        app(AssistantDocumentProcessingPolicyService::class)->assign($this->operator, $document->organization_id,
+            $document->project_id, $document->id, $this->fixture->owner->id);
+        $document = $this->documents->process($document->id);
+        $embeddings = new LocalProcessingRecordingEmbeddings;
+        $indexer = new RagIndexer($embeddings, new RagSourceRegistry([new FileRagSource]));
+        $indexer->indexEntity($document->organization_id, 'file_document', 'assistant_document', $document->id);
+        $selection = ['project_id' => $document->project_id, 'document_id' => $document->id,
+            'chunk_ids' => RagChunk::query()->where('organization_id', $document->organization_id)->orderBy('id')->pluck('id')->all()];
+        $projector = app(OrdinaryAssistantDocumentProjection::class);
+        $before = $projector->capture($this->fixture->owner, $document->organization_id, $document->project_id, $selection);
+        $this->travel(1)->minutes();
+        $indexer->indexEntity($document->organization_id, 'file_document', 'assistant_document', $document->id);
+        $indexer->indexOrganization($document->organization_id, $document->project_id, 'file_document');
+        (new IndexRagSourceJob($document->organization_id, $document->project_id, 'file_document', entityType: 'assistant_document', entityId: $document->id))->handle($indexer);
+        self::assertSame($selection['chunk_ids'], RagChunk::query()->where('organization_id', $document->organization_id)->orderBy('id')->pluck('id')->all());
+        $after = $projector->capture($this->fixture->owner, $document->organization_id, $document->project_id, $selection);
+        self::assertSame($before['proof'], $after['proof']);
+        self::assertSame($before['preview'], $after['preview']);
+        self::assertSame(0, $embeddings->calls);
+    }
+    #[DataProvider('replacementPolicyStates')]
+    public function test_replacement_file_version_stays_selected_until_explicit_reassignment(bool $revoked): void
+    {
+        $document = $this->document();
+        $policies = app(AssistantDocumentProcessingPolicyService::class);
+        $policy = $policies->assign($this->operator, $document->organization_id, $document->project_id, $document->id, $this->fixture->owner->id);
+        $this->documents->process($document->id);
+        if ($revoked) { $policies->revoke($this->operator, $document->organization_id, $document->id); }
+        $file = File::query()->findOrFail($document->file_id);
+        Storage::disk('s3')->put($file->path, 'Новая версия: бетон 20 кубов.');
+        $replacement = $this->documents->registerFile($file);
+        self::assertNotSame($document->id, $replacement->id);
+        self::assertNull(AIAssistantDocument::query()->find($document->id));
+        $embeddings = new LocalProcessingRecordingEmbeddings;
+        $indexer = new RagIndexer($embeddings, new RagSourceRegistry([new FileRagSource]));
+        $denied = null;
+        try {
+            $this->documents->process($replacement->id);
+            $indexer->indexEntity($replacement->organization_id, 'file_document', 'assistant_document', $replacement->id);
+        } catch (AssistantEgressDenied $failure) { $denied = $failure; }
+        self::assertSame(0, $embeddings->calls);
+        self::assertInstanceOf(AssistantEgressDenied::class, $denied);
+        self::assertTrue($policies->selected($replacement->id));
+        self::assertTrue($policies->selected($document->id));
+        try {
+            app(AssistantDocumentOcrClient::class)->recognize($replacement, new AICreditReservation, 'queued pixels', static function (): void {});
+            self::fail('A replacement version reached OCR');
+        } catch (AssistantEgressDenied) { Http::assertNothingSent(); }
+        $current = $policies->assign($this->operator, $replacement->organization_id, $replacement->project_id, $replacement->id, $this->fixture->owner->id);
+        self::assertNotSame($policy->id, $current->id);
+        self::assertNotSame($policy->generation, $current->generation);
+        $replacement = $this->documents->process($replacement->id);
+        self::assertSame(AIAssistantDocument::STATUS_READY, $replacement->status);
+        $indexer->indexEntity($replacement->organization_id, 'file_document', 'assistant_document', $replacement->id);
+        self::assertSame(0, $embeddings->calls);
+        self::assertNull(RagChunk::query()->where('organization_id', $replacement->organization_id)->firstOrFail()->embedding);
+        self::assertFalse($policies->selected($this->document()->id));
+    }
+
+    public static function replacementPolicyStates(): iterable
+    {
+        yield 'active' => [false];
+        yield 'revoked tombstone' => [true];
+    }
+
+    #[DataProvider('reuseChanges')]
+    public function test_local_chunk_reuse_requires_current_raw_unit_and_acl(string $change): void
+    {
+        $document = $this->document();
+        app(AssistantDocumentProcessingPolicyService::class)->assign($this->operator, $document->organization_id,
+            $document->project_id, $document->id, $this->fixture->owner->id);
+        $document = $this->documents->process($document->id);
+        $embeddings = new LocalProcessingRecordingEmbeddings;
+        $indexer = new RagIndexer($embeddings, new RagSourceRegistry([new FileRagSource]));
+        $chunk = iterator_to_array((new FileRagSource)->collectEntity($document->organization_id, 'assistant_document', $document->id))[0];
+        $indexer->indexChunk($chunk);
+        $ids = RagChunk::query()->where('organization_id', $document->organization_id)->orderBy('id')->pluck('id')->all();
+        $checks = 0;
+        try {
+            $indexer->indexChunk($chunk, guard: function () use (&$checks, $change, $document): void {
+                if (++$checks !== 2) { return; }
+                if ($change === 'raw unit') { AIAssistantDocumentUnit::query()->where('document_id', $document->id)->update(['text' => 'changed']); }
+                else { $this->fixture->organization->users()->updateExistingPivot($this->fixture->owner->id, ['is_active' => false]); }
+            });
+            self::fail('Local chunks were reused without current source authorization');
+        } catch (AssistantEgressDenied) {
+            self::assertSame($ids, RagChunk::query()->where('organization_id', $document->organization_id)->orderBy('id')->pluck('id')->all());
+            self::assertSame(0, $embeddings->calls);
+        }
+    }
+
+    public static function reuseChanges(): iterable
+    {
+        yield 'raw unit' => ['raw unit'];
+        yield 'current ACL' => ['ACL'];
+    }
     public function test_legacy_vectors_and_checkpoints_do_not_bypass_a_later_local_policy(): void
     {
         $document = $this->documents->process($this->document()->id);
@@ -264,6 +364,35 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
     {
         yield 'known occurred usage' => [true];
         yield 'unknown occurred usage' => [false];
+    }
+
+    #[DataProvider('pastOcrUsage')]
+    public function test_inflight_ocr_receipt_is_kept_when_local_policy_arrives_before_unit_commit(bool $known): void
+    {
+        $image = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
+        $document = $this->documents->process($this->document($image, 'image/png')->id);
+        $quote = $this->documents->quoteOcr($this->fixture->owner, $document->organization_id, $document);
+        $document = $this->documents->confirmOcr($this->fixture->owner, $document->organization_id, $document, $quote['quote_id'], $quote['request_id']);
+        Http::fake(['https://fixture.invalid/v1/chat/completions' => function () use ($document, $known): \GuzzleHttp\Promise\PromiseInterface {
+            app(AssistantDocumentProcessingPolicyService::class)->assign($this->operator, $document->organization_id,
+                $document->project_id, $document->id, $this->fixture->owner->id);
+            return Http::response($known
+                ? ['model' => \App\Support\AI\LunaModelPolicy::TIMEWEB, 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
+                    'choices' => [['finish_reason' => 'stop', 'message' => ['content' => self::SENTINEL]]]]
+                : ['error' => ['message' => self::SENTINEL]], $known ? 200 : 503);
+        }]);
+        $result = $this->documents->processOcr($document->id);
+        Http::assertSentCount(1);
+        self::assertSame(AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED, $result->status);
+        self::assertSame('local_processing_ocr_disabled', $result->last_error);
+        self::assertSame(0, AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', 'ocr_page')->count());
+        $usage = \App\Models\Credits\AICreditProviderUsage::query()->where('ai_credit_reservation_id', $document->ocr_reservation_id)->sole();
+        self::assertSame($known, $usage->metadata['provider_usage_available']);
+        self::assertSame($known, $usage->metadata['cost_available']);
+        self::assertSame($known ? 10 : 0, $usage->metadata['input_tokens']);
+        self::assertStringNotContainsString(self::SENTINEL, json_encode($usage->getAttributes(), JSON_THROW_ON_ERROR));
+        self::assertNotSame('reserved', AICreditReservation::query()->findOrFail($document->ocr_reservation_id)->status);
+        Queue::assertNotPushed(ProcessAssistantDocumentOcr::class);
     }
 
     public function test_legacy_ocr_still_sends_the_existing_page_and_finishes_with_usage(): void

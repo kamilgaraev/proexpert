@@ -29,10 +29,10 @@ final readonly class AssistantDocumentProcessingPolicyService
             $document = AIAssistantDocument::query()->where('organization_id', $organizationId)->where('project_id', $projectId)
                 ->whereKey($documentId)->lockForUpdate()->first();
             $actor = User::query()->whereKey($actorId)->where('is_active', true)->first();
-            if ($document === null || $actor === null || $projectId < 1) { $this->deny(); }
+            if ($document === null || $actor === null || $projectId < 1 || $document->file_id === null || $document->file_id < 1) { $this->deny(); }
             app(AssistantDocumentService::class)->assertProcessingSource($actor, $document);
             return AssistantDocumentProcessingPolicy::query()->updateOrCreate(['document_id' => $documentId], [
-                'organization_id' => $organizationId, 'project_id' => $projectId, 'actor_user_id' => $actorId,
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'file_id' => $document->file_id, 'actor_user_id' => $actorId,
                 'assigned_by' => $operator->id, 'policy_version' => self::VERSION, 'generation' => (string) Str::uuid(),
                 'state' => 'active', 'source_identity' => $this->identity($document)]);
         });
@@ -52,14 +52,14 @@ final readonly class AssistantDocumentProcessingPolicyService
 
     public function capture(int $documentId): ?AssistantDocumentProcessingPolicy
     {
-        $policy = AssistantDocumentProcessingPolicy::query()->where('document_id', $documentId)->first();
+        $policy = $this->resolve($documentId);
         $this->assertCurrent($documentId, $policy);
         return $policy;
     }
 
     public function selected(int $documentId): bool
     {
-        try { return AssistantDocumentProcessingPolicy::query()->where('document_id', $documentId)->exists(); }
+        try { return $this->resolve($documentId) !== null; }
         catch (Throwable) { $this->deny(); }
     }
 
@@ -76,18 +76,28 @@ final readonly class AssistantDocumentProcessingPolicyService
 
     private function checkCurrent(int $documentId, ?AssistantDocumentProcessingPolicy $captured, bool $lock): void
     {
-        $document = $lock ? AIAssistantDocument::query()->whereKey($documentId)->lockForUpdate()->first() : null;
-        $current = AssistantDocumentProcessingPolicy::query()->where('document_id', $documentId)
+        $document = AIAssistantDocument::query()->whereKey($documentId)
             ->when($lock, static fn ($query) => $query->lockForUpdate())->first();
+        $current = $this->resolve($documentId, $document, $lock);
         if ($captured === null && $current === null) { return; }
         if ($captured === null || $current === null || $current->state !== 'active' || $current->policy_version !== self::VERSION
             || $current->generation !== $captured->generation || $current->document_id !== $documentId) { $this->deny(); }
-        $document ??= AIAssistantDocument::query()->find($documentId);
         $actor = User::query()->whereKey($current->actor_user_id)->where('is_active', true)->first();
         if ($document === null || $actor === null || $document->organization_id !== $current->organization_id
-            || $document->project_id !== $current->project_id || $current->project_id < 1
+            || $document->project_id !== $current->project_id || $document->file_id !== $current->file_id || $current->file_id < 1 || $current->project_id < 1
             || ! hash_equals($current->source_identity, $this->identity($document, $lock))) { $this->deny(); }
         app(AssistantDocumentService::class)->assertProcessingSource($actor, $document);
+    }
+
+    private function resolve(int $documentId, ?AIAssistantDocument $document = null, bool $lock = false): ?AssistantDocumentProcessingPolicy
+    {
+        $exact = AssistantDocumentProcessingPolicy::query()->where('document_id', $documentId)
+            ->when($lock, static fn ($query) => $query->lockForUpdate())->first();
+        if ($exact !== null) { return $exact; }
+        $document ??= AIAssistantDocument::query()->find($documentId);
+        if ($document?->file_id === null) { return null; }
+        return AssistantDocumentProcessingPolicy::query()->where('file_id', $document->file_id)->orderBy('id')
+            ->when($lock, static fn ($query) => $query->lockForUpdate())->first();
     }
 
     public function sanitizeFailure(int $documentId, Throwable $failure): Throwable

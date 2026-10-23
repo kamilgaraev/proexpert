@@ -239,11 +239,25 @@ class RagIndexer
                 || ! hash_equals($checksum, $this->sourceFingerprint(\App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource::chunkForUnit($document, $unit)))) {
                 throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('source_stale');
             }
-            $source = RagSource::query()->updateOrCreate([
+            $identity = [
                 'organization_id' => $chunk->organizationId, 'identity_project_id' => $chunk->projectId ?? 0,
                 'identity_part_key' => $this->partKey($chunk), 'source_type' => $chunk->sourceType,
                 'entity_type' => $chunk->entityType, 'entity_id' => (string) $chunk->entityId,
-            ], $this->sourceAttributes($chunk, $checksum, $reconciledAt));
+            ];
+            $source = RagSource::query()->where($identity)->lockForUpdate()->first();
+            if ($source !== null && hash_equals($checksum, (string) $source->checksum)) {
+                $stored = $source->chunks()->orderBy('chunk_index')->lockForUpdate()->get();
+                $source->setRelation('chunks', $stored);
+                if ($stored->isNotEmpty() && $stored->every(static fn (RagChunk $row, int $index): bool => $row->content === ($contentChunks[$index] ?? null)
+                    && $row->embedding === null
+                    && $row->embedding_provider === null && $row->embedding_model === null && $row->embedding_created_at === null)
+                    && $this->matchesLexicalSource($source, $chunk)) {
+                    if ($reconciledAt instanceof DateTimeInterface) { $source->forceFill(['last_reconciled_at' => $reconciledAt])->save(); }
+                    $guard();
+                    return $this->recordCoverageChange($chunk, $checksum);
+                }
+            }
+            $source = RagSource::query()->updateOrCreate($identity, $this->sourceAttributes($chunk, $checksum, $reconciledAt));
             $source->chunks()->delete();
             foreach ($contentChunks as $index => $content) {
                 RagChunk::query()->forceCreate(['source_id' => $source->id, 'organization_id' => $chunk->organizationId,

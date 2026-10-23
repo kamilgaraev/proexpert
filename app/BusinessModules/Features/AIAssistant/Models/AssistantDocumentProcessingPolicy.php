@@ -12,6 +12,6 @@ final class AssistantDocumentProcessingPolicy extends Model
 
     protected $guarded = [];
 
-    protected $casts = ['organization_id' => 'integer', 'project_id' => 'integer', 'document_id' => 'integer',
+    protected $casts = ['organization_id' => 'integer', 'project_id' => 'integer', 'document_id' => 'integer', 'file_id' => 'integer',
         'actor_user_id' => 'integer', 'assigned_by' => 'integer'];
 }

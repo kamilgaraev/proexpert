@@ -13,6 +13,7 @@ return new class extends Migration
         Schema::create('ai_assistant_document_processing_policies', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('document_id')->unique();
+            $table->unsignedBigInteger('file_id')->index();
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('project_id');
             $table->foreignId('actor_user_id')->nullable()->constrained('users')->nullOnDelete();
