@@ -15,6 +15,30 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class FactVocabularyTest extends TestCase
 {
+    public function test_minimum_length_is_only_exact_arithmetic_and_keeps_the_existing_numeric_domain(): void
+    {
+        foreach ([['102', 'mm', '0.102', 'm'], ['10.2', 'cm', '102', 'mm'],
+            ['4', 'in', '101.6', 'mm'], ['1000000000000', 'mm', '1000000000', 'm']] as $operands) {
+            self::assertTrue(FactVocabulary::meetsMinimumLength(...$operands));
+        }
+        self::assertFalse(FactVocabulary::meetsMinimumLength('101', 'mm', '0.102', 'm'));
+        self::assertFalse(FactVocabulary::meetsMinimumLength('4', 'in', '102', 'mm'));
+        foreach ([[null, 'mm', '102', 'mm'], ['102', null, '102', 'mm'], ['102', 'm2', '102', 'mm'],
+            ['NaN', 'mm', '102', 'mm'], [102.0, 'mm', '102', 'mm'], ['1e2', 'mm', '102', 'mm'],
+            ['0', 'mm', '102', 'mm'], ['-1', 'mm', '102', 'mm'], ['1.00001', 'm', '1', 'm'],
+            ['1000000000000.0001', 'mm', '102', 'mm'], ['102', 'mm', null, 'mm']] as $operands) {
+            try {
+                FactVocabulary::meetsMinimumLength(...$operands);
+                self::fail('Invalid length operand was accepted.');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        self::assertNull(FactVocabulary::engineeringObservation('equipment:1', 'height', '102', 'mm'));
+        self::assertFalse(FactVocabulary::supports('equipment', 'height'));
+        self::assertSame('m:0.102', FactVocabulary::measurementSignature('102', 'mm'));
+    }
+
     public function test_equal_engineering_marks_on_different_source_sheets_do_not_merge(): void
     {
         $models = new InMemoryProjectModelRepository;
