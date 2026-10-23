@@ -6,17 +6,32 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ExtractQuantitiesStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -25,6 +40,99 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_manual_quantity_refreshes_current_planning_before_the_next_generation_quantity_stage(): void
+    {
+        Http::fake(static fn () => throw new \RuntimeException('Unexpected provider call.'));
+        [$actor, $session, $target] = $this->planningFixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $before = $models->snapshotForPlanning(...[...$scope, 10001])['token'];
+        self::assertNotNull($models->currentTechnologyRecommendations(...$scope));
+        self::assertNotNull($models->currentCompleteness(...$scope));
+        $input = [...$this->input(), 'state_version' => (int) $session->state_version, 'unit' => 'count'];
+        $writer = app(SaveEvaluationWorkQuantity::class);
+        $receipt = $writer->handle($actor, $scope[1], $scope[2], $input);
+        $current = $session->fresh();
+        $output = $this->extractQuantities($current);
+        self::assertNotContains('stage5_projection_not_current', array_column($output['building_quantities']['diagnostics'], 'code'));
+        $quantities = array_column($output['building_quantities']['quantities'], null, 'key');
+        self::assertArrayHasKey($receipt['quantity_key'], $quantities);
+        $quantity = $quantities[$receipt['quantity_key']];
+        self::assertSame('3', $quantity['amount']);
+        self::assertSame('count', $quantity['unit']);
+        self::assertSame('direct_quantity', $quantity['formula_key']);
+        self::assertSame('estimated', $quantity['source']);
+        self::assertSame($target, $quantity['formula_inputs']['entity_id']);
+        $operand = $quantity['formula_inputs']['operands'][0];
+        $selection = $current->input_payload['quantity_selections'][$input['work_item_key']];
+        self::assertSame($selection['source_fact_id'], $operand['fact_id']);
+        self::assertSame($receipt['fact_id'], $operand['quantity_binding']['fact_id']);
+        self::assertSame($receipt['decision_id'], $operand['quantity_binding']['decision_id']);
+        self::assertSame($input['work_item_key'], $operand['quantity_binding']['work_item_key']);
+        self::assertSame([$selection['source_fact_id']], $quantity['assumptions']);
+        $after = $models->snapshotForPlanning(...[...$scope, 10001])['token'];
+        self::assertNotSame($before, $after);
+        self::assertSame($after, $models->currentTechnologyRecommendations(...$scope)['input_fingerprint']);
+        self::assertSame($after, $models->currentCompleteness(...$scope)['input_fingerprint']);
+        $counts = $this->planningCounts($session);
+        self::assertEquals($receipt, $writer->handle($actor, $scope[1], $scope[2], $input));
+        self::assertSame($counts, $this->planningCounts($session));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_planning_refresh_failure_rolls_back_the_quantity_choice_and_receipt(): void
+    {
+        [$actor, $session] = $this->planningFixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $counts = $this->planningCounts($session);
+        $payload = $session->input_payload;
+        $state = $session->state_version;
+        $evidenceCount = DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->count();
+        $trigger = Mockery::mock(PlanningReanalysisTrigger::class);
+        $trigger->shouldReceive('trigger')->once()->with($scope[2], Mockery::on(static fn ($context): bool => $context instanceof ActorContext
+            && $context->organizationId === $scope[0] && $context->projectId === $scope[1] && $context->actorId === (int) $actor->id))
+            ->andThrow(new \RuntimeException('Planning refresh failed.'));
+        $this->app->instance(PlanningReanalysisTrigger::class, $trigger);
+        try {
+            app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2],
+                [...$this->input(), 'state_version' => (int) $state]);
+            self::fail('A failed planning refresh committed the manual choice.');
+        } catch (\RuntimeException $error) {
+            self::assertSame('Planning refresh failed.', $error->getMessage());
+        }
+        self::assertSame($state, $session->fresh()->state_version);
+        self::assertSame($payload, $session->fresh()->input_payload);
+        self::assertSame($counts, $this->planningCounts($session));
+        self::assertSame($evidenceCount, DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->count());
+        self::assertSame($snapshot['token'], $models->snapshotForPlanning(...[...$scope, 10001])['token']);
+        self::assertNotNull($models->currentTechnologyRecommendations(...$scope));
+        self::assertNotNull($models->currentCompleteness(...$scope));
+    }
+
+    public function test_unresolved_reanalysis_keeps_the_current_planning_guard_closed(): void
+    {
+        config(['estimate-generation.project_understanding.max_facts' => 1]);
+        Http::fake(static fn () => throw new \RuntimeException('Unexpected provider call.'));
+        [$actor, $session] = $this->planningFixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        self::assertNotNull($models->currentTechnologyRecommendations(...$scope));
+        $receipt = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2],
+            [...$this->input(), 'state_version' => (int) $session->state_version, 'unit' => 'count']);
+        self::assertSame($receipt['fact_id'], $session->fresh()->input_payload['quantity_selections']['equipment:purchase']['fact_id']);
+        self::assertNull($models->currentTechnologyRecommendations(...$scope));
+        self::assertNull($models->currentCompleteness(...$scope));
+        $output = $this->extractQuantities($session->fresh());
+        self::assertSame([], $output['building_quantities']['quantities']);
+        self::assertSame(['stage5_projection_not_current'], array_column($output['building_quantities']['diagnostics'], 'code'));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        Http::assertNothingSent();
+    }
+
     public function test_http_manual_quantity_validation_reaches_the_writer_and_replays_without_new_facts(): void
     {
         [$actor, $session] = $this->fixture();
@@ -216,6 +324,59 @@ final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonic
                 self::assertArrayNotHasKey('quantity_selections', $session->fresh()->input_payload);
             }
         }
+    }
+
+    private function planningFixture(): array
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $original = app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+            ['key' => 'equipment-1', 'type' => 'equipment', 'parameters' => ['equipment_count' => ['value' => '1', 'unit' => 'count', 'basis' => 'input']]],
+        ]]);
+        $target = $original['quantities']['equipment.count']['formula_inputs']['entity_id'];
+        $session = $session->fresh();
+        $session->input_payload = [...$session->input_payload, 'price_policy' => 'catalog'];
+        $draft = $session->draft_payload;
+        $draft['generation_contract'] = UniversalDraftProjector::CONTRACT;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['unit'] = null;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata'] = ['scope_entity_id' => $target];
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['validation_flags'] = ['unit_requires_confirmation'];
+        $draft['source_input_version'] = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session);
+        $draft = app(UniversalReviewSummaryProjector::class)->project($draft);
+        $session->update(['input_payload' => $session->input_payload, 'draft_payload' => app(BuildMostEstimateDraft::class)->seal($draft)]);
+        app(PlanningReanalysisTrigger::class)->trigger($scope[2], new ActorContext($scope[0], $scope[1], (int) $actor->id, (string) Str::uuid()));
+
+        return [$actor, $session->fresh(), $target];
+    }
+
+    private function extractQuantities(EstimateGenerationSession $session): array
+    {
+        $version = 'sha256:'.hash('sha256', 'quantity-generation-stage');
+        $results = new StageResultFactory(new InMemoryPipelineArtifactStore, PipelineDefinitionGraph::standard());
+        $context = new PipelineContext((int) $session->id, (int) $session->organization_id, (int) $session->project_id,
+            (int) $session->state_version, $version, $session->status->value, generationAttemptId: (string) Str::uuid(),
+            stage: ProcessingStage::UnderstandObject, dependencyVersions: [ProcessingStage::UnderstandDocuments->value => $version]);
+        $analysis = $results->make($context, ProcessingStage::UnderstandObject, ['analysis' => []]);
+        $prior = new PipelinePriorOutputs([ProcessingStage::UnderstandObject->value => $analysis->output],
+            [ProcessingStage::UnderstandObject->value => ['analysis' => []]]);
+        $stage = new ExtractQuantitiesStage(app(EstimateGenerationQuantityLearningEvidenceService::class), $results,
+            app(CurrentProjectDerivedQuantityService::class));
+        $context = new PipelineContext((int) $session->id, (int) $session->organization_id, (int) $session->project_id,
+            (int) $session->state_version, $version, $session->status->value, priorOutputs: $prior,
+            generationAttemptId: $context->generationAttemptId, stage: ProcessingStage::ExtractQuantities,
+            dependencyVersions: [ProcessingStage::UnderstandObject->value => $analysis->output->version]);
+
+        return $stage->execute($context)->transientData;
+    }
+
+    private function planningCounts(EstimateGenerationSession $session): array
+    {
+        $counts = [];
+        foreach (['project_model_assertions', 'project_model_corrections', 'project_understanding_runs', 'technology_planning_runs', 'completeness_runs'] as $table) {
+            $counts[$table] = DB::table('estimate_generation_'.$table)->where('session_id', $session->id)->count();
+        }
+
+        return $counts;
     }
 
     private function input(): array
