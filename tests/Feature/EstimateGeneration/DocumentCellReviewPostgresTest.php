@@ -62,6 +62,45 @@ use Tests\Support\AssistantRealAuthorizationFixture;
 
 final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_actual_snapshot_stays_readable_after_accepting_a_current_cell_interpretation(): void
+    {
+        [, $session, , $document, $headers] = $this->realHttpReview();
+        $base = '/api/v1/admin/projects/'.$session->project_id.'/estimate-generation/sessions/'.$session->id;
+        $url = $base.'/documents/'.$document->id.'/cell-reviews';
+        $before = $this->getJson($base.'/snapshot', $headers);
+        self::assertSame(200, $before->getStatusCode(), 'BEFORE accept: '.$before->getContent());
+        self::assertSame((int) $session->fresh()->state_version, $before->json('data.state_version'));
+        $proposal = $this->getJson($url, $headers)->assertOk()->json('data.items.0');
+        $input = $this->reviewRequest($session->fresh(), $proposal);
+        $accepted = $this->postJson($url, $input, $headers)->assertOk()->json('data');
+        self::assertSame('accept', $accepted['decision']);
+        $after = $this->getJson($base.'/snapshot', $headers);
+        self::assertSame(200, $after->getStatusCode(), 'AFTER accept: '.$after->getContent());
+        self::assertSame($accepted['state_version'], $after->json('data.state_version'));
+        $rows = $this->getJson($url, $headers)->assertOk()->json('data.items');
+        self::assertSame('accept', $rows[0]['status']);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $sourceIds = static fn (array $facts): array => array_values(array_map(static fn ($fact): string => $fact->id,
+            array_filter($facts, static fn ($fact): bool => $fact->type === 'equipment_specification' && $fact->origin === 'document')));
+        $acceptedSources = $sourceIds($models->snapshot(...$scope)->facts);
+        self::assertCount(1, $acceptedSources);
+        $counts = $this->reviewCounts($session);
+        self::assertSame(CanonicalPipelineJson::encode($accepted), CanonicalPipelineJson::encode(
+            $this->postJson($url, $input, $headers)->assertOk()->json('data')));
+        $replayed = $this->getJson($base.'/snapshot', $headers)->assertOk();
+        self::assertSame($after->json('data.state_version'), $replayed->json('data.state_version'));
+        self::assertSame($counts, $this->reviewCounts($session));
+        $revoked = $this->postJson($url, $this->reviewRequest($session->fresh(), $rows[0], 'revoke'), $headers)->assertOk()->json('data');
+        self::assertSame('revoke', $revoked['decision']);
+        $afterRevoke = $this->getJson($base.'/snapshot', $headers)->assertOk();
+        self::assertSame($revoked['state_version'], $afterRevoke->json('data.state_version'));
+        self::assertSame([], $sourceIds($models->snapshot(...$scope)->facts));
+        self::assertSame($acceptedSources[0], $models->fact(...[...$scope, $acceptedSources[0]])->id);
+        self::assertSame('revoke', $this->getJson($url, $headers)->assertOk()->json('data.items.0.status'));
+        self::assertSame($counts['usage'], DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
     public function test_actual_admin_route_accepts_get_derived_cell_review_and_replays_without_new_writes(): void
     {
         [, $session, , $document, $headers] = $this->realHttpReview();

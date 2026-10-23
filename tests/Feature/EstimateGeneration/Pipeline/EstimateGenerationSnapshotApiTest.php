@@ -67,6 +67,26 @@ final class EstimateGenerationSnapshotApiTest extends EstimateGenerationCanonica
         self::assertTrue($store->resolve($resolved->context, $resolved->fingerprint, 'retry_succeeded', new \DateTimeImmutable));
         $record($session, (string) Str::uuid(), 'estimate_composer_candidate_source_invalid');
         $record($foreignSession, $attemptId, 'estimate_composer_approved_plan_invalid');
+        $activeEvent = DB::table('estimate_generation_failure_events')
+            ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+            ->where('session_id', $session->id)->where('event_id', $active->context->eventId)
+            ->where('fingerprint', $active->fingerprint)->where('event_type', 'occurred')->first();
+        self::assertNotNull($activeEvent);
+        $activeEvent = (array) $activeEvent;
+        unset($activeEvent['sequence']);
+        $activeEvent['event_id'] = (string) Str::uuid();
+        $recordedContext = json_decode((string) $activeEvent['safe_context'], true, 512, JSON_THROW_ON_ERROR);
+        $activeEvent['safe_context'] = json_encode([
+            'invariant_code' => $recordedContext['invariant_code'], 'exception_class' => true,
+            'provider_code' => 'private_provider_code', 'http_code' => 503, 'http_class' => '5xx',
+        ], JSON_THROW_ON_ERROR);
+        DB::table('estimate_generation_failure_events')->insert($activeEvent);
+        $persisted = DB::table('estimate_generation_failures')
+            ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+            ->where('session_id', $session->id)->where('fingerprint', $active->fingerprint)->whereNull('resolved_at')
+            ->value('safe_context');
+        self::assertSame('private_provider_code', json_decode((string) $persisted, true, 512, JSON_THROW_ON_ERROR)['provider_code']);
+        self::assertTrue(json_decode((string) $persisted, true, 512, JSON_THROW_ON_ERROR)['exception_class']);
         $this->route($project, $session);
         $this->withToken(auth('api_admin')->login($user));
 
@@ -76,6 +96,8 @@ final class EstimateGenerationSnapshotApiTest extends EstimateGenerationCanonica
             ->assertJsonPath('data.failure_summary.latest.code', 'estimate_composer_fact_limit_exceeded')
             ->assertJsonPath('data.failure_summary.latest.diagnostics.invariant_code', 'estimate_composer_fact_limit_exceeded');
         self::assertArrayNotHasKey('provider_error_code', $first->json('data.failure_summary.latest.diagnostics'));
+        self::assertArrayNotHasKey('safe_context', $first->json('data.failure_summary.latest'));
+        self::assertSame(['invariant_code' => 'estimate_composer_fact_limit_exceeded'], $first->json('data.failure_summary.latest.diagnostics'));
         self::assertStringNotContainsString('private', $first->getContent());
 
         self::assertTrue($store->resolve($active->context, $active->fingerprint, 'retry_succeeded', new \DateTimeImmutable));

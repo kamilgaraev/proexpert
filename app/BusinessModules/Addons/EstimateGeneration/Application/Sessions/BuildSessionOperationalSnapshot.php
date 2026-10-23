@@ -24,8 +24,8 @@ use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
-    // Ten aggregate reads, four quota reads and two current clarification reads.
-    public const QUERY_BUDGET = 16;
+    // Ten aggregate reads, seven current clarification reads and four quota reads.
+    public const QUERY_BUDGET = 21;
 
     private const CHECKPOINT_STATUS_VALUES = [
         CheckpointStatus::Running->value,

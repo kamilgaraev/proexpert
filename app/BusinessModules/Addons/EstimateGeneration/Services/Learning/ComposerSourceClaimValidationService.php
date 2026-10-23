@@ -163,7 +163,7 @@ final readonly class ComposerSourceClaimValidationService
         $candidate = ['source_review_decision_id' => $decision->id, 'entity_id' => $source->entityId,
             'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => $source->value], 'unit' => null,
             'document_fact_ids' => [$source->id]];
-        $binding = $this->documentBinding($scope, $snapshot, $source, $candidate, GeometryInventory::currentDocumentVersions($snapshot));
+        $binding = $this->documentBinding($scope, $snapshot, $source, $candidate, GeometryInventory::currentDocumentVersions($snapshot, false));
         if ($binding === null || $binding['literal_witness']['entity_key'] !== ($value['entity_key'] ?? null)
             || $binding['literal_witness']['cell'] !== $cell['address']) {
             return null;
