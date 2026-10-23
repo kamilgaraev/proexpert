@@ -37,6 +37,13 @@ class ProjectEvent extends Model
 {
     use HasFactory, SoftDeletes, HasOnboardingDemo;
 
+    public ?array $recurrenceResponseContext = null;
+    public ?array $recurrenceOperationSummary = null;
+
+    protected $appends = ['recurrence_context', 'recurrence_until', 'recurrence_operation'];
+
+    protected $hidden = ['recurrenceSeries', 'recurringParent', 'recurrence_overrides'];
+
     protected $fillable = [
         'project_id',
         'organization_id',
@@ -66,6 +73,10 @@ class ProjectEvent extends Model
         'recurrence_pattern',
         'recurrence_config',
         'recurring_parent_id',
+        'series_id',
+        'series_position',
+        'recurrence_overrides',
+        'recurrence_suppressed',
         'attachments',
         'notes',
         'custom_fields',
@@ -90,6 +101,9 @@ class ProjectEvent extends Model
         'custom_fields' => 'array',
         'recurrence_config' => 'array',
         'is_onboarding_demo' => 'boolean',
+        'series_position' => 'integer',
+        'recurrence_overrides' => 'array',
+        'recurrence_suppressed' => 'boolean',
     ];
 
     // ============================================
@@ -129,6 +143,68 @@ class ProjectEvent extends Model
     public function recurringChildren(): HasMany
     {
         return $this->hasMany(ProjectEvent::class, 'recurring_parent_id');
+    }
+
+    public function recurrenceSeries(): BelongsTo
+    {
+        return $this->belongsTo(ProjectEventSeries::class, 'series_id');
+    }
+
+    public function getRecurrenceContextAttribute(): ?array
+    {
+        if ($this->recurrenceResponseContext !== null) {
+            return $this->recurrenceResponseContext;
+        }
+        if ($this->series_id !== null) {
+            $series = $this->recurrenceSeries;
+            if ($series === null || $series->organization_id !== $this->organization_id || $series->project_id !== $this->project_id) {
+                return null;
+            }
+            $definition = $series->definitionAt((int) $this->series_position);
+
+            return [
+                'series_id' => $series->id, 'position' => $this->series_position, 'revision' => $series->revision,
+                'enabled' => $definition['enabled'], 'pattern' => $definition['pattern'],
+                'until' => $definition['until'], 'end_known' => $definition['until'] !== null,
+                'legacy' => in_array('legacy', (array) $this->recurrence_overrides, true),
+                'suppressed' => $this->recurrence_suppressed,
+            ];
+        }
+        if (!$this->is_recurring && $this->recurring_parent_id === null) {
+            return null;
+        }
+        $root = $this->recurring_parent_id === null ? $this : $this->recurringParent;
+        $sameScope = $root !== null && $root->organization_id === $this->organization_id && $root->project_id === $this->project_id;
+
+        return [
+            'series_id' => null, 'position' => null, 'revision' => 0, 'enabled' => true,
+            'pattern' => $sameScope ? $root->recurrence_pattern : null, 'until' => null,
+            'end_known' => false, 'legacy' => true, 'suppressed' => false,
+        ];
+    }
+
+    public function getRecurrenceUntilAttribute(): ?string
+    {
+        return $this->recurrence_context['until'] ?? null;
+    }
+
+    public function getRecurrencePatternAttribute(?string $value): ?string
+    {
+        return $this->series_id === null ? $value : ($this->recurrence_context['pattern'] ?? $value);
+    }
+
+    public function getIsRecurringAttribute(mixed $value): bool
+    {
+        if ($this->series_id !== null && $this->recurring_parent_id === null) {
+            return $this->recurrence_context['enabled'] ?? (bool) $value;
+        }
+
+        return (bool) $value;
+    }
+
+    public function getRecurrenceOperationAttribute(): ?array
+    {
+        return $this->recurrenceOperationSummary;
     }
 
     // ============================================
@@ -326,7 +402,6 @@ class ProjectEvent extends Model
 
         $events = [];
         $currentDate = $this->event_date->copy();
-        $config = $this->recurrence_config ?? [];
 
         while ($currentDate->lte($until)) {
             $currentDate = $this->getNextRecurrenceDate($currentDate);
@@ -335,7 +410,7 @@ class ProjectEvent extends Model
                 break;
             }
 
-            $events[] = $this->replicate()->fill([
+            $events[] = $this->replicate(['series_id', 'series_position', 'recurrence_overrides', 'recurrence_suppressed'])->fill([
                 'event_date' => $currentDate,
                 'end_date' => $this->end_date?->copy()->addDays((int) $this->event_date->diffInDays($currentDate, false)),
                 'recurring_parent_id' => $this->id,
@@ -416,7 +491,7 @@ class ProjectEvent extends Model
 
     public function scopeUpcoming($query, int $days = 7)
     {
-        return $query->whereBetween('event_date', [
+        return $query->where('recurrence_suppressed', false)->whereBetween('event_date', [
             now()->toDateString(),
             now()->addDays($days)->toDateString()
         ])->whereIn('status', ['scheduled', 'in_progress']);
@@ -434,7 +509,7 @@ class ProjectEvent extends Model
 
     public function scopeNeedsReminder($query)
     {
-        return $query->whereNotNull('reminder_before_hours')
+        return $query->where('recurrence_suppressed', false)->whereNotNull('reminder_before_hours')
             ->where('reminder_sent', false)
             ->where('event_date', '>=', now()->toDateString());
     }

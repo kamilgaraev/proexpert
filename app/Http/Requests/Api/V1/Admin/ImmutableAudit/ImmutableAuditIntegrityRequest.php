@@ -17,7 +17,7 @@ final class ImmutableAuditIntegrityRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'domain' => ['sometimes', 'string', Rule::in(['payments', 'budgeting', 'mdm', 'rbac', 'one_c_exchange', 'warehouse', 'crm', 'period_close', 'procurement', 'sod'])],
+            'domain' => ['sometimes', 'string', Rule::in(['payments', 'budgeting', 'mdm', 'rbac', 'one_c_exchange', 'warehouse', 'crm', 'period_close', 'procurement', 'sod', 'schedule_management'])],
             'chain_scope' => ['sometimes', 'string', 'max:120'],
             'date_from' => ['sometimes', 'date'],
             'date_to' => ['sometimes', 'date'],

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ScheduleManagement\Http\Controllers;
 
 use App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent;
+use App\BusinessModules\Features\ScheduleManagement\Http\Requests\UpdateProjectEventRequest;
 use App\BusinessModules\Features\ScheduleManagement\Services\ProjectEventService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -15,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use function trans_message;
 
 class ProjectEventController extends Controller
@@ -55,6 +57,7 @@ class ProjectEventController extends Controller
                 return [
                     'id' => $event->id,
                     'title' => $event->title,
+                    'recurrence_context' => $event->recurrence_context,
                     'description' => $event->description,
                     'start' => $event->getStartDateTimeAttribute()->toIso8601String(),
                     'end' => $event->getEndDateTimeAttribute()?->toIso8601String(),
@@ -152,7 +155,7 @@ class ProjectEventController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
 
-            $event = ProjectEvent::with(['createdBy', 'project'])
+            $event = ProjectEvent::with(['createdBy', 'project', 'recurrenceSeries.segments', 'recurringParent'])
                 ->where('project_id', $projectId)
                 ->where('organization_id', $organizationId)
                 ->findOrFail($eventId);
@@ -232,7 +235,7 @@ class ProjectEventController extends Controller
         }
     }
 
-    public function update(Request $request, int $projectId, int $eventId): JsonResponse
+    public function update(UpdateProjectEventRequest $request, int $projectId, int $eventId): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -241,39 +244,14 @@ class ProjectEventController extends Controller
                 ->where('organization_id', $organizationId)
                 ->findOrFail($eventId);
 
-            $validated = $request->validate([
-                'event_type' => 'sometimes|string|in:inspection,delivery,meeting,maintenance,weather,other,site_request',
-                'title' => 'sometimes|string|max:255',
-                'description' => 'nullable|string',
-                'location' => 'nullable|string|max:255',
-                'event_date' => 'sometimes|date',
-                'event_time' => ['nullable', 'regex:/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/'],
-                'end_time' => ['nullable', 'regex:/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/'],
-                'duration_minutes' => 'nullable|integer|min:1',
-                'is_all_day' => 'sometimes|boolean',
-                'end_date' => 'nullable|date|after_or_equal:event_date',
-                'is_blocking' => 'sometimes|boolean',
-                'priority' => 'sometimes|string|in:low,normal,high,critical,medium',
-                'status' => 'sometimes|string|in:scheduled,in_progress,completed,cancelled',
-                'schedule_id' => 'nullable|integer',
-                'related_task_id' => 'nullable|integer',
-                'participants' => 'nullable|array',
-                'responsible_users' => 'nullable|array',
-                'organizations' => 'nullable|array',
-                'reminder_before_hours' => 'nullable|integer|min:1|max:720',
-                'is_recurring' => 'sometimes|boolean',
-                'recurrence_pattern' => 'nullable|string|in:daily,weekly,monthly',
-                'recurrence_config' => 'nullable|array',
-                'recurrence_until' => 'nullable|date',
-                'notes' => 'nullable|string',
-                'color' => 'nullable|string|max:7',
-                'icon' => 'nullable|string|max:50',
-            ]);
+            $validated = $request->validated();
 
             return AdminResponse::success(
                 $this->eventService->updateEvent($event, $validated)->load(['createdBy']),
                 trans_message('schedule_management.event_updated')
             );
+        } catch (ConflictHttpException) {
+            return AdminResponse::error(trans_message('schedule_management.event_series_conflict'), Response::HTTP_CONFLICT);
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('schedule_management.event_not_found'), Response::HTTP_NOT_FOUND);
         } catch (ValidationException $e) {
@@ -307,6 +285,8 @@ class ProjectEventController extends Controller
             $this->eventService->deleteEvent($event, (bool) $request->input('delete_recurring', false));
 
             return AdminResponse::success(null, trans_message('schedule_management.event_deleted'));
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('schedule_management.validation_error'), Response::HTTP_UNPROCESSABLE_ENTITY, $e->errors());
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('schedule_management.event_not_found'), Response::HTTP_NOT_FOUND);
         } catch (\Throwable $e) {
