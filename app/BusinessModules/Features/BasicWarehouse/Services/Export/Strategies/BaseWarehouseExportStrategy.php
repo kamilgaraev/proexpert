@@ -66,10 +66,10 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
         return $fragment !== '' ? $fragment : $fallback;
     }
 
-    protected function applyReceiptPrintLayout(Worksheet $sheet, int $headerRow, bool $singleQuantity): void
+    protected function applyReceiptPrintLayout(Worksheet $sheet, int $headerRow): void
     {
         $lastRow = $sheet->getHighestRow();
-        $lastDataRow = $lastRow - ($singleQuantity ? 2 : 3);
+        $lastDataRow = $lastRow - 3;
         $sheet->setShowGridlines(false);
         $sheet->getStyle("A1:I{$lastRow}")->getFont()->setName('Arial')->setSize(10);
         $sheet->getStyle("A1:I{$lastRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
@@ -82,7 +82,7 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
         $sheet->getStyle('G1:I3')->getFont()->setSize(8);
         $sheet->getStyle('G1:I3')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $sheet->getStyle('A6')->getFont()->setSize(8);
-        $sheet->getStyle('A9')->getFont()->setSize($singleQuantity ? 14 : 12);
+        $sheet->getStyle('A9')->getFont()->setSize(12);
         $sheet->getStyle('H10:I10')->getFont()->setSize(8);
         $sheet->mergeCells('A6:G6');
         foreach ([5, 9, 13, 14, 15] as $row) {
@@ -103,13 +103,10 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
         }
         foreach (range($headerRow, $lastDataRow) as $row) {
             $sheet->mergeCells("A{$row}:D{$row}");
-            if ($singleQuantity) {
-                $sheet->mergeCells("F{$row}:G{$row}");
-            }
             $this->fitWrappedCell($sheet, "A{$row}:D{$row}");
             $this->fitWrappedCell($sheet, "E{$row}");
             if ($row === $headerRow) {
-                foreach ($singleQuantity ? ["F{$row}:G{$row}", "H{$row}", "I{$row}"] : ["F{$row}", "G{$row}", "H{$row}", "I{$row}"] as $range) {
+                foreach (["F{$row}", "G{$row}", "H{$row}", "I{$row}"] as $range) {
                     $this->fitWrappedCell($sheet, $range);
                 }
             } else {
@@ -134,7 +131,7 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
             ->setPrintArea("A1:I{$lastRow}")->setRowsToRepeatAtTop([$headerRow, $headerRow]);
         $sheet->getPageMargins()->setTop(0.25)->setBottom(0.3)->setLeft(0.2)->setRight(0.2)->setHeader(0.1)->setFooter(0.15);
         $number = str_replace('&', '&&', (string) $sheet->getCell('H11')->getValue());
-        $sheet->getHeaderFooter()->setOddFooter('&L&8М-'.($singleQuantity ? '4' : '7').' № '.$number.'&R&8Страница &P из &N');
+        $sheet->getHeaderFooter()->setOddFooter('&L&8М-7 № '.$number.'&R&8Страница &P из &N');
     }
 
     protected function fitWrappedCell(Worksheet $sheet, string $range, float $minimumHeight = 18): void

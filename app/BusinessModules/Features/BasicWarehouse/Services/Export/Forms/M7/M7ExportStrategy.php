@@ -136,6 +136,6 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
 
     protected function applyStyles($sheet): void
     {
-        $this->applyReceiptPrintLayout($sheet, 17, false);
+        $this->applyReceiptPrintLayout($sheet, 17);
     }
 }

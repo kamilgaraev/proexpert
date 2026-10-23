@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Services\Export;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use DateTimeZone;
 use Illuminate\Database\Eloquent\Collection;
 
 final class WarehouseMovementDocumentResolver
 {
     /** @return Collection<int, WarehouseMovement> */
-    public function resolve(WarehouseMovement $movement): Collection
+    public function resolve(WarehouseMovement $movement, ?DateTimeZone $documentTimezone = null): Collection
     {
         if ($movement->document_number === null || trim($movement->document_number) === '') {
             return $movement->newCollection([$movement]);
@@ -28,8 +29,16 @@ final class WarehouseMovementDocumentResolver
             ->where('user_id', $movement->user_id)
             ->where('operation_category', $movement->operation_category)
             ->where('reason', $movement->reason)
-            ->whereDate('movement_date', $movement->movement_date)
             ->orderBy('id');
+
+        if ($documentTimezone === null) {
+            $query->whereDate('movement_date', $movement->movement_date);
+        } else {
+            $start = $movement->movement_date->copy()->setTimezone($documentTimezone)->startOfDay();
+            $end = $start->copy()->addDay();
+            $query->where('movement_date', '>=', $start->utc())
+                ->where('movement_date', '<', $end->utc());
+        }
 
         // Одинаковый пользовательский номер не объединяет документы разных подрядчиков.
         if ($movement->isContractorTransferOut()) {

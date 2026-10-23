@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Mobile;
 
+use App\BusinessModules\Features\BasicWarehouse\Enums\WarehouseReceiptVatMode;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferRequest;
@@ -154,8 +155,8 @@ class WarehouseController extends Controller
                 $organizationId,
                 (int) $validated['warehouse_id'],
                 (int) $materialId,
-                (float) $validated['quantity'],
-                (float) $validated['price'],
+                isset($validated['vat_mode']) ? (string) $validated['quantity'] : (float) $validated['quantity'],
+                isset($validated['vat_mode']) ? (string) $validated['price'] : (float) $validated['price'],
                 [
                     'project_id' => $validated['project_id'] ?? null,
                     'user_id' => $request->user()->id,
@@ -163,7 +164,9 @@ class WarehouseController extends Controller
                     'reason' => $validated['reason'] ?? null,
                     'metadata' => $validated['metadata'] ?? [],
                     'idempotency_key' => $validated['idempotency_key'],
-                ]
+                ],
+                vatMode: isset($validated['vat_mode']) ? WarehouseReceiptVatMode::from($validated['vat_mode']) : null,
+                vatRate: isset($validated['vat_rate']) ? (string) $validated['vat_rate'] : null,
             );
 
             if ($request->hasFile('photos')) {
@@ -179,6 +182,7 @@ class WarehouseController extends Controller
 
             return MobileResponse::success([
                 'movement_id' => $result['movement']->id,
+                'receipt_tax' => $result['movement']->metadata['receipt_tax'] ?? null,
                 'photo_gallery' => $result['movement']->photo_gallery,
             ], trans_message('warehouse_basic.receipt_success'));
         } catch (WarehouseOperationIdempotencyConflictException $exception) {
