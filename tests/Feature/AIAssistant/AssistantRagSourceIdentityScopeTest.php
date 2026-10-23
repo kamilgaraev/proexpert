@@ -374,6 +374,88 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         self::assertSame([$execution], $metrics->summary()['rag_source_batches']);
     }
 
+    public function test_batch_metrics_ignore_empty_identity_groups_without_changing_counter_queries(): void
+    {
+        $this->source($this->organization->id, $this->visible->id, 'project', 'project', $this->visible->id);
+        $identities = [];
+        for ($index = 0; $index < 128; $index++) {
+            $identities[] = (object) ['entity_type' => 'private_inactive_'.$index, 'source_type' => 'file_document', 'identity_count' => 1];
+        }
+        $identities[] = (object) ['entity_type' => 'project', 'source_type' => 'project', 'identity_count' => 1];
+        $observer = (object) ['hits' => 0];
+        $query = static function () use ($identities, $observer) {
+            $model = new class extends RagSource
+            {
+                public array $identityRows = [];
+                public ?object $readObserver = null;
+
+                protected function newBaseQueryBuilder()
+                {
+                    if ($this->readObserver === null) { return parent::newBaseQueryBuilder(); }
+                    $connection = $this->getConnection();
+                    return new class($connection, $connection->getQueryGrammar(), $connection->getPostProcessor(), $this->identityRows, $this->readObserver) extends \Illuminate\Database\Query\Builder
+                    {
+                        public function __construct(\Illuminate\Database\ConnectionInterface $connection, \Illuminate\Database\Query\Grammars\Grammar $grammar,
+                            \Illuminate\Database\Query\Processors\Processor $processor, private readonly array $identityRows, private readonly object $observer)
+                        {
+                            parent::__construct($connection, $grammar, $processor);
+                        }
+
+                        public function newQuery()
+                        {
+                            return new static($this->connection, $this->grammar, $this->processor, $this->identityRows, $this->observer);
+                        }
+
+                        public function get($columns = ['*']): \Illuminate\Support\Collection
+                        {
+                            $sql = $this->toSql();
+                            if (str_contains($sql, 'COUNT(*) AS identity_count') && str_contains($sql, '"ai_rag_sources"')) {
+                                $this->observer->hits++;
+                                return new \Illuminate\Support\Collection($this->identityRows);
+                            }
+                            return parent::get($columns);
+                        }
+                    };
+                }
+            };
+            $model->identityRows = $identities;
+            $model->readObserver = $observer;
+            return $model->newQuery()->from('ai_rag_status_sources as ai_rag_sources');
+        };
+        $columns = ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'];
+        $aggregate = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+        $baseline = (clone $this->policy)->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate);
+        self::assertSame(1, $observer->hits);
+        self::assertCount(2, $baseline);
+        $expected = [];
+        $baselineQueries = [];
+        foreach ($baseline as $batch) {
+            $baselineQueries[] = [$batch->toSql(), $batch->getBindings()];
+            foreach ($batch->get() as $row) { $expected[$row->source_type] = (int) $row->stored_count; }
+        }
+        self::assertSame(['project' => 1], $expected);
+        $observer->hits = 0;
+        $metrics = $this->streamingMetrics();
+        $queries = [];
+        $counts = [];
+        $compiled = (clone $this->policy)->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate,
+            consume: static function ($batch) use (&$queries, &$counts): void {
+                $queries[] = [$batch->toSql(), $batch->getBindings()];
+                foreach ($batch->get() as $row) { $counts[$row->source_type] = (int) $row->stored_count; }
+            });
+        self::assertSame(1, $observer->hits);
+        self::assertCount(2, $compiled);
+        self::assertSame($baselineQueries, $queries);
+        self::assertSame($expected, $counts);
+        $batches = $metrics->summary()['rag_source_batches'] ?? [];
+        self::assertCount(2, $batches);
+        self::assertSame([false, true], array_column($batches, 'candidate_identities_complete'));
+        self::assertSame([[], [['entity_type' => 'project', 'source_type' => 'project']]], array_column($batches, 'candidate_identities'));
+        self::assertSame([true, true], array_column($batches, 'completed'));
+        self::assertStringNotContainsString('private_inactive_', json_encode($batches, JSON_THROW_ON_ERROR));
+    }
+
     public function test_expected_actor_counts_measure_real_batches_and_preserve_full_proof_parity(): void
     {
         $this->streamingCounterFixture();
