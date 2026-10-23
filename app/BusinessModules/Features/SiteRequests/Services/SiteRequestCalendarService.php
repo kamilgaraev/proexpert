@@ -371,7 +371,7 @@ class SiteRequestCalendarService
      */
     private function getEquipmentEventTitle(SiteRequest $request): string
     {
-        $type = $request->equipment_type ?? 'Техника';
+        $type = $request->equipment_type?->label() ?? 'Техника';
         return "Аренда: {$type}";
     }
 
@@ -399,7 +399,7 @@ class SiteRequestCalendarService
      */
     private function getStartDate(SiteRequest $request): ?Carbon
     {
-        return $request->getCalendarStartDate();
+        return $request->getCalendarStartDate()?->copy()->startOfDay();
     }
 
     /**
@@ -407,7 +407,7 @@ class SiteRequestCalendarService
      */
     private function getEndDate(SiteRequest $request): ?Carbon
     {
-        return $request->getCalendarEndDate();
+        return $request->getCalendarEndDate()?->copy()->startOfDay();
     }
 
     /**
@@ -415,6 +415,10 @@ class SiteRequestCalendarService
      */
     private function getStartTime(SiteRequest $request): ?string
     {
+        if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $request->equipment_start_at !== null) {
+            return $request->getCalendarStartDate()?->format('H:i:s');
+        }
+
         if ($request->delivery_time_from) {
             return $request->delivery_time_from;
         }
@@ -426,6 +430,10 @@ class SiteRequestCalendarService
      */
     private function getEndTime(SiteRequest $request): ?string
     {
+        if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $request->equipment_start_at !== null) {
+            return $request->getCalendarEndDate()?->format('H:i:s');
+        }
+
         if ($request->delivery_time_to) {
             return $request->delivery_time_to;
         }
@@ -437,6 +445,10 @@ class SiteRequestCalendarService
      */
     private function isAllDay(SiteRequest $request): bool
     {
+        if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $request->equipment_start_at !== null) {
+            return false;
+        }
+
         return $request->delivery_time_from === null;
     }
 
