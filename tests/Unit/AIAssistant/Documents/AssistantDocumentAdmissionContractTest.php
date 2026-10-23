@@ -87,4 +87,31 @@ final class AssistantDocumentAdmissionContractTest extends TestCase
         yield 'long query' => [['query' => str_repeat('я', 201)]];
         yield 'empty query' => [['query' => '  ']];
     }
+
+    #[DataProvider('invalidStoredDocumentReferences')]
+    public function test_stored_document_entry_rejects_other_or_incomplete_proofs(array $changes): void
+    {
+        $guard = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class))->newInstanceWithoutConstructor();
+        $reference = ['egress_projection_version' => OrdinaryAssistantDocumentProjection::VERSION,
+            'entity_type' => 'assistant_document', 'source_type' => 'file_document', 'content_scope' => 'unstructured',
+            'organization_id' => 3, 'entity_id' => 4, 'document_id' => 4, 'project_id' => 5,
+            'unit_id' => 6, 'source_id' => 7, 'chunk_id' => 8,
+            'document_checksum' => 'document', 'unit_checksum' => 'unit', 'rag_source_checksum' => 'source'];
+        self::assertFalse($guard->storedDocumentCurrent(new \App\Models\User(), 3, [array_replace($reference, $changes)]));
+    }
+
+    public static function invalidStoredDocumentReferences(): iterable
+    {
+        yield 'unknown version' => [['egress_projection_version' => 'other']];
+        yield 'SQL policy' => [['egress_projection_version' => OrdinaryAssistantSourceProjection::VERSION]];
+        yield 'other entity' => [['entity_type' => 'project']];
+        yield 'other source' => [['source_type' => 'project']];
+        yield 'structured' => [['content_scope' => 'structured']];
+        yield 'other tenant' => [['organization_id' => 9]];
+        yield 'mismatched document' => [['document_id' => 9]];
+        foreach (['entity_id', 'document_id', 'project_id', 'unit_id', 'source_id', 'chunk_id',
+            'document_checksum', 'unit_checksum', 'rag_source_checksum'] as $key) {
+            yield 'missing '.$key => [[$key => null]];
+        }
+    }
 }

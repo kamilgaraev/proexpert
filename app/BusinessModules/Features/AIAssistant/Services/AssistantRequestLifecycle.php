@@ -141,7 +141,7 @@ final class AssistantRequestLifecycle
                     throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found'));
                 }
                 if ($existing->status === 'completed' && is_array($existing->response)) {
-                    $this->assertResponseAccess($existing->response, $actor, (int) $organization->id);
+                    $this->assertResponseAccess($existing->response, $actor, (int) $organization->id, true);
                     $response = $existing->response;
                     $response['progress'] = AssistantRequestProgress::sanitize($response['progress'] ?? []);
                     return ['request' => $existing, 'response' => $response, 'created' => false];
@@ -465,7 +465,7 @@ final class AssistantRequestLifecycle
         $request = $this->ownedRequest($requestId, $actor, $organizationId);
         $this->assertSurface($request, $surface);
         if ($request->status === 'completed' && is_array($request->response)) {
-            $this->assertResponseAccess($request->response, $actor, $organizationId);
+            $this->assertResponseAccess($request->response, $actor, $organizationId, true);
         }
         $status = ['request_id' => $request->request_id, 'conversation_id' => $request->conversation_id, 'status' => $request->cancel_requested_at !== null && $request->status === 'running' ? 'cancel_requested' : $request->status, 'stage' => $request->stage, 'calls_used' => $request->calls_used, 'max_calls' => $request->max_calls];
         $status['progress'] = AssistantRequestProgress::sanitize($request->response['progress'] ?? []);
@@ -675,7 +675,7 @@ final class AssistantRequestLifecycle
             ->where('request_key', $requestId)->where('expires_at', '>', now())->orderByDesc('id')->firstOrFail();
     }
 
-    private function assertResponseAccess(array $response, User $actor, int $organizationId): void
+    private function assertResponseAccess(array $response, User $actor, int $organizationId, bool $storedResponse = false): void
     {
         $refs = $response['message']['metadata']['source_refs'] ?? [];
         if (!is_array($refs)) {
@@ -687,17 +687,19 @@ final class AssistantRequestLifecycle
         $checkpoint = $execution === null ? null : fn (): int => $execution->remainingMilliseconds();
         $requestId = $response['message']['metadata']['request_id'] ?? null;
         $requestId = is_string($requestId) && Str::isUuid($requestId) ? $requestId : null;
-        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId);
-        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId);
+        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId, $storedResponse);
+        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId, $storedResponse);
     }
 
-    private function assertResponseReferences(array $refs, User $actor, int $organizationId, ?callable $checkpoint, ?string $requestId): void
+    private function assertResponseReferences(array $refs, User $actor, int $organizationId, ?callable $checkpoint, ?string $requestId, bool $storedResponse = false): void
     {
-        $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($refs, $actor, $organizationId, $requestId): void {
+        $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($refs, $actor, $organizationId, $requestId, $storedResponse): void {
             foreach ($refs as $index => $ref) {
                 if (!is_array($ref) || !$this->dataAccess->canReadReference($actor, $organizationId, $ref)
                     || (($ref['egress_projection_version'] ?? null) === \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection::VERSION
-                        && !app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, [$ref]))) {
+                        && !($storedResponse
+                            ? app(AssistantSourceReferenceGuard::class)->storedDocumentCurrent($actor, $organizationId, [$ref])
+                            : app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, [$ref])))) {
                     $type = is_array($ref) ? ($ref['entity_type'] ?? null) : null;
                     Log::notice('ai.assistant.response_source_access_denied', [
                         'request_id' => $requestId, 'reason' => 'source_ref_denied', 'reference_index' => is_int($index) ? $index : null,

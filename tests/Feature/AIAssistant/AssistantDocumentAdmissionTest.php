@@ -116,11 +116,11 @@ final class AssistantDocumentAdmissionTest extends TestCase
         return ['project_id' => $this->project->id, 'document_id' => $this->document->id, 'chunk_ids' => array_column(array_slice($this->chunks, 0, 3), 'id')];
     }
 
-    private function enroll(): array
+    private function enroll(string $message = 'Покажи документы и объясни учебные данные.'): array
     {
         $cohort = $this->enrollments->assign($this->operator, $this->fixture->organization->id, $this->fixture->owner,
             $this->project->id, [OrdinaryAssistantDocumentProjection::TOOL], OrdinaryAssistantDocumentProjection::VERSION);
-        $payload = ['request_id' => (string) Str::uuid(), 'message' => 'Покажи документы и объясни учебные данные.', 'conversation_id' => null,
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $message, 'conversation_id' => null,
             'profile' => 'normal', 'allow_actions' => false];
         $payload['quote_id'] = app(AICreditService::class)->quote($this->fixture->organization, $this->fixture->owner, $payload)['quote_id'];
         $manifest = $this->enrollments->preview($this->fixture->owner, $cohort->organization_id, $cohort->id, $payload['quote_id'], $payload,
@@ -129,9 +129,10 @@ final class AssistantDocumentAdmissionTest extends TestCase
         return [$cohort, $payload, $manifest];
     }
 
-    public function test_native_loop_transmits_only_approved_subset_and_keeps_raw_fragments_out_of_durable_metadata(): void
+    #[DataProvider('documentRequestWordings')]
+    public function test_native_loop_transmits_only_approved_subset_and_keeps_raw_fragments_out_of_durable_metadata(string $message): void
     {
-        [$cohort, $payload, $manifest] = $this->enroll();
+        [$cohort, $payload, $manifest] = $this->enroll($message);
         $storedProof = AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id'])->sources;
         self::assertStringNotContainsString(self::SENTINEL, json_encode($storedProof, JSON_THROW_ON_ERROR));
         self::assertCount(3, $manifest['sources'][0]['projection']['data']['fragments']);
@@ -168,13 +169,24 @@ final class AssistantDocumentAdmissionTest extends TestCase
         self::assertSame(0, \App\BusinessModules\Features\AIAssistant\Models\AssistantMemory::query()->where('organization_id', $cohort->organization_id)->count());
         self::assertFalse($context->allowsExpansion('rag'));
         self::assertFalse(config('ai-assistant.rag.expanded_context_enabled'));
+        Carbon::setTestNow(now()->addHours(2));
+        self::assertFalse(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+            ->fresh($this->fixture->owner, $cohort->organization_id, $response['message']['metadata']['source_refs']));
         $lifecycle = app(AssistantRequestLifecycle::class);
         self::assertSame('completed', $lifecycle->status($response['request_id'], $this->fixture->owner, $cohort->organization_id)['status']);
+        self::assertFalse($lifecycle->start($this->fixture->organization, $this->fixture->owner, null, $payload)['created']);
         $this->enrollments->revoke($this->fixture->owner, $cohort->organization_id, $manifest['enrollment_id']);
         self::assertSame('completed', $lifecycle->status($response['request_id'], $this->fixture->owner, $cohort->organization_id)['status']);
+        self::assertFalse($lifecycle->start($this->fixture->organization, $this->fixture->owner, null, $payload)['created']);
         File::query()->whereKey($this->document->file_id)->update(['deleted_at' => now()]);
         $this->expectException(AuthorizationException::class);
         $lifecycle->status($response['request_id'], $this->fixture->owner, $cohort->organization_id);
+    }
+
+    public static function documentRequestWordings(): iterable
+    {
+        yield 'ordinary wording' => ['Покажи документы и объясни учебные данные.'];
+        yield 'metadata wording' => ['Какие документы с готовым текстом доступны? Покажи имена и идентификаторы.'];
     }
 
     public function test_actual_sdk_error_echo_cannot_copy_an_admitted_fragment_to_failure_stores_or_logs(): void
@@ -415,6 +427,39 @@ final class AssistantDocumentAdmissionTest extends TestCase
         $context->assertTool('get_project_attention', array_replace($args, ['limit' => 2]), $this->fixture->owner, $cohort->organization_id);
     }
 
+    public function test_guarded_sql_model_arguments_survive_location_wording_without_semantic_defaults(): void
+    {
+        $tool = 'get_project_production_schedule_summary';
+        $query = 'Сверь выполненные работы с графиком с первого по пятый этаж';
+        $args = ['project_id' => $this->project->id, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'];
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => $this->project->id]]]]];
+        self::assertSame($tool, \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::fromPlan($plan)['name']);
+        self::assertSame('location', \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::bindArguments($plan, $tool, $args)['scope_clarification']);
+        $cohort = $this->enrollments->assign($this->operator, $this->fixture->organization->id, $this->fixture->owner, $this->project->id, [$tool]);
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => $query, 'profile' => 'normal', 'allow_actions' => false,
+            'context' => $plan['request']['context']];
+        $payload['quote_id'] = app(AICreditService::class)->quote($this->fixture->organization, $this->fixture->owner, $payload)['quote_id'];
+        $manifest = $this->enrollments->preview($this->fixture->owner, $cohort->organization_id, $cohort->id, $payload['quote_id'], $payload,
+            [['tool' => $tool, 'arguments' => $args]]);
+        $this->enrollments->confirm($this->fixture->owner, $cohort->organization_id, $manifest['enrollment_id'], $manifest['manifest_hash'], OrdinaryAssistantEnrollmentService::DECLARATION);
+        $calls = 0;
+        $provider = $this->responses(function (array $input) use (&$calls, $args, $tool, $manifest): array {
+            if (++$calls === 1) {
+                $native = $this->nativeCall($args);
+                $native['output'][0]['name'] = $native['function_calls'][0]['name'] = $tool;
+                return $native;
+            }
+            $outputs = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? null) === 'function_call_output'));
+            self::assertCount(1, $outputs);
+            self::assertSame($manifest['sources'][0]['projection'], json_decode($outputs[0]['output'], true, 512, JSON_THROW_ON_ERROR));
+            return array_replace($this->answer(), ['content' => 'Проверен учебный график проекта.']);
+        });
+        $response = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+            app(OrdinaryAssistantScopedContext::class))->ask($query, $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertSame(2, $calls);
+        self::assertSame('completed', $response['status']);
+    }
+
     public static function clarifications(): iterable
     {
         yield 'before read' => [false, false];
@@ -479,21 +524,65 @@ final class AssistantDocumentAdmissionTest extends TestCase
         $capture();
     }
 
-    public function test_local_replay_keeps_existing_expiry_policy_but_checks_current_document_source(): void
+    #[DataProvider('storedSourceChanges')]
+    public function test_local_replay_keeps_existing_expiry_policy_but_checks_current_document_source(string $change): void
     {
         [$cohort, $payload, $manifest] = $this->enroll();
         $context = app(OrdinaryAssistantScopedContext::class);
         $context->enter($this->fixture->owner, $cohort->organization_id, $payload['message'], $payload, null);
         $result = app(SearchAssistantDocumentsTool::class)->execute($this->args(), $this->fixture->owner, $this->fixture->organization);
+        $capturedAt = now();
+        Carbon::setTestNow($capturedAt->copy()->addMinutes(4)->addSeconds(59));
+        self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+            ->fresh($this->fixture->owner, $cohort->organization_id, $result['source_refs']));
+        Carbon::setTestNow($capturedAt->copy()->addMinutes(5)->addSecond());
+        self::assertFalse(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+            ->fresh($this->fixture->owner, $cohort->organization_id, $result['source_refs']));
         $this->enrollments->revoke($this->fixture->owner, $cohort->organization_id, $manifest['enrollment_id']);
         $cohort->update(['expires_at' => now()->subMinute()]);
         AssistantEgressEnrollment::query()->whereKey($manifest['enrollment_id'])->update(['expires_at' => now()->subMinute()]);
+        Carbon::setTestNow($capturedAt->copy()->addHours(2));
         $method = new \ReflectionMethod(AssistantRequestLifecycle::class, 'assertResponseReferences');
-        $method->invoke(app(AssistantRequestLifecycle::class), $result['source_refs'], $this->fixture->owner, $cohort->organization_id, null, null);
+        $method->invoke(app(AssistantRequestLifecycle::class), $result['source_refs'], $this->fixture->owner, $cohort->organization_id, null, null, true);
         self::assertTrue(true);
-        AIAssistantDocumentUnit::query()->whereKey($this->chunks[0]->metadata['unit_id'])->update(['text' => 'stale']);
+        match ($change) {
+            'raw unit' => AIAssistantDocumentUnit::query()->whereKey($this->chunks[0]->metadata['unit_id'])->update(['text' => 'stale']),
+            'source checksum' => RagSource::query()->whereKey($this->chunks[0]->source_id)->update(['checksum' => hash('sha256', 'changed')]),
+            'source identity' => RagSource::query()->whereKey($this->chunks[0]->source_id)->update(['entity_id' => '999999999']),
+            'current ACL' => File::query()->whereKey($this->document->file_id)->update(['deleted_at' => now()]),
+            'future timestamp' => $result['source_refs'][0]['fetched_at'] = now()->addHour()->toISOString(),
+            'invalid timestamp' => $result['source_refs'][0]['fetched_at'] = 'invalid timestamp',
+        };
         $this->expectException(AuthorizationException::class);
-        $method->invoke(app(AssistantRequestLifecycle::class), $result['source_refs'], $this->fixture->owner, $cohort->organization_id, null, null);
+        $method->invoke(app(AssistantRequestLifecycle::class), $result['source_refs'], $this->fixture->owner, $cohort->organization_id, null, null, true);
+    }
+
+    public static function storedSourceChanges(): iterable
+    {
+        foreach (['raw unit', 'source checksum', 'source identity', 'current ACL', 'future timestamp', 'invalid timestamp'] as $change) {
+            yield $change => [$change];
+        }
+    }
+
+    public function test_delayed_completion_keeps_transient_reference_ttl_with_an_active_request_lease(): void
+    {
+        [$cohort, $payload] = $this->enroll();
+        $context = app(OrdinaryAssistantScopedContext::class);
+        $context->enter($this->fixture->owner, $cohort->organization_id, $payload['message'], $payload, null);
+        $result = app(SearchAssistantDocumentsTool::class)->execute($this->args(), $this->fixture->owner, $this->fixture->organization);
+        $lifecycle = app(AssistantRequestLifecycle::class);
+        $request = $lifecycle->start($this->fixture->organization, $this->fixture->owner, null, $payload)['request'];
+        Carbon::setTestNow(now()->addHours(2));
+        $request->updateQuietly(['lease_expires_at' => now()->addMinute()]);
+        self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+            ->storedDocumentCurrent($this->fixture->owner, $cohort->organization_id, $result['source_refs']));
+        try {
+            $lifecycle->complete($request, $this->fixture->owner, ['message' => ['metadata' => ['source_refs' => $result['source_refs']]]], false);
+            self::fail('Delayed completion published expired transient references');
+        } catch (AuthorizationException $denied) {
+            self::assertSame(trans_message('ai_assistant.sources_access_revoked'), $denied->getMessage());
+        }
+        self::assertSame('running', $request->refresh()->status);
     }
 
     private function responses(callable $callback): DocumentAdmissionResponsesProvider
