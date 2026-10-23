@@ -9,12 +9,34 @@ use App\BusinessModules\Features\ScheduleManagement\Services\ProjectEventService
 use App\Models\Project;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Schema;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 class ProjectEventDateRangeTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_exact_end_migration_rolls_back_unknown_durations_without_failing_and_keeps_the_default(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create(['organization_id' => $context->organization->id]));
+        $attributes = [
+            'organization_id' => $context->organization->id, 'created_by_user_id' => $context->user->id, 'project_id' => $project->id,
+            'event_type' => 'meeting', 'title' => 'Migration fixture', 'event_date' => '2026-10-24',
+        ];
+        $unknown = ProjectEvent::query()->create([...$attributes, 'duration_minutes' => null]);
+        $migration = require app_path('BusinessModules/Features/ScheduleManagement/migrations/2026_10_23_030000_add_exact_end_time_to_project_events.php');
+        $migration->down();
+        $this->assertFalse(Schema::hasColumn('project_events', 'end_time'));
+        $this->assertSame(0, $unknown->fresh()->duration_minutes);
+        $migration->up();
+        $this->assertTrue(Schema::hasColumn('project_events', 'end_time'));
+        $native = ProjectEvent::query()->create($attributes)->fresh();
+        $this->assertSame(60, $native->duration_minutes);
+        $native->update(['duration_minutes' => null]);
+        $this->assertNull($native->fresh()->duration_minutes);
+    }
 
     public function test_a_midday_event_finds_all_day_and_multiday_blockers_on_its_first_day(): void
     {
@@ -113,6 +135,44 @@ class ProjectEventDateRangeTest extends TestCase
 
         $night->update(['duration_minutes' => 2000, 'end_date' => '2026-10-24']);
         $this->assertFalse($service->checkEventConflicts($night)['has_conflicts']);
+    }
+
+    public function test_exact_end_and_unknown_end_preserve_ranges_conflicts_and_recurring_intervals(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create(['organization_id' => $context->organization->id]));
+        $attributes = [
+            'organization_id' => $context->organization->id, 'created_by_user_id' => $context->user->id, 'project_id' => $project->id,
+            'event_type' => 'meeting', 'title' => 'Exact interval fixture', 'event_date' => '2026-10-24', 'event_time' => '09:15:30',
+            'end_date' => '2026-10-25', 'end_time' => '10:45:15', 'duration_minutes' => null,
+            'is_all_day' => false, 'is_blocking' => true, 'priority' => 'normal', 'status' => 'scheduled',
+        ];
+        $exact = ProjectEvent::query()->create($attributes);
+        $unknown = ProjectEvent::query()->create(array_replace($attributes, ['end_date' => null, 'end_time' => null]));
+        $midnight = ProjectEvent::query()->create(array_replace($attributes, ['end_time' => '00:00:00']));
+        $target = ProjectEvent::query()->create(array_replace($attributes, ['event_date' => '2026-10-25', 'event_time' => '10:45:14', 'end_time' => '11:00:00']));
+        $service = new ProjectEventService();
+        $day = Carbon::parse('2026-10-25');
+
+        $this->assertEqualsCanonicalizing([$exact->id, $target->id], $service->getCalendarEvents($project->id, $day, $day)->pluck('id')->all());
+        $this->assertSame([$exact->id], $service->checkEventConflicts($target)['conflicts']->pluck('id')->all());
+        $this->assertTrue($target->hasConflicts());
+        $this->assertFalse($unknown->hasConflicts());
+        $this->assertFalse($service->checkEventConflicts($unknown)['has_conflicts']);
+        $this->assertNull($unknown->getEndDateTimeAttribute());
+        $this->assertNull($unknown->getCalendarEndLocal());
+        $target->update(['event_time' => '10:45:15']);
+        $this->assertFalse($service->checkEventConflicts($target)['has_conflicts']);
+        $this->assertFalse($target->hasConflicts());
+        $this->assertSame('2026-10-25T00:00:00', $midnight->getCalendarEndLocal());
+
+        $exact->update(['is_recurring' => true, 'recurrence_pattern' => 'daily']);
+        $children = $exact->generateRecurringEvents(Carbon::parse('2026-10-27'));
+        $this->assertCount(3, $children);
+        foreach ($children as $offset => $child) {
+            $this->assertSame(Carbon::parse('2026-10-25')->addDays($offset)->format('Y-m-d') . 'T09:15:30', $child->getCalendarStartLocal());
+            $this->assertSame(Carbon::parse('2026-10-26')->addDays($offset)->format('Y-m-d') . 'T10:45:15', $child->getCalendarEndLocal());
+        }
     }
 
     public function test_ranges_include_ongoing_durations_without_including_finished_or_foreign_events(): void

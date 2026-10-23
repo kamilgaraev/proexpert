@@ -326,6 +326,50 @@ final class SiteRequestDraftPublicationTest extends TestCase
         $this->assertNotContains($request->id, $visibleRequests);
     }
 
+    public function test_equipment_mirror_preserves_the_source_interval_when_times_change_or_are_cleared(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext(true);
+        $this->actingAs(User::query()->findOrFail($request->user_id));
+        $request->update([
+            'request_type' => SiteRequestTypeEnum::EQUIPMENT_REQUEST->value,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+            'required_date' => null,
+            'equipment_type' => 'generator',
+            'equipment_count' => 1,
+            'rental_start_date' => '2026-10-27',
+            'rental_end_date' => '2026-10-28',
+            'equipment_start_at' => '2026-10-27T06:15:00Z',
+            'equipment_end_at' => '2026-10-28T07:45:00Z',
+        ]);
+        $calendarService->createCalendarEvent($request->fresh());
+        $source = SiteRequestCalendarEvent::query()->where('site_request_id', $request->id)->sole();
+        $mirrorId = $source->schedule_event_id;
+        $this->assertNotNull($mirrorId);
+
+        foreach ([
+            [[], '2026-10-27T09:15:00', '2026-10-28T10:45:00'],
+            [[
+                'equipment_start_at' => '2026-10-27T06:15:30Z',
+                'equipment_end_at' => '2026-10-28T07:45:15Z',
+            ], '2026-10-27T09:15:30', '2026-10-28T10:45:15'],
+            [['equipment_end_at' => null], '2026-10-27T09:15:30', null],
+            [['equipment_start_at' => null], '2026-10-27', '2026-10-29'],
+        ] as [$changes, $start, $end]) {
+            if ($changes !== []) {
+                $request->refresh()->update($changes);
+                $calendarService->updateCalendarEvent($request->fresh());
+            }
+            $source->refresh();
+            $mirror = ProjectEvent::query()->findOrFail($mirrorId);
+            $this->assertSame($mirrorId, $source->schedule_event_id);
+            $this->assertSame($start, $mirror->getCalendarStartLocal());
+            $this->assertSame($end, $mirror->getCalendarEndLocal());
+            $this->assertSame($request->organization_id, $mirror->organization_id);
+            $this->assertSame($request->project_id, $mirror->project_id);
+            $this->assertDatabaseCount('project_events', 1);
+        }
+    }
+
     public function test_equipment_calendar_keeps_exact_moscow_times_and_cleared_end(): void
     {
         [$request, , $calendarService] = $this->publicationContext();
