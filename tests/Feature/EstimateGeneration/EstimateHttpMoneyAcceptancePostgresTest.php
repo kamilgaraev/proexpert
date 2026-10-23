@@ -22,6 +22,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMap
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningSourceTrustPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EquipmentCountKnowledgeValidationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Enums\AuthSessionStatus;
@@ -558,14 +559,19 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint'],
             ...($response === 'other' ? ['other' => 'Пользователь предполагает крепление по инструкции; независимой проверки технологии пока нет.', 'document_ids' => []] : [])];
         $this->postJson($url.'/questions/'.$question['code'].'/answer', $answerInput, $headers)->assertOk();
+        $question = $this->workTechnologyQuestion($project, $session, $headers);
+        $answerReferences = [$question['answer']['fact_id'], $question['answer']['decision_id']];
         if ($status === 'revoked') {
-            $question = $this->workTechnologyQuestion($project, $session, $headers);
             $this->postJson($url.'/questions/'.$question['code'].'/answer', ['response' => 'revoke',
                 'idempotency_key' => (string) Str::uuid(), 'expected_source_version' => $question['source_version'],
                 'answer_fingerprint' => $question['answer_fingerprint']], $headers)->assertOk();
         }
         $question = $this->workTechnologyQuestion($project, $session, $headers);
+        $answerReferences = [...$answerReferences, $question['answer']['fact_id'], $question['answer']['decision_id']];
         self::assertSame($status, $question['status']);
+        self::assertSame($status === 'answered' ? ['other', $answerInput['other'], []]
+            : [$status === 'revoked' ? 'revoke' : 'leave_unresolved', null, []],
+            [$question['answer']['response'], $question['answer']['other'], $question['answer']['document_ids']]);
         $beforeStaleGenerate = $this->modelMoneySnapshot($session);
         $this->postJson($url.'/generate', ['request_id' => $staleOperation, 'quote_id' => $staleQuote['quote_id'],
             'state_version' => $session->fresh()->state_version, 'generation_mode' => 'ai_assisted'], $headers)->assertUnprocessable();
@@ -611,6 +617,12 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         $entry = $projectInput['work_technology_context'][0];
         self::assertSame($status, $entry['status']);
         self::assertSame($question['answer']['fact_id'], $entry['answer']['fact_id']);
+        self::assertSame($question['answer']['decision_id'], $entry['answer']['decision_id']);
+        self::assertSame([$question['answer']['response'], $question['answer']['other'], $question['answer']['document_ids']],
+            [$entry['answer']['response'], $entry['answer']['other'], $entry['answer']['document_ids']]);
+        if ($status !== 'answered') {
+            self::assertSame([], $entry['documents']);
+        }
         self::assertSame([$status === 'answered' ? 'user_assumption' : 'no_active_claim', 'unresolved', false],
             [$entry['answer']['trust'], $entry['answer']['engineering_applicability'], $entry['answer']['numeric_parameters_confirmed']]);
         self::assertNotContains($entry['answer']['fact_id'], array_column($projectInput['facts'], 'id'));
@@ -642,6 +654,23 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         $evaluation = $this->getJson($url.'/evaluation', $headers)->assertOk()->json('data.result');
         self::assertCount(4, $evaluation['missing_requirements']);
         self::assertFalse($evaluation['can_confirm_for_apply']);
+        foreach (EstimateGenerationLearningExample::query()->where('organization_id', $session->organization_id)
+            ->where('project_id', $project->id)->where('generation_session_id', $session->id)->get() as $example) {
+            $references = [];
+            $payload = ['context' => $example->context_payload ?? [], 'sources' => $example->source_refs ?? []];
+            array_walk_recursive($payload,
+                static function (mixed $value) use (&$references): void {
+                    if (is_string($value)) {
+                        $references[] = $value;
+                    }
+                });
+            if (array_intersect($answerReferences, $references) === []) {
+                continue;
+            }
+            self::assertFalse(EstimateGenerationLearningSourceTrustPolicy::isIndexable($example));
+            self::assertFalse(EquipmentCountKnowledgeValidationService::hasPassingValidationMetadata($example));
+            self::assertNotSame('passed', data_get($example->context_payload, 'source_claim_validation.engineering_applicability'));
+        }
         $money = $this->modelMoneySnapshot($session);
         $job->handle(app(RunEstimateGenerationDraft::class));
         self::assertSame($money, $this->modelMoneySnapshot($session));
