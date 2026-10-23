@@ -22,6 +22,7 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use OpenAI\Exceptions\ErrorException;
+use OpenAI\Exceptions\RateLimitException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -86,7 +87,7 @@ final class AssistantProviderErrorDiagnosticsTest extends TestCase
         try {
             $client->responses()->create(['model' => 'openai/gpt-6-luna', 'input' => [['role' => 'user', 'content' => self::CANARY]]]);
             self::fail('Actual SDK must reject the synthetic HTTP error');
-        } catch (ErrorException $failure) {
+        } catch (ErrorException|RateLimitException $failure) {
             $failure->response->getBody()->close();
             $diagnostics = AssistantProviderErrorDiagnostics::fromFailure($failure);
             self::assertSame(['provider_http_status' => $status, 'provider_error_type' => $type, 'provider_error_code' => $code], $diagnostics);
@@ -102,6 +103,7 @@ final class AssistantProviderErrorDiagnosticsTest extends TestCase
             'auth' => [401, ['message' => self::CANARY, 'type' => 'authentication_error', 'code' => 'invalid_api_key'], 'authentication_error', 'invalid_api_key'],
             'model' => [404, ['message' => self::CANARY, 'type' => 'invalid_request_error', 'code' => 'model_not_found'], 'invalid_request_error', 'model_not_found'],
             'server' => [503, ['message' => self::CANARY, 'type' => 'server_error', 'code' => 'server_error'], 'server_error', 'server_error'],
+            'rate-limit' => [429, ['message' => self::CANARY, 'type' => 'rate_limit_error', 'code' => 'rate_limit_exceeded'], null, null],
             'untrusted-identifiers' => [400, ['message' => self::CANARY, 'type' => self::CANARY, 'code' => self::CANARY], null, null],
             'string-error' => [422, self::CANARY, null, null],
             'invalid-field-types' => [400, ['message' => self::CANARY, 'type' => ['private' => self::CANARY], 'code' => ['private' => self::CANARY]], null, null],

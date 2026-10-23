@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use OpenAI\Exceptions\ErrorException;
+use OpenAI\Exceptions\RateLimitException;
 use Throwable;
 
 final class AssistantProviderErrorDiagnostics
@@ -24,6 +25,11 @@ final class AssistantProviderErrorDiagnostics
     public static function fromFailure(?Throwable $failure): array
     {
         $diagnostics = ['provider_http_status' => null, 'provider_error_type' => null, 'provider_error_code' => null];
+        if ($failure instanceof RateLimitException) {
+            $diagnostics['provider_http_status'] = 429;
+
+            return $diagnostics;
+        }
         if (! $failure instanceof ErrorException) {
             return $diagnostics;
         }
