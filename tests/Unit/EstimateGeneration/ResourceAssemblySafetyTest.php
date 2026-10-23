@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeResourceRowData;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
@@ -13,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeM
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use Brick\Math\BigDecimal;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Filesystem\Filesystem;
@@ -727,6 +729,57 @@ final class ResourceAssemblySafetyTest extends TestCase
             'centimetres' => ['см', 100, '0.025', 2.5],
             'zero quantity' => ['мм', 0, '0.0025', 0.0],
             'negative quantity' => ['мм', -1, '0.0025', 0.0],
+        ];
+    }
+
+    #[DataProvider('mappedResourceCoefficientCases')]
+    public function test_mapped_stored_coefficient_is_scaled_without_float_noise(
+        string $coefficient,
+        bool $exactOutput,
+        string $expectedRate,
+        string|float $expectedQuantity,
+    ): void {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 100, 'norm_resource_id' => 7001,
+            'price_id' => 9001, 'resource_type' => 'material',
+            'resource_code' => '01.1.01.01-0001', 'price_resource_code' => '01.1.01.01-0001',
+            'resource_name' => 'Synthetic material coefficient', 'unit' => 'м3',
+            'quantity' => $coefficient, 'unit_price' => '1.000000',
+            'regional_price_version_id' => 11, 'regional_price_version_key' => 'synthetic-regional',
+        ]);
+        $candidate = $this->unsafeCandidate();
+        $candidate['unit'] = '100 м3';
+        $candidate['resources']['materials'] = [$mapped->resource];
+        $work = ['key' => 'mapped-resource-coefficient', 'name' => $candidate['name'], 'unit' => 'м3', 'quantity' => '3',
+            'confidence' => 0.9, 'validation_flags' => [], 'materials' => [], 'labor' => [], 'machinery' => [],
+            'work_intent' => ['scope' => 'site', 'action' => 'excavation', 'preferred_section_prefixes' => ['01'], 'forbidden_section_prefixes' => []]];
+        if ($exactOutput) {
+            $work['quantity_evidence'] = ['basis' => 'synthetic_unit_test_quantity'];
+        }
+        $match = ['version' => ['source_type' => 'fsnb_2022', 'version_key' => 'synthetic-decimal-coefficient'],
+            'selected' => $candidate, 'candidates' => [$candidate]];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($work, $match);
+
+        self::assertSame('matched', $item['normative_match']['status']);
+        self::assertSame($expectedRate, (string) BigDecimal::of($item['materials'][0]['quantity_per_work_unit'])->strippedOfTrailingZeros());
+        self::assertSame($expectedQuantity, $item['materials'][0]['quantity']);
+        self::assertSame('normative_resource', $item['materials'][0]['quantity_basis']);
+        self::assertSame(7001, $item['materials'][0]['normative_ref']['norm_resource_id']);
+        self::assertSame(9001, $item['materials'][0]['normative_ref']['price_id']);
+        self::assertSame('01.1.01.01-0001', $item['materials'][0]['normative_ref']['resource_code']);
+        self::assertSame($coefficient, $mapped->resource['quantity']);
+    }
+
+    public static function mappedResourceCoefficientCases(): array
+    {
+        return [
+            'ordinary coefficient legacy output' => ['834.680000', false, '8.3468', 25.0404],
+            'ordinary coefficient exact output' => ['834.680000', true, '8.3468', '25.0404'],
+            'integer legacy control' => ['118.000000', false, '1.18', 3.54],
+            'integer exact control' => ['118.000000', true, '1.18', '3.54'],
+            'small fraction legacy control' => ['1.050000', false, '0.0105', 0.0315],
+            'small fraction exact control' => ['1.050000', true, '0.0105', '0.0315'],
         ];
     }
 

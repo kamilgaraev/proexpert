@@ -1307,6 +1307,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame('125.450000', $mapped->resource['unit_price']);
         self::assertSame('regional_catalog', $mapped->resource['price_source']);
         self::assertSame('regional-2026-q2', $mapped->resource['price_source_version']);
+        self::assertSame('50', $mapped->resource['quantity']);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('normative_resource_price_relation_invalid');
@@ -1314,6 +1315,26 @@ final class NormativeContextPinResolverTest extends TestCase
             ...(array) $row,
             'price_resource_code' => '01.7.02',
         ]);
+    }
+
+    #[Test]
+    public function database_resource_quantity_preserves_decimal_column_scale_and_existing_zero_fallback(): void
+    {
+        $row = ['estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'price_id' => 9001, 'resource_type' => 'material', 'resource_code' => '01.7.01',
+            'price_resource_code' => '01.7.01', 'resource_name' => 'Synthetic coefficient', 'unit' => 'м3',
+            'unit_price' => '125.450000', 'regional_price_version_id' => 11,
+            'regional_price_version_key' => 'regional-2026-q2'];
+        foreach (['834.680000', '123456789.123456', '99999999999999.999999',
+            '-99999999999999.999999', '0.000001', '0.000000', '-1.050000'] as $coefficient) {
+            $mapped = NormativeResourceRowData::fromDatabaseRow((object) [...$row, 'quantity' => $coefficient]);
+            self::assertSame($coefficient, $mapped->resource['quantity']);
+            self::assertSame('125.450000', $mapped->resource['unit_price']);
+            self::assertSame('materials', $mapped->group);
+            self::assertSame('01.7.01', $mapped->resource['code']);
+        }
+        self::assertSame('0', NormativeResourceRowData::fromDatabaseRow((object) $row)->resource['quantity']);
+        self::assertSame('0', NormativeResourceRowData::fromDatabaseRow((object) [...$row, 'quantity' => null])->resource['quantity']);
     }
 
     #[Test]

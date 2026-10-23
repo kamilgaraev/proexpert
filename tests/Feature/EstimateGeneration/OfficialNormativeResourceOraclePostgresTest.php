@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources;
 use App\Models\Organization;
@@ -47,7 +51,7 @@ final class OfficialNormativeResourceOraclePostgresTest extends EstimateGenerati
         $labor = $assembled['labor'][0];
         self::assertSame($fixture['norm']['resources'][0]['unit'], $labor['unit']);
         self::assertSame($fixture['norm']['resources'][0]['quantity'], (string) $labor['quantity_per_unit']);
-        self::assertSame($fixture['oracle']['labor_per_work_unit'], $labor['quantity_per_work_unit']);
+        self::assertSame($fixture['oracle']['labor_per_work_unit'], (string) BigDecimal::of($labor['quantity_per_work_unit'])->strippedOfTrailingZeros());
         self::assertSame($fixture['oracle']['labor_hours'], (string) $labor['quantity']);
         self::assertCount($fixture['oracle']['materials_count'], $assembled['materials']);
         self::assertCount($fixture['oracle']['machinery_count'], $assembled['machinery']);
@@ -86,6 +90,56 @@ final class OfficialNormativeResourceOraclePostgresTest extends EstimateGenerati
         self::assertSame($before, $item);
         self::assertSame('100 м3', DB::table('estimate_norms')->where('id', $catalog['norm_id'])->value('unit'));
         Http::assertNothingSent();
+    }
+
+    public function test_controlled_catalog_coefficient_drift_requires_fresh_pin_and_resource_verification(): void
+    {
+        [$fixture, $catalog, $item, $context] = $this->fixture();
+        $regional = $context['regional_context'];
+        $intents = [['work_item_key' => $item['key'], 'search_text' => $item['name'],
+            'unit' => $item['unit'], 'code' => $fixture['norm']['code']]];
+        $pins = app(NormativeContextPinResolver::class);
+        $pin = $pins->resolve($regional, $intents);
+        self::assertSame('pinned', $pin['status'], json_encode($pin, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        self::assertCount(1, $pin['catalog_candidates']);
+        self::assertSame('118.000000', $pin['catalog_candidates'][0]['resources']['labor'][0]['quantity']);
+        $resolver = app(ResolveSelectedNormativeResources::class);
+        $resolved = $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $context);
+        self::assertSame([], $resolved['blocking_issues'], json_encode($resolved, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        self::assertNotNull($resolved['item']);
+        $priced = app(EstimatePricingService::class)->price([$resolved['item']], $regional)[0];
+        $guard = new VerifyCurrentNormativeResourcePrices;
+        self::assertTrue($guard->verify([$priced], $regional));
+        $frozenPin = CanonicalPipelineJson::encode($pin);
+        $frozenPriced = CanonicalPipelineJson::encode($priced);
+        $normBefore = DB::table('estimate_norms')->where('id', $catalog['norm_id'])->first();
+        $sessionBefore = EstimateGenerationSession::query()->findOrFail($context['session_id'])->getRawOriginal();
+
+        DB::table('estimate_norm_resources')->where('id', $catalog['resource_id'])->update(['quantity' => '834.680000']);
+
+        $freshPin = $pins->resolve($regional, $intents);
+        self::assertSame('pinned', $freshPin['status']);
+        self::assertSame('834.680000', $freshPin['catalog_candidates'][0]['resources']['labor'][0]['quantity']);
+        self::assertNotSame($pin['catalog_content_hash'], $freshPin['catalog_content_hash']);
+        self::assertNotSame($pin['identity_version'], $freshPin['identity_version']);
+        self::assertFalse($guard->verify([$priced], $regional));
+        $freshResolved = $resolver->resolveWithDiagnostics($item, $catalog['norm_id'], $context);
+        self::assertSame([], $freshResolved['blocking_issues']);
+        self::assertNotNull($freshResolved['item']);
+        self::assertSame('8.3468', (string) BigDecimal::of($freshResolved['item']['labor'][0]['quantity_per_work_unit'])->strippedOfTrailingZeros());
+        self::assertSame(25.0404, $freshResolved['item']['labor'][0]['quantity']);
+        $freshPriced = app(EstimatePricingService::class)->price([$freshResolved['item']], $regional)[0];
+        self::assertTrue($guard->verify([$freshPriced], $regional));
+        self::assertSame('834.680000', DB::table('estimate_norm_resources')->where('id', $catalog['resource_id'])->value('quantity'));
+        self::assertEquals($normBefore, DB::table('estimate_norms')->where('id', $catalog['norm_id'])->first());
+        self::assertSame($sessionBefore, EstimateGenerationSession::query()->findOrFail($context['session_id'])->getRawOriginal());
+        self::assertSame($frozenPin, CanonicalPipelineJson::encode($pin));
+        self::assertSame($frozenPriced, CanonicalPipelineJson::encode($priced));
+        self::assertFalse($fixture['source']['current_edition_verified']);
+        self::assertFalse($fixture['source']['official_xml_import_verified']);
+        self::assertFalse($fixture['synthetic_price_context']['official_price_verified']);
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
     }
 
     private function fixture(): array
