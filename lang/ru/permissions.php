@@ -104,6 +104,7 @@ return [
         ],
     ],
     'values' => [
+        'ai_assistant.egress.manage' => 'Управление допуском данных помощника к провайдеру',
         'brigades.requests.close' => 'Закрытие заявок на бригады',
         'brigades.responses.approve' => 'Одобрение откликов бригад',
         'workforce.hr.private.read' => 'Просмотр персональных кадровых данных',
