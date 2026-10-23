@@ -32,6 +32,17 @@ enum SiteRequestTypeEnum: string
         };
     }
 
+    public function storedValues(): array
+    {
+        return [
+            $this->value,
+            ...array_values(array_filter(
+                ['material', 'personnel', 'equipment', 'info', 'issue'],
+                fn (string $value): bool => self::fromStoredValue($value) === $this,
+            )),
+        ];
+    }
+
     /**
      * Получить человекочитаемое название
      */

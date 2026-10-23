@@ -48,6 +48,45 @@ use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
 
 final class ComposerClarificationLifecyclePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_local_rebuild_captures_only_its_current_work_answer_and_forwards_the_manifest_scope(): void
+    {
+        [$actor, $session, $project] = $this->publish('universal', true, true, true);
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $controller = app(EstimateGenerationQuestionController::class);
+        $request = Request::create('/', 'GET');
+        $request->setUserResolver(static fn (): User => $actor);
+        $cards = $controller->index($request, $project, $session->fresh())->getData(true)['data']['items'];
+        self::assertCount(2, $cards);
+        foreach ($cards as $index => $card) {
+            $code = $card['code'];
+            $card = array_values(array_filter($controller->index($request, $project, $session->fresh())->getData(true)['data']['items'],
+                static fn (array $current): bool => $current['code'] === $code))[0];
+            $result = $controller->answer($this->answerRequest($actor, $project, ['response' => 'other',
+                'other' => 'Допущение для работы '.$index, 'idempotency_key' => 'local-work-answer-'.$index,
+                'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint']]),
+                $project, $session->fresh(), $card['code']);
+            self::assertSame(200, $result->getStatusCode(), $result->getContent());
+        }
+        $session->refresh();
+        $key = 'ai-composer-supplementary:equipment';
+        $captured = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null,
+            $session->input_payload['selected_sections'], 'universal', $session->input_payload, $key]);
+        self::assertCount(1, $captured->workTechnologyContext);
+        self::assertSame('custom_equipment_installation', $captured->workTechnologyContext[0]['context']['binding']['work_key']);
+        self::assertNotNull($captured->workTechnologyContext[0]['answer']);
+        $session->update(['status' => 'generating', 'input_payload' => [...$session->input_payload, 'rebuild_section_key' => $key]]);
+        $model = $this->createMock(EstimateComposerModel::class);
+        $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $input, callable $reserved): array {
+            self::assertCount(1, $input->canonicalPayload()['work_technology_context']);
+            self::assertSame('custom_equipment_installation', $input->workTechnologyContext[0]['context']['binding']['work_key']);
+            self::assertNotNull($input->workTechnologyContext[0]['answer']);
+            $reserved((string) Str::uuid());
+
+            return ['work_intents' => []];
+        });
+        $this->plan($session->fresh(), $model);
+    }
+
     public function test_current_work_question_is_readable_but_not_writable_outside_review(): void
     {
         [$actor, $session, $project] = $this->publish('universal', true);
@@ -363,7 +402,7 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
         return [['legacy'], ['universal']];
     }
 
-    private function publish(string $mode, bool $workQuestion = false, bool $secondWork = false): array
+    private function publish(string $mode, bool $workQuestion = false, bool $secondWork = false, bool $separateEstimate = false): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         Http::fake();
@@ -378,7 +417,7 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
         $authorization->allows('can')->andReturn(true);
         $this->app->instance(AuthorizationService::class, $authorization);
         $input = ['evaluation_mode' => $mode, 'building_type' => 'bridge', 'profile_id' => 'construction', 'generation_mode' => 'ai_assisted',
-            'selected_sections' => $mode === 'universal' ? ($workQuestion ? ['equipment'] : ['heating', 'roofing', 'equipment']) : [],
+            'selected_sections' => $mode === 'universal' ? ($workQuestion ? ($separateEstimate ? ['equipment', 'heating'] : ['equipment']) : ['heating', 'roofing', 'equipment']) : [],
             'description' => 'Монтаж неизвестной установки и покрытия'];
         $session = app(CreateEstimateGenerationSession::class)->handle(['organization_id' => $organization->id,
             'project_id' => $project->id, 'user_id' => $actor->id, 'input_payload' => $input], $actor);
@@ -388,7 +427,7 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
             'generation_evaluation_input_hash' => $inputHash]])->save();
         $source = app(ProjectModelRepository::class)->snapshot((int) $organization->id, (int) $project->id, (int) $session->id)->facts[0];
         $model = $this->createMock(EstimateComposerModel::class);
-        $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $captured, callable $reserved) use ($source, $workQuestion, $secondWork): array {
+        $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $captured, callable $reserved) use ($source, $workQuestion, $secondWork, $separateEstimate): array {
             $reserved((string) Str::uuid());
             if ($workQuestion) {
                 $intent = ['kind' => 'supplementary', 'work_key' => 'custom_equipment_installation',
@@ -397,7 +436,8 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
                     'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
                     'technology_clarification' => ['question' => 'Как выполняется крепление этой установки?', 'reason' => 'В исходных данных не указан способ монтажа.']];
 
-                return ['work_intents' => [$intent, ...($secondWork ? [[...$intent, 'work_key' => 'custom_equipment_second', 'name' => 'Монтаж второй неизвестной установки']] : [])]];
+                return ['work_intents' => [$intent, ...($secondWork ? [[...$intent, 'work_key' => 'custom_equipment_second', 'name' => 'Монтаж второй неизвестной установки',
+                    'work_section' => $separateEstimate ? 'heating' : 'equipment']] : [])]];
             }
 
             return ['work_intents' => array_map(static fn (array $work): array => [
@@ -455,12 +495,13 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
         $analysis = (new ConstructionSemanticParser)->parse($input, []);
         $analysis['evaluation_policy'] = ['mode' => $mode, 'price_policy' => 'normative', 'profile_id' => 'construction', 'selected_sections' => $input['selected_sections']];
         $payloads = [ProcessingStage::UnderstandDocuments->value => ['base_input_version' => 'sha256:'.$inputHash,
-                'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null],
+                'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => $input['rebuild_section_key'] ?? null],
             ProcessingStage::UnderstandObject->value => ['analysis' => $analysis],
             ProcessingStage::ExtractQuantities->value => ['quantity_learning_hints' => [], 'building_quantities' => [],
                 'quantity_coverage_warnings' => [], 'stage6_generation_context' => []]];
         $planner = new PlanWorkItemsStage(app(WorkPlanCompiler::class), $results, app(AcceptedQuantityEvidenceMaterializer::class),
-            $composer, new EstimateComposerInputFactory(app(ProjectModelRepository::class), 10000));
+            $composer, new EstimateComposerInputFactory(app(ProjectModelRepository::class), 10000,
+                clarifications: app(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class)));
         $plan = $planner->execute($this->context($session, ProcessingStage::PlanWorkItems, $payloads, $results))->transientData;
         return [$plan, $results, $payloads];
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers;
 
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCalendarEventResource;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\SiteRequestCalendarRequest;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestCalendarService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -23,15 +24,10 @@ class SiteRequestCalendarController extends Controller
     ) {
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(SiteRequestCalendarRequest $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'start_date' => ['required', 'date'],
-                'end_date' => ['required', 'date', 'after_or_equal:start_date'],
-                'project_id' => ['nullable', 'integer'],
-                'event_type' => ['nullable', 'string'],
-            ]);
+            $validated = $request->validated();
 
             return AdminResponse::success(
                 SiteRequestCalendarEventResource::collection(
@@ -40,12 +36,12 @@ class SiteRequestCalendarController extends Controller
                         Carbon::parse($validated['start_date']),
                         Carbon::parse($validated['end_date']),
                         isset($validated['project_id']) ? (int) $validated['project_id'] : null,
-                        $validated['event_type'] ?? null
+                        $validated['event_type'] ?? null,
+                        requestType: $validated['type'] ?? null,
+                        statuses: (array) ($validated['status'] ?? []),
                     )
                 )
             );
-        } catch (ValidationException $e) {
-            return AdminResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\Throwable $e) {
             Log::error('[SiteRequestCalendarController.index] Unexpected error', [
                 'message' => $e->getMessage(),
@@ -87,28 +83,25 @@ class SiteRequestCalendarController extends Controller
         }
     }
 
-    public function export(Request $request): Response
+    public function export(SiteRequestCalendarRequest $request): Response
     {
         try {
-            $validated = $request->validate([
-                'start_date' => ['required', 'date'],
-                'end_date' => ['required', 'date', 'after_or_equal:start_date'],
-                'project_id' => ['nullable', 'integer'],
-            ]);
+            $validated = $request->validated();
 
             $ical = $this->calendarService->exportToICal(
                 (int) $request->attributes->get('current_organization_id'),
                 Carbon::parse($validated['start_date']),
                 Carbon::parse($validated['end_date']),
-                isset($validated['project_id']) ? (int) $validated['project_id'] : null
+                isset($validated['project_id']) ? (int) $validated['project_id'] : null,
+                $validated['event_type'] ?? null,
+                $validated['type'] ?? null,
+                (array) ($validated['status'] ?? []),
             );
 
             return response($ical, 200, [
                 'Content-Type' => 'text/calendar; charset=utf-8',
                 'Content-Disposition' => 'attachment; filename="site-requests-' . now()->format('Y-m-d') . '.ics"',
             ]);
-        } catch (ValidationException $e) {
-            return AdminResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\Throwable $e) {
             Log::error('[SiteRequestCalendarController.export] Unexpected error', [
                 'message' => $e->getMessage(),
