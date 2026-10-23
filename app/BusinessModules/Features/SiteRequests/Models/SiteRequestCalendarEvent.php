@@ -108,17 +108,14 @@ class SiteRequestCalendarEvent extends Model
      */
     public function scopeInDateRange($query, Carbon $startDate, Carbon $endDate)
     {
-        return $query->where(function ($q) use ($startDate, $endDate) {
-            $q->whereBetween('start_date', [$startDate, $endDate])
-              ->orWhereBetween('end_date', [$startDate, $endDate])
-              ->orWhere(function ($q2) use ($startDate, $endDate) {
-                  $q2->where('start_date', '<=', $startDate)
-                     ->where(function ($q3) use ($endDate) {
-                         $q3->whereNull('end_date')
-                            ->orWhere('end_date', '>=', $endDate);
-                     });
-              });
-        });
+        return $query->where('start_date', '<=', $endDate->toDateString())
+            ->where(function ($q) use ($startDate) {
+                $q->where('end_date', '>=', $startDate->toDateString())
+                    ->orWhere(function ($q2) use ($startDate) {
+                        $q2->whereNull('end_date')
+                            ->where('start_date', '>=', $startDate->toDateString());
+                    });
+            });
     }
 
     /**
@@ -126,16 +123,7 @@ class SiteRequestCalendarEvent extends Model
      */
     public function scopeOnDate($query, Carbon $date)
     {
-        return $query->where(function ($q) use ($date) {
-            $q->whereDate('start_date', $date)
-              ->orWhere(function ($q2) use ($date) {
-                  $q2->where('start_date', '<=', $date)
-                     ->where(function ($q3) use ($date) {
-                         $q3->whereNull('end_date')
-                            ->orWhere('end_date', '>=', $date);
-                     });
-              });
-        });
+        return $query->inDateRange($date, $date);
     }
 
     // ============================================

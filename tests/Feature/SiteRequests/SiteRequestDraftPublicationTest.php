@@ -323,6 +323,168 @@ final class SiteRequestDraftPublicationTest extends TestCase
         $this->assertNotContains($request->id, $visibleRequests);
     }
 
+    public function test_ical_export_keeps_the_inclusive_last_day_and_date_value_type(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext();
+        $request->forceFill(['status' => SiteRequestStatusEnum::PENDING->value])->saveQuietly();
+
+        foreach ([
+            ['Single day', null],
+            ['Explicit same day', '2026-10-24'],
+            ['Multiple days', '2026-10-26'],
+        ] as [$title, $endDate]) {
+            $eventRequest = $request->replicate();
+            $eventRequest->saveQuietly();
+            SiteRequestCalendarEvent::query()->create([
+                'site_request_id' => $eventRequest->id,
+                'organization_id' => $request->organization_id,
+                'project_id' => $request->project_id,
+                'event_type' => CalendarEventTypeEnum::DEADLINE->value,
+                'title' => $title,
+                'color' => '#1976D2',
+                'start_date' => '2026-10-24',
+                'end_date' => $endDate,
+                'all_day' => true,
+            ]);
+        }
+
+        [$foreignRequest] = $this->publicationContext();
+        $foreignRequest->forceFill(['status' => SiteRequestStatusEnum::PENDING->value])->saveQuietly();
+        SiteRequestCalendarEvent::query()->create([
+            'site_request_id' => $foreignRequest->id,
+            'organization_id' => $foreignRequest->organization_id,
+            'project_id' => $foreignRequest->project_id,
+            'event_type' => CalendarEventTypeEnum::DEADLINE->value,
+            'title' => 'Foreign organization event',
+            'color' => '#1976D2',
+            'start_date' => '2026-10-24',
+            'all_day' => true,
+        ]);
+
+        $ical = $calendarService->exportToICal(
+            $request->organization_id,
+            Carbon::parse('2026-10-24'),
+            Carbon::parse('2026-10-26'),
+            $request->project_id,
+        );
+
+        foreach ([
+            ['Single day', '20261025'],
+            ['Explicit same day', '20261025'],
+            ['Multiple days', '20261027'],
+        ] as [$title, $exclusiveEnd]) {
+            $this->assertStringContainsString(
+                "DTSTART;VALUE=DATE:20261024\r\nDTEND;VALUE=DATE:{$exclusiveEnd}\r\nSUMMARY:{$title}\r\n",
+                $ical,
+            );
+        }
+
+        $this->assertStringNotContainsString('Foreign organization event', $ical);
+        $this->assertSame(3, substr_count($ical, 'BEGIN:VEVENT'));
+    }
+
+    public function test_ical_export_formats_timed_events_with_seconds_and_utc_timestamp(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext();
+        $request->forceFill(['status' => SiteRequestStatusEnum::PENDING->value])->saveQuietly();
+
+        foreach ([
+            ['Timed same day', '09:15:30', null, '10:45:15'],
+            ['Timed overnight', '23:30:00', '2026-10-25', '01:30:00'],
+            ['Timed open end', '09:00:00', null, null],
+        ] as [$title, $startTime, $endDate, $endTime]) {
+            $eventRequest = $request->replicate();
+            $eventRequest->saveQuietly();
+            SiteRequestCalendarEvent::query()->create([
+                'site_request_id' => $eventRequest->id,
+                'organization_id' => $request->organization_id,
+                'project_id' => $request->project_id,
+                'event_type' => CalendarEventTypeEnum::DEADLINE->value,
+                'title' => $title,
+                'color' => '#1976D2',
+                'start_date' => '2026-10-24',
+                'end_date' => $endDate,
+                'start_time' => $startTime,
+                'end_time' => $endTime,
+                'all_day' => false,
+            ]);
+        }
+
+        $timezone = date_default_timezone_get();
+        date_default_timezone_set('Europe/Moscow');
+        Carbon::setTestNow(Carbon::parse('2026-10-23 12:00:00', 'Europe/Moscow'));
+
+        try {
+            $ical = $calendarService->exportToICal(
+                $request->organization_id,
+                Carbon::parse('2026-10-24'),
+                Carbon::parse('2026-10-25'),
+                $request->project_id,
+            );
+        } finally {
+            Carbon::setTestNow();
+            date_default_timezone_set($timezone);
+        }
+
+        foreach ([
+            ['Timed same day', '20261024T091530', '20261024T104515'],
+            ['Timed overnight', '20261024T233000', '20261025T013000'],
+            ['Timed open end', '20261024T090000', '20261025T000000'],
+        ] as [$title, $start, $end]) {
+            $this->assertStringContainsString("DTSTART:{$start}\r\nDTEND:{$end}\r\nSUMMARY:{$title}\r\n", $ical);
+        }
+
+        $this->assertStringContainsString('DTSTAMP:20261023T090000Z', $ical);
+    }
+
+    public function test_ical_export_only_includes_events_overlapping_the_selected_days(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext();
+        $request->forceFill(['status' => SiteRequestStatusEnum::PENDING->value])->saveQuietly();
+
+        foreach ([
+            ['Past single', '2026-10-13', null],
+            ['Past closed', '2026-10-13', '2026-10-18'],
+            ['Ongoing', '2026-10-13', '2026-10-20'],
+            ['Ends on first day', '2026-10-18', '2026-10-19'],
+            ['First day', '2026-10-19', null],
+            ['Last day', '2026-10-25', null],
+            ['Next single', '2026-10-26', null],
+            ['Next closed', '2026-10-26', '2026-10-28'],
+        ] as [$title, $startDate, $endDate]) {
+            $eventRequest = $request->replicate();
+            $eventRequest->saveQuietly();
+            SiteRequestCalendarEvent::query()->create([
+                'site_request_id' => $eventRequest->id,
+                'organization_id' => $request->organization_id,
+                'project_id' => $request->project_id,
+                'event_type' => CalendarEventTypeEnum::DEADLINE->value,
+                'title' => $title,
+                'color' => '#1976D2',
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'all_day' => true,
+            ]);
+        }
+
+        $start = Carbon::parse('2026-10-19');
+        $end = Carbon::parse('2026-10-25');
+        $expected = ['Ongoing', 'Ends on first day', 'First day', 'Last day'];
+        $events = $calendarService->getCalendarEvents($request->organization_id, $start, $end, $request->project_id);
+        $this->assertEqualsCanonicalizing($expected, $events->pluck('title')->all());
+        $onFirstDay = $calendarService->getEventsOnDate($request->organization_id, $start);
+        $this->assertEqualsCanonicalizing(['Ongoing', 'Ends on first day', 'First day'], $onFirstDay->pluck('title')->all());
+
+        $ical = $calendarService->exportToICal($request->organization_id, $start, $end, $request->project_id);
+        foreach ($expected as $title) {
+            $this->assertStringContainsString("SUMMARY:{$title}\r\n", $ical);
+        }
+        foreach (['Past single', 'Past closed', 'Next single', 'Next closed'] as $title) {
+            $this->assertStringNotContainsString("SUMMARY:{$title}\r\n", $ical);
+        }
+        $this->assertSame(4, substr_count($ical, 'BEGIN:VEVENT'));
+    }
+
     private function publicationContext(bool $scheduleManagement = false): array
     {
         $organization = Organization::factory()->verified()->create();
