@@ -686,6 +686,109 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             'explicitly unresolved' => ['left_unresolved'], 'replacement work excludes old context' => ['answered', true]];
     }
 
+    public function test_http_local_rebuild_excludes_foreign_work_technology_but_full_generation_keeps_both_contexts(): void
+    {
+        $clarification = ['question' => 'Как закрепляется экспозиционное оборудование?',
+            'reason' => 'Исходное описание не определяет способ крепления.'];
+        [, $project, $session, , $headers] = $this->generatedSession(false, true, technologyClarification: $clarification, withForeignSection: true);
+        $url = $this->url($project, $session);
+        $localKeys = array_column($session->fresh()->draft_payload['local_estimates'], 'key');
+        sort($localKeys);
+        self::assertSame(['ai-composer-supplementary:equipment', 'ai-composer-supplementary:finishing'], $localKeys);
+        $questions = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
+            static fn (array $question): bool => ($question['source_locator']['kind'] ?? null) === 'composer_work_technology'));
+        self::assertCount(2, $questions);
+        $saved = [];
+        foreach ($questions as $question) {
+            $code = $question['code'];
+            $fresh = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
+                static fn (array $item): bool => $item['code'] === $code));
+            self::assertCount(1, $fresh);
+            $question = $fresh[0];
+            $workKey = $question['source_locator']['work_key'];
+            $text = $workKey === self::GENERIC_WORK_KEY
+                ? 'Для оборудования пользователь предполагает крепление по отдельной инструкции.'
+                : 'Для подготовки поверхности пользователь предполагает иной порядок работ.';
+            $this->postJson($url.'/questions/'.$question['code'].'/answer', ['response' => 'other', 'other' => $text,
+                'document_ids' => [], 'idempotency_key' => (string) Str::uuid(),
+                'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint']], $headers)->assertOk();
+            $saved[$workKey] = ['code' => $question['code'], 'other' => $text];
+        }
+        self::assertCount(2, $saved);
+        $this->transport($session, descriptionOnly: true, technologyClarification: $clarification, withForeignSection: true);
+        $fullOperation = (string) Str::uuid();
+        $fullQuote = $this->postJson($url.'/operations/quote', ['request_id' => $fullOperation,
+            'state_version' => $session->fresh()->state_version, 'operation_kind' => 'generation',
+            'operation_parameters' => ['max_work_items' => 4]], $headers)->assertOk()->json('data');
+        $queuedBefore = Queue::pushed(GenerateEstimateDraftJob::class)->count();
+        $this->postJson($url.'/generate', ['request_id' => $fullOperation, 'quote_id' => $fullQuote['quote_id'],
+            'state_version' => $session->fresh()->state_version, 'generation_mode' => 'ai_assisted'], $headers)->assertSuccessful();
+        $fullJob = Queue::pushed(GenerateEstimateDraftJob::class)->slice($queuedBefore)->sole();
+        foreach (ProcessingStage::cases() as $stage) {
+            try {
+                $fullJob->handle(app(RunEstimateGenerationDraft::class));
+            } catch (\Throwable $error) {
+                throw $this->recordingFailure ?? $error;
+            }
+        }
+        self::assertCount(2, $this->composerProjects);
+        $fullContexts = $this->composerProjects[1]['work_technology_context'];
+        self::assertCount(2, $fullContexts);
+        foreach ($fullContexts as $entry) {
+            $workKey = $entry['context']['binding']['work_key'];
+            self::assertArrayHasKey($workKey, $saved);
+            self::assertSame(['answered', 'other', $saved[$workKey]['other'], [], 'user_assumption', 'unresolved', false],
+                [$entry['status'], $entry['answer']['response'], $entry['answer']['other'], $entry['answer']['document_ids'],
+                    $entry['answer']['trust'], $entry['answer']['engineering_applicability'], $entry['answer']['numeric_parameters_confirmed']]);
+        }
+        $readback = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
+            static fn (array $question): bool => ($question['source_locator']['kind'] ?? null) === 'composer_work_technology'));
+        self::assertCount(2, $readback);
+        foreach ($readback as $question) {
+            $workKey = $question['source_locator']['work_key'];
+            self::assertSame($saved[$workKey]['code'], $question['code']);
+            self::assertSame($saved[$workKey]['other'], $question['answer']['other']);
+            $saved[$workKey]['answer'] = $question['answer'];
+        }
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $factsBefore = array_map(get_object_vars(...), $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts);
+        $decisionsBefore = array_map(get_object_vars(...), $models->decisionsForSelectedFacts(...[...$scope, array_column($factsBefore, 'id')]));
+        $ledgerBefore = $this->answerLedgerCounts($session);
+        $this->transport($session, descriptionOnly: true, technologyClarification: $clarification, withForeignSection: true, onlyWorkSection: 'equipment');
+        $rebuildOperation = (string) Str::uuid();
+        $stateVersion = $session->fresh()->state_version;
+        $quote = $this->postJson($url.'/operations/quote', ['request_id' => $rebuildOperation, 'state_version' => $stateVersion,
+            'operation_kind' => 'rebuild', 'operation_parameters' => ['local_estimate_key' => 'ai-composer-supplementary:equipment']], $headers)->assertOk()->json('data');
+        $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $rebuildOperation)->sole()->processing_plan,
+            true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame('ai-composer-supplementary:equipment', $plan['operation_parameters']['local_estimate_key']);
+        self::assertSame(1, $plan['known_context']['known_work_count']);
+        $queuedBefore = Queue::pushed(GenerateEstimateDraftJob::class)->count();
+        $this->postJson($url.'/rebuild-section', ['request_id' => $rebuildOperation, 'quote_id' => $quote['quote_id'],
+            'state_version' => $stateVersion, 'local_estimate_key' => 'ai-composer-supplementary:equipment'], $headers)->assertStatus(202);
+        $rebuildJob = Queue::pushed(GenerateEstimateDraftJob::class)->slice($queuedBefore)->sole();
+        foreach (ProcessingStage::cases() as $stage) {
+            try {
+                $rebuildJob->handle(app(RunEstimateGenerationDraft::class));
+            } catch (\Throwable $error) {
+                throw $this->recordingFailure ?? $error;
+            }
+        }
+        self::assertCount(3, $this->composerProjects);
+        $targetContexts = $this->composerProjects[2]['work_technology_context'];
+        self::assertCount(1, $targetContexts, 'A local rebuild leaked another local estimate\'s work technology into the real Composer request.');
+        self::assertSame(self::GENERIC_WORK_KEY, $targetContexts[0]['context']['binding']['work_key']);
+        self::assertSame($saved[self::GENERIC_WORK_KEY]['answer'], $targetContexts[0]['answer']);
+        self::assertStringNotContainsString($saved[self::SECONDARY_WORK_KEY]['other'], CanonicalPipelineJson::encode($targetContexts));
+        self::assertSame($factsBefore, array_map(get_object_vars(...), $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts));
+        self::assertSame($decisionsBefore, array_map(get_object_vars(...), $models->decisionsForSelectedFacts(...[...$scope, array_column($factsBefore, 'id')])));
+        self::assertSame($ledgerBefore, $this->answerLedgerCounts($session));
+        self::assertSame(9, DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
+            ->where('generation_attempt_id', $rebuildOperation)->where('status', 'completed')->count());
+        Http::assertNothingSent();
+    }
+
     public function test_http_work_technology_document_links_remain_assumptions_and_ignored_source_revokes_currentness(): void
     {
         $clarification = ['question' => 'Как закрепляется оборудование и какие условия крепления заданы изготовителем?',
@@ -971,7 +1074,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count, $revision];
     }
 
-    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, bool $withSecondaryWork = false): array
+    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, bool $withSecondaryWork = false, bool $withForeignSection = false): array
     {
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
@@ -1002,10 +1105,10 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         $headers = $this->headers($rights->member);
         $created = $this->postJson('/api/v1/admin/projects/'.$project->id.'/estimate-generation/sessions', [
             'request_id' => (string) Str::uuid(), 'description' => $descriptionOnly
-                ? 'Подготовить демонстрационную экспозицию из имущества заказчика; состав и технология требуют уточнения.'
+                ? 'Подготовить демонстрационную экспозицию из имущества заказчика; состав и технология требуют уточнения.'.($withForeignSection ? ' Подготовить поверхность в зоне размещения экспозиции; способ подготовки требует уточнения.' : '')
                 : 'Монтаж оборудования по ведомости на промышленной площадке. Технология требует отдельной проверки.',
             'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal', 'profile_id' => 'construction',
-            'construction_type' => 'new_construction', 'price_policy' => $withNormativeContext ? 'normative' : 'catalog', 'selected_sections' => ['equipment'],
+            'construction_type' => 'new_construction', 'price_policy' => $withNormativeContext ? 'normative' : 'catalog', 'selected_sections' => $withForeignSection ? ['equipment', 'finishing'] : ['equipment'],
             ...($withNormativeContext ? ['estimate_regional_price_version_id' => $catalog['version_id'], 'normative_dataset_version' => $catalog['dataset_key']] : []),
         ], $headers);
         self::assertSame(201, $created->getStatusCode(), $created->getContent());
@@ -1056,7 +1159,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             self::assertFalse($session->fresh()->input_payload['input_confirmed'] ?? false);
         }
         $this->transport($session, descriptionOnly: $descriptionOnly, requirementKey: $requirementKey, technologyClarification: $technologyClarification,
-            withSecondaryWork: $withSecondaryWork);
+            withSecondaryWork: $withSecondaryWork, withForeignSection: $withForeignSection);
         app(AICreditService::class)->grant($rights->organization, 1000000, 'purchase', null, 'test:http-money-acceptance');
         $operation = (string) Str::uuid();
         $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation, 'state_version' => $session->fresh()->state_version,
@@ -1083,11 +1186,11 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count];
     }
 
-    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, ?array $workOverride = null, bool $withSecondaryWork = false): void
+    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, ?array $workOverride = null, bool $withSecondaryWork = false, bool $withForeignSection = false, ?string $onlyWorkSection = null): void
     {
         $descriptor = json_decode(file_get_contents(base_path('tests/Fixtures/EstimateGeneration/universal-replay/xlsx-floor-finishing-v1.json')), true, 64, JSON_THROW_ON_ERROR);
         $responses = $descriptor['recordings'];
-        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly, $requirementKey, $technologyClarification, $workOverride, $withSecondaryWork): Response {
+        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly, $requirementKey, $technologyClarification, $workOverride, $withSecondaryWork, $withForeignSection, $onlyWorkSection): Response {
             try {
                 $wire = json_decode((string) $request->getBody(), true, 128, JSON_THROW_ON_ERROR);
                 $project = null;
@@ -1105,7 +1208,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                     self::assertCount(1, $descriptions);
                     self::assertSame($session->input_payload['description'], $descriptions[0]['value']['description']);
                     self::assertSame(false, $descriptions[0]['value']['numeric_parameters_confirmed']);
-                    self::assertSame(['equipment'], $descriptions[0]['declared_work_sections']);
+                    self::assertSame($withForeignSection ? ['equipment', 'finishing'] : ['equipment'], $descriptions[0]['declared_work_sections']);
                     self::assertSame([], array_values(array_filter($project['facts'], static fn (array $fact): bool => $fact['type'] === 'equipment_count')));
                     $entityId = $descriptions[0]['entity_id'];
                     $contextId = $sourceId = $descriptions[0]['id'];
@@ -1164,10 +1267,19 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                     ...($technologyClarification !== null ? ['technology_clarification' => $technologyClarification] : []),
                     'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
                 $intents = [$intent];
-                if ($withSecondaryWork) {
+                if ($withSecondaryWork || $withForeignSection) {
                     $secondary = [...$intent, 'work_key' => self::SECONDARY_WORK_KEY, 'name' => 'Размещение экспозиционного оборудования в выбранной зоне'];
                     unset($secondary['technology_clarification']);
+                    if ($withForeignSection) {
+                        $secondary['work_section'] = 'finishing';
+                        $secondary['name'] = 'Подготовка поверхности в зоне размещения экспозиции';
+                        $secondary['technology_clarification'] = ['question' => 'Как подготавливается поверхность в зоне экспозиции?',
+                            'reason' => 'Описание не задаёт порядок подготовки поверхности.'];
+                    }
                     $intents[] = $secondary;
+                }
+                if ($onlyWorkSection !== null) {
+                    $intents = array_values(array_filter($intents, static fn (array $item): bool => $item['work_section'] === $onlyWorkSection));
                 }
                 $response = $responses[0]['response'];
                 $response['choices'][0]['message']['content'] = json_encode(['work_intents' => $intents], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
