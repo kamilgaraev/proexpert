@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentAdmissionOperation;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
@@ -29,6 +33,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Psr\Http\Message\RequestInterface;
 use Tests\Support\AssistantRealAuthorizationFixture;
@@ -38,6 +43,105 @@ use Tests\Support\EstimateGeneration\InMemoryS3HttpStorage;
 final class NativeSpreadsheetUploadHttpPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     private int $storageWrites = 0;
+
+    public function test_native_length_operand_requires_actual_current_publication_and_never_creates_semantic_authority(): void
+    {
+        [$rights, $project, $session] = $this->fixture();
+        $spreadsheet = new Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet()->setTitle('Источник');
+        $sheet->fromArray([['entity_key', 'parameter', 'value', 'unit'],
+            ['quantity:clearance', 'quantity', '102', 'mm'],
+            ['quantity:exact', 'quantity', '0.102', 'm'],
+            ['quantity:float', 'quantity', 102.5, 'mm']]);
+        $sheet->setCellValueExplicit('C2', '102', DataType::TYPE_STRING);
+        $sheet->setCellValueExplicit('C3', '0.102', DataType::TYPE_STRING);
+        $path = tempnam(sys_get_temp_dir(), 'most-length-xlsx-');
+        self::assertIsString($path);
+        try {
+            (new Xlsx($spreadsheet))->save($path);
+            $file = UploadedFile::fake()->createWithContent('condition.xlsx', file_get_contents($path));
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+            unlink($path);
+        }
+        $headers = $this->headers($rights->member);
+        $this->post($this->url($project, $session), ['state_version' => 0, 'request_id' => (string) Str::uuid(), 'files' => [$file]], $headers)
+            ->assertOk();
+        $document = $session->documents()->sole();
+        $this->app->call([Queue::pushed(ProcessEstimateGenerationDocumentJob::class)->sole(), 'handle']);
+        $unit = $document->processingUnits()->with('page')->sole();
+        $context = new DocumentUnitExecutionContext((int) $unit->id, (int) $session->organization_id, (int) $project->id,
+            (int) $session->id, (int) $document->id, $unit->unit_type, $unit->unit_index, $unit->source_version,
+            $unit->locator, $document->storage_path, $document->mime_type, $document->filename, '', 1,
+            (int) $session->fresh()->state_version, $session->fresh()->status->value);
+        $content = app(DocumentUnitContentReader::class)->read($context);
+        $factory = new NativeNumericFactFactory;
+        $models = app(ProjectModelRepository::class);
+        $evidence = app(EvidenceRepository::class);
+        self::assertNull($factory->readLengthOperand($context, $content, 'unpublished:raw', $models, $evidence));
+        $unitJob = Queue::pushed(ProcessEstimateGenerationUnitJob::class)->sole();
+        $this->app->call([$unitJob, 'handle']);
+        $unit->load('page');
+        self::assertNotNull($unit->page);
+        $snapshot = $this->snapshot($session);
+        $facts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'quantity'));
+        self::assertCount(3, $facts);
+        $byValue = array_column($facts, null, 'value');
+        $fact = $byValue['102'];
+        $rawRows = DB::table('estimate_generation_project_model_assertions')
+            ->where('organization_id', $session->organization_id)->where('project_id', $project->id)
+            ->where('session_id', $session->id)->where('stable_key', $fact->id);
+        $rawBefore = $rawRows->value('payload');
+        $before = $this->publicationCounts($session);
+        $descriptor = $factory->readLengthOperand($context, $content, $fact->id, $models, $evidence);
+        self::assertNotNull($descriptor);
+        self::assertSame(['102', 'mm', 'C2', 'D2', 'xlsx:sheet:Источник!C2'],
+            [$descriptor['value'], $descriptor['unit'], $descriptor['value_cell'], $descriptor['unit_cell'], $descriptor['native_reference']]);
+        self::assertSame([$fact->id, $fact->version, $fact->entityId, $fact->type, $fact->evidenceIds[0]],
+            [$descriptor['raw_fact_id'], $descriptor['raw_fact_version'], $descriptor['raw_entity_id'], $descriptor['raw_fact_type'], $descriptor['evidence_id']]);
+        self::assertSame($document->checksum_sha256, $descriptor['document_checksum_sha256']);
+        self::assertSame($context->locator['artifact_sha256'], $descriptor['artifact_sha256']);
+        self::assertSame(strlen($content), $descriptor['artifact_bytes']);
+        self::assertSame(hash('sha256', json_encode('102', JSON_THROW_ON_ERROR)), $descriptor['raw_value_hash']);
+        self::assertSame([], array_intersect(array_keys($descriptor), ['minimum', 'trust', 'applicability', 'engineering_status', 'definition_id', 'parameter_id']));
+        self::assertSame($descriptor, $factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        self::assertSame('0.102', $factory->readLengthOperand($context, $content, $byValue['0.102']->id, $models, $evidence)['value']);
+        self::assertNull($factory->readLengthOperand($context, $content, $byValue['102.5']->id, $models, $evidence));
+        self::assertNull($factory->readLengthOperand($context, $content.' ', $fact->id, $models, $evidence));
+        self::assertNull($factory->readLengthOperand($context, $content, 'unpublished:raw', $models, $evidence));
+        foreach (['organizationId', 'projectId', 'sessionId', 'documentId', 'unitId'] as $foreignField) {
+            $foreign = new DocumentUnitExecutionContext(...[...get_object_vars($context), $foreignField => 999999999]);
+            self::assertNull($factory->readLengthOperand($foreign, $content, $fact->id, $models, $evidence), $foreignField);
+        }
+        $stale = new DocumentUnitExecutionContext(...[...get_object_vars($context), 'sourceVersion' => 'sha256:'.str_repeat('a', 64)]);
+        self::assertNull($factory->readLengthOperand($stale, $content, $fact->id, $models, $evidence));
+        $wrongSeal = new DocumentUnitExecutionContext(...[...get_object_vars($context),
+            'locator' => [...$context->locator, 'artifact_sha256' => 'sha256:'.str_repeat('b', 64)]]);
+        self::assertNull($factory->readLengthOperand($wrongSeal, $content, $fact->id, $models, $evidence));
+        self::assertSame($before, $this->publicationCounts($session));
+        self::assertSame($rawBefore, $rawRows->value('payload'));
+        $this->app->call([$unitJob, 'handle']);
+        self::assertSame($before, $this->publicationCounts($session));
+        self::assertSame($descriptor, $factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        $unit->page->update(['excluded_at' => now()]);
+        self::assertNull($factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        $unit->page->update(['excluded_at' => null]);
+        $originalDocumentStatus = $document->fresh()->status;
+        $document->update(['status' => 'ignored', 'ignored_at' => now()]);
+        self::assertNull($factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        $document->update(['status' => $originalDocumentStatus, 'ignored_at' => null]);
+        self::assertSame($descriptor, $factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        self::assertSame(1, $evidence->invalidate((int) $session->organization_id, (int) $project->id, (int) $session->id,
+            [(int) substr($descriptor['evidence_id'], strlen('evidence:'))], 'source_changed'));
+        self::assertNull($factory->readLengthOperand($context, $content, $fact->id, $models, $evidence));
+        self::assertNotNull($factory->readLengthOperand($context, $content, $byValue['0.102']->id, $models, $evidence));
+        $models->invalidateSourceVersion((int) $session->organization_id, (int) $project->id, (int) $session->id,
+            $context->sourceVersion, 'sha256:'.str_repeat('c', 64));
+        self::assertNull($factory->readLengthOperand($context, $content, $byValue['0.102']->id, $models, $evidence));
+        self::assertSame($rawBefore, $rawRows->value('payload'));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
 
     public function test_authenticated_multipart_upload_publishes_current_native_count_through_dispatched_jobs(): void
     {

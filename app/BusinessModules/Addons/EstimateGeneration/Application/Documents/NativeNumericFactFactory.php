@@ -10,13 +10,108 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdent
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelInvariant;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\SourceDocumentRole;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use Brick\Math\BigDecimal;
 use Throwable;
 
 final class NativeNumericFactFactory
 {
+    public function readLengthOperand(DocumentUnitExecutionContext $context, string $artifactContent, string $rawFactId,
+        ProjectModelRepository $models, EvidenceRepository $evidence): ?array
+    {
+        try {
+            ProjectModelInvariant::id($rawFactId, 'Native operand fact');
+        } catch (\InvalidArgumentException) {
+            return null;
+        }
+        $unit = EstimateGenerationProcessingUnit::query()->with('document', 'page')
+            ->where('organization_id', $context->organizationId)->where('project_id', $context->projectId)
+            ->where('session_id', $context->sessionId)->where('document_id', $context->documentId)
+            ->where('unit_type', DocumentUnitType::SpreadsheetSheet->value)->where('unit_index', $context->index)
+            ->where('status', DocumentProcessingUnitStatus::Completed->value)->where('source_version', $context->sourceVersion)
+            ->find($context->unitId);
+        $document = $unit?->document;
+        $page = $unit?->page;
+        if (! $document instanceof EstimateGenerationDocument || $page === null
+            || $context->type !== DocumentUnitType::SpreadsheetSheet
+            || [(int) $document->organization_id, (int) $document->project_id, (int) $document->session_id]
+                !== [$context->organizationId, $context->projectId, $context->sessionId]
+            || $document->source_version !== $context->sourceVersion || $document->status === 'ignored'
+            || $document->ignored_at !== null || $document->processing_control_status === 'ignored'
+            || $document->storage_path !== $context->storagePath || $document->filename !== $context->filename
+            || $page->excluded_at !== null || $page->source_version !== $context->sourceVersion
+            || (int) $page->document_id !== $context->documentId || (int) $page->page_number !== $context->index
+            || preg_match('/\A[a-f0-9]{64}\z/', (string) $document->checksum_sha256) !== 1
+            || CanonicalPipelineJson::encode((array) $unit->locator) !== CanonicalPipelineJson::encode($context->locator)) {
+            return null;
+        }
+        try {
+            $source = NativeSpreadsheetLiteralSources::fromArtifact($context, $artifactContent);
+        } catch (\JsonException|DocumentUnitProcessingException) {
+            return null;
+        }
+        if ($source === null) {
+            return null;
+        }
+        $fact = $models->factsByIds($context->organizationId, $context->projectId, $context->sessionId, [$rawFactId])[0] ?? null;
+        if (! $fact instanceof Fact || $fact->sourceVersion !== $context->sourceVersion
+            || [$fact->organizationId, $fact->projectId, $fact->sessionId]
+                !== [$context->organizationId, $context->projectId, $context->sessionId]
+            || $fact->status !== 'confirmed' || $fact->origin !== 'document' || $fact->semanticAttributes !== []
+            || count($fact->evidenceIds) !== 1 || ! is_string($fact->value) || ! CanonicalSourceDecimal::isPositive($fact->value)
+            || FactVocabulary::factor('length', $fact->unit) === null) {
+            return null;
+        }
+        $current = $models->currentFacts($context->organizationId, $context->projectId, $context->sessionId, $fact->entityId, 10_001);
+        if (count($current) > 10_000 || count(array_filter($current,
+            static fn (Fact $candidate): bool => $candidate->id === $fact->id && $candidate->version === $fact->version
+                && CanonicalPipelineJson::encode($candidate->jsonSerialize()) === CanonicalPipelineJson::encode($fact->jsonSerialize()))) !== 1
+            || preg_match('/\Aevidence:([1-9][0-9]{0,17})\z/', $fact->evidenceIds[0], $identity) !== 1) {
+            return null;
+        }
+        $node = $evidence->node($context->organizationId, $context->projectId, $context->sessionId, (int) $identity[1]);
+        if ($node === null || $node->invalidatedAt !== null || $node->type !== EvidenceType::SourceFact
+            || $node->sourceType !== EvidenceSourceType::Document || $node->sourceRef !== 'document:'.$context->documentId
+            || $node->sourceVersion !== $context->sourceVersion || $node->producerName !== 'native_numeric_parser'
+            || ($node->locator['document_id'] ?? null) !== $context->documentId
+            || ($node->locator['unit_type'] ?? null) !== DocumentUnitType::SpreadsheetSheet->value
+            || ($node->locator['unit_index'] ?? null) !== $context->index
+            || ! is_string($node->locator['native_reference'] ?? null)
+            || ($node->value['fact_value'] ?? null) !== $fact->value) {
+            return null;
+        }
+        $domainEvidence = new Evidence($fact->evidenceIds[0], $node->organizationId, $node->projectId, $node->sessionId,
+            $node->sourceVersion, $node->sourceRef, $node->sourceType->value,
+            nativeReference: $node->locator['native_reference'], producerName: $node->producerName, fingerprint: $node->fingerprint);
+        $operand = $source->lengthOperand($node->locator['native_reference']);
+        if (! (new NativeNumericFactProof)->matches($fact, $domainEvidence) || $operand === null
+            || $operand['value'] !== $fact->value || $operand['unit'] !== $fact->unit) {
+            return null;
+        }
+
+        return ['schema_version' => 1, ...$operand, 'raw_fact_id' => $fact->id, 'raw_fact_version' => $fact->version,
+            'raw_fact_type' => $fact->type, 'raw_entity_id' => $fact->entityId,
+            'raw_value_hash' => hash('sha256', json_encode($fact->value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)),
+            'evidence_id' => $fact->evidenceIds[0], 'evidence_fingerprint' => $node->fingerprint,
+            'evidence_invalidation_version' => $node->invalidationVersion,
+            'organization_id' => $context->organizationId, 'project_id' => $context->projectId, 'session_id' => $context->sessionId,
+            'document_id' => $context->documentId, 'document_source_version' => $context->sourceVersion,
+            'document_checksum_sha256' => $document->checksum_sha256, 'unit_id' => $context->unitId, 'unit_index' => $context->index,
+            'artifact_sha256' => $context->locator['artifact_sha256'], 'artifact_bytes' => $context->locator['artifact_bytes']];
+    }
+
     public function spreadsheet(DocumentUnitExecutionContext $context, array $native, ?NativeSpreadsheetLiteralSources $literalSources = null): ?DocumentUnitPublication
     {
         $cells = is_array($native['cells'] ?? null) ? $native['cells'] : [];
