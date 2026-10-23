@@ -179,7 +179,8 @@ final readonly class EstimateComposerBatchPlanner
             ['contract' => 'composer-context:v1', 'parent_input_fingerprint' => $parent,
                 'parent_counts' => ['facts' => count($input->facts), 'quantities' => count($input->derivedQuantities),
                     'decisions' => count($input->decisions), 'candidates' => count($input->candidates), 'missing_documents' => count($input->missingDocuments)]],
-            $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, array_column($facts, 'id'))));
+            $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, array_column($facts, 'id'))),
+            directQuantityBindings: array_intersect_key($input->directQuantityBindings, array_fill_keys(array_column($quantities, 'id'), true)));
     }
 
     private function withAnswerContext(array $batches, EstimateComposerInput $input): array

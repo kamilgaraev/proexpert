@@ -40,6 +40,7 @@ final readonly class EstimateComposerInput
         ?array $claimAnswerFactIds = null,
         public array $sourceClaimReferences = [],
         public array $nativeCellContext = [],
+        public array $directQuantityBindings = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -117,6 +118,16 @@ final readonly class EstimateComposerInput
             || count(array_unique(array_column($nativeCellContext, 'row_id'))) !== count($nativeCellContext)) {
             throw new InvalidArgumentException('estimate_composer_cell_context_invalid');
         }
+        $quantityIds = array_fill_keys(array_column($derivedQuantities, 'id'), true);
+        foreach ($directQuantityBindings as $id => $binding) {
+            if (! isset($quantityIds[$id]) || ! is_array($binding) || count($binding) !== 5
+                || array_diff(array_keys($binding), ['work_item_key', 'entity_id', 'binding_fact_id', 'decision_id', 'quantity_hash']) !== []
+                || ! self::identifier($binding['work_item_key'] ?? null) || ! self::identifier($binding['entity_id'] ?? null)
+                || ! self::identifier($binding['binding_fact_id'] ?? null) || ! self::identifier($binding['decision_id'] ?? null)
+                || ! is_string($binding['quantity_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/D', $binding['quantity_hash']) !== 1) {
+                throw new InvalidArgumentException('estimate_composer_quantity_bindings_invalid');
+            }
+        }
     }
 
     public function acceptsSourceClaims(): bool
@@ -130,7 +141,7 @@ final readonly class EstimateComposerInput
         return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken,
             $this->facts, $this->derivedQuantities, $this->decisions, $this->candidates, $this->missingDocuments,
             $this->contractVersion, $this->wireScope, $this->batchKey, $this->contextManifest, $this->allowedWorkSections,
-            $this->claimAnswerFactIds, $references, $this->nativeCellContext);
+            $this->claimAnswerFactIds, $references, $this->nativeCellContext, $this->directQuantityBindings);
     }
 
     public function baseContractVersion(): string
@@ -147,7 +158,7 @@ final readonly class EstimateComposerInput
         return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken,
             $this->facts, $this->derivedQuantities, $this->decisions, $this->candidates, $this->missingDocuments,
             $version, $this->wireScope, $this->batchKey, $this->contextManifest, $this->allowedWorkSections,
-            $this->claimAnswerFactIds, $this->sourceClaimReferences, $rows);
+            $this->claimAnswerFactIds, $this->sourceClaimReferences, $rows, $this->directQuantityBindings);
     }
 
     public static function sourceClaimReference(mixed $reference, array $facts, array $answerIds): bool

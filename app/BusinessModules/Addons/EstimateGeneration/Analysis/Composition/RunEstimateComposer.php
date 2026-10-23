@@ -153,7 +153,7 @@ final readonly class RunEstimateComposer
                 throw new RuntimeException('estimate_composer_replay_invalid');
             }
             $replayed = [];
-            $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts);
+            $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts, $input->directQuantityBindings);
             $allowedFactIds = array_fill_keys(array_column($input->facts, 'id'), true);
             foreach ($stored as $index => $intent) {
                 if (! is_array($intent)) {
@@ -304,7 +304,7 @@ final readonly class RunEstimateComposer
         $supplementaryWorkKeys = [];
         $seenCandidateIds = [];
         $quarantined = [];
-        $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts);
+        $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts, $input->directQuantityBindings);
         foreach ($payload as $index => $record) {
             try {
                 if (! is_array($record) || array_is_list($record)) {
