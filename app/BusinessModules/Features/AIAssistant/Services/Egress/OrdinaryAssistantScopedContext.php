@@ -137,7 +137,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
                         'query' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 200],
                         'project_id' => ['type' => 'integer', 'enum' => [(int) $this->cohort->project_id]],
                         'source_types' => ['type' => 'array', 'items' => ['type' => 'string', 'enum' => ['file_document']],
-                            'minItems' => 1, 'maxItems' => 1, 'enum' => [['file_document']]],
+                            'minItems' => 1, 'maxItems' => 1],
                         'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 3],
                         'retrieval_mode' => ['type' => 'string', 'enum' => ['lexical']]]];
                 $filtered[] = $tool;
