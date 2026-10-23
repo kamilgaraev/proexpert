@@ -10,20 +10,20 @@ use Brick\Math\BigDecimal;
 final class NormativeUnitNormalizer
 {
     private const UNIT_RULES = [
-        ['length', 'м', 1000.0, ['км', 'km', 'километр', 'километра', 'километры'], []],
-        ['length', 'м', 0.001, ['мм', 'mm'], []],
-        ['length', 'м', 0.01, ['см', 'cm'], []],
-        ['length', 'м', 1.0, ['м', 'мп', 'пм', 'погм', 'метр', 'метра', 'метры', 'm', 'lm', 'rm', 'linm', 'linearmeter'], []],
-        ['volume', 'м3', 1.0, [], ['м3', 'm3', 'cbm', 'кубм']],
-        ['area', 'м2', 1.0, [], ['м2', 'm2', 'sqm', 'квм']],
-        ['labor_time', 'чел-ч', 1.0, [], ['чел-ч', 'чел/ч', 'челч']],
-        ['machine_time', 'маш-ч', 1.0, [], ['маш-ч', 'маш/ч', 'машч']],
-        ['piece', 'шт', 1.0, ['pcs', 'piece', 'pieces', 'item', 'count', 'точка', 'точки', 'точек', 'точ', 'шт', 'ед'], ['компл', 'точк', 'штук', 'единиц']],
-        ['time', 'ч', 1.0, ['h', 'hour', 'hours', 'ч', 'час', 'часа', 'часов'], []],
-        ['mass', 'кг', 1.0, ['kg', 'кг', 'килограмм', 'килограмма', 'килограммы'], []],
-        ['power', 'кВт', 1.0, ['kw', 'квт', 'киловатт', 'киловатта', 'киловатты'], []],
-        ['mass', 'кг', 1000.0, ['т', 't'], ['тонн']],
-        ['time', 'мес', 1.0, ['мес', 'месяц', 'месяца', 'месяцев'], []],
+        ['length', 'м', '1000', ['км', 'km', 'километр', 'километра', 'километры'], []],
+        ['length', 'м', '0.001', ['мм', 'mm'], []],
+        ['length', 'м', '0.01', ['см', 'cm'], []],
+        ['length', 'м', '1', ['м', 'мп', 'пм', 'погм', 'метр', 'метра', 'метры', 'm', 'lm', 'rm', 'linm', 'linearmeter'], []],
+        ['volume', 'м3', '1', [], ['м3', 'm3', 'cbm', 'кубм']],
+        ['area', 'м2', '1', [], ['м2', 'm2', 'sqm', 'квм']],
+        ['labor_time', 'чел-ч', '1', [], ['чел-ч', 'чел/ч', 'челч']],
+        ['machine_time', 'маш-ч', '1', [], ['маш-ч', 'маш/ч', 'машч']],
+        ['piece', 'шт', '1', ['pcs', 'piece', 'pieces', 'item', 'count', 'точка', 'точки', 'точек', 'точ', 'шт', 'ед'], ['компл', 'точк', 'штук', 'единиц']],
+        ['time', 'ч', '1', ['h', 'hour', 'hours', 'ч', 'час', 'часа', 'часов'], []],
+        ['mass', 'кг', '1', ['kg', 'кг', 'килограмм', 'килограмма', 'килограммы'], []],
+        ['power', 'кВт', '1', ['kw', 'квт', 'киловатт', 'киловатта', 'киловатты'], []],
+        ['mass', 'кг', '1000', ['т', 't'], ['тонн']],
+        ['time', 'мес', '1', ['мес', 'месяц', 'месяца', 'месяцев'], []],
     ];
 
     /** @return array<string, string> */
@@ -95,7 +95,7 @@ final class NormativeUnitNormalizer
             normalized: self::compact($normalized),
             dimension: $dimension,
             baseUnit: $baseUnit,
-            multiplier: $multiplier * $unitMultiplier,
+            multiplier: $multiplier * (float) $unitMultiplier,
         );
     }
 
@@ -160,7 +160,7 @@ final class NormativeUnitNormalizer
             $normalized = trim($matches[2]);
         }
         [, $base, $unitMultiplier] = self::classify($normalized);
-        $multiplier = $multiplier->multipliedBy($unitMultiplier === 1000.0 ? '1000' : '1');
+        $multiplier = $multiplier->multipliedBy($unitMultiplier);
 
         return [
             'base' => $base,
@@ -169,7 +169,7 @@ final class NormativeUnitNormalizer
     }
 
     /**
-     * @return array{string, string, float}
+     * @return array{string, string, string}
      */
     private static function classify(string $unit): array
     {
@@ -186,7 +186,7 @@ final class NormativeUnitNormalizer
             }
         }
 
-        return ['', '', 1.0];
+        return ['', '', '1'];
     }
 
     private static function normalize(string $unit): string

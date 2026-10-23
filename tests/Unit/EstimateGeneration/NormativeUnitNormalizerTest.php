@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class NormativeUnitNormalizerTest extends TestCase
@@ -64,6 +65,42 @@ class NormativeUnitNormalizerTest extends TestCase
     {
         $this->assertFalse(NormativeUnitNormalizer::compatible('мес', 'м'));
         $this->assertFalse(NormativeUnitNormalizer::compatible('тыс. шт', 'т'));
+    }
+
+    #[DataProvider('decimalQuantityFactorCases')]
+    public function test_decimal_quantity_factor_preserves_unit_scales(string $workUnit, string $normUnit, ?string $expected): void
+    {
+        $this->assertSame($expected, NormativeUnitNormalizer::safeQuantityFactorDecimal($workUnit, $normUnit));
+    }
+
+    public static function decimalQuantityFactorCases(): array
+    {
+        return [
+            'millimetres to metres' => ['мм', 'м', '0.001'],
+            'centimetres to metres' => ['см', 'м', '0.01'],
+            'metres to millimetres' => ['м', 'мм', '1000'],
+            'metres to centimetres' => ['м', 'см', '100'],
+            'millimetres to centimetres' => ['мм', 'см', '0.1'],
+            'centimetres to millimetres' => ['см', 'мм', '10'],
+            'scaled millimetres' => ['834,68 мм', 'м', '0.83468'],
+            'scaled centimetres' => ['194,25 см', 'м', '1.9425'],
+            'millimetres to kilometres' => ['mm', 'km', '0.000001'],
+            'metres to kilometres' => ['м', 'км', '0.001'],
+            'kilometres to metres' => ['км', 'м', '1000'],
+            'square metre measure' => ['м²', '100 м2', '0.01'],
+            'cubic metre measure' => ['м3', '1000 м³', '0.001'],
+            'scaled tonnes' => ['0,1 т', 'кг', '100'],
+            'thousand pieces' => ['тыс. шт', 'шт', '1000'],
+            'nonterminating decimal' => ['м', '3 м', null],
+            'incompatible dimensions' => ['м2', 'м', null],
+            'unknown work unit' => ['неизвестно', 'м', null],
+            'unknown norm unit' => ['м', 'неизвестно', null],
+            'empty work unit' => ['', 'м', null],
+            'zero work prefix keeps legacy unit' => ['0 м', 'м', '1'],
+            'zero norm prefix keeps legacy unit' => ['м', '0 м', '1'],
+            'negative work prefix' => ['-1 м', 'м', null],
+            'negative norm prefix' => ['м', '-1 м', null],
+        ];
     }
 
     /**
