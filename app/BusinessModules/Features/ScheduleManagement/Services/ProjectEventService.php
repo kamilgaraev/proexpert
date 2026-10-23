@@ -131,9 +131,12 @@ class ProjectEventService
      */
     public function updateEvent(ProjectEvent $event, array $data): ProjectEvent
     {
-        $this->validateEventData($data, $event);
-
         DB::transaction(function () use ($event, $data) {
+            $current = ProjectEvent::query()->whereKey($event->getKey())
+                ->forOrganization($event->organization_id)->forProject($event->project_id)
+                ->lockForUpdate()->firstOrFail();
+            $event->setRawAttributes($current->getAttributes(), true);
+            $this->validateEventData($data, $event);
             $event->fill($data);
             $recurrenceChanged = $event->isDirty(['recurrence_pattern', 'recurrence_config']);
             $rebuildRecurrence = $event->is_recurring
@@ -286,6 +289,10 @@ class ProjectEventService
 
     private function getIntervalEnd(ProjectEvent $event): Carbon
     {
+        if (!$event->is_all_day && $event->end_time !== null) {
+            return Carbon::parse(($event->end_date ?? $event->event_date)->toDateString() . ' ' . $event->end_time, 'UTC');
+        }
+
         if ($event->end_date) {
             return Carbon::parse($event->end_date->toDateString(), 'UTC')->addDay();
         }
@@ -371,10 +378,20 @@ class ProjectEventService
             }
         }
 
-        if (isset($data['end_date'])) {
-            $endDate = Carbon::parse($data['end_date']);
+        $merged = array_replace($event?->getAttributes() ?? [], $data);
+        if (isset($merged['end_date'])) {
+            $endDate = Carbon::parse($merged['end_date']);
             if ($eventDate !== null && $endDate->lt($eventDate)) {
                 throw new \InvalidArgumentException('Дата окончания не может быть раньше даты начала');
+            }
+        }
+
+        if (!($merged['is_all_day'] ?? false) && isset($merged['end_time']) && $eventDate !== null) {
+            $start = Carbon::parse($eventDate->toDateString() . ' ' . ($merged['event_time'] ?? '00:00:00'), 'UTC');
+            $endDate = isset($merged['end_date']) ? Carbon::parse($merged['end_date'])->toDateString() : $eventDate->toDateString();
+            $end = Carbon::parse($endDate . ' ' . $merged['end_time'], 'UTC');
+            if ($end->lessThanOrEqualTo($start)) {
+                throw ValidationException::withMessages(['end_time' => trans_message('schedule_management.event_end_after_start')]);
             }
         }
 

@@ -81,6 +81,9 @@ return [
         ],
     ],
     'errors' => [
+        'equipment_end_after_start' => 'Окончание аренды должно быть позже начала.',
+        'delivery_end_after_start' => 'Время окончания доставки должно быть позже времени начала.',
+        'calendar_end_before_start' => 'Дата окончания не может быть раньше даты начала.',
         'not_editable_status' => 'Заявку нельзя редактировать в текущем статусе.',
         'invalid_status_transition' => 'Невозможен переход в выбранный статус.',
         'disabled_status_transition' => 'Переход в выбранный статус отключен.',

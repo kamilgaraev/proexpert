@@ -81,7 +81,7 @@ final readonly class OrdinaryAssistantEnrollmentService
                 || ! is_array($source['arguments'] ?? null)) {
                 throw new AssistantEgressDenied('unsupported_purpose');
             }
-            $capture = $this->sources->capture($actor, $organizationId, (int) $cohort->project_id, $source['tool'], $source['arguments']);
+            $capture = $this->sources->captureForReview($actor, (int) $owner->id, $organizationId, (int) $cohort->project_id, $source['tool'], $source['arguments']);
             $proofs[] = $capture['proof'];
             $previews[] = ['tool' => $capture['proof']['tool'], 'arguments' => $capture['proof']['arguments'],
                 'projection_hash' => $capture['proof']['projection_hash'], 'projection' => $capture['preview']];
@@ -118,7 +118,7 @@ final readonly class OrdinaryAssistantEnrollmentService
         $actor = User::query()->findOrFail($cohort->actor_id);
         if ($enrollment->input_context !== null) { app(OrdinaryAssistantClarificationContext::class)->refresh($enrollment->input_context, $actor, $cohort); }
         foreach ($enrollment->sources as $source) {
-            $current = $this->sources->capture($actor, $organizationId, (int) $cohort->project_id, $source['tool'], $source['arguments']);
+            $current = $this->sources->captureForReview($actor, $enrollment->reviewed_by, $organizationId, (int) $cohort->project_id, $source['tool'], $source['arguments']);
             if (! hash_equals(OrdinaryAssistantSourceProjection::hash($current['proof']), OrdinaryAssistantSourceProjection::hash($source))) {
                 throw new AssistantEgressDenied('source_stale');
             }

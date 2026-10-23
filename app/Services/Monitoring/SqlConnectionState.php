@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services\Monitoring;
 
+use App\Database\NativeParameterPostgresConnection;
 use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\QueryExecuted;
 use PDO;
+use PDOStatement;
 use ReflectionMethod;
 use Throwable;
 use WeakMap;
@@ -37,7 +39,8 @@ final class SqlConnectionState
                 }
             }
             foreach (['run', 'runQueryCallback', 'prepared', 'logQuery', 'select', 'selectResultSets', 'cursor', 'getPdoForSelect'] as $method) {
-                if ((new ReflectionMethod($connection, $method))->getDeclaringClass()->getName() !== Connection::class) {
+                $declaring = (new ReflectionMethod($connection, $method))->getDeclaringClass()->getName();
+                if ($declaring !== Connection::class && ! ($method === 'select' && $declaring === NativeParameterPostgresConnection::class)) {
                     $this->connections[$connection]->intervals_supported = false;
                     break;
                 }
@@ -63,7 +66,7 @@ final class SqlConnectionState
         }
     }
 
-    public function prepared(Connection $connection): void
+    public function prepared(Connection $connection, ?PDOStatement $statement = null): void
     {
         try {
             $at = hrtime(true);
@@ -74,8 +77,11 @@ final class SqlConnectionState
             $state->pending['prepared_count']++;
             if ($state->pending['prepared_count'] !== 1) {
                 $state->pending['intervals_valid'] = false;
+                $state->pending['native_select_parameters'] = false;
                 return;
             }
+            $state->pending['native_select_parameters'] = $connection instanceof NativeParameterPostgresConnection
+                && $statement !== null && $connection->usesNativeParameterStatement($statement);
             $write = $connection->getRawPdo();
             $read = $connection->getRawReadPdo();
             foreach (['write' => $write, 'read' => $read] as $name => $handle) {
@@ -120,6 +126,9 @@ final class SqlConnectionState
                 $writeRuntime = $this->pdoRuntime($write);
                 $runtime['pdo_runtime'] = ['observed' => true, 'php_version_id' => PHP_VERSION_ID,
                     'write' => $writeRuntime, 'read' => $read === $write ? $writeRuntime : $this->pdoRuntime($read)];
+                if (($pending['native_select_parameters'] ?? false) === true) {
+                    $runtime['pdo_runtime']['statement_transport'] = 'pgsql_native_parameters';
+                }
             }
 
             return [
@@ -171,6 +180,7 @@ final class SqlConnectionState
                 'before_at' => $at,
                 'prepared_at' => null,
                 'prepared_count' => 0,
+                'native_select_parameters' => false,
                 'intervals_valid' => $state->intervals_supported,
                 'write_before_reference' => $write instanceof PDO ? WeakReference::create($write) : null,
                 'read_before_reference' => $read instanceof PDO ? WeakReference::create($read) : null,

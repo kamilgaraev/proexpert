@@ -12,12 +12,12 @@ final class AssistantOperationsBusinessMetadataTest extends TestCase
 {
     public function test_finite_inventory_covers_every_new_operation_model_and_classifies_exclusions(): void
     {
-        $expected = explode(' ', 'asset_custody_events asset_operation_profiles organization_assets asset_categories auto_reorder_rules inventory_act_items organization_warehouses project_material_delivery_events warehouse_identifiers warehouse_item_galleries warehouse_logistic_units warehouse_scan_events warehouse_zones inventory_demand_snapshots inventory_reorder_policy_versions inventory_risk_rows inventory_risk_snapshots warehouse_daily_balance_rows warehouse_daily_balance_snapshots warehouse_inventory_events asset_requests asset_request_events machinery_defects machinery_idempotency_records machinery_shift_inspections maintenance_inspections quality_defect_photos quality_defect_status_history quality_defect_flow_events quality_defect_flow_gaps quality_defect_flow_policies quality_defect_flow_policy_versions quality_defect_flow_rows quality_defect_flow_snapshots quality_defect_transition_events safety_briefing_participants safety_employee_requirements safety_inspection_items safety_inspection_templates safety_medical_exams safety_ppe_issues safety_ppe_norms safety_requirement_matrices safety_training_records safety_work_permit_participants safety_admission_policy_versions safety_admission_rows safety_admission_snapshots safety_site_workforce_assignments safety_exposure_days safety_incident_policy_versions safety_incident_rows safety_incident_snapshots safety_sites safety_transition_events daily_work_plans daily_work_plan_assignments lookahead_plans lookahead_plan_tasks project_events schedule_baseline_versions work_constraints lookahead_reporting_rows lookahead_reporting_snapshots lookahead_reporting_constraint_transition_events baseline_schedule_variance_snapshots baseline_schedule_variance_rows schedule_task_state_versions site_requests site_request_calendar_events site_request_groups site_request_history site_request_statuses site_request_status_transitions site_request_templates');
+        $expected = explode(' ', 'asset_custody_events asset_operation_profiles organization_assets asset_categories auto_reorder_rules inventory_act_items machinery organization_warehouses project_material_delivery_events warehouse_identifiers warehouse_item_galleries warehouse_logistic_units warehouse_scan_events warehouse_zones inventory_demand_snapshots inventory_reorder_policy_versions inventory_risk_rows inventory_risk_snapshots warehouse_daily_balance_rows warehouse_daily_balance_snapshots warehouse_inventory_events asset_requests asset_request_events machinery_defects machinery_idempotency_records machinery_shift_inspections maintenance_inspections quality_defect_photos quality_defect_status_history quality_defect_flow_events quality_defect_flow_gaps quality_defect_flow_policies quality_defect_flow_policy_versions quality_defect_flow_rows quality_defect_flow_snapshots quality_defect_transition_events safety_briefing_participants safety_employee_requirements safety_inspection_items safety_inspection_templates safety_medical_exams safety_ppe_issues safety_ppe_norms safety_requirement_matrices safety_training_records safety_work_permit_participants safety_admission_policy_versions safety_admission_rows safety_admission_snapshots safety_site_workforce_assignments safety_exposure_days safety_incident_policy_versions safety_incident_rows safety_incident_snapshots safety_sites safety_transition_events daily_work_plans daily_work_plan_assignments lookahead_plans lookahead_plan_tasks project_events schedule_baseline_versions work_constraints lookahead_reporting_rows lookahead_reporting_snapshots lookahead_reporting_constraint_transition_events baseline_schedule_variance_snapshots baseline_schedule_variance_rows schedule_task_state_versions site_requests site_request_calendar_events site_request_groups site_request_history site_request_statuses site_request_status_transitions site_request_templates');
         $actual = [...array_column(Metadata::recordDefinitions(), 'table'), ...array_keys(Metadata::excludedInventory())];
         sort($expected);
         sort($actual);
         self::assertSame($expected, $actual);
-        self::assertCount(70, Metadata::recordDefinitions());
+        self::assertCount(71, Metadata::recordDefinitions());
         self::assertSame([], array_intersect(array_column(Metadata::recordDefinitions(), 'table'), array_keys(Metadata::excludedInventory())));
         foreach (Metadata::recordDefinitions() as $record) {
             $model = new $record['model'];
@@ -31,6 +31,14 @@ final class AssistantOperationsBusinessMetadataTest extends TestCase
                 self::assertNotContains($record['column_types'][$field], ['json', 'jsonb']);
             }
         }
+    }
+
+    public function test_project_events_expose_the_exact_end_time_in_read_and_rag_contracts(): void
+    {
+        $record = Metadata::recordDefinitions()['project_event'];
+        self::assertContains('end_time', $record['read_fields']);
+        self::assertContains('end_time', $record['rag_fields']);
+        self::assertSame('time', $record['column_types']['end_time']);
     }
 
     public function test_identifier_polymorphic_targets_have_finite_current_tenant_paths_and_cell_zone_is_correlated(): void
