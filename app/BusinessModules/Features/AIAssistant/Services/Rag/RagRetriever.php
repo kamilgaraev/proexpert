@@ -844,6 +844,7 @@ final class RagRetriever
             $candidateIdentities = [];
         }
         $terms = $this->lexicalTerms($query);
+        $directTerms = $corpus === null ? [] : $this->lexicalTerms($query, false);
         $preferredTypes = $this->preferredSourceTypes($query);
         if ($terms === []) {
             return [];
@@ -934,6 +935,7 @@ final class RagRetriever
             })
             ->filter(static fn (object $row): bool => (int) $row->lexical_score > 0)
             ->sortByDesc(static fn (object $row): float => (float) $row->lexical_score + (in_array($row->source_type, $preferredTypes, true) ? 0.05 : 0.0))
+            ->when($corpus !== null, fn ($ranked) => $ranked->sortByDesc(fn (object $row): int => $this->lexicalScore($row, $directTerms, $corpus)))
             ->unique(fn (object $row): string => $this->candidateIdentity($row))
             ->take($rankLimit ?? $limit)
             ->values()
@@ -1141,7 +1143,7 @@ SQL;
     /**
      * @return array<int, string>
      */
-    private function lexicalTerms(string $query): array
+    private function lexicalTerms(string $query, bool $includeExpansions = true): array
     {
         $normalized = str_replace('ё', 'е', mb_strtolower($query));
         $tokens = preg_split('/[^\p{L}\p{N}]+/u', $normalized) ?: [];
@@ -1191,7 +1193,8 @@ SQL;
             $terms[] = $term;
         }
 
-        return array_slice(array_values(array_unique(array_merge($terms, $this->expandedLexicalTerms($terms, $normalized)))), 0, self::MAX_LEXICAL_TERMS);
+        return array_slice(array_values(array_unique($includeExpansions
+            ? array_merge($terms, $this->expandedLexicalTerms($terms, $normalized)) : $terms)), 0, self::MAX_LEXICAL_TERMS);
     }
 
     private function identifierTerms(string $query, string $normalized): array
