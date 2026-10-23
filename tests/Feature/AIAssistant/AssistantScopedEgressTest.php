@@ -460,13 +460,118 @@ final class AssistantScopedEgressTest extends TestCase
         }
     }
 
-    private function enroll(?array $sources = null, ?string $query = null, ?int $conversationId = null): array
+    public static function sequentialChoices(): array
+    {
+        return [
+            'none' => [[]],
+            'attention-only' => [['get_project_attention']],
+            'production-only' => [['get_project_production_schedule_summary']],
+            'attention-then-production' => [['get_project_attention', 'get_project_production_schedule_summary']],
+            'production-then-attention' => [['get_project_production_schedule_summary', 'get_project_attention']],
+        ];
+    }
+
+    #[DataProvider('sequentialChoices')]
+    public function test_guarded_model_selects_zero_one_or_two_reads_within_three_quoted_calls(array $sequence): void
+    {
+        config(['ai-assistant-credits.profiles.short' => ['input_tokens' => 12288, 'output_tokens' => 1024, 'max_calls' => 3]]);
+        $sources = $this->sequentialSources();
+        [$cohort, $payload] = $this->enroll($sources, 'Сопоставь эти учебные наблюдения и объясни главное.', profile: 'short');
+        $calls = 0;
+        $initial = $previousOutputs = [];
+        $final = 'Учебные наблюдения учтены; начните с согласования дальнейших шагов.';
+        $provider = $this->responses(function (array $input, array $options) use (&$calls, &$initial, &$previousOutputs, $sources, $sequence, $final): array {
+            self::assertSame('auto', $options['tool_choice']);
+            self::assertEqualsCanonicalizing(array_column($sources, 'tool'), array_column($options['tools'], 'name'));
+            self::assertSame(['input_tokens' => 12288, 'output_tokens' => 1024, 'max_calls' => 3], $options['budget_limits']);
+            self::assertStringNotContainsString(self::ACCOUNT_CANARY, json_encode([$input, $options], JSON_THROW_ON_ERROR));
+            $initial = $initial ?: array_slice($input, 0, 3);
+            self::assertSame($initial, array_slice($input, 0, 3));
+            $outputs = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call_output'));
+            $nativeCalls = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call'));
+            self::assertCount($calls, $outputs);
+            self::assertCount($calls, $nativeCalls);
+            self::assertSame($previousOutputs, array_slice($outputs, 0, count($previousOutputs)));
+            foreach ($outputs as $index => $output) {
+                self::assertSame('call_multi_'.($index + 1), $output['call_id']);
+                self::assertSame($sequence[$index], $nativeCalls[$index]['name']);
+                $source = $sources[$sequence[$index] === 'get_project_attention' ? 0 : 1];
+                self::assertSame($source['arguments'], json_decode($nativeCalls[$index]['arguments'], true, 512, JSON_THROW_ON_ERROR));
+                $projected = json_decode($output['output'], true, 512, JSON_THROW_ON_ERROR);
+                self::assertSame($this->project->id, $projected['data']['project']['id']);
+                self::assertSame([['entity_type' => 'project', 'entity_id' => $this->project->id, 'project_id' => $this->project->id]], $projected['source_refs']);
+                self::assertArrayNotHasKey('server_formatted_answer', $projected);
+                if ($source['tool'] === 'get_project_production_schedule_summary') {
+                    self::assertSame('2026-10-02', $projected['data']['period_start']);
+                    self::assertSame('2026-10-19', $projected['data']['period_end']);
+                }
+            }
+            $previousOutputs = $outputs;
+            $next = $sequence[$calls] ?? null;
+            $calls++;
+            if ($next !== null) {
+                $source = $sources[$next === 'get_project_attention' ? 0 : 1];
+
+                return $this->nativeToolCall($next, $source['arguments'], 'multi_'.$calls);
+            }
+
+            return array_replace($this->answer(), ['content' => $final]);
+        });
+        $response = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+            app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertSame(count($sequence) + 1, $calls);
+        self::assertSame($final, $response['message']['content']);
+        $stored = Message::query()->findOrFail($response['message']['id']);
+        self::assertSame($final, $stored->content);
+        $request = AssistantRequest::query()->where('request_id', $response['request_id'])->sole();
+        self::assertSame('completed', $request->status);
+        self::assertSame(3, $request->max_calls);
+        self::assertSame($calls, $request->calls_used);
+        self::assertSame($calls, AICreditProviderUsage::query()->where('organization_id', $this->fixture->organization->id)->count());
+        self::assertSame($sequence === [], ($response['message']['metadata']['source_refs'] ?? []) === []);
+    }
+
+    public function test_two_quoted_calls_never_hide_a_third_provider_call_after_two_selected_reads(): void
+    {
+        config(['ai-assistant-credits.profiles.short' => ['input_tokens' => 12288, 'output_tokens' => 1024, 'max_calls' => 2]]);
+        $sources = $this->sequentialSources();
+        [$cohort, $payload] = $this->enroll($sources, 'Сопоставь эти учебные наблюдения и объясни главное.', profile: 'short');
+        $calls = 0;
+        $provider = $this->responses(function (array $input, array $options) use (&$calls, $sources): array {
+            self::assertLessThan(2, $calls);
+            self::assertSame(2, $options['budget_limits']['max_calls']);
+            self::assertSame('auto', $options['tool_choice']);
+            $outputs = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call_output'));
+            self::assertCount($calls, $outputs);
+            $source = $sources[$calls++];
+
+            return $this->nativeToolCall($source['tool'], $source['arguments'], 'budget_'.$calls);
+        });
+        $response = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+            app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertSame(2, $calls);
+        $request = AssistantRequest::query()->where('request_id', $response['request_id'])->sole();
+        self::assertSame(2, $request->max_calls);
+        self::assertSame(2, $request->calls_used);
+        self::assertSame(2, AICreditProviderUsage::query()->where('organization_id', $this->fixture->organization->id)->count());
+        self::assertSame(trans_message('ai_assistant_facts.live_proof_required'), $response['message']['content']);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+    }
+
+    private function sequentialSources(): array
+    {
+        return [['tool' => 'get_project_attention', 'arguments' => ['project_id' => $this->project->id, 'focus' => 'schedule', 'limit' => 2]],
+            ['tool' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => $this->project->id,
+                'period_start' => '2026-10-02', 'period_end' => '2026-10-19']]];
+    }
+
+    private function enroll(?array $sources = null, ?string $query = null, ?int $conversationId = null, string $profile = 'normal'): array
     {
         $sources ??= [['tool' => 'get_project_attention', 'arguments' => ['project_id' => $this->project->id, 'focus' => 'schedule', 'limit' => 3]]];
         $cohort = $this->enrollments->assign($this->operator, $this->fixture->organization->id, $this->fixture->owner,
             $this->project->id, array_values(array_unique(array_column($sources, 'tool'))));
         $payload = ['request_id' => (string) Str::uuid(), 'message' => $query ?? 'Покажи учебные просроченные задачи объекта.',
-            'conversation_id' => $conversationId, 'profile' => 'normal', 'allow_actions' => false];
+            'conversation_id' => $conversationId, 'profile' => $profile, 'allow_actions' => false];
         $payload['quote_id'] = app(AICreditService::class)->quote($this->fixture->organization, $this->fixture->owner, $payload)['quote_id'];
         $manifest = $this->enrollments->preview($this->fixture->owner, $cohort->organization_id, $cohort->id, $payload['quote_id'], $payload,
             $sources);
@@ -491,9 +596,9 @@ final class AssistantScopedEgressTest extends TestCase
         return $provider;
     }
 
-    private function nativeToolCall(string $name, array $arguments): array
+    private function nativeToolCall(string $name, array $arguments, string $id = 'scoped'): array
     {
-        $call = ['type' => 'function_call', 'id' => 'fc_scoped', 'call_id' => 'call_scoped', 'status' => 'completed', 'name' => $name,
+        $call = ['type' => 'function_call', 'id' => 'fc_'.$id, 'call_id' => 'call_'.$id, 'status' => 'completed', 'name' => $name,
             'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)];
 
         return ['content' => '', 'output' => [$call], 'function_calls' => [$call], 'input_tokens' => 100, 'output_tokens' => 20,
