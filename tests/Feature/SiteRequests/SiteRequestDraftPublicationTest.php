@@ -400,6 +400,53 @@ final class SiteRequestDraftPublicationTest extends TestCase
         $this->assertSame('2026-10-27', $request->fresh()->work_start_date->toDateString());
     }
 
+    public function test_interval_validation_messages_follow_the_current_locale(): void
+    {
+        [$request] = $this->publicationContext();
+        $service = app(SiteRequestService::class);
+        $previousLocale = app()->getLocale();
+        try {
+            foreach (['ru', 'en'] as $locale) {
+                app()->setLocale($locale);
+                foreach ([
+                    ['delivery_time_to', 'site_requests.errors.delivery_end_after_start', ['delivery_time_from' => '10:00', 'delivery_time_to' => '09:00']],
+                    ['equipment_end_at', 'site_requests.errors.equipment_end_after_start', ['request_type' => 'equipment_request', 'equipment_start_at' => '2026-10-27T09:00:00Z', 'equipment_end_at' => '2026-10-27T08:00:00Z']],
+                    ['work_end_date', 'site_requests.errors.calendar_end_before_start', ['work_start_date' => '2026-10-28', 'work_end_date' => '2026-10-27']],
+                ] as [$field, $key, $changes]) {
+                    $errors = [];
+                    try {
+                        $service->create($request->organization_id, $request->user_id, array_replace([
+                            'project_id' => $request->project_id, 'title' => 'Localized invalid interval', 'request_type' => 'other',
+                        ], $changes));
+                    } catch (\Illuminate\Validation\ValidationException $exception) {
+                        $errors = $exception->errors();
+                    }
+                    $expected = trans_message($key);
+                    $this->assertNotSame($key, $expected);
+                    $this->assertSame([$expected], $errors[$field] ?? []);
+                    $this->assertNotSame(trans_message($key, [], $locale === 'ru' ? 'en' : 'ru'), $expected);
+                }
+                $errors = [];
+                try {
+                    (new ProjectEventService())->createEvent($request->project_id, $request->organization_id, [
+                        'title' => 'Localized invalid event', 'event_date' => '2026-10-27', 'event_time' => '10:00', 'end_time' => '09:00',
+                    ]);
+                } catch (\Illuminate\Validation\ValidationException $exception) {
+                    $errors = $exception->errors();
+                }
+                $key = 'schedule_management.event_end_after_start';
+                $expected = trans_message($key);
+                $this->assertNotSame($key, $expected);
+                $this->assertSame([$expected], $errors['end_time'] ?? []);
+                $this->assertNotSame(trans_message($key, [], $locale === 'ru' ? 'en' : 'ru'), $expected);
+            }
+            $this->assertDatabaseCount('site_requests', 1);
+            $this->assertDatabaseCount('project_events', 0);
+        } finally {
+            app()->setLocale($previousLocale);
+        }
+    }
+
     public function test_a_known_end_date_without_a_clock_keeps_its_legacy_end_of_day_in_the_mirror(): void
     {
         [$request, , $calendarService] = $this->publicationContext(true);

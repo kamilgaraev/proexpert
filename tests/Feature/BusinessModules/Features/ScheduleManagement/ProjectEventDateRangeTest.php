@@ -175,6 +175,29 @@ class ProjectEventDateRangeTest extends TestCase
         }
     }
 
+    public function test_same_day_exact_events_without_end_dates_are_checked_for_conflicts(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create(['organization_id' => $context->organization->id]));
+        $attributes = [
+            'organization_id' => $context->organization->id, 'created_by_user_id' => $context->user->id, 'project_id' => $project->id,
+            'event_type' => 'meeting', 'title' => 'Same-day exact fixture', 'event_date' => '2026-10-24',
+            'event_time' => '09:15:30', 'end_date' => null, 'end_time' => '10:45:15', 'duration_minutes' => null,
+            'is_all_day' => false, 'is_blocking' => true, 'priority' => 'normal', 'status' => 'scheduled',
+        ];
+        $blocker = ProjectEvent::query()->create($attributes);
+        $target = ProjectEvent::query()->create(array_replace($attributes, ['event_time' => '10:00:00', 'end_time' => '11:00:00']));
+        $service = new ProjectEventService();
+
+        $this->assertSame([$blocker->id], $service->checkEventConflicts($target)['conflicts']->pluck('id')->all());
+        $this->assertSame([$target->id], $service->checkEventConflicts($blocker)['conflicts']->pluck('id')->all());
+        $this->assertTrue($target->hasConflicts());
+        $target->update(['event_time' => '10:45:15']);
+        $this->assertFalse($service->checkEventConflicts($target)['has_conflicts']);
+        $this->assertFalse($service->checkEventConflicts($blocker)['has_conflicts']);
+        $this->assertFalse($target->hasConflicts());
+    }
+
     public function test_ranges_include_ongoing_durations_without_including_finished_or_foreign_events(): void
     {
         $context = AdminApiTestContext::create();

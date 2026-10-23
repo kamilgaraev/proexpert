@@ -72,16 +72,16 @@ class SiteRequestService
         $errors = [];
         if ($candidate->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $candidate->equipment_start_at !== null) {
             if ($start !== null && $end !== null && $end->lessThanOrEqualTo($start)) {
-                $errors['equipment_end_at'] = 'Окончание аренды должно быть позже начала.';
+                $errors['equipment_end_at'] = trans_message('site_requests.errors.equipment_end_after_start');
             }
         } else {
             if ($candidate->delivery_time_from !== null && $candidate->delivery_time_to !== null
                 && Carbon::parse($candidate->delivery_time_to, 'UTC')->format('H:i:s') <= Carbon::parse($candidate->delivery_time_from, 'UTC')->format('H:i:s')) {
-                $errors['delivery_time_to'] = 'Время окончания доставки должно быть позже времени начала.';
+                $errors['delivery_time_to'] = trans_message('site_requests.errors.delivery_end_after_start');
             }
             if ($start !== null && $end !== null && $end->copy()->startOfDay()->lessThan($start->copy()->startOfDay())) {
                 $field = $candidate->work_end_date !== null ? 'work_end_date' : 'rental_end_date';
-                $errors[$field] = 'Дата окончания не может быть раньше даты начала.';
+                $errors[$field] = trans_message('site_requests.errors.calendar_end_before_start');
             }
         }
         if ($errors !== []) {

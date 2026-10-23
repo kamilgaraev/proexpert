@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'event_end_after_start' => 'Окончание события должно быть позже начала.',
     'event_recurrence_end_required' => 'Укажите дату окончания для изменения повторения. Существующие события серии сохранены.',
     'event_recurrence_end_before_start' => 'Окончание повторения не может быть раньше даты события.',
     'schedule_completion_requires_full_progress' => 'Нельзя завершить график с неполным прогрессом.',

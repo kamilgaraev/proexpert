@@ -388,7 +388,7 @@ class ProjectEventService
             $endDate = isset($merged['end_date']) ? Carbon::parse($merged['end_date'])->toDateString() : $eventDate->toDateString();
             $end = Carbon::parse($endDate . ' ' . $merged['end_time'], 'UTC');
             if ($end->lessThanOrEqualTo($start)) {
-                throw ValidationException::withMessages(['end_time' => 'Окончание события должно быть позже начала.']);
+                throw ValidationException::withMessages(['end_time' => trans_message('schedule_management.event_end_after_start')]);
             }
         }
 
