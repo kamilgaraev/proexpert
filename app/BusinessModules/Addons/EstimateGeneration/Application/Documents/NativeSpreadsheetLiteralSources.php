@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 
 final readonly class NativeSpreadsheetLiteralSources
@@ -54,6 +55,78 @@ final readonly class NativeSpreadsheetLiteralSources
     public function bind(DocumentUnitExecutionContext $context, array $native, array $claims): self
     {
         return $this->bindLiterals($context, $native, $claims);
+    }
+
+    public function lengthOperand(string $nativeReference): ?array
+    {
+        $headers = $this->native['header_cells'] ?? [];
+        $cells = $this->native['cells'] ?? [];
+        if (! is_array($headers) || ! is_array($cells) || count($headers) > 80 || count($cells) > 20_000
+            || ($this->native['merged_cells'] ?? $this->native['merged_ranges'] ?? []) !== []) {
+            return null;
+        }
+        $columns = [];
+        $headerRow = 0;
+        $headerAddresses = [];
+        foreach ($headers as $header) {
+            if (! is_array($header) || ($header['formula'] ?? null) !== null
+                || ! is_string($header['raw_value'] ?? null) || $header['raw_value'] !== ($header['value'] ?? null)
+                || preg_match('/\A([A-Z]+)([1-9][0-9]*)\z/', (string) ($header['address'] ?? ''), $address) !== 1
+                || isset($headerAddresses[$header['address']])) {
+                return null;
+            }
+            $headerAddresses[$header['address']] = true;
+            $name = preg_replace('/[^\p{L}\p{N}]/u', '', mb_strtolower($header['raw_value']));
+            $field = match ($name) {
+                'value', 'значение', 'quantity', 'количество', 'колво', 'объем', 'объём' => 'value',
+                'unit', 'ед', 'едизм', 'единицаизмерения' => 'unit',
+                default => null,
+            };
+            if ($field !== null) {
+                if (isset($columns[$field])) {
+                    return null;
+                }
+                $columns[$field] = $address[1];
+            }
+            $headerRow = max($headerRow, (int) $address[2]);
+        }
+        if (! isset($columns['value'], $columns['unit'])) {
+            return null;
+        }
+        $byAddress = [];
+        $prefix = 'xlsx:sheet:'.(string) ($this->native['sheet'] ?? '').'!';
+        foreach ($cells as $cell) {
+            if (! is_array($cell) || ! is_string($cell['address'] ?? null)
+                || preg_match('/\A[A-Z]+[1-9][0-9]*\z/', $cell['address']) !== 1
+                || isset($byAddress[$cell['address']])) {
+                return null;
+            }
+            $byAddress[$cell['address']] = $cell;
+        }
+        if (! str_starts_with($nativeReference, $prefix)
+            || preg_match('/\A'.preg_quote($columns['value'], '/').'([1-9][0-9]*)\z/', substr($nativeReference, strlen($prefix)), $row) !== 1
+            || (int) $row[1] <= $headerRow) {
+            return null;
+        }
+        $valueAddress = $columns['value'].$row[1];
+        $unitAddress = $columns['unit'].$row[1];
+        $valueCell = $byAddress[$valueAddress] ?? [];
+        $unitCell = $byAddress[$unitAddress] ?? [];
+        $value = $valueCell['raw_value'] ?? null;
+        $unit = $unitCell['raw_value'] ?? null;
+        foreach ($byAddress as $address => $cell) {
+            if (preg_match('/\A[A-Z]+'.preg_quote($row[1], '/').'\z/', $address) === 1 && ($cell['formula'] ?? null) !== null) {
+                return null;
+            }
+        }
+        if ((! is_string($value) && ! is_int($value)) || ! CanonicalSourceDecimal::isPositive((string) $value)
+            || ! is_string($unit) || $unit !== ($unitCell['value'] ?? null)
+            || FactVocabulary::factor('length', $unit) === null) {
+            return null;
+        }
+
+        return ['value' => (string) $value, 'unit' => $unit, 'value_cell' => $valueAddress,
+            'unit_cell' => $unitAddress, 'native_reference' => $nativeReference];
     }
 
     public function bindReviewed(DocumentUnitExecutionContext $context, array $native, array $claims,

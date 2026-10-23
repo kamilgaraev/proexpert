@@ -23,6 +23,106 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class NativeSpreadsheetLiteralSourcesTest extends TestCase
 {
+    public function test_length_operand_preserves_exact_literal_cells_without_semantic_authority(): void
+    {
+        foreach (['102', 102, '0.102', '1000000000000'] as $value) {
+            $native = $this->lengthNative($value);
+            $content = $this->content($native);
+            $source = NativeSpreadsheetLiteralSources::fromArtifact($this->context($content), $content);
+            self::assertSame(['value' => (string) $value, 'unit' => 'mm', 'value_cell' => 'C2', 'unit_cell' => 'D2',
+                'native_reference' => 'xlsx:sheet:Оборудование!C2'], $source->lengthOperand('xlsx:sheet:Оборудование!C2'));
+            self::assertNull($source->lengthOperand('xlsx:sheet:Оборудование!C3'));
+        }
+    }
+
+    #[DataProvider('invalidLengthCells')]
+    public function test_length_operand_rejects_inexact_formula_ambiguous_and_incompatible_cells(string $address, array $change): void
+    {
+        $native = $this->lengthNative('102');
+        foreach ($native['cells'] as &$cell) {
+            if ($cell['address'] === $address) {
+                $cell = [...$cell, ...$change];
+            }
+        }
+        unset($cell);
+        if ($address === 'duplicate') {
+            $native['cells'][] = $native['cells'][2];
+        }
+        if ($address === 'header') {
+            $native['header_cells'][] = ['address' => 'E1', 'value' => 'unit', 'raw_value' => 'unit'];
+        }
+        $content = $this->content($native);
+        $source = NativeSpreadsheetLiteralSources::fromArtifact($this->context($content), $content);
+        self::assertNull($source->lengthOperand('xlsx:sheet:Оборудование!C2'));
+    }
+
+    public static function invalidLengthCells(): array
+    {
+        return [
+            'float' => ['C2', ['raw_value' => 102.5]],
+            'cached only' => ['C2', ['raw_value' => null, 'cached_value' => 102]],
+            'formula' => ['C2', ['formula' => '=100+2', 'cached_value' => 102]],
+            'exponent' => ['C2', ['raw_value' => '1.02e2']],
+            'locale' => ['C2', ['raw_value' => '0,102']],
+            'excess precision' => ['C2', ['raw_value' => '0.10201']],
+            'overflow' => ['C2', ['raw_value' => '1000000000000.0001']],
+            'zero' => ['C2', ['raw_value' => '0']],
+            'negative' => ['C2', ['raw_value' => '-102']],
+            'nan' => ['C2', ['raw_value' => 'NaN']],
+            'unit formula' => ['D2', ['formula' => '="mm"']],
+            'unit formatted mismatch' => ['D2', ['raw_value' => 'm']],
+            'wrong dimension' => ['D2', ['value' => 'm2', 'raw_value' => 'm2']],
+            'identity formula' => ['B2', ['formula' => '="clearance"']],
+            'duplicate cell' => ['duplicate', []],
+            'ambiguous unit header' => ['header', []],
+        ];
+    }
+
+    public function test_existing_json_artifact_cannot_recover_a_pre_serialization_integral_float(): void
+    {
+        $native = $this->lengthNative(102.0);
+        $content = $this->content($native);
+        self::assertSame(102, json_decode($content, true, 64, JSON_THROW_ON_ERROR)['native_structure']['cells'][2]['raw_value']);
+        $source = NativeSpreadsheetLiteralSources::fromArtifact($this->context($content), $content);
+        self::assertSame('102', $source->lengthOperand('xlsx:sheet:Оборудование!C2')['value']);
+        $preserved = json_encode(json_decode($content, true, 64, JSON_THROW_ON_ERROR), JSON_THROW_ON_ERROR);
+        self::assertSame($content, $preserved);
+        $native['cells'][2]['raw_value'] = 102.0;
+        $floatContent = json_encode(['schema_version' => 1, 'source_kind' => 'spreadsheet', 'native_structure' => $native],
+            JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+        self::assertNull(NativeSpreadsheetLiteralSources::fromArtifact($this->context($floatContent), $floatContent)
+            ->lengthOperand('xlsx:sheet:Оборудование!C2'));
+    }
+
+    public function test_existing_native_publication_does_not_replace_strict_length_admission(): void
+    {
+        $native = $this->lengthNative(102.5);
+        $native['cells'][0] = ['address' => 'A2', 'value' => 'quantity:clearance', 'raw_value' => 'quantity:clearance'];
+        $native['cells'][1] = ['address' => 'B2', 'value' => 'quantity', 'raw_value' => 'quantity'];
+        $content = $this->content($native);
+        $context = $this->context($content);
+        $publication = (new NativeNumericFactFactory)->spreadsheet($context, $native);
+        self::assertCount(1, $publication->claims);
+        self::assertTrue($publication->numericSources->certifies($publication->claims[0]));
+        self::assertSame('102.5', $publication->claims[0]->value['data']);
+        self::assertNull(NativeSpreadsheetLiteralSources::fromArtifact($context, $content)
+            ->lengthOperand('xlsx:sheet:Оборудование!C2'));
+    }
+
+    private function lengthNative(mixed $value): array
+    {
+        $native = $this->native();
+        foreach ($native['header_cells'] as &$header) {
+            $header['raw_value'] = $header['value'];
+        }
+        unset($header);
+        $native['cells'][1] = ['address' => 'B2', 'value' => 'clearance', 'raw_value' => 'clearance'];
+        $native['cells'][2] = ['address' => 'C2', 'value' => (string) $value, 'raw_value' => $value];
+        $native['cells'][3] = ['address' => 'D2', 'value' => 'mm', 'raw_value' => 'mm'];
+
+        return $native;
+    }
+
     public function test_only_the_typed_artifact_channel_attests_a_literal_and_preserves_numeric_guards(): void
     {
         $native = $this->native();
