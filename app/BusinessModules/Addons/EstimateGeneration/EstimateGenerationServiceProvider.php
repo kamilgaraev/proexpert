@@ -970,6 +970,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 new EloquentDocumentProcessingUnitStore($app->make('db')->connection()),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::class),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+                static fn () => $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class),
             ));
         $this->app->singleton(EstimateGenerationLearningEvidenceService::class, static fn ($app) => new EstimateGenerationLearningEvidenceService(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier::class),

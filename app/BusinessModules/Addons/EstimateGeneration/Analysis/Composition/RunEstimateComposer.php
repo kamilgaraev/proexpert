@@ -22,15 +22,17 @@ final readonly class RunEstimateComposer
 
     public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v3';
 
-    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v4';
+    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v5';
 
-    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v4';
+    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v5';
 
     public const CELL_PROMPT_CONTRACTS = [
         self::PROMPT_CONTRACT => 'estimate-composer:cells:v3',
         self::LEGACY_PROMPT_CONTRACT => 'estimate-composer:legacy-cells:v3',
-        self::ANSWER_PROMPT_CONTRACT => 'estimate-composer:answer-cells:v3',
-        self::LEGACY_ANSWER_PROMPT_CONTRACT => 'estimate-composer:legacy-answer-cells:v3',
+        self::ANSWER_PROMPT_CONTRACT => 'estimate-composer:answer-cells:v4',
+        self::LEGACY_ANSWER_PROMPT_CONTRACT => 'estimate-composer:legacy-answer-cells:v4',
+        'estimate-composer:answers:v4' => 'estimate-composer:answer-cells:v3',
+        'estimate-composer:legacy-answers:v4' => 'estimate-composer:legacy-answer-cells:v3',
         'estimate-composer:v4' => 'estimate-composer:cells:v1',
         'estimate-composer:legacy:v1' => 'estimate-composer:legacy-cells:v1',
         'estimate-composer:answers:v2' => 'estimate-composer:answer-cells:v1',
@@ -42,7 +44,8 @@ final readonly class RunEstimateComposer
         'estimate-composer:cells:v2', 'estimate-composer:legacy-cells:v2',
         'estimate-composer:answer-cells:v2', 'estimate-composer:legacy-answer-cells:v2',
         'estimate-composer:cells:v3', 'estimate-composer:legacy-cells:v3',
-        'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3'];
+        'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3',
+        'estimate-composer:answer-cells:v4', 'estimate-composer:legacy-answer-cells:v4'];
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -153,6 +156,8 @@ final readonly class RunEstimateComposer
                     !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($claim->result->payload['claim_candidates'])) {
                     throw new RuntimeException('estimate_composer_replay_invalid');
                 }
+            } elseif (($claim->result->payload['claim_candidates'] ?? []) !== []) {
+                throw new RuntimeException('estimate_composer_replay_invalid');
             }
             $stored = $claim->result->payload['work_intents'] ?? null;
             if (! is_array($stored) || ! array_is_list($stored)) {
@@ -267,7 +272,8 @@ final readonly class RunEstimateComposer
         $claims = [];
         $seen = [];
         foreach ($raw as $candidate) {
-            if (! EstimateComposerInput::sourceClaimCandidate($candidate, $input->facts, $input->claimAnswerFactIds)) {
+            if (! EstimateComposerInput::sourceClaimCandidate($candidate, $input->facts, $input->claimAnswerFactIds,
+                $input->acceptsWorkSourceClaims() ? $input->workTechnologyContext : [])) {
                 continue;
             }
             $answer = $candidate['source_answer_fact_id'];

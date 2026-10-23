@@ -33,7 +33,7 @@ final class EstimateGenerationLearningEvidenceService
     ) {}
 
     public function sourceClaimReferences(int $organizationId, int $projectId, int $sessionId,
-        ProjectModelSnapshot $snapshot, array $decisions, array $input): array
+        ProjectModelSnapshot $snapshot, array $decisions, array $input, ?string $localEstimateKey = null): array
     {
         if (min($organizationId, $projectId, $sessionId) < 1 || count($snapshot->facts) > 10000) {
             return [];
@@ -49,6 +49,7 @@ final class EstimateGenerationLearningEvidenceService
             return [];
         }
         $answerHashes = $answerIds = $documentIds = $checked = [];
+        $workContexts = $this->sourceClaims->currentWorkSourceClaimContexts($scope, $snapshot, $decisions, $input, $localEstimateKey);
         $entities = array_column($snapshot->entities, null, 'id');
         $facts = $snapshot->facts;
         usort($facts, static fn (Fact $left, Fact $right): int => strcmp($left->id, $right->id));
@@ -64,7 +65,8 @@ final class EstimateGenerationLearningEvidenceService
                 || count($answerIds) >= ComposerSourceClaimValidationService::MAX_CLAIMS) {
                 continue;
             }
-            $context = ResolveCurrentEstimateClarification::composerAnswerContext($fact, $snapshot, $decisions, $input, $checked);
+            $context = isset($workContexts[$fact->id]) ? ['work_sections' => ['equipment']]
+                : ResolveCurrentEstimateClarification::composerAnswerContext($fact, $snapshot, $decisions, $input, $checked);
             if ($context !== null && in_array('equipment', $context['work_sections'], true)) {
                 $answerIds[] = $fact->id;
                 $answerHashes[] = hash('sha256', CanonicalPipelineJson::encode($fact->value));
@@ -74,7 +76,7 @@ final class EstimateGenerationLearningEvidenceService
             return [];
         }
         $table = 'estimate_generation_learning_examples';
-        $query = EstimateGenerationLearningExample::query()->select($table.'.*')
+        $query = EstimateGenerationLearningExample::query()->select($table.'.*', 'receipt.prompt_contract_version as receipt_contract_version')
             ->join('estimate_generation_ai_role_runs as receipt', 'receipt.id', '=', $table.'.source_entity_id')
             ->join('estimate_generation_vision_physical_attempts as physical', 'physical.attempt_id', '=', 'receipt.physical_attempt_id')
             ->join('estimate_generation_credit_attempts as credit', 'credit.attempt_id', '=', 'physical.attempt_id')
@@ -89,8 +91,8 @@ final class EstimateGenerationLearningEvidenceService
             ->whereIn(DB::raw($table.".context_payload #>> '{candidate,document_fact_ids,0}'"), $documentIds)
             ->where('receipt.status', 'completed')->where('receipt.role', 'estimate_composer')
             ->where('receipt.subject_type', 'estimate_session')->where('receipt.subject_id', (string) $sessionId)
-            ->whereRaw("((receipt.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4') AND receipt.result_payload->'schema_version' = '2'::jsonb)
-                OR (receipt.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3') AND receipt.result_payload->'schema_version' = '3'::jsonb))")
+            ->whereRaw("((receipt.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4','estimate-composer:answers:v5','estimate-composer:legacy-answers:v5') AND receipt.result_payload->'schema_version' = '2'::jsonb)
+                OR (receipt.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3','estimate-composer:answer-cells:v4','estimate-composer:legacy-answer-cells:v4') AND receipt.result_payload->'schema_version' = '3'::jsonb))")
             ->whereRaw('receipt.result_payload->\'claim_candidates\' @> jsonb_build_array('.$table.'.context_payload->\'candidate\')')
             ->whereColumn('physical.request_fingerprint', 'receipt.input_fingerprint')
             ->whereColumn('physical.logical_request_fingerprint', 'receipt.input_fingerprint')
@@ -123,11 +125,12 @@ final class EstimateGenerationLearningEvidenceService
             }
             $group = array_values($matches)[0];
             $candidate = $group['candidate'];
-            $fresh = $this->sourceClaims->capture($scope, $snapshot, $decisions, $input, $candidate, $anchors, $checked);
-            if ($fresh === null) {
-                continue;
-            }
             foreach ($group['rows'] as $row) {
+                $fresh = $this->sourceClaims->capture($scope, $snapshot, $decisions, $input, $candidate, $anchors, $checked,
+                    $row->receipt_contract_version, $localEstimateKey);
+                if ($fresh === null) {
+                    continue;
+                }
                 if ($fresh['source_claim_key'] !== $row->source_claim_key) {
                     continue;
                 }

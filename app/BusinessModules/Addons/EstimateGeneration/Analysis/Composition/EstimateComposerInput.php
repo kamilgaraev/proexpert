@@ -11,6 +11,9 @@ final readonly class EstimateComposerInput
 {
     public const MAX_SOURCE_CLAIMS = 8;
 
+    public const WORK_SOURCE_CLAIM_CONTRACTS = ['estimate-composer:answers:v5', 'estimate-composer:legacy-answers:v5',
+        'estimate-composer:answer-cells:v4', 'estimate-composer:legacy-answer-cells:v4'];
+
     public array $claimAnswerFactIds;
 
     public const WORK_SECTIONS = ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating',
@@ -103,6 +106,10 @@ final readonly class EstimateComposerInput
                 }
             }
         }
+        if ($this->acceptsWorkSourceClaims()) {
+            $answers = [...$answers, ...array_keys(self::workSourceClaimContexts($workTechnologyContext))];
+        }
+        $answers = array_values(array_unique($answers));
         sort($answers, SORT_STRING);
         if ($claimAnswerFactIds !== null && (! array_is_list($claimAnswerFactIds)
             || count($claimAnswerFactIds) > self::MAX_SOURCE_CLAIMS || array_diff($claimAnswerFactIds, $answers) !== []
@@ -114,7 +121,8 @@ final readonly class EstimateComposerInput
             throw new InvalidArgumentException('estimate_composer_source_claim_refs_invalid');
         }
         foreach ($sourceClaimReferences as $reference) {
-            if (! self::sourceClaimReference($reference, $facts, $this->claimAnswerFactIds)) {
+            if (! self::sourceClaimReference($reference, $facts, $this->claimAnswerFactIds,
+                $this->acceptsWorkSourceClaims() ? $workTechnologyContext : [])) {
                 throw new InvalidArgumentException('estimate_composer_source_claim_refs_invalid');
             }
         }
@@ -137,9 +145,15 @@ final readonly class EstimateComposerInput
 
     public function acceptsSourceClaims(): bool
     {
-        return in_array($this->baseContractVersion(), ['estimate-composer:answers:v4', 'estimate-composer:legacy-answers:v4',
+        return in_array($this->baseContractVersion(), ['estimate-composer:answers:v5', 'estimate-composer:legacy-answers:v5',
+            'estimate-composer:answers:v4', 'estimate-composer:legacy-answers:v4',
             'estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2',
             'estimate-composer:answers:v3', 'estimate-composer:legacy-answers:v3'], true);
+    }
+
+    public function acceptsWorkSourceClaims(): bool
+    {
+        return in_array($this->contractVersion, self::WORK_SOURCE_CLAIM_CONTRACTS, true);
     }
 
     public function acceptsWorkRequirements(): bool
@@ -153,7 +167,8 @@ final readonly class EstimateComposerInput
     {
         return in_array($this->contractVersion, ['estimate-composer:v6', 'estimate-composer:legacy:v3',
             'estimate-composer:answers:v4', 'estimate-composer:legacy-answers:v4', 'estimate-composer:cells:v3',
-            'estimate-composer:legacy-cells:v3', 'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3'], true);
+            'estimate-composer:legacy-cells:v3', 'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3',
+            ...self::WORK_SOURCE_CLAIM_CONTRACTS], true);
     }
 
     public function withSourceClaimReferences(array $references): self
@@ -194,7 +209,7 @@ final readonly class EstimateComposerInput
             $this->claimAnswerFactIds, $this->sourceClaimReferences, $rows, $this->directQuantityBindings, $this->workTechnologyContext);
     }
 
-    public static function sourceClaimReference(mixed $reference, array $facts, array $answerIds): bool
+    public static function sourceClaimReference(mixed $reference, array $facts, array $answerIds, array $workContexts = []): bool
     {
         if (! is_array($reference) || count($reference) !== 10 || ! is_int($reference['learning_example_id'] ?? null)
             || $reference['learning_example_id'] < 1 || ($reference['interpretation_status'] ?? null) !== 'proposed'
@@ -222,10 +237,10 @@ final readonly class EstimateComposerInput
 
         return self::sourceClaimCandidate(array_intersect_key($reference, array_flip([
             'source_answer_fact_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids',
-        ])), $facts, $answerIds);
+        ])), $facts, $answerIds, $workContexts);
     }
 
-    public static function sourceClaimCandidate(mixed $candidate, array $facts, array $answerIds): bool
+    public static function sourceClaimCandidate(mixed $candidate, array $facts, array $answerIds, array $workContexts = []): bool
     {
         if (! is_array($candidate) || count($candidate) !== 6
             || array_diff(array_keys($candidate), ['source_answer_fact_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids']) !== []
@@ -243,12 +258,66 @@ final readonly class EstimateComposerInput
         }
         $byId = array_column($facts, null, 'id');
         $document = $byId[$candidate['document_fact_ids'][0]] ?? null;
+        $work = self::workSourceClaimContexts($workContexts)[$candidate['source_answer_fact_id']] ?? null;
+        if ($work !== null) {
+            $pins = array_filter($work['documents'], static fn (array $pin): bool => in_array($pin['document_id'], $work['answer']['document_ids'], true));
+
+            return self::sourceClaimDocument($document) && $document['entity_id'] === $candidate['entity_id']
+                && $candidate['entity_id'] === $work['context']['binding']['entity_id']
+                && ($document['value'] ?? null) === $candidate['value']['data']
+                && is_int($document['source_document_id'] ?? null)
+                && array_filter($pins, static fn (array $pin): bool => $pin['document_id'] === $document['source_document_id']
+                    && $pin['source_version'] === ($document['source_version'] ?? null)) !== [];
+        }
 
         return isset($byId[$candidate['source_answer_fact_id']])
             && (! array_key_exists('target_entity_id', $byId[$candidate['source_answer_fact_id']]['value'] ?? [])
                 || $byId[$candidate['source_answer_fact_id']]['value']['target_entity_id'] === $candidate['entity_id'])
             && $candidate['document_fact_ids'][0] !== $candidate['source_answer_fact_id']
             && self::sourceClaimDocument($document) && $document['entity_id'] === $candidate['entity_id'];
+    }
+
+    public static function workSourceClaimContexts(array $entries): array
+    {
+        $result = $duplicates = [];
+        foreach ($entries as $entry) {
+            $answer = $entry['answer'] ?? null;
+            $context = $entry['context'] ?? null;
+            $binding = $context['binding'] ?? null;
+            if (($entry['status'] ?? null) !== 'answered' || ! is_array($answer) || ! is_array($binding)
+                || ($context['schema_version'] ?? null) !== 1 || ($binding['work_section'] ?? null) !== 'equipment'
+                || ! self::identifier($binding['entity_id'] ?? null) || ! self::identifier($binding['work_key'] ?? null)
+                || ! is_string($context['binding_hash'] ?? null)
+                || ! hash_equals($context['binding_hash'], hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($binding)))
+                || ($answer['response'] ?? null) !== 'other' || ($answer['trust'] ?? null) !== 'user_assumption'
+                || ($answer['engineering_applicability'] ?? null) !== 'unresolved' || ($answer['numeric_parameters_confirmed'] ?? null) !== false
+                || ! self::identifier($answer['fact_id'] ?? null) || ! self::identifier($answer['decision_id'] ?? null)
+                || ! is_string($answer['other'] ?? null) || trim($answer['other']) === '' || mb_strlen($answer['other']) > 500
+                || ! is_array($answer['document_ids'] ?? null) || ! array_is_list($answer['document_ids'])
+                || $answer['document_ids'] === [] || count($answer['document_ids']) > self::MAX_SOURCE_CLAIMS
+                || count(array_unique($answer['document_ids'])) !== count($answer['document_ids'])
+                || count(array_filter($answer['document_ids'], static fn ($id): bool => is_int($id) && $id > 0)) !== count($answer['document_ids'])
+                || ! is_array($entry['documents'] ?? null) || ! array_is_list($entry['documents'])
+                || count(array_filter($entry['documents'], 'is_array')) !== count($entry['documents'])) {
+                continue;
+            }
+            $pins = array_filter($entry['documents'], static fn (mixed $pin): bool => is_array($pin)
+                && in_array($pin['document_id'] ?? null, $answer['document_ids'], true)
+                && in_array($pin['status'] ?? null, ['ready', 'needs_review'], true)
+                && is_string($pin['checksum_sha256'] ?? null) && preg_match('/\A[a-f0-9]{64}\z/D', $pin['checksum_sha256']) === 1
+                && ($pin['source_version'] ?? null) === 'sha256:'.$pin['checksum_sha256']);
+            if (count($pins) !== count($answer['document_ids'])
+                || count(array_unique(array_column($pins, 'document_id'))) !== count($pins)) {
+                continue;
+            }
+            if (isset($result[$answer['fact_id']])) {
+                $duplicates[$answer['fact_id']] = true;
+            }
+            $result[$answer['fact_id']] = $entry;
+        }
+        ksort($result, SORT_STRING);
+
+        return array_diff_key($result, $duplicates);
     }
 
     public static function sourceClaimDocument(mixed $document): bool

@@ -450,7 +450,8 @@ final class EstimateGenerationLearningRecorder
         $checked = $validated = [];
         foreach ($receipts as $receipt) {
             $result = $this->sourceClaims->capture($scope, $snapshot, $decisions, $session->input_payload ?? [],
-                $receipt['candidate'], $anchors, $checked);
+                $receipt['candidate'], $anchors, $checked, $receipt['contract_version'] ?? null,
+                $session->input_payload['rebuild_section_key'] ?? null);
             if ($result !== null) {
                 $validated[] = [...$receipt, 'validation' => $result];
             }
@@ -663,14 +664,16 @@ final class EstimateGenerationLearningRecorder
             ->whereIn('run.prompt_contract_version', ['estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2',
                 'estimate-composer:answers:v3', 'estimate-composer:legacy-answers:v3',
                 'estimate-composer:answers:v4', 'estimate-composer:legacy-answers:v4',
+                'estimate-composer:answers:v5', 'estimate-composer:legacy-answers:v5',
                 'estimate-composer:answer-cells:v1', 'estimate-composer:legacy-answer-cells:v1',
                 'estimate-composer:answer-cells:v2', 'estimate-composer:legacy-answer-cells:v2',
-                'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3'])
+                'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3',
+                'estimate-composer:answer-cells:v4', 'estimate-composer:legacy-answer-cells:v4'])
             ->whereColumn('physical.request_fingerprint', 'run.input_fingerprint')
             ->whereColumn('physical.logical_request_fingerprint', 'run.input_fingerprint')
-            ->whereRaw("((run.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4') AND run.result_payload->'schema_version' = '2'::jsonb
+            ->whereRaw("((run.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4','estimate-composer:answers:v5','estimate-composer:legacy-answers:v5') AND run.result_payload->'schema_version' = '2'::jsonb
                 AND run.result_payload - ARRAY['schema_version','role','work_intents','quarantined_intents','result_state','claim_candidates'] = '{}'::jsonb)
-                OR (run.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3') AND run.result_payload->'schema_version' = '3'::jsonb
+                OR (run.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3','estimate-composer:answer-cells:v4','estimate-composer:legacy-answer-cells:v4') AND run.result_payload->'schema_version' = '3'::jsonb
                 AND run.result_payload - ARRAY['schema_version','role','work_intents','quarantined_intents','result_state','claim_candidates','cell_mapping_proposals','cell_mapping_context'] = '{}'::jsonb
                 AND jsonb_typeof(run.result_payload->'cell_mapping_proposals') = 'array' AND jsonb_typeof(run.result_payload->'cell_mapping_context') = 'array'))")
             ->whereRaw("run.result_payload->>'role' = ?", [AiAnalysisRole::EstimateComposer->value])
@@ -702,7 +705,11 @@ final class EstimateGenerationLearningRecorder
                 'candidates' => json_decode($row->claim_candidates, true, 64, JSON_THROW_ON_ERROR)];
         }
 
-        return ComposerSourceClaimValidationService::foldReceipts($receipts);
+        $contracts = $rows->pluck('prompt_contract_version', 'id')->all();
+
+        return array_map(static fn (array $receipt): array => [...$receipt,
+            ...(in_array($contracts[$receipt['run_id']], \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::WORK_SOURCE_CLAIM_CONTRACTS, true)
+                ? ['contract_version' => $contracts[$receipt['run_id']]] : [])], ComposerSourceClaimValidationService::foldReceipts($receipts));
     }
 
     private function knowledgeContext(EstimateGenerationSession $session, array $workItem, int $normId): array

@@ -184,7 +184,7 @@ final readonly class ResolveCurrentEstimateClarification
 
     private static function sameWorkContext(mixed $left, mixed $right): bool
     {
-        return CanonicalPipelineJson::encode($left) === CanonicalPipelineJson::encode($right);
+        return is_array($left) && is_array($right) && CanonicalPipelineJson::encode($left) === CanonicalPipelineJson::encode($right);
     }
 
     private function workTechnologyAnswer(array $context, ProjectModelSnapshot $snapshot, array $decisions, array $scope, array $documents): ?array

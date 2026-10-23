@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -34,10 +35,11 @@ final readonly class ComposerSourceClaimValidationService
 
     public function __construct(private EvidenceRepository $evidence, private DocumentProcessingUnitStore $units,
         private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource $cellSources = null,
-        private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization $reviewAuthorization = null) {}
+        private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization $reviewAuthorization = null,
+        private ?\Closure $clarifications = null) {}
 
     public function capture(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $input,
-        array $candidate, array $anchors, array &$checkedAnswers = []): ?array
+        array $candidate, array $anchors, array &$checkedAnswers = [], ?string $contractVersion = null, ?string $localEstimateKey = null): ?array
     {
         if (! array_is_list($scope) || count($scope) !== 3
             || count(array_filter($scope, static fn ($id): bool => is_int($id) && $id > 0)) !== 3 || ! self::isCandidate($candidate)) {
@@ -52,7 +54,19 @@ final readonly class ComposerSourceClaimValidationService
             || GeometryInventory::type($entity) !== 'equipment') {
             return null;
         }
-        $context = ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, $decisions, $input, $checkedAnswers);
+        $work = null;
+        if (is_array($answer->value) && ($answer->value['composer_context']['kind'] ?? null) === 'work_technology') {
+            if (! in_array($contractVersion, EstimateComposerInput::WORK_SOURCE_CLAIM_CONTRACTS, true)) {
+                return null;
+            }
+            $work = $this->currentWorkSourceClaimContexts($scope, $snapshot, $decisions, $input, $localEstimateKey)[$answer->id] ?? null;
+            if ($work === null || $work['context']['binding']['entity_id'] !== $candidate['entity_id']) {
+                return null;
+            }
+            $context = ['work_sections' => ['equipment'], 'target_entity_id' => $work['context']['binding']['entity_id']];
+        } else {
+            $context = ResolveCurrentEstimateClarification::composerAnswerContext($answer, $snapshot, $decisions, $input, $checkedAnswers);
+        }
         if ($context === null || ! in_array('equipment', $context['work_sections'], true)
             || (isset($context['target_entity_id']) && $context['target_entity_id'] !== $candidate['entity_id'])) {
             return null;
@@ -81,16 +95,44 @@ final readonly class ComposerSourceClaimValidationService
         if ($binding === null) {
             return null;
         }
+        $pins = $work === null ? [] : array_values(array_filter($work['documents'],
+            static fn (array $pin): bool => in_array($pin['document_id'], $work['answer']['document_ids'], true)));
+        if ($work !== null && array_filter($pins, static fn (array $pin): bool => $pin['document_id'] === $binding['literal_witness']['document_id']
+            && $pin['source_version'] === $source->sourceVersion) === []) {
+            return null;
+        }
         $identity = ['predicate' => self::PREDICATE, 'scope' => $scope, 'candidate' => $candidate,
             'answer' => ['fact_id' => $answer->id, 'version' => $answer->version, 'source_version' => $answer->sourceVersion,
                 'value_hash' => hash('sha256', CanonicalPipelineJson::encode($answer->value)),
                 'decision_id' => $decision->id, 'decision_version' => $decision->version,
                 'decision_hash' => hash('sha256', CanonicalPipelineJson::encode(get_object_vars($decision)))],
             'source' => ['fact_id' => $source->id, 'version' => $source->version, 'source_version' => $source->sourceVersion,
-                'entity_id' => $source->entityId, ...$binding]];
+                'entity_id' => $source->entityId, ...$binding],
+            ...($work === null ? [] : ['work_context' => $work['context'], 'document_pins' => $pins, 'contract_version' => $contractVersion])];
 
         return ['source_claim_key' => hash('sha256', CanonicalPipelineJson::encode($identity)), 'identity' => $identity,
-            'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved'];
+            'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved',
+            ...($work === null ? [] : ['numeric_parameters_confirmed' => false])];
+    }
+
+    public function currentWorkSourceClaimContexts(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $input,
+        ?string $localEstimateKey = null): array
+    {
+        if ($this->clarifications === null || count($scope) !== 3) {
+            return [];
+        }
+        $policy = ResolveCurrentEstimateClarification::composerPolicy($input);
+        if ($policy === null) {
+            return [];
+        }
+        $catalog = ($this->clarifications)();
+        if (! $catalog instanceof \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog) {
+            return [];
+        }
+        $entries = $catalog->currentWorkContexts(...[...$scope, $snapshot, $decisions, $localEstimateKey]);
+
+        return array_filter(EstimateComposerInput::workSourceClaimContexts($entries), static fn (array $entry): bool =>
+            CanonicalPipelineJson::encode($entry['context']['policy'] ?? null) === CanonicalPipelineJson::encode($policy));
     }
 
     public function captureCellReview(array $scope, ProjectModelSnapshot $snapshot, array $decisions, Fact $source): ?array
