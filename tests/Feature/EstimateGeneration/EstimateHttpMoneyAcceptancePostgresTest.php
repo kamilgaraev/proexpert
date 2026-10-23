@@ -261,10 +261,10 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         Http::assertNothingSent();
     }
 
-    public function test_http_generic_description_only_work_retains_an_assumed_quantity_on_fresh_generation(): void
+    public function test_http_generic_semantic_installation_covers_only_its_requirement_and_retains_an_assumed_quantity(): void
     {
         self::assertFalse((new WorkItemQuantityMapper)->isKnownWorkKey(self::GENERIC_WORK_KEY));
-        [$rights, $project, $session, $catalog, $headers, $native] = $this->generatedSession(false, true);
+        [$rights, $project, $session, $catalog, $headers, $native] = $this->generatedSession(false, true, 'installation');
         self::assertNull($native);
         self::assertSame([], $catalog);
         self::assertSame(0, $session->documents()->count());
@@ -296,13 +296,26 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         self::assertSame('count', $item['composition_intent']['unit']);
         self::assertNull($item['composition_intent']['derived_quantity_id']);
         self::assertSame([$description->id], $item['composition_intent']['source_fact_ids']);
+        $url = $this->url($project, $session);
+        $evaluation = $this->getJson($url.'/evaluation', $headers)->assertOk()->json('data.result');
+        $missing = $evaluation['missing_requirements'];
+        self::assertCount(4, $missing);
+        self::assertEqualsCanonicalizing(['equipment_specification', 'equipment_purchase', 'delivery', 'commissioning'],
+            array_column($missing, 'requirement'));
+        self::assertSame([$description->entityId], array_values(array_unique(array_column($missing, 'entity_id'))));
+        self::assertSame(['equipment'], array_values(array_unique(array_column($missing, 'section'))));
+        self::assertSame('installation', $item['metadata']['requirement_key']);
+        self::assertSame(self::GENERIC_WORK_KEY, $item['composition_intent']['work_key']);
+        self::assertFalse($evaluation['can_confirm_for_apply']);
+        self::assertNull($item['unit_price']);
+        self::assertNull($item['total_cost']);
+        self::assertFalse(isset($item['normative_match']['norm_id']));
         $firstCalls = count($this->wireHistory);
-        self::assertGreaterThan(0, $firstCalls);
+        self::assertSame(2, $firstCalls);
         self::assertSame($firstCalls, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         $manualBalance = app(AICreditService::class)->balance($rights->organization);
         $manualUsage = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson();
         $manualOperations = DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count();
-        $url = $this->url($project, $session);
         $input = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
             'work_item_key' => $item['key'], 'value' => '3', 'unit' => 'count',
             'reason' => 'Пользователь принял предварительное количество и единицу этой работы; документального измерения нет.'];
@@ -327,7 +340,20 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         $entered = array_column($snapshot->facts, null, 'id')[$quantity['source_fact_id']];
         self::assertSame(['3', 'count', $description->entityId, 'user_assumption', []],
             [$entered->value, $entered->unit, $entered->entityId, $entered->origin, $entered->nativeNumericProofs]);
-        $this->transport($session, [...$quantity, 'work_item_key' => $item['key'], 'target_entity_id' => $description->entityId], true);
+        $recalculated = $this->postJson($url.'/evaluation/recalculate', ['request_id' => (string) Str::uuid(),
+            'state_version' => $session->fresh()->state_version], $headers)->assertOk()->json('data');
+        self::assertSame('0', $recalculated['cost_units']);
+        self::assertCount(4, $recalculated['result']['missing_requirements']);
+        $position = $recalculated['result']['scenarios'][0]['positions'][0];
+        self::assertSame([$item['key'], $description->entityId, '3', 'count', 'assumed', 'direct_quantity'],
+            [$position['key'], $position['entity_id'], $position['quantity'], $position['unit'],
+                $position['quantity_status'], $position['quantity_formula']]);
+        self::assertFalse($recalculated['result']['can_confirm_for_apply']);
+        self::assertCount($firstCalls, $this->wireHistory);
+        self::assertSame($manualBalance, app(AICreditService::class)->balance($rights->organization));
+        self::assertSame($manualUsage, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson());
+        self::assertSame($manualOperations, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+        $this->transport($session, [...$quantity, 'work_item_key' => $item['key'], 'target_entity_id' => $description->entityId], true, 'installation');
         $operation = (string) Str::uuid();
         $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation,
             'state_version' => $session->fresh()->state_version, 'operation_kind' => 'generation',
@@ -360,6 +386,11 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         self::assertNull($row['total_cost']);
         self::assertSame('price_unknown', $row['pricing_status']);
         self::assertFalse(isset($row['normative_match']['norm_id']));
+        self::assertSame('installation', $row['metadata']['requirement_key']);
+        $freshEvaluation = $this->getJson($url.'/evaluation', $headers)->assertOk()->json('data.result');
+        self::assertCount(4, $freshEvaluation['missing_requirements']);
+        self::assertEqualsCanonicalizing(['equipment_specification', 'equipment_purchase', 'delivery', 'commissioning'],
+            array_column($freshEvaluation['missing_requirements'], 'requirement'));
         $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
         $facts = array_column($snapshot->facts, null, 'id');
         self::assertSame($originalFact, get_object_vars($facts[$description->id]));
@@ -369,7 +400,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             static fn ($evidence): bool => in_array($evidence->id, $description->evidenceIds, true)))));
         self::assertSame($originalDecisions, array_map(get_object_vars(...), $models->decisionsForSelectedFacts(...[...$scope, [$description->id]])));
         $calls = count($this->wireHistory);
-        self::assertGreaterThan($firstCalls, $calls);
+        self::assertSame(4, $calls);
         self::assertSame($calls, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         $balance = app(AICreditService::class)->balance($rights->organization);
         $receipts = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->orderBy('attempt_id')->get()->toJson();
@@ -502,7 +533,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count, $revision];
     }
 
-    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false): array
+    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null): array
     {
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
@@ -586,7 +617,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         } else {
             self::assertFalse($session->fresh()->input_payload['input_confirmed'] ?? false);
         }
-        $this->transport($session, descriptionOnly: $descriptionOnly);
+        $this->transport($session, descriptionOnly: $descriptionOnly, requirementKey: $requirementKey);
         app(AICreditService::class)->grant($rights->organization, 1000000, 'purchase', null, 'test:http-money-acceptance');
         $operation = (string) Str::uuid();
         $quote = $this->postJson($url.'/operations/quote', ['request_id' => $operation, 'state_version' => $session->fresh()->state_version,
@@ -613,11 +644,11 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count];
     }
 
-    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false): void
+    private function transport(EstimateGenerationSession $session, ?array $directQuantity = null, bool $descriptionOnly = false, ?string $requirementKey = null): void
     {
         $descriptor = json_decode(file_get_contents(base_path('tests/Fixtures/EstimateGeneration/universal-replay/xlsx-floor-finishing-v1.json')), true, 64, JSON_THROW_ON_ERROR);
         $responses = $descriptor['recordings'];
-        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly): Response {
+        $replies = [function (RequestInterface $request) use ($responses, $session, $directQuantity, $descriptionOnly, $requirementKey): Response {
             try {
                 $wire = json_decode((string) $request->getBody(), true, 128, JSON_THROW_ON_ERROR);
                 $project = null;
@@ -689,6 +720,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                     'name' => $descriptionOnly ? 'Подготовка экспозиции из имущества заказчика' : 'Монтаж насоса по ведомости',
                     'derived_quantity_id' => $quantities[0]['id'] ?? null, 'source_fact_ids' => array_values(array_unique([$contextId, $sourceId])),
                     'entity_id' => $entityId, 'technology_package_candidate' => null, 'unit' => 'count', 'work_section' => 'equipment',
+                    ...($requirementKey !== null ? ['requirement_key' => $requirementKey] : []),
                     'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
                 $response = $responses[0]['response'];
                 $response['choices'][0]['message']['content'] = json_encode(['work_intents' => [$intent]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
