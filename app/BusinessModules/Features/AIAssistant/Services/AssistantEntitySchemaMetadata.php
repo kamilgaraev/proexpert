@@ -13,6 +13,8 @@ final class AssistantEntitySchemaMetadata
 {
     private array $columns = [];
 
+    private array $columnTypes = [];
+
     private bool $schemaMetadataPrefetched = false;
 
     public function columns(string $table, ?AssistantAclQueryCompiler $compiler = null): array
@@ -27,6 +29,19 @@ final class AssistantEntitySchemaMetadata
         }
 
         return $columns;
+    }
+
+    public function columnTypes(string $table): array
+    {
+        if (isset($this->columnTypes[$table])) {
+            return $this->columnTypes[$table];
+        }
+        $types = array_column(Schema::getColumns($table), 'type_name', 'name');
+        if ($types !== []) {
+            $this->columnTypes[$table] = $types;
+        }
+
+        return $types;
     }
 
     public function prefetchForEntity(string $type, string $table, ?callable $checkpoint = null): void
@@ -121,11 +136,12 @@ final class AssistantEntitySchemaMetadata
         }
 
         $columnsByPair = [];
+        $typesByPair = [];
         if ($values !== []) {
             if ($checkpoint !== null) {
                 $checkpoint();
             }
-            $sql = 'select target.schema_name::text as schema_name, c.relname as table_name, a.attname as column_name, a.attnum as ordinal_position '
+            $sql = 'select target.schema_name::text as schema_name, c.relname as table_name, a.attname as column_name, a.attnum as ordinal_position, t.typname as type_name '
                 .'from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_type t on t.oid = a.atttypid '
                 .'join pg_namespace n on n.oid = c.relnamespace '
                 .'join (values '.implode(',', $values).') as target(schema_name, relation_name) '
@@ -136,6 +152,7 @@ final class AssistantEntitySchemaMetadata
             foreach ($connection->selectFromWriteConnection($sql, $bindings) as $row) {
                 $key = $row->schema_name."\0".$row->table_name;
                 $columnsByPair[$key][] = (string) $row->column_name;
+                $typesByPair[$key][(string) $row->column_name] = (string) $row->type_name;
             }
         }
         if ($checkDeadline !== null) {
@@ -143,6 +160,7 @@ final class AssistantEntitySchemaMetadata
         }
 
         $columns = [];
+        $types = [];
         foreach ($pairTables as $key => $tables) {
             $tableColumns = $columnsByPair[$key] ?? [];
             if (! $cacheMissing && $tableColumns === []) {
@@ -150,9 +168,13 @@ final class AssistantEntitySchemaMetadata
             }
             foreach (array_keys($tables) as $table) {
                 $columns[$table] = $tableColumns;
+                if ($tableColumns !== []) {
+                    $types[$table] = $typesByPair[$key];
+                }
             }
         }
         $this->columns = array_replace($this->columns, $columns);
+        $this->columnTypes = array_replace($this->columnTypes, $types);
         $this->schemaMetadataPrefetched = $cacheMissing;
     }
 

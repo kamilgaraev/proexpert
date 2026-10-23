@@ -15,7 +15,6 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
@@ -67,7 +66,7 @@ final readonly class AssistantCustomReportSource
         }
         $model = $query->getModel();
         $table = $model->getTable();
-        $columnTypes = array_column(Schema::getColumns($table), 'type_name', 'name');
+        $columnTypes = $this->policy->schemaColumnTypes($table);
         $safe = AssistantExtendedDomainRegistry::values('safeSelectColumns')[$entityType] ?? array_keys($columnTypes);
         $aliases = $entityType === 'performance_act'
             ? ['number' => 'act_document_number', 'date' => 'act_date', 'total_amount' => 'amount'] : [];

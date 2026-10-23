@@ -76,8 +76,8 @@ final class AssistantConversationReportFreshnessTest extends TestCase
         $request = Request::create('/api/v1/admin/ai-assistant/conversations');
         $request->setUserResolver(fn () => $fixture->member);
         $watch = false;
-        $count = ['all' => 0, 'bank' => 0, 'entitlement' => 0];
-        DB::listen(static function () use (&$watch, &$count): void {
+        $count = ['all' => 0, 'bank' => 0, 'entitlement' => 0, 'report_schema' => 0, 'proof' => 0];
+        DB::listen(static function (QueryExecuted $query) use (&$watch, &$count): void {
             if (! $watch) { return; }
             $count['all']++;
             $families = [];
@@ -85,6 +85,9 @@ final class AssistantConversationReportFreshnessTest extends TestCase
                 $file = basename($frame['file'] ?? '');
                 if ($file === 'BankPaymentProofAccess.php') { $families['bank'] = true; }
                 if ($file === 'OrganizationEntitlementService.php') { $families['entitlement'] = true; }
+                if ($file === 'AssistantCustomReportSource.php' && str_contains($query->sql, 'format_type(')) { $families['report_schema'] = true; }
+                if ($file === 'AssistantCustomReportReference.php' && preg_match('/\bselect\s+count\(/i', $query->sql) === 1
+                    && str_contains($query->sql, '"projects"')) { $families['proof'] = true; }
             }
             foreach (array_keys($families) as $family) { $count[$family]++; }
         });
@@ -92,7 +95,7 @@ final class AssistantConversationReportFreshnessTest extends TestCase
         foreach ([1, 8] as $size) {
             $page = $manager->queryVisibleConversations($fixture->member, $fixture->organization->id)
                 ->whereKey(array_slice($ids, 0, $size))->paginate(20);
-            $count = ['all' => 0, 'bank' => 0, 'entitlement' => 0];
+            $count = ['all' => 0, 'bank' => 0, 'entitlement' => 0, 'report_schema' => 0, 'proof' => 0];
             $watch = true;
             try {
                 $rows = ConversationResource::collection($page)->resolve($request);
@@ -103,6 +106,9 @@ final class AssistantConversationReportFreshnessTest extends TestCase
             self::assertSame(array_fill(0, $size, 'Synthetic report preview'), array_column($rows, 'last_message_preview'));
             $observations[$size] = $count;
         }
+        self::assertSame(1, $observations[1]['proof']);
+        self::assertSame(8, $observations[8]['proof'], 'Every signed report must retain its own current row-access check.');
+        self::assertLessThanOrEqual(1, $observations[8]['report_schema'], 'Repeated report proofs must reuse column types within the request.');
         $fixture->member->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
         self::assertTrue(app(AIPermissionChecker::class)->canUseAssistant($fixture->member, $fixture->organization->id));
         $revokedRows = ConversationResource::collection($page)->resolve($request);
