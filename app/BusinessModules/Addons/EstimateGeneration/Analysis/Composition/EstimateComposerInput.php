@@ -41,6 +41,7 @@ final readonly class EstimateComposerInput
         public array $sourceClaimReferences = [],
         public array $nativeCellContext = [],
         public array $directQuantityBindings = [],
+        public array $workTechnologyContext = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -55,6 +56,10 @@ final readonly class EstimateComposerInput
             || ($facts === [] && $derivedQuantities === [] && $candidates === [])
             || ! array_is_list($missingDocuments) || count($missingDocuments) > 200) {
             throw new InvalidArgumentException('estimate_composer_input_invalid');
+        }
+        if (! array_is_list($workTechnologyContext) || count($workTechnologyContext) > 200
+            || ($workTechnologyContext !== [] && ! $this->acceptsTechnologyQuestions())) {
+            throw new InvalidArgumentException('estimate_composer_entity_context_too_large');
         }
         foreach ($facts as $fact) {
             if (! is_array($fact) || ! self::identifier($fact['id'] ?? null)) {
@@ -132,18 +137,23 @@ final readonly class EstimateComposerInput
 
     public function acceptsSourceClaims(): bool
     {
-        return in_array($this->baseContractVersion(), [RunEstimateComposer::ANSWER_PROMPT_CONTRACT,
-            RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT, 'estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2'], true);
+        return in_array($this->baseContractVersion(), ['estimate-composer:answers:v4', 'estimate-composer:legacy-answers:v4',
+            'estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2',
+            'estimate-composer:answers:v3', 'estimate-composer:legacy-answers:v3'], true);
     }
 
     public function acceptsWorkRequirements(): bool
     {
-        return in_array($this->contractVersion, [RunEstimateComposer::PROMPT_CONTRACT, RunEstimateComposer::LEGACY_PROMPT_CONTRACT,
-            RunEstimateComposer::ANSWER_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT,
-            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::PROMPT_CONTRACT],
-            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::LEGACY_PROMPT_CONTRACT],
-            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::ANSWER_PROMPT_CONTRACT],
-            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT]], true);
+        return $this->acceptsTechnologyQuestions() || in_array($this->contractVersion, ['estimate-composer:v5', 'estimate-composer:legacy:v2',
+            'estimate-composer:answers:v3', 'estimate-composer:legacy-answers:v3', 'estimate-composer:cells:v2',
+            'estimate-composer:legacy-cells:v2', 'estimate-composer:answer-cells:v2', 'estimate-composer:legacy-answer-cells:v2'], true);
+    }
+
+    public function acceptsTechnologyQuestions(): bool
+    {
+        return in_array($this->contractVersion, ['estimate-composer:v6', 'estimate-composer:legacy:v3',
+            'estimate-composer:answers:v4', 'estimate-composer:legacy-answers:v4', 'estimate-composer:cells:v3',
+            'estimate-composer:legacy-cells:v3', 'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3'], true);
     }
 
     public function withSourceClaimReferences(array $references): self
@@ -151,24 +161,37 @@ final readonly class EstimateComposerInput
         return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken,
             $this->facts, $this->derivedQuantities, $this->decisions, $this->candidates, $this->missingDocuments,
             $this->contractVersion, $this->wireScope, $this->batchKey, $this->contextManifest, $this->allowedWorkSections,
-            $this->claimAnswerFactIds, $references, $this->nativeCellContext, $this->directQuantityBindings);
+            $this->claimAnswerFactIds, $references, $this->nativeCellContext, $this->directQuantityBindings, $this->workTechnologyContext);
     }
 
     public function baseContractVersion(): string
     {
         $base = array_search($this->contractVersion, RunEstimateComposer::CELL_PROMPT_CONTRACTS, true);
-
-        return is_string($base) ? $base : $this->contractVersion;
+        return is_string($base) ? $base : (['estimate-composer:cells:v1' => 'estimate-composer:v4',
+            'estimate-composer:legacy-cells:v1' => 'estimate-composer:legacy:v1',
+            'estimate-composer:answer-cells:v1' => 'estimate-composer:answers:v2',
+            'estimate-composer:legacy-answer-cells:v1' => 'estimate-composer:legacy-answers:v2',
+            'estimate-composer:cells:v2' => 'estimate-composer:v5', 'estimate-composer:legacy-cells:v2' => 'estimate-composer:legacy:v2',
+            'estimate-composer:answer-cells:v2' => 'estimate-composer:answers:v3',
+            'estimate-composer:legacy-answer-cells:v2' => 'estimate-composer:legacy-answers:v3'][$this->contractVersion] ?? $this->contractVersion);
     }
 
     public function withNativeCellContext(array $rows): self
     {
-        $version = $rows === [] ? $this->baseContractVersion() : RunEstimateComposer::CELL_PROMPT_CONTRACTS[$this->baseContractVersion()];
+        $versions = RunEstimateComposer::CELL_PROMPT_CONTRACTS + ['estimate-composer:v4' => 'estimate-composer:cells:v1',
+            'estimate-composer:legacy:v1' => 'estimate-composer:legacy-cells:v1',
+            'estimate-composer:answers:v2' => 'estimate-composer:answer-cells:v1',
+            'estimate-composer:legacy-answers:v2' => 'estimate-composer:legacy-answer-cells:v1',
+            'estimate-composer:v5' => 'estimate-composer:cells:v2', 'estimate-composer:legacy:v2' => 'estimate-composer:legacy-cells:v2',
+            'estimate-composer:answers:v3' => 'estimate-composer:answer-cells:v2',
+            'estimate-composer:legacy-answers:v3' => 'estimate-composer:legacy-answer-cells:v2'];
+        $version = $rows === [] ? $this->baseContractVersion() : ($versions[$this->baseContractVersion()]
+            ?? throw new InvalidArgumentException('estimate_composer_cell_context_invalid'));
 
         return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken,
             $this->facts, $this->derivedQuantities, $this->decisions, $this->candidates, $this->missingDocuments,
             $version, $this->wireScope, $this->batchKey, $this->contextManifest, $this->allowedWorkSections,
-            $this->claimAnswerFactIds, $this->sourceClaimReferences, $rows, $this->directQuantityBindings);
+            $this->claimAnswerFactIds, $this->sourceClaimReferences, $rows, $this->directQuantityBindings, $this->workTechnologyContext);
     }
 
     public static function sourceClaimReference(mixed $reference, array $facts, array $answerIds): bool
@@ -270,6 +293,13 @@ final readonly class EstimateComposerInput
         }
         if ($this->allowedWorkSections !== []) {
             $payload['allowed_work_sections'] = $this->allowedWorkSections;
+        }
+        if ($this->workTechnologyContext !== []) {
+            $payload['work_technology_context'] = array_map(static function (array $entry): array {
+                $ids = ($entry['answer']['response'] ?? null) === 'other' ? $entry['answer']['document_ids'] : [];
+                return [...array_intersect_key($entry, array_flip(['context', 'answer', 'status'])), 'documents' => array_values(array_filter($entry['documents'],
+                    static fn (array $document): bool => in_array($document['document_id'], $ids, true)))];
+            }, $this->workTechnologyContext);
         }
         if ($this->acceptsSourceClaims()) {
             $payload['claim_answer_fact_ids'] = $this->claimAnswerFactIds;

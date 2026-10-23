@@ -46,8 +46,17 @@ final class AnswerEstimateClarification
         string $response,
         ?string $other = null,
         ?string $targetEntityId = null,
+        array $documentIds = [],
     ): EstimateClarificationAnswer {
         $this->authorize($actor, $session, $context);
+        $workQuestion = str_starts_with($questionKey, 'composer_work_technology_');
+        if (! array_is_list($documentIds) || count($documentIds) > 8 || count(array_unique($documentIds, SORT_REGULAR)) !== count($documentIds)
+            || count(array_filter($documentIds, static fn ($id): bool => is_int($id) && $id > 0)) !== count($documentIds)
+            || ($documentIds !== [] && (! $workQuestion || $response !== 'other'))
+            || ($workQuestion && $targetEntityId !== null)) {
+            throw new InvalidArgumentException('estimate_generation.question_response_invalid');
+        }
+        sort($documentIds, SORT_NUMERIC);
         if ($targetEntityId !== null && ($response !== 'other' || ! str_starts_with($questionKey, 'composer_source_'))) {
             throw new InvalidArgumentException('estimate_generation.question_response_invalid');
         }
@@ -69,6 +78,7 @@ final class AnswerEstimateClarification
                 $response,
                 $other,
                 $targetEntityId,
+                $documentIds,
             );
             if ($this->models->currentCompleteness(
                 $context->organizationId,
@@ -80,8 +90,8 @@ final class AnswerEstimateClarification
 
             return $this->replayResult($decision, $selected);
         }
-        if (str_starts_with($questionKey, 'composer_source_')) {
-            $answer = DB::transaction(function () use ($actor, $session, $context, $questionKey, $response, $other, $targetEntityId, $decisionId): EstimateClarificationAnswer {
+        if ($workQuestion || str_starts_with($questionKey, 'composer_source_')) {
+            $answer = DB::transaction(function () use ($actor, $session, $context, $questionKey, $response, $other, $targetEntityId, $decisionId, $workQuestion, $documentIds): EstimateClarificationAnswer {
                 $locked = EstimateGenerationSession::query()->where('organization_id', $context->organizationId)
                     ->where('project_id', $context->projectId)->whereKey($session->getKey())->lockForUpdate()->first();
                 if ($locked === null) {
@@ -89,21 +99,29 @@ final class AnswerEstimateClarification
                 }
                 $existing = $this->models->decisions($context->organizationId, $context->projectId, (int) $locked->getKey(), [$decisionId]);
                 if ($existing !== []) {
-                    [$decision, $selected] = $this->replay($existing[0], $context, $questionKey, $response, $other, $targetEntityId);
+                    [$decision, $selected] = $this->replay($existing[0], $context, $questionKey, $response, $other, $targetEntityId, $documentIds);
 
                     return $this->replayResult($decision, $selected);
                 }
-                if ($locked->status !== EstimateGenerationStatus::InputReviewRequired) {
+                if ($locked->status !== ($workQuestion ? EstimateGenerationStatus::EstimateReviewRequired : EstimateGenerationStatus::InputReviewRequired)) {
                     throw new InvalidArgumentException('estimate_generation.question_stale');
                 }
                 $current = $this->source->findCurrent($context->organizationId, $context->projectId, (int) $session->getKey(), $questionKey);
                 if ($current?->composerContext === null || ! hash_equals($context->expectedSourceVersion, $current->sourceVersion)
-                    || ! hash_equals($context->expectedValueFingerprint, $current->answerFingerprint)) {
+                    || ! hash_equals($context->expectedValueFingerprint, $current->answerFingerprint)
+                    || (($current->question->sourceLocator['kind'] ?? null) === 'composer_work_technology') !== $workQuestion) {
                     throw new InvalidArgumentException('estimate_generation.question_stale');
                 }
-                [$normalized, $label, $normalizedOther] = $this->answer($current->question, $response, $other);
+                if ($workQuestion && $response === 'revoke') {
+                    if (($current->workAnswer['response'] ?? null) !== 'other' || $other !== null) {
+                        throw new InvalidArgumentException('estimate_generation.question_response_invalid');
+                    }
+                    [$normalized, $label, $normalizedOther] = ['revoke', null, null];
+                } else {
+                    [$normalized, $label, $normalizedOther] = $this->answer($current->question, $response, $other);
+                }
                 $decision = ($this->choices ?? app(UserEvaluationChoiceWriter::class))->writeComposerAnswer(
-                    $actor, $locked, $current, $normalized, $normalizedOther, $context->idempotencyKey, $decisionId, $targetEntityId);
+                    $actor, $locked, $current, $normalized, $normalizedOther, $context->idempotencyKey, $decisionId, $targetEntityId, $documentIds);
 
                 return $this->result($current, $decision, $normalized, $label, $normalizedOther, $targetEntityId);
             });
@@ -199,6 +217,7 @@ final class AnswerEstimateClarification
         string $response,
         ?string $other,
         ?string $targetEntityId = null,
+        array $documentIds = [],
     ): array {
         $selected = $decision->selectedFactId === null ? null : $this->models->fact(
             $context->organizationId,
@@ -213,6 +232,7 @@ final class AnswerEstimateClarification
             || ($selected->value['choice_value'] ?? null) !== $response
             || ($selected->value['other'] ?? null) !== $normalizedOther
             || ($selected->value['target_entity_id'] ?? null) !== $targetEntityId
+            || array_column($selected->value['documents'] ?? [], 'document_id') !== $documentIds
             || ($selected->value['question_fingerprint'] ?? null) !== $context->expectedValueFingerprint
             || ! hash_equals($decision->sourceVersion, $context->expectedSourceVersion)
             || $decision->organizationId !== $context->organizationId
@@ -234,7 +254,7 @@ final class AnswerEstimateClarification
     ): EstimateClarificationAnswer {
         return new EstimateClarificationAnswer(
             $current->question->code,
-            $response === 'leave_unresolved' ? 'left_unresolved' : 'answered',
+            $response === 'revoke' ? 'revoked' : ($response === 'leave_unresolved' ? 'left_unresolved' : 'answered'),
             $response,
             $choiceLabel,
             $other,
@@ -249,7 +269,7 @@ final class AnswerEstimateClarification
 
         return new EstimateClarificationAnswer(
             (string) $value['question_key'],
-            ($value['response'] ?? null) === 'leave_unresolved' ? 'left_unresolved' : 'answered',
+            ($value['response'] ?? null) === 'revoke' ? 'revoked' : (($value['response'] ?? null) === 'leave_unresolved' ? 'left_unresolved' : 'answered'),
             (string) $value['response'],
             is_string($value['choice_label'] ?? null) ? $value['choice_label'] : null,
             is_string($value['other'] ?? null) ? $value['other'] : null,

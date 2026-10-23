@@ -204,6 +204,11 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 }
             }
         }
+        $payload['local_estimates'] = $this->composerInputs->carryWorkTechnologyContexts($composerInput, $payload['local_estimates'],
+            ['evaluation_mode' => $analysis['evaluation_policy']['mode'] ?? 'legacy',
+                'profile_id' => $analysis['evaluation_policy']['profile_id'] ?? 'construction',
+                'selected_sections' => $analysis['evaluation_policy']['selected_sections'] ?? [],
+                'description' => trim((string) ($analysis['object']['manual_description'] ?? ''))]);
         $payload['estimate_composition'] = [
             'schema_version' => 1,
             'snapshot_token' => $composerInput->snapshotToken,

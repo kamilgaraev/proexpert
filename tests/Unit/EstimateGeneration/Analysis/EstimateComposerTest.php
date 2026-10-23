@@ -33,6 +33,123 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    #[DataProvider('technologyQuestionContracts')]
+    public function test_question_capability_is_explicit_and_preserves_historical_semantic_and_receipt_contracts(string $historical, string $active): void
+    {
+        $base = $this->declaredDescriptionInput('Сборка и установка готовых выставочных стендов', ['equipment']);
+        foreach ([$historical, $active, 'estimate-composer:future:v999'] as $version) {
+            $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, $base->facts, [], [], [], [], $version,
+                allowedWorkSections: ['equipment']);
+            if (str_contains($version, 'cells:')) {
+                $input = $input->withNativeCellContext([$this->cellContext()]);
+            }
+            self::assertSame($version !== 'estimate-composer:future:v999', $input->acceptsWorkRequirements());
+            self::assertSame($version === $active, $input->acceptsTechnologyQuestions());
+            $raw = ['work_intents' => [[...$this->semanticEquipmentWork(),
+                'technology_clarification' => ['question' => 'Какой способ монтажа предусмотрен?', 'reason' => 'Способ монтажа в источнике не указан.']]],
+                ...($input->acceptsSourceClaims() ? ['claim_candidates' => []] : []),
+                ...($input->nativeCellContext !== [] ? ['cell_mapping_proposals' => []] : [])];
+            $model = new RecordedEstimateComposerModel($raw);
+            $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+            $outcome = $composer->runDetailed($input);
+            self::assertCount($version === $active ? 1 : 0, $outcome['intents']);
+            self::assertSame($outcome, $composer->runDetailed($input));
+            self::assertSame(1, $model->calls);
+        }
+    }
+
+    public static function technologyQuestionContracts(): iterable
+    {
+        yield ['estimate-composer:v5', 'estimate-composer:v6'];
+        yield ['estimate-composer:legacy:v2', 'estimate-composer:legacy:v3'];
+        yield ['estimate-composer:answers:v3', 'estimate-composer:answers:v4'];
+        yield ['estimate-composer:legacy-answers:v3', 'estimate-composer:legacy-answers:v4'];
+        yield ['estimate-composer:cells:v2', 'estimate-composer:cells:v3'];
+        yield ['estimate-composer:legacy-cells:v2', 'estimate-composer:legacy-cells:v3'];
+        yield ['estimate-composer:answer-cells:v2', 'estimate-composer:answer-cells:v3'];
+        yield ['estimate-composer:legacy-answer-cells:v2', 'estimate-composer:legacy-answer-cells:v3'];
+    }
+
+    #[DataProvider('technologyQuestionContracts')]
+    public function test_only_question_contracts_receive_new_single_pass_instructions(string $historical, string $active): void
+    {
+        $base = $this->declaredDescriptionInput('Сборка и установка готовых выставочных стендов', ['equipment']);
+        foreach ([$historical, $active, 'estimate-composer:future:v999'] as $version) {
+            $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, $base->facts, [], [], [], [], $version,
+                allowedWorkSections: ['equipment']);
+            if (str_contains($version, 'cells:')) {
+                $input = $input->withNativeCellContext([$this->cellContext()]);
+            }
+            $wire = $this->createMock(RerankWireClient::class);
+            $wire->method('provider')->willReturn('timeweb');
+            $wire->expects(self::once())->method('call')->willReturnCallback(static function (string $model, array $sent) use ($input, $active, $version): array {
+                self::assertCount(2, $sent);
+                if ($version === $active) {
+                    self::assertStringContainsString('technology_clarification', $sent[0]['content']);
+                    self::assertStringContainsString('work_technology_context', $sent[0]['content']);
+                } else {
+                    self::assertStringNotContainsString('technology_clarification', $sent[0]['content']);
+                    self::assertStringNotContainsString('work_technology_context', $sent[0]['content']);
+                }
+                self::assertSame($version, json_decode($sent[1]['content'], true, 512, JSON_THROW_ON_ERROR)['project']['contract_version']);
+                return ['content' => json_encode(['work_intents' => [], ...($input->acceptsSourceClaims() ? ['claim_candidates' => []] : []),
+                    ...($input->nativeCellContext === [] ? [] : ['cell_mapping_proposals' => []])], JSON_THROW_ON_ERROR),
+                    'model' => $model, 'usage_available' => true, 'input_tokens' => 100, 'output_tokens' => 10];
+            });
+            $usage = $this->createMock(AiUsageStore::class);
+            $usage->expects(self::once())->method('record');
+            $prices = $this->createMock(AiPriceSnapshotResolver::class);
+            $prices->method('resolve')->willReturn(AiPriceSnapshot::fromArray([]));
+            (new RunEstimateComposer(new ComposerRoleRunMemoryRepository,
+                new TimewebEstimateComposerModel($wire, $usage, $prices, 'openai/gpt-6-luna', 100000, 4000, 60), 'openai/gpt-6-luna'))->runDetailed($input);
+        }
+    }
+
+    public function test_crafted_historical_and_future_receipts_cannot_replay_a_work_question(): void
+    {
+        $base = $this->declaredDescriptionInput('Сборка и установка готовых выставочных стендов', ['equipment']);
+        foreach (['estimate-composer:v5', 'estimate-composer:future:v999'] as $contract) {
+            $input = new EstimateComposerInput(10, 20, 30, $base->snapshotToken, $base->facts, [], [], [], [], $contract,
+                allowedWorkSections: ['equipment']);
+            $runs = new \Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
+            $identity = new AiRoleRunInput(10, 20, 30, null, null, 'estimate_session', '30', $input->snapshotToken,
+                \App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole::EstimateComposer,
+                'openai/gpt-6-luna', $contract, $input->fingerprint());
+            $owner = '11111111-1111-4111-8111-111111111111';
+            $claim = $runs->claim($identity, $owner);
+            $runs->complete($claim->runId, $owner, new AiRoleRunResult(['schema_version' => 1, 'role' => 'estimate_composer',
+                'work_intents' => [[...$this->semanticEquipmentWork(), 'technology_clarification' => [
+                    'question' => 'Как выполняется монтаж этой установки?', 'reason' => 'Способ выполнения отсутствует в источнике.']]],
+                'quarantined_intents' => [], 'result_state' => 'ready'], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'));
+            $model = new RecordedEstimateComposerModel([]);
+            try {
+                (new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna'))->runDetailed($input);
+                self::fail('An unsupported receipt acquired the question capability.');
+            } catch (\RuntimeException $error) {
+                self::assertSame('estimate_composer_replay_invalid', $error->getMessage());
+            }
+            self::assertSame(0, $model->calls);
+        }
+    }
+
+    public function test_same_composer_pass_proposes_a_work_technology_question_without_promoting_the_answer_or_quantity(): void
+    {
+        $input = $this->declaredDescriptionInput('Сборка и установка готовых выставочных стендов', ['equipment']);
+        $question = ['question' => 'Какой способ крепления предусмотрен для этой работы?',
+            'reason' => 'В исходных данных отсутствует инструкция по монтажу.'];
+        $model = new RecordedEstimateComposerModel(['work_intents' => [[...$this->semanticEquipmentWork(),
+            'technology_clarification' => $question]]]);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertSame([], $outcome['quarantined']);
+        self::assertSame($question, $outcome['intents'][0]['technology_clarification'] ?? null);
+        $work = $this->projectSemanticResult($outcome, $input)[0]['sections'][0]['work_items'][0];
+        self::assertSame($question, $work['composition_intent']['technology_clarification']);
+        self::assertNull($work['quantity']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+    }
+
     public function test_cell_proposal_is_a_closed_untrusted_receipt_and_does_not_change_work_or_quantity(): void
     {
         $row = $this->cellContext();
@@ -781,7 +898,7 @@ final class EstimateComposerTest extends TestCase
         $input = $this->declaredDescriptionInput('Монтаж стендов', [], 'legacy', $overrides);
         self::assertSame([], $input->allowedWorkSections);
         self::assertArrayNotHasKey('semantic_work_sections', $input->facts[0]);
-        self::assertSame('estimate-composer:v5', $input->contractVersion);
+        self::assertSame(RunEstimateComposer::PROMPT_CONTRACT, $input->contractVersion);
     }
 
     public static function invalidLegacyDescriptions(): iterable
@@ -1825,7 +1942,7 @@ final class EstimateComposerTest extends TestCase
         }
         if ($legacy) {
             if (! $answered) {
-                self::assertSame('47913a5e7436d1d557251a3778f9dd6e46164cf7fc8f43dc6ef5c25452f63f90', hash('sha256', $messages[0]['content']));
+                self::assertSame('e63268e9633aec62efbe7ea8959dfea7694241f401670a7b64b63c2da433a95b', hash('sha256', $messages[0]['content']));
             }
             self::assertStringContainsString('semantic_work_sections', $messages[0]['content']);
             self::assertStringContainsString('канонический словарь', $messages[0]['content']);
@@ -1835,7 +1952,7 @@ final class EstimateComposerTest extends TestCase
             self::assertArrayNotHasKey('declared_work_sections', $payload['facts'][0]);
         } else {
             if (! $answered) {
-                self::assertSame('7fa6787d297560bbc25537ba446fbeaf9f672e29230484ec28dd28043696ed77', hash('sha256', $messages[0]['content']));
+                self::assertSame('61ab2e512a78c1ed2eba9d469dd3525119277cedea13bf635ba23f01d89c944a', hash('sha256', $messages[0]['content']));
             }
             self::assertStringContainsString('только в declared_work_sections', $messages[0]['content']);
             self::assertSame($answered ? RunEstimateComposer::ANSWER_PROMPT_CONTRACT : RunEstimateComposer::PROMPT_CONTRACT, $input->contractVersion);

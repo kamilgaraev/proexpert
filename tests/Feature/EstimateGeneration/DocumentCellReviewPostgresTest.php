@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
+
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance;
@@ -615,11 +617,13 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         Http::assertNothingSent();
     }
 
-    public function test_paid_composer_persists_only_bounded_cell_proposals_and_replays_without_another_wire(): void
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:cells:v2'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:cells:v3'])]
+    public function test_paid_composer_persists_only_bounded_cell_proposals_and_replays_without_another_wire(string $contract): void
     {
         [$session, $actor] = $this->ordinaryWorkbook();
         app(InitialProjectFactsWriter::class)->write($session, $actor);
-        [$operationId, $runId, $proposal, $input] = $this->composeCells($session, $actor);
+        [$operationId, $runId, $proposal, $input] = $this->composeCells($session, $actor, contract: $contract);
         $rows = app(EstimateGenerationLearningRecorder::class)->cellReviewProposalsForOperation($session->fresh(), $operationId);
         self::assertCount(1, $rows);
         self::assertSame($runId, $rows[0]['run_id']);
@@ -1000,7 +1004,7 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         }
     }
 
-    private function composeCells(EstimateGenerationSession $session, User $actor, bool $publish = false, ?int $expectedRefs = null, ?string $valueCellAddress = null, ?string $identityCellAddress = null, array $forbiddenFactIds = []): array
+    private function composeCells(EstimateGenerationSession $session, User $actor, bool $publish = false, ?int $expectedRefs = null, ?string $valueCellAddress = null, ?string $identityCellAddress = null, array $forbiddenFactIds = [], ?string $contract = null): array
     {
         config(['ai-assistant-credits.enforce' => false, 'estimate-generation.credits.enabled' => true, 'estimate-generation.live_qa.enabled' => false]);
         app(AICreditService::class)->grant($session->organization, 1000000, 'purchase', null, 'test:cell-review:'.$session->id);
@@ -1011,6 +1015,12 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $input = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [],
             new AiSessionWireScope((int) $session->state_version, $operationId, $operationId), ['equipment'], 'universal', $session->input_payload]);
+        if ($contract !== null) {
+            $input = new EstimateComposerInput($input->organizationId, $input->projectId, $input->sessionId, $input->snapshotToken,
+                $input->facts, $input->derivedQuantities, $input->decisions, $input->candidates, $input->missingDocuments, $contract,
+                $input->wireScope, $input->batchKey, $input->contextManifest, $input->allowedWorkSections, $input->claimAnswerFactIds,
+                $input->sourceClaimReferences, $input->nativeCellContext, $input->directQuantityBindings, $input->workTechnologyContext);
+        }
         $row = array_values(array_filter($input->nativeCellContext, static fn (array $row): bool => $row['row'] > 1))[0] ?? $input->nativeCellContext[0];
         $proposal = ['row_id' => $row['row_id'], 'identity_cell_id' => $row['cells'][0]['cell_id'],
             'value_cell_id' => $row['cells'][1]['cell_id'], 'fact_type' => 'equipment_specification'];

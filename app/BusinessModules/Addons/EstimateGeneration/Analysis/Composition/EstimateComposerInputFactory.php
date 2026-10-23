@@ -24,6 +24,7 @@ final readonly class EstimateComposerInputFactory
         private int $maxFacts,
         private ?EstimateGenerationLearningEvidenceService $learning = null,
         private ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource $cellSources = null,
+        private ?\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog $clarifications = null,
     ) {
         if ($maxFacts < 1 || $maxFacts > 10000) {
             throw new InvalidArgumentException('estimate_composer_fact_limit_invalid');
@@ -80,7 +81,9 @@ final readonly class EstimateComposerInputFactory
             $sessionId,
             $this->maxFacts + 1,
         );
-        if (! hash_equals((string) $capture['token'], (string) $verified['token'])) {
+        $workContexts = $this->clarifications?->currentWorkContexts($organizationId, $projectId, $sessionId, $snapshot, $decisions) ?? [];
+        $verifiedWorkContexts = $this->clarifications?->currentWorkContexts($organizationId, $projectId, $sessionId, $verified['snapshot'], $decisions) ?? [];
+        if (! hash_equals((string) $capture['token'], (string) $verified['token']) || $workContexts !== $verifiedWorkContexts) {
             throw new InvalidArgumentException('estimate_composer_snapshot_changed');
         }
 
@@ -91,6 +94,11 @@ final readonly class EstimateComposerInputFactory
         $eligibleFacts = [];
         $policy = $answerPolicy === [] ? null : ResolveCurrentEstimateClarification::composerPolicy($answerPolicy);
         foreach ($snapshot->facts as $fact) {
+            if ($fact->type === 'evaluation_answer' && is_array($fact->value)
+                && ($fact->value['composer_context']['kind'] ?? null) === 'work_technology') {
+                $hasComposerAnswer = true;
+                continue;
+            }
             if (isset($entities[$fact->entityId]?->attributes['properties']['document_cell_review_anchor'])) {
                 $reviewContexts[$fact->id] = $this->learning?->cellReviewContext([$organizationId, $projectId, $sessionId], $snapshot, $decisions, $fact);
                 if ($reviewContexts[$fact->id] === null) {
@@ -199,6 +207,7 @@ final readonly class EstimateComposerInputFactory
             wireScope: $wireScope,
             allowedWorkSections: $allowedWorkSections,
             directQuantityBindings: $this->directQuantityBindings($snapshot, $decisions, $quantities, (string) $capture['token'], array_column($facts, 'id')),
+            workTechnologyContext: $workContexts,
         );
         if ($input->claimAnswerFactIds !== [] && $this->learning !== null) {
             $references = $this->learning->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot, $decisions, $answerPolicy);
@@ -229,6 +238,29 @@ final readonly class EstimateComposerInputFactory
         }
 
         return $input;
+    }
+
+    public function carryWorkTechnologyContexts(EstimateComposerInput $input, array $locals, array $answerPolicy): array
+    {
+        $hasQuestion = $input->workTechnologyContext !== [];
+        foreach ($locals as $local) {
+            foreach ($local['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $work) {
+                    $hasQuestion = $hasQuestion || isset($work['composition_intent']['technology_clarification']);
+                }
+            }
+        }
+        if (! $hasQuestion) {
+            return $locals;
+        }
+        $capture = $this->models->snapshotForPlanning($input->organizationId, $input->projectId, $input->sessionId, $this->maxFacts + 1);
+        $policy = ResolveCurrentEstimateClarification::composerPolicy($answerPolicy);
+        if ($policy === null || ! hash_equals($input->snapshotToken, (string) $capture['token'])) {
+            throw new InvalidArgumentException('estimate_composer_snapshot_changed');
+        }
+
+        return ResolveCurrentEstimateClarification::bindWorkTechnologyContexts($locals, $capture['snapshot'],
+            [$input->organizationId, $input->projectId, $input->sessionId], $policy, $input->workTechnologyContext);
     }
 
     private function directQuantityBindings(ProjectModelSnapshot $snapshot, array $decisions, array $quantities, string $token, array $eligibleFactIds): array

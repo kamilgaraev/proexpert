@@ -19,6 +19,71 @@ use PHPUnit\Framework\TestCase;
 
 final class ComposerClarificationTest extends TestCase
 {
+    public function test_work_context_rechecks_dependencies_of_an_existing_aggregate_answer_source(): void
+    {
+        [$input, $snapshot, $answer, $decision] = $this->answered('universal', 'entity:equipment');
+        $intent = ['kind' => 'supplementary', 'candidate_id' => 'supplementary:answer', 'work_key' => 'custom_installation',
+            'name' => 'Монтаж оборудования', 'entity_id' => 'entity:equipment', 'work_section' => 'equipment', 'unit' => 'count',
+            'source_fact_ids' => [$answer->id], 'technology_clarification' => ['question' => 'Какой способ монтажа требуется?', 'reason' => 'Способ не указан в ответе.']];
+        $locals = [['sections' => [['work_items' => [['work_key' => $intent['work_key'], 'name' => $intent['name'],
+            'composition_intent' => $intent, 'metadata' => ['scope_entity_id' => 'entity:equipment']]]]]]];
+        $locals = ResolveCurrentEstimateClarification::bindWorkTechnologyContexts($locals, $snapshot, [10, 20, 30],
+            ResolveCurrentEstimateClarification::composerPolicy($input), []);
+        $draft = (new BuildMostEstimateDraft)->seal(['scope_identity' => ['organization_id' => 10, 'project_id' => 20, 'session_id' => 30],
+            'local_estimates' => $locals]);
+        self::assertCount(1, $this->resolver()->workTechnologyContexts($draft, $input, $snapshot, [$decision], [10, 20, 30], []));
+        $source = $snapshot->facts[1];
+        $replacement = new Fact($source->id, 10, 20, 30, $source->sourceVersion, $source->entityId, $source->type,
+            'Изменённая исходная спецификация', null, 0.0, 'document', 'confirmed', $source->evidenceIds, 2);
+        $changed = new ProjectModelSnapshot($snapshot->entities, [$snapshot->facts[0], $replacement, $answer], $snapshot->evidence, []);
+        self::assertSame([], $this->resolver()->workTechnologyContexts($draft, $input, $changed, [$decision], [10, 20, 30], []));
+    }
+
+    #[DataProvider('modes')]
+    public function test_work_question_context_survives_candidate_changes_and_omission_but_rejects_replacement_drift_and_ambiguity(string $mode): void
+    {
+        [$draft, $input, $snapshot] = $this->fixture($mode);
+        $intent = ['kind' => 'supplementary', 'candidate_id' => 'supplementary:first', 'work_key' => 'custom_installation',
+            'name' => 'Монтаж неизвестной установки', 'entity_id' => 'entity:equipment', 'work_section' => 'equipment',
+            'unit' => 'count', 'source_fact_ids' => ['fact:specification'],
+            'technology_clarification' => ['question' => 'Как выполняется крепление этой установки?', 'reason' => 'Способ крепления не указан в исходных данных.']];
+        $locals = [['sections' => [['work_items' => [['key' => 'position:first', 'work_key' => $intent['work_key'], 'name' => $intent['name'],
+            'composition_intent' => $intent, 'metadata' => ['scope_entity_id' => 'entity:equipment']]]]]]];
+        $policy = ResolveCurrentEstimateClarification::composerPolicy($input);
+        $locals = ResolveCurrentEstimateClarification::bindWorkTechnologyContexts($locals, $snapshot, [10, 20, 30], $policy, []);
+        $draft = (new BuildMostEstimateDraft)->seal([...$draft, 'source_info_only' => false, 'local_estimates' => $locals]);
+        $entries = $this->resolver()->workTechnologyContexts($draft, $input, $snapshot, [], [10, 20, 30], []);
+        self::assertCount(1, $entries);
+        $questions = $this->resolver()->workTechnologyQuestions($entries, str_repeat('a', 64), 7);
+        self::assertSame('composer_work_technology', $questions[0]->question->sourceLocator['kind']);
+        self::assertNull($questions[0]->workAnswer);
+        self::assertSame('unanswered', $entries[0]['status']);
+        $next = $locals;
+        unset($next[0]['sections'][0]['work_items'][0]['metadata']['work_technology_context'],
+            $next[0]['sections'][0]['work_items'][0]['composition_intent']['technology_clarification']);
+        $next[0]['sections'][0]['work_items'][0]['composition_intent']['candidate_id'] = 'supplementary:second';
+        $next[0]['sections'][0]['work_items'][0]['key'] = 'position:second';
+        $carried = ResolveCurrentEstimateClarification::bindWorkTechnologyContexts($next, $snapshot, [10, 20, 30], $policy, $entries);
+        $nextDraft = (new BuildMostEstimateDraft)->seal([...$draft, 'local_estimates' => $carried]);
+        $nextEntries = $this->resolver()->workTechnologyContexts($nextDraft, $input, $snapshot, [], [10, 20, 30], []);
+        self::assertSame($entries, $nextEntries);
+        self::assertSame($questions[0]->question->code, $this->resolver()->workTechnologyQuestions($nextEntries, str_repeat('b', 64), 8)[0]->question->code);
+        self::assertNotSame($questions[0]->answerFingerprint, $this->resolver()->workTechnologyQuestions($nextEntries, str_repeat('b', 64), 8)[0]->answerFingerprint);
+        $source = $snapshot->facts[1];
+        $changed = new Fact($source->id, 10, 20, 30, $source->sourceVersion, $source->entityId, $source->type,
+            'Изменённый источник', null, 0.0, 'document', 'confirmed', $source->evidenceIds, 2);
+        self::assertSame([], $this->resolver()->workTechnologyContexts($draft, $input,
+            new ProjectModelSnapshot($snapshot->entities, [$snapshot->facts[0], $changed], $snapshot->evidence, []), [], [10, 20, 30], []));
+        self::assertSame([], $this->resolver()->workTechnologyContexts($draft, $input, $snapshot, [], [11, 20, 30], []));
+        self::assertSame([], $this->resolver()->workTechnologyContexts([...$draft, 'title' => 'Подменено'], $input, $snapshot, [], [10, 20, 30], []));
+        $duplicate = (new BuildMostEstimateDraft)->seal([...$draft, 'local_estimates' => [...$locals, ...$locals]]);
+        self::assertSame([], $this->resolver()->workTechnologyContexts($duplicate, $input, $snapshot, [], [10, 20, 30], []));
+        $next[0]['sections'][0]['work_items'][0]['name'] = 'Другая работа';
+        $next[0]['sections'][0]['work_items'][0]['composition_intent']['name'] = 'Другая работа';
+        $replaced = ResolveCurrentEstimateClarification::bindWorkTechnologyContexts($next, $snapshot, [10, 20, 30], $policy, $entries);
+        self::assertArrayNotHasKey('work_technology_context', $replaced[0]['sections'][0]['work_items'][0]['metadata']);
+    }
+
     #[DataProvider('modes')]
     public function test_current_sealed_requests_produce_one_aggregate_other_question_without_a_target_fact(string $mode): void
     {
@@ -231,6 +296,8 @@ final class ComposerClarificationTest extends TestCase
             'estimate_generation.composer_clarification.summary' => 'Всего запросов исходных данных: :count.',
             'estimate_generation.ai_questions.other' => 'Другое',
             'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+            'estimate_generation.work_technology.impact' => 'Качественный ответ не заменяет независимые проверки.',
+            'estimate_generation.work_technology.recommendation' => 'Укажите способ выполнения и документы.',
             default => $key,
         };
 

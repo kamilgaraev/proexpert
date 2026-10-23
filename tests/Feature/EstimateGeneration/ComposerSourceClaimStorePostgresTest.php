@@ -353,8 +353,10 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
 
     #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answers:v2'])]
     #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answers:v3'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answers:v4'])]
     #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answer-cells:v1'])]
     #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answer-cells:v2'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answer-cells:v3'])]
     public function test_terminal_source_info_fixture_records_one_normless_claim_and_reader_rechecks_the_current_scoped_source(string $contract): void
     {
         [$actor, $session, $answer, $documents] = $this->answeredSourceFixture('  Монтаж неизвестной установки  ');
