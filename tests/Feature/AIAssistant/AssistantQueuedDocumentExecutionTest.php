@@ -6,6 +6,7 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool;
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocumentUnit;
@@ -26,6 +27,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEg
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEnrollmentService;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory;
 use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
 use App\BusinessModules\Features\AIAssistant\Services\QueuedAssistantChatService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
@@ -45,6 +47,7 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -64,6 +67,8 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
     private AIAssistantDocument $document;
     private array $chunks = [];
     private OrdinaryAssistantEnrollmentService $enrollments;
+    private ?Closure $wireObserver = null;
+    private ?float $jobDurationMs = null;
     private const SENTINEL = 'APPROVED_FRAGMENT_SENTINEL';
     private const ACCOUNT = 'PRIVATE_ACCOUNT_NOT_APPROVED';
     private const ANSWER = 'В утверждённом фрагменте указано 17 тонн арматуры.';
@@ -152,9 +157,79 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
         yield 'conversation becomes read only' => ['conversation'];
     }
 
-    private function runQueuedDocument(?string $revocation = null): void
+    public function test_each_native_dispatch_checks_the_current_source_at_prepare_and_at_the_actual_transport(): void
+    {
+        $pending = 0;
+        $checks = [];
+        $delays = [];
+        DB::listen(static function (QueryExecuted $query) use (&$pending): void {
+            $sql = strtolower($query->sql);
+            if (! str_contains($sql, 'assistant_coverage_documents') || ! str_contains($sql, 'expected_units')
+                || ! str_contains($sql, 'current_units') || ! str_contains($sql, 'partial_documents')) {
+                return;
+            }
+            foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 96) as $frame) {
+                if (($frame['class'] ?? null) === OrdinaryAssistantScopedContext::class && ($frame['function'] ?? null) === 'authorize') {
+                    $pending++;
+                    return;
+                }
+            }
+        });
+        $this->wireObserver = static function () use (&$pending, &$checks, &$delays): void {
+            $checks[] = $pending;
+            $pending = 0;
+            $started = hrtime(true);
+            usleep(100_000);
+            $delays[] = (hrtime(true) - $started) / 1_000_000;
+        };
+        $this->runQueuedDocument();
+        self::assertSame([2, 2], $checks);
+        self::assertCount(2, $delays);
+        foreach ($delays as $delay) { self::assertGreaterThan(0, $delay); }
+        self::assertNotNull($this->jobDurationMs);
+        self::assertGreaterThanOrEqual(200, $this->jobDurationMs);
+        fwrite(STDERR, 'QUEUED_DISPATCH_REGRESSION '.json_encode(['source_current_checks' => $checks,
+            'sdk_mock_delays_ms' => array_map(static fn (float $delay): float => round($delay, 2), $delays),
+            'actual_job_ms' => round($this->jobDurationMs, 2)], JSON_THROW_ON_ERROR).PHP_EOL);
+    }
+
+    #[DataProvider('preWireRevocations')]
+    public function test_current_revocation_after_provider_entry_blocks_the_actual_handler(string $revocation): void
+    {
+        $this->runQueuedDocument(beforeWireRevocation: $revocation);
+    }
+
+    public static function preWireRevocations(): iterable
+    {
+        yield 'cohort generation' => ['cohort'];
+        yield 'approved source' => ['source'];
+        yield 'actor permission' => ['actor'];
+    }
+
+    private function runQueuedDocument(?string $revocation = null, ?string $beforeWireRevocation = null): void
     {
         [$cohort, $payload, $manifest] = $this->enroll();
+        $beforeWireFired = false;
+        if ($beforeWireRevocation !== null) {
+            DB::listen(function (QueryExecuted $query) use ($beforeWireRevocation, $cohort, &$beforeWireFired): void {
+                if ($beforeWireFired || ! str_contains(strtolower($query->sql), 'from "ai_assistant_requests"')) { return; }
+                foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 96) as $frame) {
+                    if (($frame['class'] ?? null) !== TimewebProvider::class || ($frame['function'] ?? null) !== 'responses') { continue; }
+                    $beforeWireFired = true;
+                    self::assertTrue(app(OrdinaryAssistantScopedContext::class)->isGuarded());
+                    self::assertTrue(app()->bound(AssistantRequestExecutionContext::class));
+                    if ($beforeWireRevocation === 'cohort') {
+                        $cohort->newQuery()->whereKey($cohort->id)->update(['generation' => (string) Str::uuid()]);
+                    } elseif ($beforeWireRevocation === 'source') {
+                        $this->chunks[1]->newQuery()->whereKey($this->chunks[1]->id)->update(['content' => 'Изменённый утверждённый фрагмент',
+                            'content_hash' => hash('sha256', 'Изменённый утверждённый фрагмент')]);
+                    } else {
+                        UserRoleAssignment::query()->whereKey($this->fixture->ownerAssignment->id)->update(['is_active' => false]);
+                    }
+                    return;
+                }
+            });
+        }
         self::assertGreaterThan(340, mb_strpos($manifest['sources'][0]['projection']['data']['fragments'][1]['content'], '17 тонн'));
         $registry = app(AIToolRegistry::class);
         $tool = $registry->getTool(OrdinaryAssistantDocumentProjection::TOOL);
@@ -198,6 +273,7 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
         $wire = [];
         $mock = new MockHandler([
             function (RequestInterface $request) use (&$wire): Response {
+                $this->wireObserver?->__invoke();
                 self::assertTrue(app()->bound(AssistantRequestExecutionContext::class));
                 self::assertInstanceOf(AssistantRequestExecutionContext::class, app(AssistantRequestExecutionContext::class));
                 self::assertStringNotContainsString(self::ACCOUNT, (string) $request->getBody());
@@ -210,6 +286,7 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
                     'arguments' => json_encode($this->args('арматура'), JSON_THROW_ON_ERROR)]]);
             },
             function (RequestInterface $request) use (&$wire, $manifest): Response {
+                $this->wireObserver?->__invoke();
                 self::assertTrue(app()->bound(AssistantRequestExecutionContext::class));
                 self::assertStringNotContainsString(self::ACCOUNT, (string) $request->getBody());
                 $wire[] = json_decode((string) $request->getBody(), true, 512, JSON_THROW_ON_ERROR);
@@ -242,6 +319,7 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
         self::assertNull($started['request']->started_at);
         self::assertFalse(app()->bound(AssistantRequestExecutionContext::class));
         $escaped = null;
+        $jobStarted = hrtime(true);
         try {
             (new ExecuteAssistantChatJob($started['request']->id))->handle(app(AssistantRequestLifecycle::class), app(AssistantDataAccessPolicy::class));
         } catch (Throwable $failure) {
@@ -254,11 +332,31 @@ final class AssistantQueuedDocumentExecutionTest extends TestCase
                     'queued_document_invariant' => in_array($observed->getMessage(), $allowed, true) ? $observed->getMessage() : null,
                     'queued_document_origin_file' => basename($observed->getFile()), 'queued_document_origin_line' => $observed->getLine()], JSON_THROW_ON_ERROR).PHP_EOL);
             }
-            if ($revocation === null) { throw $failure; }
-            self::assertInstanceOf(AuthorizationException::class, $failure);
+            if ($revocation === null && $beforeWireRevocation === null) { throw $failure; }
+            self::assertInstanceOf($beforeWireRevocation !== null && $beforeWireRevocation !== 'actor'
+                ? AssistantEgressDenied::class : AuthorizationException::class, $failure);
             $escaped = $failure;
         }
+        $this->jobDurationMs = (hrtime(true) - $jobStarted) / 1_000_000;
         self::assertFalse(app()->bound(AssistantRequestExecutionContext::class));
+        if ($beforeWireRevocation !== null) {
+            self::assertTrue($beforeWireFired);
+            self::assertNotNull($escaped);
+            self::assertCount(0, $wire);
+            self::assertSame(0, $probe->executions);
+            $request = AssistantRequest::query()->findOrFail($started['request']->id);
+            self::assertSame('failed', $request->status);
+            self::assertSame($beforeWireRevocation === 'actor' ? 'access_revoked' : 'assistant_egress_denied', $request->error_code);
+            self::assertSame(1, $request->calls_used);
+            self::assertSame(0, Conversation::query()->findOrFail($request->conversation_id)->messages()->where('role', 'assistant')->count());
+            $usage = \App\Models\Credits\AICreditProviderUsage::query()->where('ai_credit_reservation_id', $request->reservation_id)->get();
+            self::assertCount($beforeWireRevocation === 'actor' ? 1 : 0, $usage);
+            if ($beforeWireRevocation === 'actor') {
+                self::assertFalse($usage->first()->is_successful);
+                self::assertFalse($usage->first()->metadata['provider_usage_available']);
+            }
+            return;
+        }
         if ($revocation !== null) {
             self::assertNotNull($escaped);
             self::assertCount(1, $wire);
