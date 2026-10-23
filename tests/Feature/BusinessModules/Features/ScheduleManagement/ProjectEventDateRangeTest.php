@@ -198,6 +198,35 @@ class ProjectEventDateRangeTest extends TestCase
         $this->assertFalse($target->hasConflicts());
     }
 
+    public function test_partial_updates_validate_against_the_latest_persisted_event_interval(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create(['organization_id' => $context->organization->id]));
+        $event = ProjectEvent::query()->create([
+            'organization_id' => $context->organization->id, 'created_by_user_id' => $context->user->id, 'project_id' => $project->id,
+            'event_type' => 'meeting', 'title' => 'Stale editor fixture', 'event_date' => '2026-10-24', 'event_time' => '09:00:00',
+            'end_date' => null, 'end_time' => '12:00:00', 'duration_minutes' => null, 'is_all_day' => false,
+        ]);
+        $endEditor = $event->fresh();
+        $service = new ProjectEventService();
+        $service->updateEvent($event->fresh(), ['event_time' => '11:00:00', 'notes' => 'Latest persisted note']);
+        $errors = [];
+        try {
+            $service->updateEvent($endEditor, ['end_time' => '10:00:00']);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $errors = $exception->errors();
+        }
+        $this->assertArrayHasKey('end_time', $errors);
+        $this->assertSame('11:00:00', $event->fresh()->event_time);
+        $this->assertSame('12:00:00', $event->fresh()->end_time);
+        $this->assertSame('Latest persisted note', $event->fresh()->notes);
+        $updated = $service->updateEvent($endEditor, ['end_time' => '13:00:00']);
+        $this->assertSame($event->id, $updated->id);
+        $this->assertSame('2026-10-24T11:00:00', $updated->getCalendarStartLocal());
+        $this->assertSame('2026-10-24T13:00:00', $updated->getCalendarEndLocal());
+        $this->assertSame('Latest persisted note', $updated->notes);
+    }
+
     public function test_ranges_include_ongoing_durations_without_including_finished_or_foreign_events(): void
     {
         $context = AdminApiTestContext::create();

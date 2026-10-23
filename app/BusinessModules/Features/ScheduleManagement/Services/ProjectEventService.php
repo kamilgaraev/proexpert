@@ -131,9 +131,12 @@ class ProjectEventService
      */
     public function updateEvent(ProjectEvent $event, array $data): ProjectEvent
     {
-        $this->validateEventData($data, $event);
-
         DB::transaction(function () use ($event, $data) {
+            $current = ProjectEvent::query()->whereKey($event->getKey())
+                ->forOrganization($event->organization_id)->forProject($event->project_id)
+                ->lockForUpdate()->firstOrFail();
+            $event->setRawAttributes($current->getAttributes(), true);
+            $this->validateEventData($data, $event);
             $event->fill($data);
             $recurrenceChanged = $event->isDirty(['recurrence_pattern', 'recurrence_config']);
             $rebuildRecurrence = $event->is_recurring
