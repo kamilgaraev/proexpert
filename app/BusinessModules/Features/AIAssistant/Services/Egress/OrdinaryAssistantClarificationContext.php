@@ -167,7 +167,7 @@ final readonly class OrdinaryAssistantClarificationContext
         $admission = AssistantEgressEnrollment::query()->whereKey($receipt['parent_enrollment_id'])->where('cohort_id', $cohort->id)
             ->where('cohort_generation', $cohort->generation)->where('input_hash', $parent->request_hash)->first();
         if ($admission === null || $admission->input_context !== null || $admission->approved_at === null
-            || $admission->declaration_version !== OrdinaryAssistantEnrollmentService::DECLARATION
+            || ! in_array($admission->declaration_version, OrdinaryAssistantEnrollmentService::APPROVED_DECLARATIONS, true)
             || $admission->manifest_hash !== $receipt['parent_manifest_hash']
             || ! hash_equals($admission->manifest_hash, self::manifestHash(['cohort' => $cohort->id,
                 'cohort_generation' => $cohort->generation, 'input_hash' => $admission->input_hash, 'sources' => $admission->sources], null))) {

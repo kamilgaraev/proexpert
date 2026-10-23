@@ -94,6 +94,8 @@ final class AssistantClarificationContinuationTest extends TestCase
     public function test_a_new_owner_preview_binds_only_the_parent_question_and_fixed_clarification(): void
     {
         [$cohort, $parent, $oldManifest, $oldInput] = $this->parent(true);
+        $legacyAdmission = AssistantEgressEnrollment::query()->findOrFail($oldManifest['enrollment_id']);
+        $legacyAdmission->forceFill(['declaration_version' => OrdinaryAssistantEnrollmentService::LEGACY_OWNER_DECLARATION])->save();
         $request = AssistantRequest::query()->where('request_id', $parent['request_id'])->sole();
         self::assertNull($request->payload);
         self::assertNull($oldInput['conversation_id']);
@@ -144,6 +146,7 @@ final class AssistantClarificationContinuationTest extends TestCase
         self::assertSame(2, $child->calls_used);
         self::assertSame(2, AICreditProviderUsage::query()->where('ai_credit_reservation_id', $child->reservation_id)->count());
         self::assertSame(2, AICreditProviderUsage::query()->where('ai_credit_reservation_id', $request->reservation_id)->count());
+        self::assertSame(OrdinaryAssistantEnrollmentService::LEGACY_OWNER_DECLARATION, $legacyAdmission->refresh()->declaration_version);
     }
 
     public static function invalidParents(): iterable
@@ -389,7 +392,7 @@ final class AssistantClarificationContinuationTest extends TestCase
     {
         [$cohort, $parent, $parentManifest] = $this->parent();
         $reviewer = $this->otherOwner();
-        $this->enrollments->assertOwner($reviewer, $cohort->organization_id);
+        $this->enrollments->assertOrganizationManager((int) $reviewer->id, $cohort->organization_id);
         $sourceReview = app(\App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSourceCatalog::class)
             ->captureForReview($this->fixture->owner, (int) $reviewer->id, $cohort->organization_id, $this->project->id, 'get_project_attention', $this->args());
         self::assertSame($parentManifest['sources'][0]['projection_hash'], $sourceReview['proof']['projection_hash']);
