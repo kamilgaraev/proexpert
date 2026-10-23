@@ -3015,6 +3015,7 @@ class AIAssistantService
                             'duration_ms' => $providerCallDuration,
                             'success' => $providerCallFailure === null,
                             'exception_class' => $providerCallFailure === null ? null : $providerCallFailure::class,
+                            ...AssistantProviderErrorDiagnostics::fromFailure($providerCallFailure),
                         ]);
                     }
                 } catch (Throwable) {
