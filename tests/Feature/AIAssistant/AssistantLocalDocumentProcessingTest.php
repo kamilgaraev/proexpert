@@ -502,6 +502,67 @@ final class AssistantLocalDocumentProcessingTest extends TestCase
         $this->expectException(AssistantEgressDenied::class);
         app(AssistantDocumentProcessingPolicyService::class)->capture($document->id);
     }
+
+    #[DataProvider('controllerFailures')]
+    public function test_policy_controller_distinguishes_denial_from_safe_database_failure(string $action, bool $unexpected): void
+    {
+        $document = $this->document();
+        $policy = $action === 'revoke' ? app(AssistantDocumentProcessingPolicyService::class)->assign($this->operator,
+            $document->organization_id, $document->project_id, $document->id, $this->fixture->owner->id) : null;
+        $this->operator->updateQuietly(['current_organization_id' => $document->organization_id]);
+        $this->withoutMiddleware();
+        $this->actingAs($unexpected ? $this->operator : $this->fixture->owner);
+        \Illuminate\Support\Facades\Exceptions::fake();
+        $connection = DB::connection();
+        $original = $connection->getEventDispatcher();
+        $events = new \Illuminate\Events\Dispatcher($this->app);
+        $faults = 0;
+        $events->listen(\Illuminate\Database\Events\QueryExecuted::class, static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$faults, $unexpected): void {
+            if ($unexpected && str_contains($query->sql, 'ai_assistant_document_processing_policies')
+                && preg_match('/^\s*(insert|update)\s/i', $query->sql) === 1) {
+                $faults++;
+                throw new \RuntimeException(self::SENTINEL.' database failure', 0, new \RuntimeException(self::SENTINEL.' previous'));
+            }
+        });
+        $connection->setEventDispatcher($events);
+        $previous = ini_set('zend.exception_ignore_args', '0');
+        try {
+            $path = '/api/v1/admin/ai-assistant/documents/'.$document->id.'/local-processing';
+            $response = $action === 'assign' ? $this->postJson($path, ['project_id' => $document->project_id,
+                'actor_user_id' => $this->fixture->owner->id, 'policy_version' => AssistantDocumentProcessingPolicyService::VERSION]) : $this->deleteJson($path);
+        } finally {
+            ini_set('zend.exception_ignore_args', $previous);
+            if ($original === null) { $connection->unsetEventDispatcher(); }
+            else { $connection->setEventDispatcher($original); }
+        }
+        self::assertSame($unexpected ? 1 : 0, $faults);
+        $response->assertStatus($unexpected ? 500 : 403)
+            ->assertJsonPath('message', trans_message($unexpected ? 'ai_assistant.request_failed' : 'ai_assistant.access_denied'));
+        self::assertStringNotContainsString(self::SENTINEL, $response->getContent());
+        \Illuminate\Support\Facades\Exceptions::assertReportedCount($unexpected ? 1 : 0);
+        if ($unexpected) {
+            $failure = \Illuminate\Support\Facades\Exceptions::reported()[0];
+            self::assertInstanceOf(\Throwable::class, $failure);
+            self::assertNull($failure->getPrevious());
+            self::assertStringNotContainsString(self::SENTINEL, (string) $failure);
+            self::assertStringNotContainsString(self::SENTINEL, $failure->getTraceAsString());
+            self::assertStringNotContainsString(self::SENTINEL, json_encode($failure->getTrace(), JSON_THROW_ON_ERROR));
+            self::assertSame([], array_filter($failure->getTrace(), static fn (array $frame): bool => array_key_exists('args', $frame)));
+        }
+        if ($policy === null) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentProcessingPolicy::query()->where('document_id', $document->id)->exists());
+        } else {
+            self::assertSame('active', $policy->refresh()->state);
+        }
+    }
+
+    public static function controllerFailures(): iterable
+    {
+        yield 'assign unexpected database failure' => ['assign', true];
+        yield 'revoke unexpected database failure' => ['revoke', true];
+        yield 'assign expected denial' => ['assign', false];
+        yield 'revoke expected denial' => ['revoke', false];
+    }
 }
 
 final class LocalProcessingRecordingEmbeddings implements RagEmbeddingProviderInterface

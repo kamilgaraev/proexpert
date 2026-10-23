@@ -466,12 +466,16 @@ final class AssistantDocumentService
 
     public function assertProcessingSource(User $actor, AIAssistantDocument $document): void
     {
-        $this->policy->withCurrentChecks($actor, (int) $document->organization_id, function () use ($actor, $document): void {
-            if (! $actor->is_active || ! $this->policy->belongsToOrganization($actor, (int) $document->organization_id)) {
-                throw new RuntimeException('ai_assistant_document_access_denied');
-            }
-            $this->assertReadable($actor, (int) $document->organization_id, $document);
-        }, true);
+        try {
+            $this->policy->withCurrentChecks($actor, (int) $document->organization_id, function () use ($actor, $document): void {
+                if (! $actor->is_active || ! $this->policy->belongsToOrganization($actor, (int) $document->organization_id)) {
+                    throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('access_denied');
+                }
+                $this->assertReadable($actor, (int) $document->organization_id, $document);
+            }, true);
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException|\Illuminate\Auth\Access\AuthorizationException) {
+            throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('access_denied');
+        }
     }
 
     private function assertReadable(User $actor, int $organizationId, AIAssistantDocument $document): void

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Http\Controllers;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentProcessingPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentProcessingPolicyService;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantExceptionBoundary;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
@@ -29,7 +31,12 @@ final class AssistantDocumentProcessingController extends Controller
             return AdminResponse::success($this->payload($this->policies->assign($operator,
                 (int) $request->attributes->get('current_organization_id', $operator->current_organization_id),
                 (int) $data['project_id'], $document, (int) $data['actor_user_id'])));
-        } catch (Throwable) { return AdminResponse::error(trans_message('ai_assistant.access_denied'), 403); }
+        } catch (AssistantEgressDenied) {
+            return AdminResponse::error(trans_message('ai_assistant.access_denied'), 403);
+        } catch (Throwable $failure) {
+            report(OrdinaryAssistantExceptionBoundary::sanitize($failure));
+            return AdminResponse::error(trans_message('ai_assistant.request_failed'), 500);
+        }
     }
 
     public function revoke(Request $request, int $document): JsonResponse
@@ -39,7 +46,12 @@ final class AssistantDocumentProcessingController extends Controller
         try {
             return AdminResponse::success($this->payload($this->policies->revoke($operator,
                 (int) $request->attributes->get('current_organization_id', $operator->current_organization_id), $document)));
-        } catch (Throwable) { return AdminResponse::error(trans_message('ai_assistant.access_denied'), 403); }
+        } catch (AssistantEgressDenied) {
+            return AdminResponse::error(trans_message('ai_assistant.access_denied'), 403);
+        } catch (Throwable $failure) {
+            report(OrdinaryAssistantExceptionBoundary::sanitize($failure));
+            return AdminResponse::error(trans_message('ai_assistant.request_failed'), 500);
+        }
     }
 
     private function payload(AssistantDocumentProcessingPolicy $policy): array
