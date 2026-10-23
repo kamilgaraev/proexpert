@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Database\NativeParameterConnectionFactory;
 use App\Events\OrganizationOnboardingCompleted;
 use App\Events\OrganizationProfileUpdated;
 use App\Events\ProjectOrganizationAdded;
@@ -40,6 +41,8 @@ use App\Services\FileService;
 use App\Services\Landing\ChildOrganizationUserService;
 use App\Services\RateCoefficient\RateCoefficientService;
 use App\Services\Report\MaterialReportService;
+use Illuminate\Database\Connectors\ConnectionFactory;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\App;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
@@ -55,6 +58,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->extend('db.factory', static function ($factory, Container $app) {
+            return get_class($factory) === ConnectionFactory::class ? new NativeParameterConnectionFactory($app) : $factory;
+        });
+
         $this->app->bind(
             \App\Contracts\Seo\IndexNowPublisher::class,
             \App\Services\Seo\QueuedIndexNowPublisher::class,
@@ -262,7 +269,7 @@ class AppServiceProvider extends ServiceProvider
             Event::listen(\Illuminate\Database\Events\ConnectionEstablished::class,
                 static fn (\Illuminate\Database\Events\ConnectionEstablished $event) => $connectionState->established($event->connection));
             Event::listen(\Illuminate\Database\Events\StatementPrepared::class,
-                static fn (\Illuminate\Database\Events\StatementPrepared $event) => $connectionState->prepared($event->connection));
+                static fn (\Illuminate\Database\Events\StatementPrepared $event) => $connectionState->prepared($event->connection, $event->statement));
             foreach (DB::getConnections() as $connection) {
                 $connectionState->watch($connection);
             }

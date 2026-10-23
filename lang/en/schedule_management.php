@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'event_end_after_start' => 'The event must end after it starts.',
     'task_resource_cost_limit_exceeded' => 'The planned material cost exceeds the allowed amount.',
     'task_resource_cost_reduce_quantity_or_price' => 'Reduce the material quantity or unit price.',
     'task_resource_task_missing' => 'The task for the resource assignment was not found',

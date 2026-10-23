@@ -506,6 +506,16 @@
             <file>tests/Feature/AIAssistant/AssistantDocumentAdmissionTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantScopedEgressTest.php</file>
         </testsuite>
+        <testsuite name="NativePostgresSelect">
+            <file>tests/Feature/AIAssistant/AssistantDocumentPolicySnapshotTrackingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantEgressSnapshotTrackingTest.php</file>
+            <file>tests/Feature/Infrastructure/PostgresNativeParameterModeTest.php</file>
+            <file>tests/Feature/Infrastructure/PostgresNativeSelectConnectionTest.php</file>
+            <file>tests/Feature/Infrastructure/NativeParameterDatabaseBindingTest.php</file>
+            <file>tests/Unit/Monitoring/SqlConnectionStateTest.php</file>
+            <file>tests/Unit/Monitoring/SlowQueryContextTest.php</file>
+            <file>tests/Feature/Monitoring/SqlConnectionStatePostgresRuntimeTest.php</file>
+        </testsuite>
     </testsuites>
     <source>
         <include>
