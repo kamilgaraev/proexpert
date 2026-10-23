@@ -74,7 +74,7 @@ final readonly class OrdinaryAssistantEnrollmentService
             || ($cohort->policy_version === OrdinaryAssistantDocumentProjection::VERSION && count($requestedSources) !== 1)) {
             throw new AssistantEgressDenied('scope_mismatch');
         }
-        $inputContext = app(OrdinaryAssistantClarificationContext::class)->preview($input, $actor, $cohort);
+        $inputContext = app(OrdinaryAssistantClarificationContext::class)->preview($input, $actor, $cohort, (int) $owner->id);
         $proofs = $previews = [];
         foreach ($requestedSources as $source) {
             if (! is_array($source) || ! in_array($source['tool'] ?? null, $cohort->allowed_tools, true)
@@ -116,7 +116,7 @@ final readonly class OrdinaryAssistantEnrollmentService
             throw new AssistantEgressDenied('access_denied');
         }
         $actor = User::query()->findOrFail($cohort->actor_id);
-        if ($enrollment->input_context !== null) { app(OrdinaryAssistantClarificationContext::class)->refresh($enrollment->input_context, $actor, $cohort); }
+        if ($enrollment->input_context !== null) { app(OrdinaryAssistantClarificationContext::class)->refresh($enrollment->input_context, $actor, $cohort, $enrollment->reviewed_by); }
         foreach ($enrollment->sources as $source) {
             $current = $this->sources->captureForReview($actor, $enrollment->reviewed_by, $organizationId, (int) $cohort->project_id, $source['tool'], $source['arguments']);
             if (! hash_equals(OrdinaryAssistantSourceProjection::hash($current['proof']), OrdinaryAssistantSourceProjection::hash($source))) {

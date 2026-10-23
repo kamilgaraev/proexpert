@@ -401,7 +401,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             if (! hash_equals(OrdinaryAssistantSourceProjection::hash($envelope), OrdinaryAssistantSourceProjection::hash($this->requestedContext))) {
                 throw new AssistantEgressDenied('scope_mismatch');
             }
-            $this->continuationPreview = app(OrdinaryAssistantClarificationContext::class)->refresh($manifest->input_context, $this->actor, $current)['preview'];
+            $this->continuationPreview = app(OrdinaryAssistantClarificationContext::class)->refresh($manifest->input_context, $this->actor, $current, $manifest->reviewed_by)['preview'];
         }
         $this->cohort = $current;
         $this->enrollment = $manifest;

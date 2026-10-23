@@ -385,6 +385,326 @@ final class AssistantClarificationContinuationTest extends TestCase
         self::assertSame(1, $calls);
     }
 
+    public function test_an_owner_reviewer_cannot_preview_a_private_parent_question_from_a_forwarded_locator(): void
+    {
+        [$cohort, $parent, $parentManifest] = $this->parent();
+        $reviewer = $this->otherOwner();
+        $this->enrollments->assertOwner($reviewer, $cohort->organization_id);
+        $sourceReview = app(\App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSourceCatalog::class)
+            ->captureForReview($this->fixture->owner, (int) $reviewer->id, $cohort->organization_id, $this->project->id, 'get_project_attention', $this->args());
+        self::assertSame($parentManifest['sources'][0]['projection_hash'], $sourceReview['proof']['projection_hash']);
+        self::assertNull(app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class)
+            ->findAccessibleConversation($parent['conversation_id'], $reviewer, $cohort->organization_id));
+        $payload = $this->childInput($parent);
+        $before = AssistantEgressEnrollment::query()->count();
+        try {
+            $manifest = $this->enrollments->preview($reviewer, $cohort->organization_id, $cohort->id, $payload['quote_id'], $payload,
+                [['tool' => 'get_project_attention', 'arguments' => $this->args()]]);
+        } catch (AssistantEgressDenied $denied) {
+            self::assertSame('assistant_egress_denied', $denied->getMessage());
+            self::assertSame($before, AssistantEgressEnrollment::query()->count());
+            return;
+        }
+        self::assertSame(self::QUESTION, $manifest['input_context']['previous_user_question']);
+        self::assertSame($before + 1, AssistantEgressEnrollment::query()->count());
+        self::fail('Private parent question reached an owner reviewer without conversation access');
+    }
+
+    public function test_an_owner_reviewer_with_read_only_conversation_access_can_confirm_and_complete_a_child(): void
+    {
+        [$cohort, $parent] = $this->parent();
+        $reviewer = $this->otherOwner();
+        $this->addReviewerReadAccess($parent['conversation_id'], $reviewer);
+        $conversations = app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class);
+        self::assertNotSame((int) $cohort->actor_id, (int) $reviewer->id);
+        self::assertNotNull($conversations->findAccessibleConversation($parent['conversation_id'], $reviewer, $cohort->organization_id, false));
+        self::assertNull($conversations->findAccessibleConversation($parent['conversation_id'], $reviewer, $cohort->organization_id, true));
+        self::assertNotNull($conversations->findAccessibleConversation($parent['conversation_id'], $this->fixture->owner, $cohort->organization_id, true));
+        $payload = $this->childInput($parent);
+        $manifest = $this->previewForReviewer($cohort, $payload, $reviewer);
+        self::assertSame(self::QUESTION, $manifest['input_context']['previous_user_question']);
+        self::assertSame((int) $reviewer->id, (int) AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id'])->reviewed_by);
+        $this->enrollments->confirm($reviewer, $cohort->organization_id, $manifest['enrollment_id'], $manifest['manifest_hash'], OrdinaryAssistantEnrollmentService::DECLARATION);
+        $calls = 0;
+        $provider = $this->responses(function (array $input) use (&$calls, $manifest): array {
+            self::assertSame(['system', 'user', 'user', 'user'], array_column(array_slice($input, 0, 4), 'role'));
+            self::assertSame(self::QUESTION, json_decode($input[2]['content'], true, 512, JSON_THROW_ON_ERROR)['previous_user_question']);
+            self::assertSame(self::REPLY, $input[3]['content']);
+            if (++$calls === 1) {
+                self::assertCount(4, $input);
+                return $this->nativeCall('reviewer_read_only');
+            }
+            $outputs = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? null) === 'function_call_output'));
+            self::assertCount(1, $outputs);
+            self::assertSame('call_reviewer_read_only', $outputs[0]['call_id']);
+            self::assertSame($manifest['sources'][0]['projection'], json_decode($outputs[0]['output'], true, 512, JSON_THROW_ON_ERROR));
+            return $this->answer(self::ANSWER);
+        });
+        $result = $this->ask($cohort, $payload, $provider);
+        self::assertSame(2, $calls);
+        self::assertSame(self::ANSWER, $result['message']['content']);
+        self::assertFalse($result['message']['metadata']['needs_clarification']);
+        self::assertNotEmpty($result['message']['metadata']['source_refs']);
+    }
+
+    public static function reviewerConfirmationChanges(): iterable
+    {
+        yield 'read revoked' => [true];
+        yield 'another owner caller' => [false];
+    }
+
+    #[DataProvider('reviewerConfirmationChanges')]
+    public function test_a_pending_child_cannot_be_confirmed_after_reviewer_read_revocation_or_by_another_owner(bool $revoke): void
+    {
+        [$cohort, $parent] = $this->parent();
+        $reviewer = $this->otherOwner();
+        $this->addReviewerReadAccess($parent['conversation_id'], $reviewer);
+        $manifest = $this->previewForReviewer($cohort, $this->childInput($parent), $reviewer);
+        if ($revoke) {
+            $this->removeReviewerReadAccess($parent['conversation_id'], $reviewer);
+            self::assertNull(app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class)
+                ->findAccessibleConversation($parent['conversation_id'], $reviewer, $cohort->organization_id, false));
+        }
+        try {
+            $this->enrollments->confirm($revoke ? $reviewer : $this->fixture->owner, $cohort->organization_id,
+                $manifest['enrollment_id'], $manifest['manifest_hash'], OrdinaryAssistantEnrollmentService::DECLARATION);
+            self::fail('A changed reviewer confirmation boundary was accepted');
+        } catch (AssistantEgressDenied $denied) {
+            self::assertSame('assistant_egress_denied', $denied->getMessage());
+            $pending = AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id']);
+            self::assertSame('pending_review', $pending->status);
+            self::assertNull($pending->approved_at);
+            self::assertSame((int) $reviewer->id, (int) $pending->reviewed_by);
+        }
+    }
+
+    public static function reviewerWireBoundaries(): iterable
+    {
+        yield 'before first wire' => ['first'];
+        yield 'before next wire' => ['next'];
+        yield 'before publication' => ['publication'];
+    }
+
+    #[DataProvider('reviewerWireBoundaries')]
+    public function test_reviewer_read_revocation_blocks_first_next_send_or_publication_and_keeps_occurred_usage(string $phase): void
+    {
+        [$cohort, $parent] = $this->parent();
+        $reviewer = $this->otherOwner();
+        $this->addReviewerReadAccess($parent['conversation_id'], $reviewer);
+        $payload = $this->childInput($parent);
+        $manifest = $this->previewForReviewer($cohort, $payload, $reviewer);
+        $this->enrollments->confirm($reviewer, $cohort->organization_id, $manifest['enrollment_id'], $manifest['manifest_hash'], OrdinaryAssistantEnrollmentService::DECLARATION);
+        $before = AICreditProviderUsage::query()->where('organization_id', $cohort->organization_id)->count();
+        if ($phase === 'first') { $this->removeReviewerReadAccess($parent['conversation_id'], $reviewer); }
+        $calls = 0;
+        $provider = $this->responses(function () use (&$calls, $phase, $parent, $reviewer): array {
+            $calls++;
+            if (($phase === 'next' && $calls === 1) || ($phase === 'publication' && $calls === 2)) {
+                $this->removeReviewerReadAccess($parent['conversation_id'], $reviewer);
+            }
+            return $calls === 1 ? $this->nativeCall('reviewer_revocation') : $this->answer(self::ANSWER);
+        });
+        try {
+            $this->ask($cohort, $payload, $provider);
+            self::fail('Revoked reviewer read access reached an unauthorized send or publication');
+        } catch (AssistantEgressDenied $denied) {
+            self::assertSame('assistant_egress_denied', $denied->getMessage());
+            self::assertSame(match ($phase) { 'first' => 0, 'next' => 1, default => 2 }, $calls);
+            self::assertSame($before + $calls, AICreditProviderUsage::query()->where('organization_id', $cohort->organization_id)->count());
+            self::assertSame(1, Message::query()->where('conversation_id', $parent['conversation_id'])->where('role', 'assistant')->count());
+            self::assertNotNull(app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class)
+                ->findAccessibleConversation($parent['conversation_id'], $this->fixture->owner, $cohort->organization_id, true));
+            $child = AssistantRequest::query()->where('request_id', $payload['request_id'])->first();
+            if ($child !== null) { self::assertNull($child->clarification_receipt); }
+        }
+    }
+
+    public static function invalidStoredReviewers(): iterable
+    {
+        yield 'missing server reviewer' => [true];
+        yield 'inactive server reviewer' => [false];
+    }
+
+    #[DataProvider('invalidStoredReviewers')]
+    public function test_missing_or_inactive_stored_reviewer_never_falls_back_to_actor_or_client_reviewer_id(bool $missing): void
+    {
+        [$cohort, $parent] = $this->parent();
+        $reviewer = $this->otherOwner();
+        $this->addReviewerReadAccess($parent['conversation_id'], $reviewer);
+        $payload = $this->childInput($parent);
+        $manifest = $this->previewForReviewer($cohort, $payload, $reviewer);
+        $this->enrollments->confirm($reviewer, $cohort->organization_id, $manifest['enrollment_id'], $manifest['manifest_hash'], OrdinaryAssistantEnrollmentService::DECLARATION);
+        if ($missing) { AssistantEgressEnrollment::query()->whereKey($manifest['enrollment_id'])->update(['reviewed_by' => null]); }
+        else { User::query()->whereKey($reviewer->id)->update(['is_active' => false]); }
+        $payload['reviewer_id'] = $this->fixture->owner->id;
+        $calls = 0;
+        $provider = $this->responses(function () use (&$calls): never { $calls++; self::fail('An invalid stored reviewer reached provider transport'); });
+        try {
+            $this->ask($cohort, $payload, $provider);
+            self::fail('An invalid server reviewer was replaced by another principal');
+        } catch (AssistantEgressDenied $denied) {
+            self::assertSame('assistant_egress_denied', $denied->getMessage());
+            self::assertSame(0, $calls);
+            self::assertSame(1, Message::query()->where('conversation_id', $parent['conversation_id'])->where('role', 'assistant')->count());
+        }
+    }
+
+    public static function publicContextStages(): iterable
+    {
+        yield 'preview' => [false];
+        yield 'confirm' => [true];
+    }
+
+    #[DataProvider('publicContextStages')]
+    public function test_public_context_dependency_faults_reach_the_actual_controller_as_safe_500_without_approval(bool $confirm): void
+    {
+        [$cohort, $parent] = $this->parent();
+        $private = 'PRIVATE_CURRENT_REPLY_ERROR_CANARY';
+        $payload = $this->childInput($parent, $private);
+        $context = app(OrdinaryAssistantClarificationContext::class)->preview($payload, $this->fixture->owner, $cohort, (int) $this->fixture->owner->id);
+        self::assertSame(self::QUESTION, $context['preview']['previous_user_question']);
+        $manifest = $confirm ? $this->preview($cohort, $payload) : null;
+        $count = AssistantEgressEnrollment::query()->count();
+        $this->withoutMiddleware();
+        \Illuminate\Support\Facades\Exceptions::fake();
+        $connection = DB::connection();
+        $original = $connection->getEventDispatcher();
+        $events = new \Illuminate\Events\Dispatcher($this->app);
+        $faults = 0;
+        $events->listen(\Illuminate\Database\Events\QueryExecuted::class, static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$faults, $parent, $private): void {
+            if (str_contains($query->sql, 'from "ai_assistant_requests"') && in_array($parent['request_id'], $query->bindings, true)) {
+                $faults++;
+                self::privateContextFailure($private);
+            }
+        });
+        $connection->setEventDispatcher($events);
+        $previous = ini_set('zend.exception_ignore_args', '0');
+        try {
+            if ($confirm) {
+                $response = $this->postJson('/api/v1/admin/ai-assistant/egress/enrollments/'.$manifest['enrollment_id'].'/confirm',
+                    ['manifest_hash' => $manifest['manifest_hash'], 'declaration' => OrdinaryAssistantEnrollmentService::DECLARATION]);
+            } else {
+                $input = $payload;
+                unset($input['request_id'], $input['quote_id']);
+                $response = $this->postJson('/api/v1/admin/ai-assistant/egress/enrollments/preview', ['cohort_id' => $cohort->id,
+                    'quote_id' => $payload['quote_id'], 'input' => $input,
+                    'sources' => [['tool' => 'get_project_attention', 'arguments' => $this->args()]]]);
+            }
+            self::assertSame('0', ini_get('zend.exception_ignore_args'));
+        } finally {
+            ini_set('zend.exception_ignore_args', $previous);
+            if ($original === null) { $connection->unsetEventDispatcher(); }
+            else { $connection->setEventDispatcher($original); }
+        }
+        self::assertSame(1, $faults);
+        $response->assertStatus(500);
+        self::assertStringNotContainsString($private, $response->getContent());
+        \Illuminate\Support\Facades\Exceptions::assertReportedCount(1);
+        $failure = \Illuminate\Support\Facades\Exceptions::reported()[0];
+        self::assertInstanceOf(\RuntimeException::class, $failure);
+        self::assertSame('assistant_provider_failed', $failure->getMessage());
+        self::assertNull($failure->getPrevious());
+        self::assertStringNotContainsString($private, (string) $failure);
+        self::assertStringNotContainsString($private, $failure->getTraceAsString());
+        self::assertStringNotContainsString($private, json_encode($failure->getTrace(), JSON_THROW_ON_ERROR));
+        self::assertSame([], array_filter($failure->getTrace(), static fn (array $frame): bool => array_key_exists('args', $frame)));
+        self::assertSame($count, AssistantEgressEnrollment::query()->count());
+        if ($confirm) {
+            $pending = AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id']);
+            self::assertSame('pending_review', $pending->status);
+            self::assertNull($pending->approved_at);
+        }
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    #[DataProvider('publicContextStages')]
+    public function test_public_context_expected_denial_keeps_identity_and_actual_controller_403(bool $confirm): void
+    {
+        [$cohort, $parent] = $this->parent();
+        $payload = $this->childInput($parent);
+        $manifest = $confirm ? $this->preview($cohort, $payload) : null;
+        $count = AssistantEgressEnrollment::query()->count();
+        $denied = new AssistantEgressDenied('access_denied');
+        $connection = DB::connection();
+        $original = $connection->getEventDispatcher();
+        $events = new \Illuminate\Events\Dispatcher($this->app);
+        $faults = 0;
+        $events->listen(\Illuminate\Database\Events\QueryExecuted::class, static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$faults, $parent, $denied): void {
+            if (str_contains($query->sql, 'from "ai_assistant_requests"') && in_array($parent['request_id'], $query->bindings, true)) {
+                $faults++;
+                throw $denied;
+            }
+        });
+        $connection->setEventDispatcher($events);
+        try {
+            try {
+                $context = app(OrdinaryAssistantClarificationContext::class);
+                if ($confirm) { $context->refresh(AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id'])->input_context, $this->fixture->owner, $cohort, (int) $this->fixture->owner->id); }
+                else { $context->preview($payload, $this->fixture->owner, $cohort, (int) $this->fixture->owner->id); }
+                self::fail('Expected context denial was swallowed');
+            } catch (AssistantEgressDenied $actual) {
+                self::assertSame($denied, $actual);
+                self::assertSame('access_denied', $actual->reason);
+            }
+            $this->withoutMiddleware();
+            \Illuminate\Support\Facades\Exceptions::fake();
+            if ($confirm) {
+                $response = $this->postJson('/api/v1/admin/ai-assistant/egress/enrollments/'.$manifest['enrollment_id'].'/confirm',
+                    ['manifest_hash' => $manifest['manifest_hash'], 'declaration' => OrdinaryAssistantEnrollmentService::DECLARATION]);
+            } else {
+                $input = $payload;
+                unset($input['request_id'], $input['quote_id']);
+                $response = $this->postJson('/api/v1/admin/ai-assistant/egress/enrollments/preview', ['cohort_id' => $cohort->id,
+                    'quote_id' => $payload['quote_id'], 'input' => $input,
+                    'sources' => [['tool' => 'get_project_attention', 'arguments' => $this->args()]]]);
+            }
+        } finally {
+            if ($original === null) { $connection->unsetEventDispatcher(); }
+            else { $connection->setEventDispatcher($original); }
+        }
+        self::assertSame(2, $faults);
+        $response->assertStatus(403);
+        \Illuminate\Support\Facades\Exceptions::assertNothingReported();
+        self::assertSame($count, AssistantEgressEnrollment::query()->count());
+        if ($confirm) {
+            $pending = AssistantEgressEnrollment::query()->findOrFail($manifest['enrollment_id']);
+            self::assertSame('pending_review', $pending->status);
+            self::assertNull($pending->approved_at);
+        }
+    }
+
+    private static function privateContextFailure(string $private): never
+    {
+        throw new \RuntimeException($private, 0, new \RuntimeException($private));
+    }
+
+    private function addReviewerReadAccess(int $conversationId, User $reviewer): void
+    {
+        \App\BusinessModules\Features\AIAssistant\Models\ConversationParticipant::query()->create(['conversation_id' => $conversationId,
+            'user_id' => $reviewer->id, 'role' => 'viewer', 'added_by_user_id' => $this->fixture->owner->id]);
+    }
+
+    private function removeReviewerReadAccess(int $conversationId, User $reviewer): void
+    {
+        $deleted = \App\BusinessModules\Features\AIAssistant\Models\ConversationParticipant::query()->where('conversation_id', $conversationId)
+            ->where('user_id', $reviewer->id)->delete();
+        self::assertSame(1, $deleted);
+    }
+
+    private function previewForReviewer(AssistantEgressCohort $cohort, array $payload, User $reviewer): array
+    {
+        return $this->enrollments->preview($reviewer, $cohort->organization_id, $cohort->id, $payload['quote_id'], $payload,
+            [['tool' => 'get_project_attention', 'arguments' => $this->args()]]);
+    }
+    private function otherOwner(): User
+    {
+        $reviewer = $this->fixture->administrator->fresh();
+        $reviewer->organizations()->updateExistingPivot($this->fixture->organization->id, ['is_owner' => true, 'project_access_mode' => 'all_projects']);
+        UserRoleAssignment::query()->where('user_id', $reviewer->id)->update(['role_slug' => 'organization_owner']);
+        $this->project->users()->syncWithoutDetaching([$reviewer->id => ['role' => 'member', 'is_active' => true,
+            'assigned_by_user_id' => $this->fixture->owner->id, 'assigned_at' => now()]]);
+        return $reviewer;
+    }
     private function makeViewer(int $conversationId): void
     {
         Conversation::query()->whereKey($conversationId)->update(['user_id' => $this->operator->id]);

@@ -15,6 +15,7 @@ use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 final readonly class OrdinaryAssistantClarificationContext
 {
@@ -94,36 +95,53 @@ final readonly class OrdinaryAssistantClarificationContext
             'context_hash' => OrdinaryAssistantSourceProjection::hash($receipt)];
     }
 
-    public function preview(array $input, User $actor, AssistantEgressCohort $cohort): ?array
+    public function preview(array $input, User $actor, AssistantEgressCohort $cohort, ?int $reviewerId): ?array
     {
-        $envelope = self::envelope($input);
-        if ($envelope === null) { return null; }
-        if (! is_int($input['conversation_id'] ?? null) || ! is_string($input['message'] ?? null) || ! self::replyAllowed($input['message'])) { throw new AssistantEgressDenied('scope_mismatch'); }
-        return $this->resolve($envelope, $actor, $cohort, $input['conversation_id']);
+        try {
+            $envelope = self::envelope($input);
+            if ($envelope === null) { return null; }
+            if (! is_int($input['conversation_id'] ?? null) || ! is_string($input['message'] ?? null) || ! self::replyAllowed($input['message'])) { throw new AssistantEgressDenied('scope_mismatch'); }
+            return $this->resolve($envelope, $actor, $cohort, $input['conversation_id'], $reviewerId);
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
+        }
     }
 
-    public function refresh(array $proof, User $actor, AssistantEgressCohort $cohort): array
+    public function refresh(array $proof, User $actor, AssistantEgressCohort $cohort, ?int $reviewerId): array
     {
-        if (count($proof) !== 5 || ! is_int($proof['conversation_id'] ?? null) || ! is_string($proof['projection_hash'] ?? null)) {
-            throw new AssistantEgressDenied('source_unknown');
+        try {
+            if (count($proof) !== 5 || ! is_int($proof['conversation_id'] ?? null) || ! is_string($proof['projection_hash'] ?? null)) {
+                throw new AssistantEgressDenied('source_unknown');
+            }
+            $envelope = self::envelope(['context' => [self::KEY => array_intersect_key($proof, array_flip(['version', 'parent_request_id', 'context_hash']))]]);
+            $current = $this->resolve($envelope ?? [], $actor, $cohort, $proof['conversation_id'], $reviewerId);
+            if (! hash_equals(OrdinaryAssistantSourceProjection::hash($proof), OrdinaryAssistantSourceProjection::hash($current['proof']))) {
+                throw new AssistantEgressDenied('source_stale');
+            }
+            return $current;
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
         }
-        $envelope = self::envelope(['context' => [self::KEY => array_intersect_key($proof, array_flip(['version', 'parent_request_id', 'context_hash']))]]);
-        $current = $this->resolve($envelope ?? [], $actor, $cohort, $proof['conversation_id']);
-        if (! hash_equals(OrdinaryAssistantSourceProjection::hash($proof), OrdinaryAssistantSourceProjection::hash($current['proof']))) {
-            throw new AssistantEgressDenied('source_stale');
-        }
-        return $current;
     }
 
-    private function resolve(array $envelope, User $actor, AssistantEgressCohort $cohort, int $conversationId): array
+    private function resolve(array $envelope, User $actor, AssistantEgressCohort $cohort, int $conversationId, ?int $reviewerId): array
     {
         return $this->access->withCurrentChecks($actor, (int) $cohort->organization_id,
-            fn (): array => $this->resolveCurrent($envelope, $actor, $cohort, $conversationId), true);
+            fn (): array => $this->resolveCurrent($envelope, $actor, $cohort, $conversationId, $reviewerId), true);
     }
 
-    private function resolveCurrent(array $envelope, User $actor, AssistantEgressCohort $cohort, int $conversationId): array
+    private function resolveCurrent(array $envelope, User $actor, AssistantEgressCohort $cohort, int $conversationId, ?int $reviewerId): array
     {
         if ((int) $actor->id !== (int) $cohort->actor_id) { throw new AssistantEgressDenied('scope_mismatch'); }
+        $reviewer = app(OrdinaryAssistantSourceCatalog::class)->freshReviewer($reviewerId, (int) $cohort->organization_id);
+        if ($this->access->withCurrentChecks($reviewer, (int) $cohort->organization_id,
+            fn () => $this->conversations->findAccessibleConversation($conversationId, $reviewer, (int) $cohort->organization_id, false), true) === null) {
+            throw new AssistantEgressDenied('access_denied');
+        }
         $parent = AssistantRequest::query()->where('request_id', $envelope['parent_request_id'])
             ->where('organization_id', $cohort->organization_id)->where('user_id', $actor->id)->first();
         $receipt = $parent?->clarification_receipt;
