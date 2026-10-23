@@ -24,7 +24,11 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public const ORGANIZATION_PERMISSION = 'ai_assistant.egress.manage';
 
-    public const DECLARATION = 'owner_declared_synthetic_input_and_sources/1';
+    public const DECLARATION = 'authorized_reviewer_declared_synthetic_input_and_sources/1';
+
+    public const LEGACY_OWNER_DECLARATION = 'owner_declared_synthetic_input_and_sources/1';
+
+    public const APPROVED_DECLARATIONS = [self::DECLARATION, self::LEGACY_OWNER_DECLARATION];
 
     public function __construct(private AuthorizationService $authorization, private AssistantDataAccessPolicy $access,
         private OrdinaryAssistantSourceCatalog $sources, private AICreditService $credits) {}
@@ -140,12 +144,13 @@ final readonly class OrdinaryAssistantEnrollmentService
             'input_hash' => $hash, 'sources' => $proofs], $inputContext['proof'] ?? null);
         $enrollment = AssistantEgressEnrollment::query()->create(['id' => (string) Str::uuid(), 'cohort_id' => $cohort->id, 'cohort_generation' => $cohort->generation,
             'reviewed_by' => $owner->id, 'input_hash' => $hash, 'manifest_hash' => $manifestHash, 'input_context' => $inputContext['proof'] ?? null,
-            'sources' => $proofs, 'status' => 'pending_review', 'expires_at' => now()->addMinutes(15)]);
+            'sources' => $proofs, 'status' => 'pending_review', 'declaration_version' => self::DECLARATION, 'expires_at' => now()->addMinutes(15)]);
 
         return ['enrollment_id' => $enrollment->id, 'manifest_hash' => $manifestHash, 'input_hash' => $hash,
             'project_id' => $cohort->project_id, 'cohort_generation' => $cohort->generation, 'purpose' => OrdinaryAssistantEgressRequest::PURPOSE,
             'provider' => $cohort->provider, 'model' => $cohort->model, 'endpoint' => $cohort->endpoint, 'policy_version' => $cohort->policy_version,
-            'declaration_version' => self::DECLARATION,
+            'declaration_version' => self::DECLARATION, 'reviewer_id' => (int) $owner->id,
+            'declaration_text' => trans_message('ai_assistant.egress_reviewer_synthetic_declaration'),
             'sources' => $previews, 'expires_at' => $enrollment->expires_at->toISOString()]
             + ($inputContext === null ? [] : ['input_context' => $inputContext['preview'] + ['current_reply' => $input['message']]]);
     }
@@ -155,7 +160,7 @@ final readonly class OrdinaryAssistantEnrollmentService
         $this->assertOrganizationManager((int) $owner->id, $organizationId);
         $enrollment = AssistantEgressEnrollment::query()->findOrFail($enrollmentId);
         $cohort = $this->cohort((string) $enrollment->cohort_id, $organizationId);
-        if ($declaration !== self::DECLARATION || (int) $enrollment->reviewed_by !== (int) $owner->id || $enrollment->status !== 'pending_review'
+        if ($declaration !== self::DECLARATION || $enrollment->declaration_version !== $declaration || (int) $enrollment->reviewed_by !== (int) $owner->id || $enrollment->status !== 'pending_review'
             || ! hash_equals((string) $cohort->generation, (string) $enrollment->cohort_generation)
             || array_diff(array_column($enrollment->sources, 'tool'), $cohort->allowed_tools) !== []
             || ! OrdinaryAssistantSourceProjection::allowsSources($cohort->policy_version, $enrollment->sources)
@@ -176,9 +181,9 @@ final readonly class OrdinaryAssistantEnrollmentService
             throw new AssistantEgressDenied('source_stale');
         }
         $updated = AssistantEgressEnrollment::query()->whereKey($enrollmentId)->where('status', 'pending_review')
-            ->where('cohort_generation', $cohort->generation)
+            ->where('cohort_generation', $cohort->generation)->where('declaration_version', $declaration)
             ->where('reviewed_by', $owner->id)->where('manifest_hash', $manifestHash)->where('input_hash', $enrollment->input_hash)
-            ->where('expires_at', '>', now())->update(['status' => 'approved', 'declaration_version' => self::DECLARATION,
+            ->where('expires_at', '>', now())->update(['status' => 'approved', 'declaration_version' => $declaration,
                 'approved_at' => now(), 'expires_at' => min(now()->addHour(), $cohort->expires_at), 'updated_at' => now()]);
         if ($updated !== 1) {
             throw new AssistantEgressDenied('access_denied');

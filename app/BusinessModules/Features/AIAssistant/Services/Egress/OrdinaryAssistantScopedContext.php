@@ -393,7 +393,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         $current = $this->enrollments->cohort((string) $this->cohort->id, (int) $this->cohort->organization_id);
         $manifest = AssistantEgressEnrollment::query()->whereKey($this->enrollment->id)->where('status', 'approved')
             ->where('cohort_generation', $current->generation)
-            ->where('declaration_version', OrdinaryAssistantEnrollmentService::DECLARATION)
+            ->whereIn('declaration_version', OrdinaryAssistantEnrollmentService::APPROVED_DECLARATIONS)
             ->where('expires_at', '>', now())->first();
         $expectedHash = $manifest === null ? null : OrdinaryAssistantClarificationContext::manifestHash(['cohort' => $current->getKey(),
             'cohort_generation' => $current->generation, 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources], $manifest->input_context);

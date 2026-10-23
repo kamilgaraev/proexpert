@@ -148,6 +148,31 @@ final class AssistantOrganizationEgressAuthorityTest extends TestCase
         self::assertSame('revoked', $cohort->refresh()->status);
     }
 
+    public function test_declaration_versions_require_new_review_and_preserve_historical_owner_approvals(): void
+    {
+        $cohort = $this->assign($this->fixture->owner);
+        [$payload, $preview] = $this->preview($this->fixture->owner, $cohort);
+        self::assertSame(OrdinaryAssistantEnrollmentService::DECLARATION, $preview['declaration_version']);
+        self::assertSame((int) $this->fixture->owner->id, $preview['reviewer_id']);
+        $enrollment = AssistantEgressEnrollment::query()->findOrFail($preview['enrollment_id']);
+        foreach ([null, OrdinaryAssistantEnrollmentService::LEGACY_OWNER_DECLARATION, 'unknown_reviewer/1'] as $version) {
+            $enrollment->forceFill(['declaration_version' => $version])->save();
+            $this->confirm($this->fixture->owner, $preview)->assertForbidden();
+            self::assertSame('pending_review', $enrollment->refresh()->status);
+        }
+        $enrollment->forceFill(['declaration_version' => OrdinaryAssistantEnrollmentService::DECLARATION])->save();
+        $this->confirm($this->fixture->owner, $preview)->assertOk();
+        $enrollment->forceFill(['declaration_version' => OrdinaryAssistantEnrollmentService::LEGACY_OWNER_DECLARATION])->save();
+        $legacyAttributes = $enrollment->refresh()->getRawOriginal();
+        $context = app(OrdinaryAssistantScopedContext::class);
+        $context->enter($this->fixture->owner, (int) $cohort->organization_id, $payload['message'], $payload, null);
+        self::assertSame(['get_project_attention'], $context->allowedToolNames());
+        self::assertSame($legacyAttributes, $enrollment->refresh()->getRawOriginal());
+        foreach ([null, 'unknown_reviewer/1'] as $version) {
+            $enrollment->forceFill(['declaration_version' => $version])->save();
+            $this->denied(fn () => $context->allowedToolNames());
+        }
+    }
     public function test_selected_custom_permission_supports_the_whole_workflow_without_owner_or_settings_permission(): void
     {
         $this->delegate(true);
@@ -156,10 +181,18 @@ final class AssistantOrganizationEgressAuthorityTest extends TestCase
         self::assertFalse($manager->organizations()->where('organizations.id', $this->fixture->organization->id)->wherePivot('is_owner', true)->exists());
         $cohort = $this->assign($manager, $manager);
         [$payload, $preview] = $this->preview($manager, $cohort);
+        self::assertSame('authorized_reviewer_declared_synthetic_input_and_sources/1', $preview['declaration_version']);
+        self::assertSame((int) $manager->id, $preview['reviewer_id']);
+        self::assertSame(trans_message('ai_assistant.egress_reviewer_synthetic_declaration'), $preview['declaration_text']);
+        self::assertSame($preview['declaration_version'], AssistantEgressEnrollment::query()->findOrFail($preview['enrollment_id'])->declaration_version);
+        $this->actingAs($manager)->postJson(self::BASE.'/enrollments/'.$preview['enrollment_id'].'/confirm',
+            ['manifest_hash' => $preview['manifest_hash'], 'declaration' => 'owner_declared_synthetic_input_and_sources/1'])->assertUnprocessable();
+        self::assertSame('pending_review', AssistantEgressEnrollment::query()->findOrFail($preview['enrollment_id'])->status);
         $this->actingAs($this->fixture->owner);
         $this->confirm($this->fixture->owner, $preview)->assertForbidden();
         self::assertSame('pending_review', AssistantEgressEnrollment::query()->findOrFail($preview['enrollment_id'])->status);
         $this->confirm($manager, $preview)->assertOk()->assertJsonPath('data.status', 'approved');
+        self::assertSame($preview['declaration_version'], AssistantEgressEnrollment::query()->findOrFail($preview['enrollment_id'])->declaration_version);
         $this->getJson(self::BASE.'/capability')->assertOk()->assertJsonPath('data.can_review_sources', true);
         self::assertSame((int) $manager->id, (int) AssistantEgressEnrollment::query()->findOrFail($preview['enrollment_id'])->reviewed_by);
         $context = app(OrdinaryAssistantScopedContext::class);
