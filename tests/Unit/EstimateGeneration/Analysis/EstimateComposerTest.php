@@ -34,6 +34,75 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    #[DataProvider('jsonObjectTransportContracts')]
+    public function test_json_object_transport_changes_only_current_request_identities(string $contract, bool $active): void
+    {
+        $input = new EstimateComposerInput(...[...get_object_vars($this->input()), 'contractVersion' => $contract]);
+        $semantic = $input->canonicalPayload();
+        $expected = $semantic;
+        if ($active) {
+            $expected['transport_contract'] = 'estimate-composer-json-object:v1';
+            $expected['response_format'] = ['type' => 'json_object'];
+        }
+        self::assertSame(hash('sha256', json_encode($expected, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)), $input->fingerprint());
+        self::assertSame($semantic, $input->canonicalPayload());
+        self::assertArrayNotHasKey('response_format', $semantic);
+        self::assertArrayNotHasKey('transport_contract', $semantic);
+        self::assertSame($contract, $input->contractVersion);
+        self::assertSame($active ? ['type' => 'json_object'] : null, $input->responseFormat());
+    }
+
+    public static function jsonObjectTransportContracts(): iterable
+    {
+        foreach (['estimate-composer:v6', 'estimate-composer:legacy:v3', 'estimate-composer:answers:v5', 'estimate-composer:legacy-answers:v5',
+            'estimate-composer:cells:v3', 'estimate-composer:legacy-cells:v3', 'estimate-composer:answer-cells:v4', 'estimate-composer:legacy-answer-cells:v4'] as $contract) {
+            yield $contract => [$contract, true];
+        }
+        foreach (['estimate-composer:v4', 'estimate-composer:v5', 'estimate-composer:legacy:v1', 'estimate-composer:legacy:v2',
+            'estimate-composer:answers:v2', 'estimate-composer:answers:v3', 'estimate-composer:answers:v4',
+            'estimate-composer:legacy-answers:v2', 'estimate-composer:legacy-answers:v3', 'estimate-composer:legacy-answers:v4',
+            'estimate-composer:cells:v1', 'estimate-composer:cells:v2', 'estimate-composer:legacy-cells:v1', 'estimate-composer:legacy-cells:v2',
+            'estimate-composer:answer-cells:v1', 'estimate-composer:answer-cells:v2', 'estimate-composer:answer-cells:v3',
+            'estimate-composer:legacy-answer-cells:v1', 'estimate-composer:legacy-answer-cells:v2', 'estimate-composer:legacy-answer-cells:v3',
+            'estimate-composer:v999', 'estimate-composer:answer-cells:v999'] as $contract) {
+            yield $contract => [$contract, false];
+        }
+    }
+
+    public function test_json_transport_is_retained_by_actual_multipart_planning_and_role_replay(): void
+    {
+        $input = $this->input(candidates: array_map(static fn (int $index): array => [
+            'candidate_id' => 'baseline:work-'.$index, 'work_key' => 'work_'.$index, 'name' => 'Работа '.$index,
+            'unit' => 'm2', 'quantity' => '1', 'quantity_formula' => 'scope.area', 'source_fact_ids' => [],
+            'technology_package_candidate' => null,
+        ], range(1, 33)));
+        $parts = (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner)->plan($input);
+        self::assertCount(2, $parts);
+        foreach ($parts as $part) {
+            self::assertSame(['type' => 'json_object'], $part->responseFormat());
+            self::assertNotSame(hash('sha256', json_encode($part->canonicalPayload(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)), $part->fingerprint());
+        }
+        $model = new class implements EstimateComposerModel
+        {
+            public int $calls = 0;
+
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->calls++;
+                \PHPUnit\Framework\Assert::assertSame(['type' => 'json_object'], $input->responseFormat());
+                $onPhysicalAttemptReserved(AiOperationContext::deterministicId('fixture|'.$input->fingerprint()));
+
+                return ['work_intents' => []];
+            }
+        };
+        $runs = new \Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
+        $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna');
+        $first = $composer->runDetailed($input);
+        self::assertSame($first, $composer->runDetailed($input));
+        self::assertSame(2, $model->calls);
+        self::assertCount(2, array_unique(array_map(static fn ($role): string => $role->identityFingerprint(), $runs->inputs)));
+    }
+
     public function test_current_work_answer_can_propose_only_its_attached_entity_source_without_becoming_a_numeric_fact(): void
     {
         $input = $this->workSourceClaimInput();
@@ -2171,6 +2240,7 @@ final class EstimateComposerTest extends TestCase
         self::assertSame($result, $actual);
         self::assertSame('openai/gpt-5-mini', $wire->requestedModel);
         self::assertSame('json', $wire->options['profile']);
+        self::assertSame(['type' => 'json_object'], $wire->options['response_format']);
         self::assertArrayNotHasKey('fallback_models', $wire->options);
         self::assertStringContainsString('10.2500', $wire->messages[1]['content']);
         self::assertStringNotContainsString('unit_price', $wire->messages[1]['content']);
@@ -2193,6 +2263,7 @@ final class EstimateComposerTest extends TestCase
         $wire->method('provider')->willReturn('timeweb');
         $wire->expects(self::once())->method('call')->willReturnCallback(function (string $model, array $sent, array $options) use (&$messages, $answered): array {
             $messages = $sent;
+            self::assertSame(['type' => 'json_object'], $options['response_format']);
 
             return ['content' => $answered ? '{"work_intents":[],"claim_candidates":[]}' : '{"work_intents":[]}', 'model' => $model, 'usage_available' => true, 'input_tokens' => 100, 'output_tokens' => 10];
         });
