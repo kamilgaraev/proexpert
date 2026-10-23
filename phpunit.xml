@@ -13,6 +13,13 @@
             <file>tests/Feature/AIAssistant/AssistantClarificationContinuationTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantScopedEgressTest.php</file>
         </testsuite>
+        <testsuite name="OrdinaryAssistantLocalDocumentProcessing">
+            <file>tests/Feature/AIAssistant/AssistantLocalDocumentProcessingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagIndexerTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/OpenAIRagEmbeddingProviderTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/EmbeddingAttemptEvidenceTest.php</file>
+        </testsuite>
         <testsuite name="AIAssistantDocumentFollowupSearch">
             <file>tests/Feature/AIAssistant/AssistantDocumentFollowupSearchTest.php</file>
         </testsuite>
