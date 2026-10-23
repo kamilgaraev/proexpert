@@ -351,7 +351,11 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         Http::assertNothingSent();
     }
 
-    public function test_terminal_source_info_fixture_records_one_normless_claim_and_reader_rechecks_the_current_scoped_source(): void
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answers:v2'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answers:v3'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answer-cells:v1'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['estimate-composer:answer-cells:v2'])]
+    public function test_terminal_source_info_fixture_records_one_normless_claim_and_reader_rechecks_the_current_scoped_source(string $contract): void
     {
         [$actor, $session, $answer, $documents] = $this->answeredSourceFixture('  Монтаж неизвестной установки  ');
         $candidate = ['source_answer_fact_id' => $answer->id, 'entity_id' => $documents[0]->entityId,
@@ -359,7 +363,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'unit' => null, 'document_fact_ids' => [$documents[0]->id]];
         $organization = Organization::query()->findOrFail($session->organization_id);
         $project = Project::query()->findOrFail($session->project_id);
-        [$session, $operationId, $runId] = $this->paidReceipt('estimate-composer:answers:v2', [$candidate], true,
+        [$session, $operationId, $runId] = $this->paidReceipt($contract, [$candidate], true,
             [$organization, $project, $actor, $session], false);
         [$claim, $result] = $this->terminalFixture($actor, $session, $operationId);
         Queue::fake();
@@ -675,6 +679,14 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'answered-v2' => ['estimate-composer:answers:v2', [$candidate], true],
             'settled-unavailable-cost' => ['estimate-composer:answers:v2', [$candidate], true, false],
             'legacy-answered-v2' => ['estimate-composer:legacy-answers:v2', [$candidate], true],
+            'answered-v3' => ['estimate-composer:answers:v3', [$candidate], true],
+            'legacy-answered-v3' => ['estimate-composer:legacy-answers:v3', [$candidate], true],
+            'answer-cells-v1' => ['estimate-composer:answer-cells:v1', [$candidate], true],
+            'legacy-answer-cells-v1' => ['estimate-composer:legacy-answer-cells:v1', [$candidate], true],
+            'answer-cells-v2' => ['estimate-composer:answer-cells:v2', [$candidate], true],
+            'legacy-answer-cells-v2' => ['estimate-composer:legacy-answer-cells:v2', [$candidate], true],
+            'unknown future' => ['estimate-composer:answers:v999', [$candidate], false],
+            'unknown future cells' => ['estimate-composer:answer-cells:v999', [$candidate], false],
             'no-answer' => ['estimate-composer:v4', [$candidate], false],
             'model-verdict' => ['estimate-composer:answers:v2', [[...$candidate, 'passed' => true]], false],
             'non-array' => ['estimate-composer:answers:v2', 'not-an-array', false],
@@ -682,7 +694,26 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         ];
     }
 
-    private function paidReceipt(string $contract, mixed $candidates, bool $measured = true, ?array $fixture = null, bool $settle = true, ?callable $compose = null): array
+    public function test_old_and_new_completed_identities_exceeding_one_frozen_part_stay_unresolved(): void
+    {
+        $fixture = $this->fixture();
+        [$session, $operationId] = $this->paidReceipt('estimate-composer:answers:v2', [$this->candidate()], fixture: $fixture, settle: false, maxWorkItems: 1);
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->sole();
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(1, $plan['composer_part_limit']);
+        self::assertSame(3, $plan['roles']['estimate_composition']['max_calls']);
+        $this->paidReceipt('estimate-composer:answers:v3', [$this->candidate()], fixture: $fixture, reuseOperationId: $operationId);
+        self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
+        self::assertSame(2, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)
+            ->where('role', 'estimate_composition')->where('status', 'recorded')->count());
+        self::assertSame(2, DB::table('estimate_generation_ai_role_runs')->where('organization_id', $session->organization_id)
+            ->where('project_id', $session->project_id)->where('session_id', $session->id)->where('status', 'completed')->count());
+        self::assertSame([], app(EstimateGenerationLearningRecorder::class)->sourceClaimCandidatesForOperation($session->fresh(), $operationId));
+        self::assertSame(0, DB::table('estimate_generation_learning_examples')->where('organization_id', $session->organization_id)->count());
+        Http::assertNothingSent();
+    }
+
+    private function paidReceipt(string $contract, mixed $candidates, bool $measured = true, ?array $fixture = null, bool $settle = true, ?callable $compose = null, ?string $reuseOperationId = null, ?int $maxWorkItems = null): array
     {
         [$organization, $project, $actor, $session] = $fixture ?? $this->fixture();
         $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
@@ -696,11 +727,14 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         if (! $actor->organizations()->whereKey($organization->id)->exists()) {
             $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         }
-        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:source-claim:'.$organization->id);
-        $operationId = (string) Str::uuid();
-        $operations = app(EstimatorCreditOperations::class);
-        $quote = $operations->quote($actor, (int) $project->id, (int) $session->id, (int) $session->state_version, $operationId, 'generation');
-        DB::transaction(fn () => $operations->begin($actor, $session, (int) $session->state_version, $operationId, $quote['quote_id'], 'generation'));
+        $operationId = $reuseOperationId ?? (string) Str::uuid();
+        if ($reuseOperationId === null) {
+            app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:source-claim:'.$organization->id);
+            $operations = app(EstimatorCreditOperations::class);
+            $quote = $operations->quote($actor, (int) $project->id, (int) $session->id, (int) $session->state_version, $operationId, 'generation',
+                $maxWorkItems === null ? [] : ['max_work_items' => $maxWorkItems]);
+            DB::transaction(fn () => $operations->begin($actor, $session, (int) $session->state_version, $operationId, $quote['quote_id'], 'generation'));
+        }
         if ($compose !== null) {
             $runId = $compose($session, $operationId);
             if ($settle) {
@@ -713,7 +747,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         }
         $input = new AiRoleRunInput((int) $organization->id, (int) $project->id, (int) $session->id, null, null,
             'estimate_session', (string) $session->id, hash('sha256', $operationId), AiAnalysisRole::EstimateComposer,
-            'openai/gpt-6-luna', $contract, hash('sha256', 'source-claim-input:'.$operationId));
+            'openai/gpt-6-luna', $contract, hash('sha256', 'source-claim-input:'.$operationId.':'.$contract));
         $runs = app(AiRoleRunRepository::class);
         $owner = (string) Str::uuid();
         $claim = $runs->claim($input, $owner);
@@ -728,8 +762,10 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'timeweb', 'openai/gpt-6-luna', 'succeeded', 10, reportedModel: 'openai/gpt-6-luna',
             usageStatus: $measured ? 'measured' : 'unavailable', inputTokens: $measured ? 1000 : 0, outputTokens: $measured ? 100 : 0,
             priceSnapshot: AiPriceSnapshot::fromArray($identity['supplier_tariff'])));
-        $runs->complete($claim->runId, $owner, new AiRoleRunResult(['schema_version' => 2, 'role' => 'estimate_composer',
-            'work_intents' => [], 'quarantined_intents' => [], 'result_state' => 'ready', 'claim_candidates' => $candidates], $attempt));
+        $cellContract = str_contains($contract, 'cells:');
+        $runs->complete($claim->runId, $owner, new AiRoleRunResult(['schema_version' => $cellContract ? 3 : 2, 'role' => 'estimate_composer',
+            'work_intents' => [], 'quarantined_intents' => [], 'result_state' => 'ready', 'claim_candidates' => $candidates,
+            ...($cellContract ? ['cell_mapping_proposals' => [], 'cell_mapping_context' => []] : [])], $attempt));
         if ($settle) {
             DB::transaction(fn () => app(EstimatorCreditOperationSettlement::class)->publish($session, $operationId,
                 ['source_input_version' => $operation->source_version, 'local_estimates' => []]));
