@@ -10,6 +10,7 @@
 >
     <testsuites>
         <testsuite name="AIAssistantClarificationContinuation">
+            <file>tests/Feature/AIAssistant/AssistantOrganizationEgressAuthorityTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantClarificationContinuationTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantScopedEgressTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantPreviewReaderAccessTest.php</file>

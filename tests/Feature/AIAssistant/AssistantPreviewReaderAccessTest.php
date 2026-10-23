@@ -204,7 +204,7 @@ final class AssistantPreviewReaderAccessTest extends TestCase
 
     public function test_a_reviewer_cannot_preview_actor_readable_restricted_legal_fragments_without_a_grant(): void
     {
-        $this->enrollments->assertOwner($this->reviewer, $this->fixture->organization->id);
+        $this->enrollments->assertOrganizationManager((int) $this->reviewer->id, $this->fixture->organization->id);
         self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadEntity($this->reviewer, $this->fixture->organization->id, 'project', $this->project->id));
         $legalAccess = new LegalDocumentAccessService(app(AuthorizationService::class)->forCurrentChecks(true));
         $legalAccess->authorize($this->fixture->owner, $this->legal, 'view');

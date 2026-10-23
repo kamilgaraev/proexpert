@@ -11,6 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\Models\User;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCorpus;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceIdentity;
 use App\Services\Credits\AICreditService;
 use App\Services\Privacy\Contracts\PrivacyDecision;
 use Throwable;
@@ -40,6 +41,8 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     private array $calls = [];
 
     private array $toolOutputs = [];
+
+    private array $canonicalToolResults = [];
 
     public function __construct(private readonly OrdinaryAssistantEnrollmentService $enrollments,
         private readonly OrdinaryAssistantSourceCatalog $catalog, private readonly OrdinaryAssistantSourceProjection $projection,
@@ -205,6 +208,8 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             $key = OrdinaryAssistantSourceProjection::hash(['tool' => $name,
                 'arguments' => $this->projection->arguments($name, $arguments, (int) $this->cohort->project_id)]);
             $this->toolOutputs[$key] = $provider;
+            $record = ['tool' => $name, 'result' => $projected];
+            $this->canonicalToolResults[AssistantSourceReferenceIdentity::key($record)] = $record;
             return $projected;
         }
         $projected = $this->projection->project($name, $result, (int) $this->cohort->organization_id,
@@ -213,11 +218,12 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         if (! hash_equals($source['projection_hash'], OrdinaryAssistantSourceProjection::hash($provider))) {
             throw new AssistantEgressDenied('source_stale');
         }
-        $this->toolOutputs[OrdinaryAssistantSourceProjection::hash(['tool' => $name, 'arguments' => $source['arguments']])] = $provider;
+        $key = OrdinaryAssistantSourceProjection::hash(['tool' => $name, 'arguments' => $source['arguments']]);
+        $this->toolOutputs[$key] = $provider;
+        $record = ['tool' => $name, 'result' => $projected];
+        $this->canonicalToolResults[AssistantSourceReferenceIdentity::key($record)] = $record;
 
-        $provider['source_refs'] = array_map(fn (array $ref): array => $ref + ['organization_id' => (int) $this->cohort->organization_id], $provider['source_refs']);
-
-        return $provider;
+        return $projected;
     }
 
     public function providerToolResult(array $result): array
@@ -250,12 +256,12 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             if (! is_array($result) || ! in_array($result['_tool_name'] ?? null, $this->allowedToolNames(), true)) {
                 throw new AssistantEgressDenied('source_unknown');
             }
-            $candidate = $this->projection->forProvider(array_intersect_key($result,
-                array_flip(['status', 'data', 'source_refs', 'egress_projection_version'])));
-            if (! in_array($candidate, $this->toolOutputs, true)) {
+            $candidate = array_intersect_key($result, array_flip(['status', 'data', 'source_refs', 'egress_projection_version']));
+            $record = $this->canonicalToolResults[AssistantSourceReferenceIdentity::key(['tool' => $result['_tool_name'], 'result' => $candidate])] ?? null;
+            if ($record === null) {
                 throw new AssistantEgressDenied('source_stale');
             }
-            $references = [...$references, ...$result['source_refs']];
+            $references = [...$references, ...$record['result']['source_refs']];
         }
 
         return array_values(array_unique($references, SORT_REGULAR));
@@ -267,11 +273,17 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         $documents = array_values(array_filter($this->enrollment->sources,
             static fn (array $source): bool => $source['tool'] === OrdinaryAssistantDocumentProjection::TOOL));
         $documentVersions = $documents === [] ? [] : array_merge(...array_column($documents, 'source_versions'));
-        $hasSql = array_intersect(array_column($this->enrollment->sources, 'tool'), OrdinaryAssistantSourceProjection::TOOLS) !== [];
+        $sqlReferences = [];
+        foreach ($this->canonicalToolResults as $record) {
+            if (in_array($record['tool'], OrdinaryAssistantSourceProjection::TOOLS, true)) {
+                foreach ($record['result']['source_refs'] as $reference) {
+                    $sqlReferences[AssistantSourceReferenceIdentity::key($reference)] = true;
+                }
+            }
+        }
         $documentReferences = [];
         foreach ($references as $ref) {
-            if ($hasSql && $ref === ['entity_type' => 'project', 'entity_id' => (int) $this->cohort->project_id,
-                'project_id' => (int) $this->cohort->project_id, 'organization_id' => (int) $this->cohort->organization_id]) {
+            if (is_array($ref) && isset($sqlReferences[AssistantSourceReferenceIdentity::key($ref)])) {
                 continue;
             }
             if ($documents === [] || ($ref['egress_projection_version'] ?? null) !== OrdinaryAssistantDocumentProjection::VERSION
@@ -330,7 +342,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         $this->inputHash = null;
         $this->queryHash = null;
         $this->requestedContext = $this->continuationPreview = null;
-        $this->initial = $this->modelItems = $this->calls = $this->toolOutputs = [];
+        $this->initial = $this->modelItems = $this->calls = $this->toolOutputs = $this->canonicalToolResults = [];
     }
 
     private function source(string $name, array $arguments): array
@@ -363,6 +375,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     private function assertSourcesFresh(): void
     {
         $this->assertFresh();
+        $this->enrollments->assertOrganizationManager($this->enrollment->reviewed_by, (int) $this->cohort->organization_id);
         foreach ($this->enrollment->sources as $source) {
             $current = $this->catalog->captureForReview($this->actor, $this->enrollment->reviewed_by, (int) $this->cohort->organization_id,
                 (int) $this->cohort->project_id, $source['tool'], $source['arguments']);
@@ -380,7 +393,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         $current = $this->enrollments->cohort((string) $this->cohort->id, (int) $this->cohort->organization_id);
         $manifest = AssistantEgressEnrollment::query()->whereKey($this->enrollment->id)->where('status', 'approved')
             ->where('cohort_generation', $current->generation)
-            ->where('declaration_version', OrdinaryAssistantEnrollmentService::DECLARATION)
+            ->whereIn('declaration_version', OrdinaryAssistantEnrollmentService::APPROVED_DECLARATIONS)
             ->where('expires_at', '>', now())->first();
         $expectedHash = $manifest === null ? null : OrdinaryAssistantClarificationContext::manifestHash(['cohort' => $current->getKey(),
             'cohort_generation' => $current->generation, 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources], $manifest->input_context);

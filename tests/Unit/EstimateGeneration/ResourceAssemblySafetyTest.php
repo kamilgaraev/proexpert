@@ -19,6 +19,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class ResourceAssemblySafetyTest extends TestCase
@@ -694,6 +695,39 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertContains('norm_without_prices', $item['normative_match']['warnings']);
         $this->assertContains('safe_norm_required', $item['validation_flags']);
         $this->assertContains('pricing_not_calculated', $item['validation_flags']);
+    }
+
+    #[DataProvider('linearUnitResourceCases')]
+    public function test_selected_norm_scales_resource_quantity_from_submetre_work_units(string $unit, int $quantity, string $expectedRate, float $expectedQuantity): void
+    {
+        $candidate = $this->unsafeCandidate();
+        $candidate['unit'] = 'м';
+        $candidate['resources']['materials'][0]['quantity'] = '2.5';
+        $work = ['key' => 'linear-quantity-scale', 'name' => $candidate['name'], 'unit' => $unit, 'quantity' => $quantity,
+            'confidence' => 0.9, 'validation_flags' => [], 'materials' => [], 'labor' => [], 'machinery' => [],
+            'work_intent' => ['scope' => 'site', 'action' => 'excavation', 'preferred_section_prefixes' => ['01'], 'forbidden_section_prefixes' => []]];
+        $match = ['version' => ['source_type' => 'fsnb_2022', 'version_key' => 'synthetic-unit-scale'],
+            'selected' => $candidate, 'candidates' => [$candidate]];
+        if ($quantity < 0) {
+            $this->expectException(\InvalidArgumentException::class);
+            $this->expectExceptionMessage('canonical_work_quantity_negative');
+        }
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($work, $match);
+
+        $this->assertSame('matched', $item['normative_match']['status'], implode(',', $item['normative_match']['warnings']));
+        $this->assertSame($expectedRate, $item['materials'][0]['quantity_per_work_unit']);
+        $this->assertSame($expectedQuantity, $item['materials'][0]['quantity']);
+        $this->assertSame('normative_resource', $item['materials'][0]['quantity_basis']);
+    }
+
+    public static function linearUnitResourceCases(): array
+    {
+        return [
+            'millimetres' => ['мм', 1000, '0.0025', 2.5],
+            'centimetres' => ['см', 100, '0.025', 2.5],
+            'zero quantity' => ['мм', 0, '0.0025', 0.0],
+            'negative quantity' => ['мм', -1, '0.0025', 0.0],
+        ];
     }
 
     private function manualSelectionService(): ResourceAssemblyService

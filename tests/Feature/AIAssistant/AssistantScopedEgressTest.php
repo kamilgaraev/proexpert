@@ -132,9 +132,9 @@ final class AssistantScopedEgressTest extends TestCase
         self::assertStringNotContainsString(self::ACCOUNT_CANARY, json_encode($response, JSON_THROW_ON_ERROR));
     }
 
-    public function test_owner_cannot_assign_platform_scope_and_revoked_platform_permission_is_fresh(): void
+    public function test_foreign_owner_cannot_assign_scope_and_revoked_platform_permission_is_fresh(): void
     {
-        foreach ([$this->fixture->owner, $this->operator] as $index => $actor) {
+        foreach ([$this->fixture->foreignOwner, $this->operator] as $index => $actor) {
             if ($index === 1) {
                 $this->platformAssignment->update(['is_active' => false]);
             }
@@ -331,13 +331,15 @@ final class AssistantScopedEgressTest extends TestCase
         }
     }
 
-    public function test_enrollment_http_contract_requires_platform_assignment_then_explicit_owner_review(): void
+    public function test_enrollment_http_contract_requires_authorized_assignment_then_explicit_review(): void
     {
         $this->withoutMiddleware();
         $prefix = '/api/v1/admin/ai-assistant/egress';
         $target = ['organization_id' => $this->fixture->organization->id, 'actor_id' => $this->fixture->owner->id,
             'project_id' => $this->project->id, 'tools' => ['get_project_attention']];
-        $this->actingAs($this->fixture->owner)->postJson($prefix.'/cohorts', $target + ['synthetic' => true])->assertForbidden();
+        self::assertFalse(app(\App\Domain\Authorization\Services\AuthorizationService::class)->canCurrent($this->fixture->member,
+            OrdinaryAssistantEnrollmentService::ORGANIZATION_PERMISSION, ['organization_id' => $this->fixture->organization->id]));
+        $this->actingAs($this->fixture->member)->postJson($prefix.'/cohorts', $target + ['synthetic' => true])->assertForbidden();
         $assigned = $this->actingAs($this->operator)->postJson($prefix.'/cohorts', $target)->assertCreated()->assertJsonPath('success', true);
         $cohortId = $assigned->json('data.cohort_id');
         $input = ['message' => 'Учебный вопрос по объекту.', 'profile' => 'normal', 'allow_actions' => false];

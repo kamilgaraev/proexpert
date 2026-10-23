@@ -22,7 +22,13 @@ final readonly class OrdinaryAssistantEnrollmentService
 {
     public const PLATFORM_PERMISSION = 'admin.ai_assistant.egress.manage';
 
-    public const DECLARATION = 'owner_declared_synthetic_input_and_sources/1';
+    public const ORGANIZATION_PERMISSION = 'ai_assistant.egress.manage';
+
+    public const DECLARATION = 'authorized_reviewer_declared_synthetic_input_and_sources/1';
+
+    public const LEGACY_OWNER_DECLARATION = 'owner_declared_synthetic_input_and_sources/1';
+
+    public const APPROVED_DECLARATIONS = [self::DECLARATION, self::LEGACY_OWNER_DECLARATION];
 
     public function __construct(private AuthorizationService $authorization, private AssistantDataAccessPolicy $access,
         private OrdinaryAssistantSourceCatalog $sources, private AICreditService $credits) {}
@@ -58,7 +64,7 @@ final readonly class OrdinaryAssistantEnrollmentService
             return ['mode' => 'guarded', 'state' => 'unavailable', 'can_review_sources' => false, 'cohort' => null];
         }
         try {
-            $this->assertOwner($actor, $organizationId);
+            $this->assertOrganizationManager((int) $actor->id, $organizationId);
             $canReview = true;
         } catch (AssistantEgressDenied) {
             $canReview = false;
@@ -72,7 +78,7 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function assign(User $operator, int $organizationId, User $actor, int $projectId, array $tools, string $policyVersion = OrdinaryAssistantSourceProjection::VERSION): AssistantEgressCohort
     {
-        $this->assertPlatform($operator);
+        $this->assertIssuer($operator, $organizationId);
         if (! $actor->is_active || (int) $actor->current_organization_id !== $organizationId
             || ! User::query()->whereKey($actor->getKey())->where('is_active', true)->where('current_organization_id', $organizationId)->exists()
             || ! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)
@@ -106,7 +112,7 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function preview(User $owner, int $organizationId, string $cohortId, string $quoteId, array $input, array $requestedSources): array
     {
-        $this->assertOwner($owner, $organizationId);
+        $this->assertOrganizationManager((int) $owner->id, $organizationId);
         $cohort = $this->cohort($cohortId, $organizationId);
         $actor = User::query()->findOrFail($cohort->actor_id);
         $hash = $this->credits->canonicalAssistantRequest($input);
@@ -138,22 +144,23 @@ final readonly class OrdinaryAssistantEnrollmentService
             'input_hash' => $hash, 'sources' => $proofs], $inputContext['proof'] ?? null);
         $enrollment = AssistantEgressEnrollment::query()->create(['id' => (string) Str::uuid(), 'cohort_id' => $cohort->id, 'cohort_generation' => $cohort->generation,
             'reviewed_by' => $owner->id, 'input_hash' => $hash, 'manifest_hash' => $manifestHash, 'input_context' => $inputContext['proof'] ?? null,
-            'sources' => $proofs, 'status' => 'pending_review', 'expires_at' => now()->addMinutes(15)]);
+            'sources' => $proofs, 'status' => 'pending_review', 'declaration_version' => self::DECLARATION, 'expires_at' => now()->addMinutes(15)]);
 
         return ['enrollment_id' => $enrollment->id, 'manifest_hash' => $manifestHash, 'input_hash' => $hash,
             'project_id' => $cohort->project_id, 'cohort_generation' => $cohort->generation, 'purpose' => OrdinaryAssistantEgressRequest::PURPOSE,
             'provider' => $cohort->provider, 'model' => $cohort->model, 'endpoint' => $cohort->endpoint, 'policy_version' => $cohort->policy_version,
-            'declaration_version' => self::DECLARATION,
+            'declaration_version' => self::DECLARATION, 'reviewer_id' => (int) $owner->id,
+            'declaration_text' => trans_message('ai_assistant.egress_reviewer_synthetic_declaration'),
             'sources' => $previews, 'expires_at' => $enrollment->expires_at->toISOString()]
             + ($inputContext === null ? [] : ['input_context' => $inputContext['preview'] + ['current_reply' => $input['message']]]);
     }
 
     public function confirm(User $owner, int $organizationId, string $enrollmentId, string $manifestHash, string $declaration): AssistantEgressEnrollment
     {
-        $this->assertOwner($owner, $organizationId);
+        $this->assertOrganizationManager((int) $owner->id, $organizationId);
         $enrollment = AssistantEgressEnrollment::query()->findOrFail($enrollmentId);
         $cohort = $this->cohort((string) $enrollment->cohort_id, $organizationId);
-        if ($declaration !== self::DECLARATION || (int) $enrollment->reviewed_by !== (int) $owner->id || $enrollment->status !== 'pending_review'
+        if ($declaration !== self::DECLARATION || $enrollment->declaration_version !== $declaration || (int) $enrollment->reviewed_by !== (int) $owner->id || $enrollment->status !== 'pending_review'
             || ! hash_equals((string) $cohort->generation, (string) $enrollment->cohort_generation)
             || array_diff(array_column($enrollment->sources, 'tool'), $cohort->allowed_tools) !== []
             || ! OrdinaryAssistantSourceProjection::allowsSources($cohort->policy_version, $enrollment->sources)
@@ -174,9 +181,9 @@ final readonly class OrdinaryAssistantEnrollmentService
             throw new AssistantEgressDenied('source_stale');
         }
         $updated = AssistantEgressEnrollment::query()->whereKey($enrollmentId)->where('status', 'pending_review')
-            ->where('cohort_generation', $cohort->generation)
+            ->where('cohort_generation', $cohort->generation)->where('declaration_version', $declaration)
             ->where('reviewed_by', $owner->id)->where('manifest_hash', $manifestHash)->where('input_hash', $enrollment->input_hash)
-            ->where('expires_at', '>', now())->update(['status' => 'approved', 'declaration_version' => self::DECLARATION,
+            ->where('expires_at', '>', now())->update(['status' => 'approved', 'declaration_version' => $declaration,
                 'approved_at' => now(), 'expires_at' => min(now()->addHour(), $cohort->expires_at), 'updated_at' => now()]);
         if ($updated !== 1) {
             throw new AssistantEgressDenied('access_denied');
@@ -187,16 +194,18 @@ final readonly class OrdinaryAssistantEnrollmentService
 
     public function revoke(User $owner, int $organizationId, string $id): void
     {
-        $this->assertOwner($owner, $organizationId);
+        $this->assertOrganizationManager((int) $owner->id, $organizationId);
         AssistantEgressEnrollment::query()->whereKey($id)->whereIn('cohort_id',
             AssistantEgressCohort::query()->where('organization_id', $organizationId)->select('id'))->firstOrFail()->update(['status' => 'revoked']);
     }
 
     public function revokeCohort(User $operator, string $id): void
     {
-        $this->assertPlatform($operator);
-        DB::transaction(function () use ($id): void {
-            AssistantEgressCohort::query()->whereKey($id)->lockForUpdate()->firstOrFail()->update(['status' => 'revoked']);
+        $cohort = AssistantEgressCohort::query()->whereKey($id)->firstOrFail();
+        $organizationId = (int) $cohort->organization_id;
+        $this->assertIssuer($operator, $organizationId);
+        DB::transaction(function () use ($id, $organizationId): void {
+            AssistantEgressCohort::query()->whereKey($id)->where('organization_id', $organizationId)->lockForUpdate()->firstOrFail()->update(['status' => 'revoked']);
             AssistantEgressEnrollment::query()->where('cohort_id', $id)->update(['status' => 'revoked', 'updated_at' => now()]);
         });
     }
@@ -213,14 +222,33 @@ final readonly class OrdinaryAssistantEnrollmentService
         return $cohort;
     }
 
-    public function assertOwner(User $owner, int $organizationId): void
+    public function assertOrganizationManager(?int $managerId, int $organizationId): void
     {
-        if (! $owner->is_active || (int) $owner->current_organization_id !== $organizationId
-            || ! User::query()->whereKey($owner->getKey())->where('is_active', true)->where('current_organization_id', $organizationId)->exists()
-            || ! $this->authorization->canCurrent($owner, 'ai_assistant.settings.manage', ['organization_id' => $organizationId])
-            || ! $owner->organizations()->where('organizations.id', $organizationId)
-                ->wherePivot('is_active', true)->wherePivot('is_owner', true)->exists()) {
-            throw new AssistantEgressDenied('access_denied');
+        try {
+            $manager = $this->sources->freshReviewer($managerId, $organizationId);
+            if (! $this->authorization->canCurrent($manager, self::ORGANIZATION_PERMISSION, ['organization_id' => $organizationId])) {
+                throw new AssistantEgressDenied('access_denied');
+            }
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
+        }
+    }
+
+    public function assertIssuer(User $operator, int $organizationId): void
+    {
+        try {
+            try {
+                $this->assertPlatform($operator);
+                return;
+            } catch (AssistantEgressDenied) {
+                $this->assertOrganizationManager((int) $operator->id, $organizationId);
+            }
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
         }
     }
 
