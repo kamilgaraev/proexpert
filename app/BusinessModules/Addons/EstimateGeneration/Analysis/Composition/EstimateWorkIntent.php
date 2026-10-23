@@ -52,7 +52,8 @@ final readonly class EstimateWorkIntent
             throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
         }
         if ($requirementKey !== null && $workSection !== null && $workKey !== null
-            && in_array(ScopeCompletenessEvaluator::workRequirement($workSection, $workKey), ScopeCompletenessEvaluator::workRequirementsFor($workSection), true)
+            && ((new WorkIntentSourceClassifier)->canonicalName($workKey) !== null
+                || in_array(ScopeCompletenessEvaluator::workRequirement($workSection, $workKey), ScopeCompletenessEvaluator::workRequirementsFor($workSection), true))
             && $requirementKey !== ScopeCompletenessEvaluator::workRequirement($workSection, $workKey)) {
             throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
         }

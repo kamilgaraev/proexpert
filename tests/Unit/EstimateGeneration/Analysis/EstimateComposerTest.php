@@ -359,6 +359,141 @@ final class EstimateComposerTest extends TestCase
         yield 'explicit null tag' => [['requirement_key' => null], false];
     }
 
+    #[DataProvider('canonicalWorkRequirementContradictions')]
+    public function test_known_work_cannot_cover_another_kind_after_canonical_naming_and_projection(string $workKey, string $section, string $requirement): void
+    {
+        $input = $this->declaredDescriptionInput('Выполнить работы по выбранному разделу проекта', [$section]);
+        $model = new RecordedEstimateComposerModel(['work_intents' => [[...$this->semanticEquipmentWork(),
+            'work_key' => $workKey, 'work_section' => $section, 'requirement_key' => $requirement]]]);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        $locals = $this->projectSemanticResult($outcome, $input);
+        if ($locals !== []) {
+            self::assertSame((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\WorkIntentSourceClassifier)->canonicalName($workKey),
+                $locals[0]['sections'][0]['work_items'][0]['name']);
+            self::assertNotContains($requirement, array_column($this->semanticWorkEvaluation($locals, $section)['coverage']['covered_requirements'], 'requirement'));
+        }
+        self::assertSame([], $outcome['intents']);
+        self::assertSame('estimate_work_intent_requirement_invalid', $outcome['quarantined'][0]['reason']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+    }
+
+    #[DataProvider('canonicalWorkRequirementContradictions')]
+    public function test_crafted_current_receipt_cannot_replay_a_known_work_as_another_kind(string $workKey, string $section, string $requirement): void
+    {
+        $input = $this->declaredDescriptionInput('Выполнить работы по выбранному разделу проекта', [$section]);
+        $runs = new \Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
+        $identity = new AiRoleRunInput(10, 20, 30, null, null, 'estimate_session', '30', $input->snapshotToken,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole::EstimateComposer,
+            'openai/gpt-6-luna', $input->contractVersion, $input->fingerprint());
+        $owner = '11111111-1111-4111-8111-111111111111';
+        $claim = $runs->claim($identity, $owner);
+        $runs->complete($claim->runId, $owner, new AiRoleRunResult(['schema_version' => 1, 'role' => 'estimate_composer',
+            'work_intents' => [[...$this->semanticEquipmentWork(), 'work_key' => $workKey, 'work_section' => $section,
+                'name' => (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\WorkIntentSourceClassifier)->canonicalName($workKey),
+                'requirement_key' => $requirement]], 'quarantined_intents' => [], 'result_state' => 'ready'],
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'));
+        $model = new RecordedEstimateComposerModel([]);
+        try {
+            (new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna'))->runDetailed($input);
+            self::fail('A persisted known work was reclassified by its semantic tag.');
+        } catch (InvalidArgumentException $error) {
+            self::assertSame('estimate_work_intent_requirement_invalid', $error->getMessage());
+        }
+        self::assertSame($identity->identityFingerprint(), $runs->inputs[1]->identityFingerprint());
+        self::assertSame(0, $model->calls);
+    }
+
+    public static function canonicalWorkRequirementContradictions(): iterable
+    {
+        yield 'purchase is not installation' => ['equipment.purchase', 'equipment', 'installation'];
+        yield 'pipe installation is not testing' => ['heating.pipe', 'heating', 'heating_testing'];
+        yield 'soil export is not excavation' => ['earth.export', 'earthworks', 'excavation'];
+    }
+
+    public function test_finite_registered_work_catalog_accepts_only_its_already_mapped_requirement(): void
+    {
+        $classifier = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\WorkIntentSourceClassifier;
+        $registry = (new \ReflectionClass($classifier))->getConstant('WORKS');
+        self::assertCount(38, $registry);
+        $named = $accepted = $unverified = 0;
+        foreach ($registry as $workKey => $section) {
+            $canonical = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator::workRequirement($section, $workKey);
+            try {
+                $name = $classifier->canonicalName($workKey);
+                self::assertNotNull($name);
+                $named++;
+            } catch (InvalidArgumentException $error) {
+                self::assertSame('estimate_composer_work_definition_unverified', $error->getMessage());
+                $name = null;
+                $unverified++;
+            }
+            foreach (\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator::workRequirementsFor($section) as $requirement) {
+                $allowed = $name !== null && $requirement === $canonical;
+                try {
+                    $intent = EstimateWorkIntent::fromArray([...$this->semanticEquipmentWork(), 'work_key' => $workKey,
+                        'work_section' => $section, 'requirement_key' => $requirement]);
+                    self::assertTrue($allowed, $workKey.' was assigned '.$requirement);
+                    self::assertSame($canonical, $intent->requirementKey);
+                    $accepted++;
+                } catch (InvalidArgumentException $error) {
+                    self::assertFalse($allowed, $workKey.' lost its canonical requirement');
+                    self::assertSame($name === null ? 'estimate_composer_work_definition_unverified' : 'estimate_work_intent_requirement_invalid', $error->getMessage());
+                }
+            }
+        }
+        self::assertSame(35, $named);
+        self::assertSame(3, $unverified);
+        self::assertSame(9, $accepted);
+    }
+
+    public function test_absent_or_null_tag_preserves_coverage_and_canonical_names_for_every_registered_work(): void
+    {
+        $classifier = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\WorkIntentSourceClassifier;
+        $registry = (new \ReflectionClass($classifier))->getConstant('WORKS');
+        foreach ($registry as $workKey => $section) {
+            foreach ([[], ['requirement_key' => null]] as $tag) {
+                $input = $this->declaredDescriptionInput('Выполнить работы по выбранному разделу проекта', [$section]);
+                $model = new RecordedEstimateComposerModel(['work_intents' => [[...$this->semanticEquipmentWork(),
+                    'work_key' => $workKey, 'work_section' => $section, ...$tag]]]);
+                $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+                $outcome = $composer->runDetailed($input);
+                try {
+                    $name = $classifier->canonicalName($workKey);
+                } catch (InvalidArgumentException $error) {
+                    self::assertSame('estimate_composer_work_definition_unverified', $error->getMessage());
+                    self::assertSame([], $outcome['intents']);
+                    self::assertSame('estimate_composer_work_definition_unverified', $outcome['quarantined'][0]['reason']);
+                    self::assertSame(1, $model->calls);
+                    continue;
+                }
+                self::assertSame([], $outcome['quarantined']);
+                self::assertSame($name, $outcome['intents'][0]['name']);
+                self::assertArrayNotHasKey('requirement_key', $outcome['intents'][0]);
+                $locals = $this->projectSemanticResult($outcome, $input);
+                self::assertArrayNotHasKey('requirement_key', $locals[0]['sections'][0]['work_items'][0]['metadata']);
+                $result = $this->semanticWorkEvaluation($locals, $section);
+                $canonical = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator::workRequirement($section, $workKey);
+                self::assertSame(in_array($canonical,
+                    \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator::workRequirementsFor($section), true) ? [$canonical] : [],
+                    array_column($result['coverage']['covered_requirements'], 'requirement'));
+                self::assertSame($outcome, $composer->runDetailed($input));
+                self::assertSame(1, $model->calls);
+            }
+        }
+    }
+
+    private function semanticWorkEvaluation(array $locals, string $section): array
+    {
+        return (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build([
+            'evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => [$section]],
+            'local_estimates' => $locals,
+        ], new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([
+            new Entity('entity:description', 10, 20, 30, 'sha256:'.str_repeat('d', 64), 'quantity', 'initial-description'),
+        ], [], [], []));
+    }
+
     #[DataProvider('invalidSemanticWorkRequirements')]
     public function test_work_requirement_rejects_unknown_foreign_section_and_document_pairs(mixed $requirement, string $section, string $workKey = 'assemble_install_ready_exhibition_stands'): void
     {
