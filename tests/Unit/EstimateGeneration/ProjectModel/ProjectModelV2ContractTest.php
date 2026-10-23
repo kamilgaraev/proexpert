@@ -91,7 +91,7 @@ final class ProjectModelV2ContractTest extends TestCase
     }
 
     #[Test]
-    public function generic_native_contract_requires_all_definition_pins_and_rejects_human_origin(): void
+    public function generic_semantic_facts_never_acquire_native_authority_from_copied_definition_pins(): void
     {
         $attributes = $this->engineeringAttributes();
         $definition = $attributes['engineering_parameter'];
@@ -106,7 +106,17 @@ final class ProjectModelV2ContractTest extends TestCase
         $proof += ['definition_id' => $definition['definition_id'], 'parameter_id' => $definition['parameter_id'],
             'definition_source' => $definition['definition_source']];
         self::assertFalse($checker->matches($this->engineeringFact($attributes, proofs: ['evidence:1' => $proof]), $evidence));
-        self::assertTrue($checker->matches($this->engineeringFact($attributes, origin: 'document', proofs: ['evidence:1' => $proof]), $evidence));
+        foreach (['observed_value', 'minimum_length_requirement'] as $role) {
+            $genericAttributes = $this->engineeringAttributes(role: $role);
+            $genericDefinition = $genericAttributes['engineering_parameter'];
+            $genericProof = [...$proof, 'parameter' => FactVocabulary::engineeringParameterType($genericAttributes),
+                'definition_id' => $genericDefinition['definition_id'], 'parameter_id' => $genericDefinition['parameter_id'],
+                'definition_source' => $genericDefinition['definition_source']];
+            foreach (['candidate', 'confirmed'] as $status) {
+                self::assertFalse($checker->matches($this->engineeringFact($genericAttributes, origin: 'document', status: $status,
+                    proofs: ['evidence:1' => $genericProof]), $evidence), $role.' '.$status);
+            }
+        }
         foreach (['definition_id', 'parameter_id', 'definition_source'] as $key) {
             $incomplete = $proof;
             unset($incomplete[$key]);
