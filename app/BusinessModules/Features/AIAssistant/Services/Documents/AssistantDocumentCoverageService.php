@@ -67,10 +67,10 @@ final class AssistantDocumentCoverageService
         return $this->policy->withCurrentChecks($actor, $organizationId, function () use ($corpus, $actor, $organizationId, $checkpoint): array {
             $documents = $this->policy->accessibleDocuments($actor, $organizationId, AIAssistantDocument::query()->whereKey($corpus->documentId)
                 ->where('ai_assistant_documents.project_id', $corpus->projectId));
-            $present = (clone $documents)->exists();
-            $retrieval = $this->retrievalCoverage($documents->toBase(), $checkpoint, false);
+            $visibleDocumentCount = 0;
+            $retrieval = $this->retrievalCoverage($documents->toBase(), $checkpoint, false, $visibleDocumentCount);
             return ['coverage_scope' => 'approved_fragment_universe', 'document_ids' => [$corpus->documentId],
-                'approved_fragments' => count($corpus->chunkIds()), 'complete' => $present && $retrieval['complete'] && $retrieval['fresh'],
+                'approved_fragments' => count($corpus->chunkIds()), 'complete' => $visibleDocumentCount > 0 && $retrieval['complete'] && $retrieval['fresh'],
                 'retrieval_coverage' => $retrieval];
         }, true, $checkpoint);
     }
@@ -396,7 +396,7 @@ final class AssistantDocumentCoverageService
         });
     }
 
-    private function retrievalCoverage(QueryBuilder $documents, ?callable $checkpoint, bool $semantic): array
+    private function retrievalCoverage(QueryBuilder $documents, ?callable $checkpoint, bool $semantic, ?int &$visibleDocumentCount = null): array
     {
         $checkpoint?->__invoke();
         $currentDocuments = (clone $documents)->select('ai_assistant_documents.id', 'ai_assistant_documents.organization_id',
@@ -443,9 +443,13 @@ final class AssistantDocumentCoverageService
         $aggregate = DB::query()->selectSub((clone $units)->selectRaw('COUNT(*)'), 'expected_units')
             ->selectSub($current->selectRaw('COUNT(*)'), 'current_units')
             ->selectSub($partialDocuments->selectRaw('COUNT(*)'), 'partial_documents');
+        if ($visibleDocumentCount !== null) {
+            $aggregate->selectSub(DB::table('assistant_coverage_documents')->selectRaw('COUNT(*)'), 'visible_document_count');
+        }
         $checkpoint?->__invoke();
         $counts = $this->withVisibleDocuments($aggregate, $currentDocuments)->first();
         if ($counts === null) { throw new \LogicException('assistant_document_retrieval_aggregate_missing'); }
+        if ($visibleDocumentCount !== null) { $visibleDocumentCount = (int) $counts->visible_document_count; }
         $expectedCount = (int) $counts->expected_units;
         $currentCount = (int) $counts->current_units;
         $partial = (int) $counts->partial_documents;
