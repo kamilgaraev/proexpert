@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Http\Controllers;
 
+use App\BusinessModules\Features\WorkforceManagement\Http\Requests\StoreWorkScheduleRequest;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceAttendanceService;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceProService;
 use App\Http\Controllers\Controller;
@@ -184,9 +185,19 @@ final class WorkforceProController extends Controller
         return $this->list($request, 'workforce_work_schedules');
     }
 
-    public function storeWorkSchedule(Request $request): JsonResponse
+    public function storeWorkSchedule(StoreWorkScheduleRequest $request): JsonResponse
     {
-        return $this->store($request, 'workforce_work_schedules', $this->scheduleRules());
+        try {
+            return AdminResponse::success(
+                $this->service->storeWorkSchedule($this->organizationId($request), $request->validated(), $request->user()),
+                trans_message('workforce.messages.record_created'),
+                201
+            );
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'work_schedules.store');
+        }
     }
 
     public function storeWorkScheduleDay(Request $request, int $scheduleId): JsonResponse
@@ -603,20 +614,6 @@ final class WorkforceProController extends Controller
             'valid_from' => ['required', 'date'],
             'valid_to' => ['nullable', 'date', 'after_or_equal:valid_from'],
             'status' => ['nullable', Rule::in(['active', 'closed'])],
-        ];
-    }
-
-    private function scheduleRules(): array
-    {
-        return [
-            'code' => ['required', 'string', 'max:80'],
-            'name' => ['required', 'string', 'max:255'],
-            'schedule_type' => ['nullable', 'string', 'max:40'],
-            'hours_per_day' => ['nullable', 'numeric', 'min:0', 'max:24'],
-            'week_pattern' => ['nullable', 'array'],
-            'week_pattern.work_days' => ['sometimes', 'required', 'array', 'min:1', 'max:7'],
-            'week_pattern.work_days.*' => ['required', 'integer', 'between:1,7', 'distinct'],
-            'is_active' => ['nullable', 'boolean'],
         ];
     }
 
