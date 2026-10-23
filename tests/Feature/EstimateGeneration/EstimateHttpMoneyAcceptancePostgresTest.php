@@ -464,7 +464,8 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         $otherProject = Project::factory()->for($rights->organization)->create(['is_archived' => false]);
         $this->postJson($this->url($otherProject, $session).'/questions/'.$question['code'].'/answer', $input, $headers)->assertForbidden();
         $this->postJson($answerUrl, [...$input, 'answer_fingerprint' => str_repeat('0', 64)], $headers)->assertConflict();
-        $this->postJson($answerUrl, [...$input, 'document_ids' => [PHP_INT_MAX]], $headers)->assertUnprocessable();
+        $this->postJson($answerUrl, [...$input, 'document_ids' => [PHP_INT_MAX]], $headers)
+            ->assertConflict()->assertJsonPath('code', 'question_stale');
         $this->postJson($answerUrl, [...$input, 'target_entity_id' => $item['metadata']['scope_entity_id']], $headers)->assertUnprocessable();
         self::assertSame($money, $this->modelMoneySnapshot($session));
         $receipt = $this->postJson($answerUrl, $input, $headers)->assertOk()->json('data');
@@ -709,7 +710,8 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             'document_ids' => [(int) $document->id], 'idempotency_key' => (string) Str::uuid(),
             'expected_source_version' => $question['source_version'], 'answer_fingerprint' => $question['answer_fingerprint']];
         $answerUrl = $url.'/questions/'.$question['code'].'/answer';
-        $this->postJson($answerUrl, [...$input, 'document_ids' => [(int) $otherDocument->id]], $headers)->assertUnprocessable();
+        $this->postJson($answerUrl, [...$input, 'document_ids' => [(int) $otherDocument->id]], $headers)
+            ->assertConflict()->assertJsonPath('code', 'question_stale');
         $receipt = $this->postJson($answerUrl, $input, $headers)->assertOk()->json('data');
         $readback = $this->workTechnologyQuestion($project, $session, $headers);
         self::assertSame(['answered', [(int) $document->id], 'user_assumption', 'unresolved', false],
