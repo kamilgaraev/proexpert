@@ -14,6 +14,45 @@ use PHPUnit\Framework\TestCase;
 
 final class AnalysisBasisPayloadServiceTest extends TestCase
 {
+    public function test_work_question_basis_reads_only_catalog_bound_current_fact_evidence(): void
+    {
+        $code = 'composer_work_technology_'.str_repeat('a', 40);
+        $question = new \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationQuestion($code,
+            'Как выполняется установка?', 'Способ не указан в исходных данных.', 'Ответ остаётся допущением пользователя.',
+            'Уточните способ выполнения.', [
+                new \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationChoice('other', 'Другое', 'other'),
+                new \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationChoice('leave_unresolved', 'Оставить нерешённым', 'leave_unresolved'),
+            ], ['kind' => 'composer_work_technology']);
+        $current = new \App\BusinessModules\Addons\EstimateGeneration\Questions\CurrentEstimateClarification($question,
+            'sha256:'.str_repeat('b', 64), str_repeat('c', 64), str_repeat('d', 64), null,
+            ['schema_version' => 2, 'work_context' => ['binding' => ['source_fact_ids' => ['fact:source']]]]);
+        $catalog = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class);
+        $catalog->expects(self::once())->method('allCurrent')->with(10, 20, 30)->willReturn([$current]);
+        $fact = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:source', 10, 20, 30,
+            'sha256:'.str_repeat('e', 64), 'entity:equipment', 'description', 'Требуется установка', null, 1.0, 'user_input', 'confirmed', ['evidence:6']);
+        $models = $this->createMock(ProjectModelRepository::class);
+        $models->expects(self::never())->method('currentUnderstanding');
+        $models->expects(self::once())->method('factsByIds')->with(10, 20, 30, ['fact:source'])->willReturn([$fact]);
+        $query = Mockery::mock(Builder::class);
+        foreach (['organization_id' => 10, 'project_id' => 20, 'session_id' => 30] as $column => $value) {
+            $query->shouldReceive('where')->once()->with($column, $value)->andReturnSelf();
+        }
+        $query->shouldReceive('whereNull')->once()->with('invalidated_at')->andReturnSelf();
+        $query->shouldReceive('whereIn')->once()->with('id', [6])->andReturnSelf();
+        $query->shouldReceive('orderBy')->once()->with('id')->andReturnSelf();
+        $query->shouldReceive('get')->once()->with(['id', 'source_ref', 'locator'])->andReturn(new Collection([
+            (object) ['id' => 6, 'source_ref' => 'input:30', 'locator' => '{"field":"description"}'],
+        ]));
+        $database = Mockery::mock(DatabaseManager::class);
+        $database->shouldReceive('table')->once()->with('estimate_generation_evidence')->andReturn($query);
+        $payload = (new AnalysisBasisPayloadService($database, $models, static fn (string $key): string => $key, $catalog))
+            ->handle(10, 20, 30, 'question', $code);
+        self::assertSame($question->impact, $payload['impact']);
+        self::assertSame([['id' => 'evidence:6', 'document_id' => null, 'locator' => ['field' => 'description']]], $payload['sources']);
+        self::assertArrayNotHasKey('work_context', $payload);
+        Mockery::close();
+    }
+
     public function test_question_basis_is_scoped_and_returns_only_subject_impact_recommendation_and_locator(): void
     {
         $models = $this->createMock(ProjectModelRepository::class);

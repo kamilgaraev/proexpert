@@ -58,6 +58,9 @@ final class ComposerClarificationTest extends TestCase
         self::assertSame('composer_work_technology', $questions[0]->question->sourceLocator['kind']);
         self::assertNull($questions[0]->workAnswer);
         self::assertSame('unanswered', $entries[0]['status']);
+        self::assertSame([], $this->resolver()->workTechnologyContexts($draft,
+            [...$input, 'scope_selection' => ['work_scope' => ['selected_items' => [['key' => 'position:first']]]]],
+            $snapshot, [], [10, 20, 30], []));
         $next = $locals;
         unset($next[0]['sections'][0]['work_items'][0]['metadata']['work_technology_context'],
             $next[0]['sections'][0]['work_items'][0]['composition_intent']['technology_clarification']);
