@@ -93,7 +93,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     {
         if ($capability !== 'document_rag' || $this->guarded !== true
             || ! in_array($this->cohort?->policy_version,
-                [OrdinaryAssistantDocumentProjection::VERSION, OrdinaryAssistantSourceProjection::MIXED_VERSION], true)) {
+                [OrdinaryAssistantDocumentProjection::VERSION, OrdinaryAssistantSourceProjection::MIXED_VERSION, OrdinaryAssistantSourceProjection::MIXED_V2_VERSION], true)) {
             return false;
         }
         $this->assertFresh();

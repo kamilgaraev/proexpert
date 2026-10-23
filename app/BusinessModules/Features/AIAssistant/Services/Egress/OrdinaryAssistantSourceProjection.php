@@ -13,6 +13,8 @@ final class OrdinaryAssistantSourceProjection
 
     public const MIXED_VERSION = 'ordinary-project-sql-document/1';
 
+    public const MIXED_V2_VERSION = 'ordinary-project-sql-document/2';
+
     public const TOOLS = ['get_project_attention', 'get_project_production_schedule_summary'];
 
     public static function toolsForPolicy(string $version): array
@@ -20,7 +22,7 @@ final class OrdinaryAssistantSourceProjection
         return match ($version) {
             self::VERSION => self::TOOLS,
             OrdinaryAssistantDocumentProjection::VERSION => [OrdinaryAssistantDocumentProjection::TOOL],
-            self::MIXED_VERSION => [...self::TOOLS, OrdinaryAssistantDocumentProjection::TOOL],
+            self::MIXED_VERSION, self::MIXED_V2_VERSION => [...self::TOOLS, OrdinaryAssistantDocumentProjection::TOOL],
             default => [],
         };
     }
@@ -30,7 +32,8 @@ final class OrdinaryAssistantSourceProjection
         return $tools !== [] && count(array_filter($tools, 'is_string')) === count($tools)
             && array_diff($tools, self::toolsForPolicy($version)) === []
             && ($version !== self::MIXED_VERSION || (count($tools) === 2 && count(array_unique($tools)) === 2
-                && in_array(OrdinaryAssistantDocumentProjection::TOOL, $tools, true)));
+                && in_array(OrdinaryAssistantDocumentProjection::TOOL, $tools, true)))
+            && ($version !== self::MIXED_V2_VERSION || (count($tools) === 3 && count(array_unique($tools)) === 3));
     }
 
     public static function projectionVersionForTool(string $tool): ?string
