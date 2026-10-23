@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Exceptions;
 
-use RuntimeException;
+use Exception;
 
-final class AssistantProviderFailure extends RuntimeException
+final class AssistantProviderFailure extends Exception
 {
     public function __construct()
     {

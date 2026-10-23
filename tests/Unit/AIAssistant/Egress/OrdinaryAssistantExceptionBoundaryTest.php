@@ -72,6 +72,7 @@ final class OrdinaryAssistantExceptionBoundaryTest extends TestCase
             'incomplete-with-raw-response' => ['incomplete', AssistantResponseIncomplete::class],
             'authorization-with-previous' => ['authorization', AuthorizationException::class],
             'invalid-request' => ['invalid', InvalidArgumentException::class],
+            'runtime-with-previous' => ['runtime', RuntimeException::class],
             'unknown-with-previous' => ['unknown', AssistantProviderFailure::class],
         ];
     }
@@ -84,7 +85,7 @@ final class OrdinaryAssistantExceptionBoundaryTest extends TestCase
         $process = new Process([PHP_BINARY, '-d', 'disable_functions=ini_set', '-d', 'zend.exception_ignore_args=0', '-r', $code]);
         $process->mustRun();
         self::assertSame('', $process->getErrorOutput());
-        self::assertSame(['class' => AssistantProviderFailure::class, 'message' => 'assistant_provider_failed',
+        self::assertSame(['class' => RuntimeException::class, 'message' => 'assistant_provider_failed',
             'trace' => [], 'previous' => null, 'setting' => '0'], json_decode($process->getOutput(), true, 512, JSON_THROW_ON_ERROR));
     }
 
@@ -100,7 +101,8 @@ final class OrdinaryAssistantExceptionBoundaryTest extends TestCase
                 'token_calibration' => ['raw' => $private], 'output' => [['text' => $private]]]),
             'authorization' => (new AuthorizationException($private, 0, new RuntimeException($private)))->asNotFound(),
             'invalid' => new InvalidArgumentException($private),
-            default => new RuntimeException($private, 0, new RuntimeException($private)),
+            'runtime' => new RuntimeException($private, 0, new RuntimeException($private)),
+            default => new \Exception($private, 0, new RuntimeException($private)),
         };
     }
 }
