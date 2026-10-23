@@ -315,6 +315,7 @@ final class AssistantOperationsBusinessCoverageTest extends TestCase
             Model::withoutEvents(static fn () => \App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent::query()->create(array_replace($attributes, $changes)));
         $exact = $create();
         $unknown = $create(['end_date' => null, 'end_time' => null]);
+        $suppressed = $create(['recurrence_suppressed' => true]);
         $foreign = $create(['organization_id' => $fixture->foreignOrganization->id, 'project_id' => $foreignProject->id, 'created_by_user_id' => $fixture->foreignOwner->id]);
         $collector = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\OperationsScheduleRagSource::class);
         foreach ([[$exact, '10:45:15'], [$unknown, null]] as [$event, $expectedEnd]) {
@@ -327,6 +328,19 @@ final class AssistantOperationsBusinessCoverageTest extends TestCase
             self::assertNull($chunks[0]->metadata['duration_minutes']);
         }
         self::assertSame([], [...$collector->collectEntity($fixture->organization->id, 'project_event', $foreign->id)]);
+        self::assertSame([], [...$collector->collectEntity($fixture->organization->id, 'project_event', $suppressed->id)]);
+        $collected = [...$collector->collectForOrganization($fixture->organization->id, $project->id)];
+        self::assertCount(2, array_filter($collected, static fn ($chunk): bool => $chunk->entityType === 'project_event'));
+        $policy = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class);
+        $source = static fn ($event): array => [
+            'organization_id' => $event->organization_id, 'project_id' => $event->project_id,
+            'source_type' => 'operations_schedule', 'entity_type' => 'project_event', 'entity_id' => $event->id,
+        ];
+        self::assertTrue($policy->canReadSource($fixture->owner, $fixture->organization->id, $source($exact)));
+        self::assertFalse($policy->canReadSource($fixture->owner, $fixture->organization->id, $source($suppressed)));
+        self::assertFalse($policy->canReadSource($fixture->owner, $fixture->organization->id, $source($foreign)));
+        Model::withoutEvents(static fn () => $exact->update(['recurrence_suppressed' => true]));
+        self::assertFalse($policy->canReadSource($fixture->owner, $fixture->organization->id, $source($exact)));
     }
 
     private function fixture(): AssistantRealAuthorizationFixture

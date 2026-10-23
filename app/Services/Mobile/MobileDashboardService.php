@@ -467,6 +467,7 @@ class MobileDashboardService
         $upcomingTo = now()->addDays(7)->toDateString();
         $activeStatuses = ['scheduled', 'in_progress'];
         $query = ProjectEvent::query()
+            ->where('recurrence_suppressed', false)
             ->where('organization_id', $organizationId)
             ->whereIn('project_id', $projectIds);
         $upcomingCount = (int) (clone $query)
