@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use InvalidArgumentException;
@@ -18,7 +19,7 @@ final readonly class ComposedQuantityProvenance
 
     private array $knownEntities;
 
-    public function __construct(array $quantities, array $facts)
+    public function __construct(array $quantities, array $facts, private array $directQuantityBindings = [])
     {
         $this->quantitiesById = array_column($quantities, null, 'id');
         $this->factsById = array_column($facts, null, 'id');
@@ -78,8 +79,25 @@ final readonly class ComposedQuantityProvenance
         $eligible = ($quantity['source'] ?? null) === 'evidenced' && ($quantity['review_blockers'] ?? []) === []
             && is_string($purpose) && is_string($intent['work_key'] ?? null)
             && (new WorkItemQuantityMapper)->acceptsExactSource($intent['work_key'], $purpose, $quantity['unit']);
+        if (($quantity['formula_key'] ?? null) === 'direct_quantity') {
+            $eligible = $this->permitsDirect($quantity, $intent['work_key'] ?? null, $entityId);
+        }
 
         return ['quantity' => $quantity, 'entity_id' => $entityId, 'operand_fact_ids' => $operands, 'eligible' => $eligible];
+    }
+
+    private function permitsDirect(array $quantity, mixed $workKey, string $entityId): bool
+    {
+        $proof = $this->directQuantityBindings[$quantity['id']] ?? null;
+        $binding = $quantity['quantity_basis']['formula_inputs']['operands'][0]['quantity_binding'] ?? null;
+
+        return is_array($proof) && is_array($binding) && is_string($workKey)
+            && ($proof['work_item_key'] ?? null) === $workKey && ($binding['work_item_key'] ?? null) === $workKey
+            && ($proof['entity_id'] ?? null) === $entityId
+            && ($proof['binding_fact_id'] ?? null) === ($binding['fact_id'] ?? null)
+            && ($proof['decision_id'] ?? null) === ($binding['decision_id'] ?? null)
+            && ($quantity['review_blockers'] ?? []) === [] && is_string($proof['quantity_hash'] ?? null)
+            && hash_equals($proof['quantity_hash'], hash('sha256', CanonicalPipelineJson::encode($quantity)));
     }
 
     /** Audit repairs use the same proof, including when the model response is replayed from storage.
@@ -125,11 +143,14 @@ final readonly class ComposedQuantityProvenance
     {
         $quantity = $binding['quantity'];
         $basis = $quantity['quantity_basis'] ?? null;
+        $direct = ($quantity['formula_key'] ?? null) === 'direct_quantity';
+        $directAllowed = $direct && $this->permitsDirect($quantity, $this->directQuantityBindings[$quantity['id']]['work_item_key'] ?? null, $binding['entity_id']);
         if (! is_array($basis) || ($basis['amount'] ?? null) !== $quantity['value']
             || ($basis['unit'] ?? null) !== $quantity['unit']
             || ($basis['formula_key'] ?? null) !== ($quantity['formula_key'] ?? null)
             || ($basis['formula_inputs']['entity_id'] ?? null) !== $binding['entity_id']
-            || ($basis['source'] ?? null) !== 'evidenced'
+            || ($direct ? ! $directAllowed || ($basis['source'] ?? null) !== ($quantity['source'] ?? null)
+                : ($basis['source'] ?? null) !== 'evidenced')
             || ! is_array($basis['formula_inputs']['operands'] ?? null)) {
             throw new InvalidArgumentException('estimate_composer_correction_canonical_basis_missing');
         }

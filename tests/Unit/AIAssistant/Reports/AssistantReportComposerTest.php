@@ -28,7 +28,8 @@ final class AssistantReportComposerTest extends TestCase
                     excerpt: 'Проект Кирпичный дом Лесной двор находится в работе. Есть риск задержки поставки кирпича.',
                     similarity: 0.91,
                     metadata: ['status' => 'active'],
-                    updatedAt: new DateTimeImmutable('2026-06-01T10:00:00+03:00')
+                    updatedAt: new DateTimeImmutable('2026-06-01T10:00:00+03:00'),
+                    content: 'PRIVATE-FULL-CHUNK-REPORT-SENTINEL'
                 ),
                 new RagSearchResult(
                     sourceType: 'contract',
@@ -70,6 +71,7 @@ final class AssistantReportComposerTest extends TestCase
         $this->assertSame('91%', $report['sources'][0]['score_label']);
         $this->assertSame(88, $report['sources'][0]['project_id']);
         $this->assertSame([], $report['limitations']);
+        self::assertStringNotContainsString('PRIVATE-FULL-CHUNK-REPORT-SENTINEL', json_encode($report, JSON_THROW_ON_ERROR));
     }
 
     public function test_verbose_pdf_query_is_normalized_into_short_management_title(): void

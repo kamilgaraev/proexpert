@@ -23,6 +23,8 @@ final readonly class EstimateComposerBatchPlanner
     /** @return list<EstimateComposerInput> */
     public function plan(EstimateComposerInput $input): array
     {
+        $cells = $input->nativeCellContext;
+        $input = $cells === [] ? $input : $input->withNativeCellContext([]);
         if ($this->maxInputBytes < 1024 || $this->candidatesPerBatch < 1 || $this->candidatesPerBatch > 64) {
             throw new InvalidArgumentException('estimate_composer_batch_configuration_invalid');
         }
@@ -35,7 +37,7 @@ final readonly class EstimateComposerBatchPlanner
             }
         }
         if (count($input->candidates) <= $this->candidatesPerBatch && $this->fits($input->withSourceClaimReferences([]))) {
-            return $this->withReferences([$input->withSourceClaimReferences([])], $input);
+            return $this->withCells($this->withReferences([$input->withSourceClaimReferences([])], $input), $cells);
         }
         $batches = [];
         $coveredFacts = [];
@@ -83,7 +85,22 @@ final readonly class EstimateComposerBatchPlanner
             $this->append($batches, $coveredFacts, $coveredQuantities, $batch);
         }
 
-        return $this->withReferences($this->withAnswerContext($batches, $input), $input);
+        return $this->withCells($this->withReferences($this->withAnswerContext($batches, $input), $input), $cells);
+    }
+
+    private function withCells(array $batches, array $rows): array
+    {
+        foreach ($rows as $row) {
+            foreach ($batches as $index => $batch) {
+                $candidate = $batch->withNativeCellContext([...$batch->nativeCellContext, $row]);
+                if ($this->fits($candidate)) {
+                    $batches[$index] = $candidate;
+                    break;
+                }
+            }
+        }
+
+        return $batches;
     }
 
     private function context(EstimateComposerInput $input, array $candidates, array $facts, array $quantities): EstimateComposerInput
@@ -162,16 +179,21 @@ final readonly class EstimateComposerBatchPlanner
             ['contract' => 'composer-context:v1', 'parent_input_fingerprint' => $parent,
                 'parent_counts' => ['facts' => count($input->facts), 'quantities' => count($input->derivedQuantities),
                     'decisions' => count($input->decisions), 'candidates' => count($input->candidates), 'missing_documents' => count($input->missingDocuments)]],
-            $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, array_column($facts, 'id'))));
+            $input->allowedWorkSections, array_values(array_intersect($input->claimAnswerFactIds, array_column($facts, 'id'))),
+            directQuantityBindings: array_intersect_key($input->directQuantityBindings, array_fill_keys(array_column($quantities, 'id'), true)));
     }
 
     private function withAnswerContext(array $batches, EstimateComposerInput $input): array
     {
-        if ($input->claimAnswerFactIds === []) {
+        $reviewIds = array_column($input->sourceClaimReferences, 'source_review_decision_id');
+        $reviewFacts = array_filter($input->facts, static fn (array $fact): bool => ($fact['value']['kind'] ?? null) === 'document_cell_review'
+            && in_array($fact['value']['source_review_decision_id'] ?? null, $reviewIds, true));
+        $anchorIds = [...$input->claimAnswerFactIds, ...array_column($reviewFacts, 'id')];
+        if ($anchorIds === []) {
             return $batches;
         }
         $answers = array_column(array_filter($input->facts,
-            static fn (array $fact): bool => in_array($fact['id'], $input->claimAnswerFactIds, true)), null, 'id');
+            static fn (array $fact): bool => in_array($fact['id'], $anchorIds, true)), null, 'id');
         foreach ($batches as $index => $batch) {
             if (array_filter($batch->facts, EstimateComposerInput::sourceClaimDocument(...)) === []) {
                 continue;
@@ -180,10 +202,18 @@ final readonly class EstimateComposerBatchPlanner
             $preferred = [];
             foreach ($input->sourceClaimReferences as $reference) {
                 if (array_intersect($reference['document_fact_ids'], $factIds) !== []) {
-                    $preferred[] = $reference['source_answer_fact_id'];
+                    if (isset($reference['source_answer_fact_id'])) {
+                        $preferred[] = $reference['source_answer_fact_id'];
+                    } else {
+                        foreach ($reviewFacts as $review) {
+                            if ($review['value']['source_review_decision_id'] === $reference['source_review_decision_id']) {
+                                $preferred[] = $review['id'];
+                            }
+                        }
+                    }
                 }
             }
-            foreach (array_unique([...$preferred, ...$input->claimAnswerFactIds]) as $id) {
+            foreach (array_unique([...$preferred, ...$anchorIds]) as $id) {
                 if (in_array($id, $factIds, true)) {
                     continue;
                 }

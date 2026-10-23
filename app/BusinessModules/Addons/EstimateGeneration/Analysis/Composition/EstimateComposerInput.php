@@ -39,6 +39,8 @@ final readonly class EstimateComposerInput
         public array $allowedWorkSections = [],
         ?array $claimAnswerFactIds = null,
         public array $sourceClaimReferences = [],
+        public array $nativeCellContext = [],
+        public array $directQuantityBindings = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -111,11 +113,26 @@ final readonly class EstimateComposerInput
                 throw new InvalidArgumentException('estimate_composer_source_claim_refs_invalid');
             }
         }
+        if (! array_is_list($nativeCellContext) || count($nativeCellContext) > self::MAX_SOURCE_CLAIMS
+            || count(array_filter($nativeCellContext, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::isWireRow(...))) !== count($nativeCellContext)
+            || count(array_unique(array_column($nativeCellContext, 'row_id'))) !== count($nativeCellContext)) {
+            throw new InvalidArgumentException('estimate_composer_cell_context_invalid');
+        }
+        $quantityIds = array_fill_keys(array_column($derivedQuantities, 'id'), true);
+        foreach ($directQuantityBindings as $id => $binding) {
+            if (! isset($quantityIds[$id]) || ! is_array($binding) || count($binding) !== 5
+                || array_diff(array_keys($binding), ['work_item_key', 'entity_id', 'binding_fact_id', 'decision_id', 'quantity_hash']) !== []
+                || ! self::identifier($binding['work_item_key'] ?? null) || ! self::identifier($binding['entity_id'] ?? null)
+                || ! self::identifier($binding['binding_fact_id'] ?? null) || ! self::identifier($binding['decision_id'] ?? null)
+                || ! is_string($binding['quantity_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/D', $binding['quantity_hash']) !== 1) {
+                throw new InvalidArgumentException('estimate_composer_quantity_bindings_invalid');
+            }
+        }
     }
 
     public function acceptsSourceClaims(): bool
     {
-        return in_array($this->contractVersion, [RunEstimateComposer::ANSWER_PROMPT_CONTRACT,
+        return in_array($this->baseContractVersion(), [RunEstimateComposer::ANSWER_PROMPT_CONTRACT,
             RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
     }
 
@@ -124,7 +141,24 @@ final readonly class EstimateComposerInput
         return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken,
             $this->facts, $this->derivedQuantities, $this->decisions, $this->candidates, $this->missingDocuments,
             $this->contractVersion, $this->wireScope, $this->batchKey, $this->contextManifest, $this->allowedWorkSections,
-            $this->claimAnswerFactIds, $references);
+            $this->claimAnswerFactIds, $references, $this->nativeCellContext, $this->directQuantityBindings);
+    }
+
+    public function baseContractVersion(): string
+    {
+        $base = array_search($this->contractVersion, RunEstimateComposer::CELL_PROMPT_CONTRACTS, true);
+
+        return is_string($base) ? $base : $this->contractVersion;
+    }
+
+    public function withNativeCellContext(array $rows): self
+    {
+        $version = $rows === [] ? $this->baseContractVersion() : RunEstimateComposer::CELL_PROMPT_CONTRACTS[$this->baseContractVersion()];
+
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken,
+            $this->facts, $this->derivedQuantities, $this->decisions, $this->candidates, $this->missingDocuments,
+            $version, $this->wireScope, $this->batchKey, $this->contextManifest, $this->allowedWorkSections,
+            $this->claimAnswerFactIds, $this->sourceClaimReferences, $rows, $this->directQuantityBindings);
     }
 
     public static function sourceClaimReference(mixed $reference, array $facts, array $answerIds): bool
@@ -132,8 +166,24 @@ final readonly class EstimateComposerInput
         if (! is_array($reference) || count($reference) !== 10 || ! is_int($reference['learning_example_id'] ?? null)
             || $reference['learning_example_id'] < 1 || ($reference['interpretation_status'] ?? null) !== 'proposed'
             || ($reference['source_correspondence'] ?? null) !== 'passed'
-            || ($reference['engineering_applicability'] ?? null) !== 'unresolved'
-            || ! in_array($reference['source_answer_fact_id'] ?? null, $answerIds, true)) {
+            || ($reference['engineering_applicability'] ?? null) !== 'unresolved') {
+            return false;
+        }
+        if (array_key_exists('source_review_decision_id', $reference)) {
+            $candidate = array_intersect_key($reference, array_flip(['source_review_decision_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids']));
+            if (! \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::isCellReviewCandidate($candidate)) {
+                return false;
+            }
+            $document = array_column($facts, null, 'id')[$candidate['document_fact_ids'][0]] ?? null;
+            $review = array_values(array_filter($facts, static fn (array $fact): bool => ($fact['type'] ?? null) === 'evaluation_answer'
+                && ($fact['origin'] ?? null) === 'user_input' && ($fact['status'] ?? null) === 'confirmed'
+                && ($fact['value']['kind'] ?? null) === 'document_cell_review' && ($fact['value']['decision'] ?? null) === 'accept'
+                && ($fact['value']['source_review_decision_id'] ?? null) === $candidate['source_review_decision_id']));
+
+            return count($review) === 1 && self::sourceClaimDocument($document) && $document['entity_id'] === $candidate['entity_id']
+                && ($document['source_review_decision_id'] ?? null) === $candidate['source_review_decision_id'];
+        }
+        if (! in_array($reference['source_answer_fact_id'] ?? null, $answerIds, true)) {
             return false;
         }
 
@@ -218,6 +268,9 @@ final readonly class EstimateComposerInput
             $payload['source_claim_refs'] = array_map(static fn (array $reference): array => array_intersect_key($reference, array_flip([
                 'learning_example_id', 'entity_id', 'fact_type', 'value', 'unit', 'document_fact_ids',
             ])), $this->sourceClaimReferences);
+        }
+        if ($this->nativeCellContext !== []) {
+            $payload['native_cell_context'] = $this->nativeCellContext;
         }
 
         return $payload;

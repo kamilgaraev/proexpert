@@ -371,7 +371,7 @@ class SiteRequestCalendarService
      */
     private function getEquipmentEventTitle(SiteRequest $request): string
     {
-        $type = $request->equipment_type ?? 'Техника';
+        $type = $request->equipment_type?->label() ?? 'Техника';
         return "Аренда: {$type}";
     }
 
@@ -399,7 +399,7 @@ class SiteRequestCalendarService
      */
     private function getStartDate(SiteRequest $request): ?Carbon
     {
-        return $request->getCalendarStartDate();
+        return $request->getCalendarStartDate()?->copy()->startOfDay();
     }
 
     /**
@@ -407,7 +407,7 @@ class SiteRequestCalendarService
      */
     private function getEndDate(SiteRequest $request): ?Carbon
     {
-        return $request->getCalendarEndDate();
+        return $request->getCalendarEndDate()?->copy()->startOfDay();
     }
 
     /**
@@ -415,6 +415,10 @@ class SiteRequestCalendarService
      */
     private function getStartTime(SiteRequest $request): ?string
     {
+        if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $request->equipment_start_at !== null) {
+            return $request->getCalendarStartDate()?->format('H:i:s');
+        }
+
         if ($request->delivery_time_from) {
             return $request->delivery_time_from;
         }
@@ -426,6 +430,10 @@ class SiteRequestCalendarService
      */
     private function getEndTime(SiteRequest $request): ?string
     {
+        if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $request->equipment_start_at !== null) {
+            return $request->getCalendarEndDate()?->format('H:i:s');
+        }
+
         if ($request->delivery_time_to) {
             return $request->delivery_time_to;
         }
@@ -437,6 +445,10 @@ class SiteRequestCalendarService
      */
     private function isAllDay(SiteRequest $request): bool
     {
+        if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $request->equipment_start_at !== null) {
+            return false;
+        }
+
         return $request->delivery_time_from === null;
     }
 
@@ -634,20 +646,23 @@ class SiteRequestCalendarService
     {
         $uid = "site-request-{$event->id}@prohelper.ru";
         $dtstart = $event->start_date->format('Ymd');
-        $dtend = ($event->end_date ?? $event->start_date->addDay())->format('Ymd');
+        $lastDate = ($event->end_date ?? $event->start_date)->copy();
+        $dtend = $lastDate->copy()->addDay()->format('Ymd');
+        $valueType = ';VALUE=DATE';
 
         if (!$event->all_day && $event->start_time) {
-            $dtstart = $event->start_date->format('Ymd') . 'T' . str_replace(':', '', $event->start_time) . '00';
-            if ($event->end_time) {
-                $dtend = ($event->end_date ?? $event->start_date)->format('Ymd') . 'T' . str_replace(':', '', $event->end_time) . '00';
-            }
+            $valueType = '';
+            $dtstart = $event->getStartDateTimeAttribute()->format('Ymd\THis');
+            $dtend = $event->end_time
+                ? $event->getEndDateTimeAttribute()->format('Ymd\THis')
+                : $lastDate->addDay()->startOfDay()->format('Ymd\THis');
         }
 
         $ical = "BEGIN:VEVENT\r\n";
         $ical .= "UID:{$uid}\r\n";
-        $ical .= "DTSTAMP:" . now()->format('Ymd\THis\Z') . "\r\n";
-        $ical .= "DTSTART:{$dtstart}\r\n";
-        $ical .= "DTEND:{$dtend}\r\n";
+        $ical .= "DTSTAMP:" . now()->utc()->format('Ymd\THis\Z') . "\r\n";
+        $ical .= "DTSTART{$valueType}:{$dtstart}\r\n";
+        $ical .= "DTEND{$valueType}:{$dtend}\r\n";
         $ical .= "SUMMARY:" . $this->escapeICal($event->title) . "\r\n";
 
         if ($event->description) {

@@ -26,6 +26,13 @@ final readonly class RunEstimateComposer
 
     public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v2';
 
+    public const CELL_PROMPT_CONTRACTS = [
+        self::PROMPT_CONTRACT => 'estimate-composer:cells:v1',
+        self::LEGACY_PROMPT_CONTRACT => 'estimate-composer:legacy-cells:v1',
+        self::ANSWER_PROMPT_CONTRACT => 'estimate-composer:answer-cells:v1',
+        self::LEGACY_ANSWER_PROMPT_CONTRACT => 'estimate-composer:legacy-answer-cells:v1',
+    ];
+
     public function __construct(
         private AiRoleRunRepository $runs,
         private EstimateComposerModel $model,
@@ -114,8 +121,19 @@ final readonly class RunEstimateComposer
         $owner = AiOperationContext::deterministicId('estimate-composer-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($runInput, $owner);
         if ($claim->disposition === 'replay' && $claim->result !== null) {
+            if ($input->nativeCellContext !== []) {
+                $cells = $claim->result->payload['cell_mapping_context'] ?? null;
+                $storedProposals = $claim->result->payload['cell_mapping_proposals'] ?? null;
+                if (($claim->result->payload['schema_version'] ?? null) !== 3
+                    || \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($cells)
+                        !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($input->nativeCellContext)
+                    || \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($this->cellProposals($storedProposals, $input))
+                        !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($storedProposals)) {
+                    throw new RuntimeException('estimate_composer_replay_invalid');
+                }
+            }
             if ($input->acceptsSourceClaims()) {
-                if (($claim->result->payload['schema_version'] ?? null) !== 2
+                if (($claim->result->payload['schema_version'] ?? null) !== ($input->nativeCellContext === [] ? 2 : 3)
                     || ! is_array($claim->result->payload['claim_candidates'] ?? null)) {
                     throw new RuntimeException('estimate_composer_replay_invalid');
                 }
@@ -135,7 +153,7 @@ final readonly class RunEstimateComposer
                 throw new RuntimeException('estimate_composer_replay_invalid');
             }
             $replayed = [];
-            $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts);
+            $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts, $input->directQuantityBindings);
             $allowedFactIds = array_fill_keys(array_column($input->facts, 'id'), true);
             foreach ($stored as $index => $intent) {
                 if (! is_array($intent)) {
@@ -170,20 +188,22 @@ final readonly class RunEstimateComposer
             if ($physicalAttemptId === null) {
                 throw new UsageInvariantViolation('Estimate composer returned without a physical attempt identity.');
             }
-            if ($input->acceptsSourceClaims()
-                ? count($raw) !== 2 || ! array_key_exists('work_intents', $raw) || ! array_key_exists('claim_candidates', $raw)
-                : array_keys($raw) !== ['work_intents']) {
+            $expected = ['work_intents', ...($input->acceptsSourceClaims() ? ['claim_candidates'] : []),
+                ...($input->nativeCellContext !== [] ? ['cell_mapping_proposals'] : [])];
+            if (count($raw) !== count($expected) || array_diff($expected, array_keys($raw)) !== []) {
                 throw new InvalidArgumentException('estimate_composer_result_shape_invalid');
             }
             $projection = $this->project($raw['work_intents'], $input);
             $claims = $input->acceptsSourceClaims() ? $this->sourceClaims($raw['claim_candidates'], $input) : [];
+            $cells = $input->nativeCellContext === [] ? [] : $this->cellProposals($raw['cell_mapping_proposals'], $input);
             $this->runs->complete($claim->runId, $claim->ownerUuid, new AiRoleRunResult([
-                'schema_version' => $input->acceptsSourceClaims() ? 2 : 1,
+                'schema_version' => $input->nativeCellContext !== [] ? 3 : ($input->acceptsSourceClaims() ? 2 : 1),
                 'role' => AiAnalysisRole::EstimateComposer->value,
                 'work_intents' => $projection['intents'],
                 'quarantined_intents' => $projection['quarantined'],
                 'result_state' => $projection['quarantined'] === [] ? 'ready' : 'partial',
                 ...($input->acceptsSourceClaims() ? ['claim_candidates' => $claims] : []),
+                ...($input->nativeCellContext !== [] ? ['cell_mapping_proposals' => $cells, 'cell_mapping_context' => $input->nativeCellContext] : []),
             ], $physicalAttemptId));
 
             return $projection;
@@ -197,6 +217,29 @@ final readonly class RunEstimateComposer
 
             throw $exception;
         }
+    }
+
+    private function cellProposals(mixed $raw, EstimateComposerInput $input): array
+    {
+        if (! is_array($raw) || ! array_is_list($raw) || count($raw) > EstimateComposerInput::MAX_SOURCE_CLAIMS) {
+            throw new InvalidArgumentException('estimate_composer_cell_proposals_invalid');
+        }
+        $proposals = $seen = [];
+        foreach ($raw as $proposal) {
+            if (\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::proposal($proposal, $input->nativeCellContext) === null) {
+                continue;
+            }
+            $row = $proposal['row_id'];
+            if (isset($seen[$row])) {
+                unset($proposals[$row]);
+                continue;
+            }
+            $seen[$row] = true;
+            $proposals[$row] = ['row_id' => $row, 'identity_cell_id' => $proposal['identity_cell_id'],
+                'value_cell_id' => $proposal['value_cell_id'], 'fact_type' => 'equipment_specification'];
+        }
+
+        return array_values($proposals);
     }
 
     private function sourceClaims(mixed $raw, EstimateComposerInput $input): array
@@ -261,7 +304,7 @@ final readonly class RunEstimateComposer
         $supplementaryWorkKeys = [];
         $seenCandidateIds = [];
         $quarantined = [];
-        $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts);
+        $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts, $input->directQuantityBindings);
         foreach ($payload as $index => $record) {
             try {
                 if (! is_array($record) || array_is_list($record)) {

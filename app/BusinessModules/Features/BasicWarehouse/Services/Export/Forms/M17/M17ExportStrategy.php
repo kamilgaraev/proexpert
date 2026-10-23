@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
 use App\Models\Material;
+use Brick\Math\BigDecimal;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -33,7 +34,7 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setShowGridlines(false);
 
         $this->setHeader($sheet, $material, $warehouse);
-        $lastRow = $this->setTable($sheet, $movements);
+        $lastRow = $this->setTable($sheet, $movements, $warehouse);
         $this->applyStyles($sheet, $lastRow);
 
         $materialCode = $this->filenameFragment($material->code ?? $material->name, 'material');
@@ -87,7 +88,6 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
 
         $sheet->setCellValue('A9', 'Структурное подразделение');
         $sheet->mergeCells('C9:O9');
-        $sheet->setCellValue('C9', 'основное');
         $this->setUnderline($sheet, 'C9:O9');
 
         $this->buildMaterialHeader($sheet, $material, $warehouse, $unit?->short_name ?? $unit?->name ?? '');
@@ -133,7 +133,6 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('S11', 'Поставщик');
 
         $sheet->mergeCells('A14:B14');
-        $sheet->setCellValue('A14', 'основное');
         $sheet->mergeCells('E14:F14');
         $sheet->setCellValue('E14', $warehouse?->name ?? '');
         $sheet->setCellValue('M14', $material->code ?? '');
@@ -151,9 +150,8 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getStyle('A11:S14')->getAlignment()->setWrapText(true);
     }
 
-    private function setTable(Worksheet $sheet, Collection $movements): int
+    private function setTable(Worksheet $sheet, Collection $movements, ?OrganizationWarehouse $warehouse): int
     {
-        $startRow = 22;
         $sheet->mergeCells('A22:A24');
         $sheet->setCellValue('A22', 'Дата записи');
         $sheet->mergeCells('B22:C22');
@@ -192,25 +190,27 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('M26', 'Нач. ост:');
 
         $row = 28;
-        $balance = 0.0;
-        $incomeTotal = 0.0;
-        $expenseTotal = 0.0;
+        $balance = BigDecimal::zero();
+        $incomeTotal = BigDecimal::zero();
+        $expenseTotal = BigDecimal::zero();
         $number = 1;
 
         foreach ($movements as $movement) {
-            $isIncome = in_array($movement->movement_type, [
-                WarehouseMovement::TYPE_RECEIPT,
-                WarehouseMovement::TYPE_TRANSFER_IN,
-                WarehouseMovement::TYPE_RETURN,
-            ], true);
-            $quantity = (float) $movement->quantity;
+            if ($warehouse !== null && (int) $movement->warehouse_id !== (int) $warehouse->id) {
+                continue;
+            }
+            $delta = $this->onHandDelta($movement);
+            if ($delta === null || $delta->isZero()) {
+                continue;
+            }
+            $isIncome = $delta->isPositive();
+            $quantity = $delta->abs();
+            $balance = $balance->plus($delta);
 
             if ($isIncome) {
-                $balance += $quantity;
-                $incomeTotal += $quantity;
+                $incomeTotal = $incomeTotal->plus($quantity);
             } else {
-                $balance -= $quantity;
-                $expenseTotal += $quantity;
+                $expenseTotal = $expenseTotal->plus($quantity);
             }
 
             $sheet->setCellValue("A{$row}", $movement->movement_date?->format('d.m.Y'));
@@ -218,9 +218,9 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
             $sheet->setCellValue("C{$row}", $number);
             $sheet->mergeCells("D{$row}:L{$row}");
             $sheet->setCellValue("D{$row}", $this->movementSourceText($movement, $isIncome));
-            $sheet->setCellValue("N{$row}", $isIncome ? $quantity : null);
-            $sheet->setCellValue("O{$row}", $isIncome ? null : $quantity);
-            $sheet->setCellValue("P{$row}", $balance);
+            $sheet->setCellValue("N{$row}", $isIncome ? (string) $quantity : null);
+            $sheet->setCellValue("O{$row}", $isIncome ? null : (string) $quantity);
+            $sheet->setCellValue("P{$row}", (string) $balance);
 
             $row++;
             $number++;
@@ -228,9 +228,9 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
 
         $sheet->mergeCells("A{$row}:M{$row}");
         $sheet->setCellValue("A{$row}", 'Всего:');
-        $sheet->setCellValue("N{$row}", $incomeTotal);
-        $sheet->setCellValue("O{$row}", $expenseTotal);
-        $sheet->setCellValue("P{$row}", $balance);
+        $sheet->setCellValue("N{$row}", (string) $incomeTotal);
+        $sheet->setCellValue("O{$row}", (string) $expenseTotal);
+        $sheet->setCellValue("P{$row}", (string) $balance);
         $this->setBold($sheet, "M{$row}:P{$row}");
 
         $this->applyTableStyle($sheet, "A22:S{$row}");
@@ -239,6 +239,34 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getStyle("N28:P{$row}")->getNumberFormat()->setFormatCode('#,##0.000');
 
         return $row;
+    }
+
+    private function onHandDelta(WarehouseMovement $movement): ?BigDecimal
+    {
+        if ($movement->operation_category === WarehouseMovement::CATEGORY_PLACEMENT
+            || in_array($movement->movement_type, ['reservation', 'unreservation'], true)) {
+            return null;
+        }
+
+        if ($movement->movement_type === WarehouseMovement::TYPE_ADJUSTMENT) {
+            $delta = ($movement->metadata ?? [])['on_hand_delta'] ?? null;
+            if (! is_string($delta) && ! is_int($delta) && ! is_float($delta)) {
+                throw new \UnexpectedValueException('Material card adjustment requires an explicit on-hand delta.');
+            }
+
+            return BigDecimal::of((string) $delta);
+        }
+
+        $quantity = BigDecimal::of((string) $movement->quantity);
+        if (! $quantity->isPositive()) {
+            throw new \UnexpectedValueException('Material card movement quantity must be positive.');
+        }
+
+        return match ($movement->movement_type) {
+            WarehouseMovement::TYPE_RECEIPT, WarehouseMovement::TYPE_TRANSFER_IN, WarehouseMovement::TYPE_RETURN => $quantity,
+            WarehouseMovement::TYPE_WRITE_OFF, WarehouseMovement::TYPE_TRANSFER_OUT, WarehouseMovement::TYPE_RESERVED_ISSUE => $quantity->negated(),
+            default => throw new \UnexpectedValueException('Unsupported movement type in material card.'),
+        };
     }
 
     private function movementSourceText(WarehouseMovement $movement, bool $isIncome): string

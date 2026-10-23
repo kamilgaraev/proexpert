@@ -559,7 +559,7 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertSame('Южный, корпус 2:', AssistantProductionSchedulePeriod::withoutSuffix('Южный, корпус 2:'));
     }
 
-    public function test_unique_named_project_overrides_background_scope_and_tool_arguments(): void
+    public function test_unique_named_project_overrides_background_scope_and_supplies_missing_tool_scope(): void
     {
         $plan = $this->plan('В проекте «Учебный ПТО» ремонт уже сделан? По выполненным работам всё выглядит готовым. Сверь с графиком: что осталось незавершённым, какой плановый срок и кто отвечает?');
         self::assertNull(AssistantRequiredProjectRead::fromPlan($plan));
@@ -572,7 +572,7 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertSame(104, $resolved['request']['context']['entity_refs'][0]['id']);
         self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
         self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($resolved));
-        self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::bindArguments($resolved, 'get_project_production_schedule_summary', ['project_id' => 104]));
+        self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::bindArguments($resolved, 'get_project_production_schedule_summary', []));
         self::assertTrue(AssistantRequestProjectScope::fromPlan($resolved)->allowsReferences([['entity_type' => 'project', 'entity_id' => 102]]));
         self::assertFalse(AssistantRequestProjectScope::fromPlan($resolved)->allowsReferences([['entity_type' => 'project', 'entity_id' => 104]]));
     }

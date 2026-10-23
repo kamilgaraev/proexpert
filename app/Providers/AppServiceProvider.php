@@ -267,7 +267,7 @@ class AppServiceProvider extends ServiceProvider
                 $connectionState->watch($connection);
             }
             DB::listen(static function (QueryExecuted $query) use ($slowQueryThreshold, $connectionState): void {
-                $state = $connectionState->finish($query);
+                $state = $connectionState->finish($query, $query->time >= $slowQueryThreshold);
                 if ($query->time < $slowQueryThreshold) {
                     return;
                 }

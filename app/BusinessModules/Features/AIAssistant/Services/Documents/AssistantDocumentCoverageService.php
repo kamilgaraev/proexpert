@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded;
 use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\QueryException;
@@ -58,6 +59,20 @@ final class AssistantDocumentCoverageService
             && $documents['empty'] === 0
             && ($documents['needs_access_review'] ?? 0) === 0
             && $scan['expected_file_count'] === $scan['scanned_file_count'];
+    }
+
+    public function coverageForCorpus(AssistantDocumentCorpus $corpus, User $actor, int $organizationId, ?callable $checkpoint = null): array
+    {
+        $corpus->assertActor($actor, $organizationId);
+        return $this->policy->withCurrentChecks($actor, $organizationId, function () use ($corpus, $actor, $organizationId, $checkpoint): array {
+            $documents = $this->policy->accessibleDocuments($actor, $organizationId, AIAssistantDocument::query()->whereKey($corpus->documentId)
+                ->where('ai_assistant_documents.project_id', $corpus->projectId));
+            $present = (clone $documents)->exists();
+            $retrieval = $this->retrievalCoverage($documents->toBase(), $checkpoint, false);
+            return ['coverage_scope' => 'approved_fragment_universe', 'document_ids' => [$corpus->documentId],
+                'approved_fragments' => count($corpus->chunkIds()), 'complete' => $present && $retrieval['complete'] && $retrieval['fresh'],
+                'retrieval_coverage' => $retrieval];
+        }, true, $checkpoint);
     }
 
     public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null, array $scope = [], bool $countersOnly = false): array

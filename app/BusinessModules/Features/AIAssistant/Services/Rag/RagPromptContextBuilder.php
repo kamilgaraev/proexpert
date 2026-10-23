@@ -11,19 +11,67 @@ use Throwable;
 
 final class RagPromptContextBuilder
 {
+    private const MAX_SOURCES = 20;
+    private const MAX_SOURCE_CHARACTERS = 2400;
+    private const MAX_CONTEXT_CHARACTERS = 12000;
+
     /**
      * @param  array<int, RagSearchResult>  $results
      * @return array{prompt: string, metadata: array<string, mixed>}
      */
     public function build(string $query, array $results): array
     {
-        $requested = $this->configInt('ai-assistant.rag.max_chunks', 8);
+        $requested = min(self::MAX_SOURCES, $this->configInt('ai-assistant.rag.max_chunks', 8));
+        $expandedContextEnabled = $this->expandedContextEnabled();
+        $candidateCount = count($results);
         $results = array_slice($results, 0, $requested);
-        $sources = $this->sources($results);
+        $sources = [];
+        $promptSources = [];
+        $remaining = self::MAX_CONTEXT_CHARACTERS;
+        $truncatedSources = 0;
+        foreach ($results as $result) {
+            if ($remaining === 0) {
+                break;
+            }
+            $source = $this->source($result);
+            if (! $expandedContextEnabled) {
+                unset($source['chunk_id'], $source['chunk_index']);
+            }
+            $providerContent = $expandedContextEnabled ? $result->providerContent() : null;
+            $content = $providerContent ?? $result->excerpt;
+            $totalLength = mb_strlen($content);
+            $length = min($totalLength, self::MAX_SOURCE_CHARACTERS, $remaining);
+            if ($length === 0) {
+                continue;
+            }
+            $text = mb_substr($content, 0, $length);
+            if ($providerContent !== null) {
+                $source['content_range'] = [
+                    'scope' => 'rag_chunk',
+                    'offset' => 0,
+                    'length' => $length,
+                    'total_length' => $totalLength,
+                    'truncated' => $length < $totalLength,
+                ];
+            } else {
+                $source['excerpt'] = $text;
+            }
+            $sources[] = $source;
+            $promptSource = $source;
+            if ($providerContent !== null) {
+                unset($promptSource['excerpt']);
+                $promptSource['content'] = $text;
+            }
+            $promptSources[] = $promptSource;
+            if ($length < $totalLength) {
+                $truncatedSources++;
+            }
+            $remaining -= $length;
+        }
         $used = $sources !== [];
 
         return [
-            'prompt' => $used ? $this->prompt($sources) : '',
+            'prompt' => $used ? $this->prompt($promptSources) : '',
             'metadata' => [
                 'enabled' => true,
                 'used' => $used,
@@ -32,18 +80,23 @@ final class RagPromptContextBuilder
                 'limits' => [
                     'requested' => $requested,
                     'returned' => $used ? count($sources) : 0,
+                    ...($expandedContextEnabled ? [
+                        'content_characters' => self::MAX_CONTEXT_CHARACTERS - $remaining,
+                        'max_content_characters' => self::MAX_CONTEXT_CHARACTERS,
+                        'truncated_sources' => $truncatedSources,
+                        'omitted_sources' => $candidateCount - count($sources),
+                    ] : []),
                 ],
             ],
         ];
     }
 
     /**
-     * @param  array<int, RagSearchResult>  $results
-     * @return array<int, array<string, mixed>>
+     * @return array<string, mixed>
      */
-    private function sources(array $results): array
+    private function source(RagSearchResult $result): array
     {
-        return array_values(array_map(static fn (RagSearchResult $result): array => [
+        return [
             'source_type' => $result->sourceType,
             'entity_type' => $result->entityType,
             'entity_id' => $result->entityId,
@@ -54,6 +107,8 @@ final class RagPromptContextBuilder
             'updated_at' => $result->updatedAt?->format(DateTimeInterface::ATOM),
             'fetched_at' => now()->toISOString(),
             'source_id' => $result->metadata['source_id'] ?? null,
+            'chunk_id' => $result->metadata['chunk_id'] ?? null,
+            'chunk_index' => $result->metadata['chunk_index'] ?? null,
             'source_version' => $result->metadata['source_version'] ?? null,
             'checksum' => $result->metadata['checksum'] ?? null,
             'assistant_public_schema_revision' => $result->metadata['assistant_public_schema_revision'] ?? null,
@@ -62,7 +117,7 @@ final class RagPromptContextBuilder
             'content_scope' => 'unstructured',
             'navigation_target' => self::navigationTarget($result),
             'navigation' => self::navigationTarget($result) !== null ? ['url' => self::navigationTarget($result)['route']] : null,
-        ], $results));
+        ];
     }
 
     public static function documentEvidence(array $metadata): array
@@ -197,6 +252,15 @@ final class RagPromptContextBuilder
         $value = $result->metadata[$key] ?? null;
 
         return is_numeric($value) ? (int) $value : null;
+    }
+
+    private function expandedContextEnabled(): bool
+    {
+        try {
+            return config('ai-assistant.rag.expanded_context_enabled', false) === true;
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     private function configInt(string $key, int $default): int

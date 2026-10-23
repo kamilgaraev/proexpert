@@ -4,17 +4,190 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Authorization;
 
+use App\Models\CommercialBankInvoice;
+use App\Models\CommercialBankPaymentProof;
+use App\Models\CommercialOrder;
+use App\Models\CommercialPayment;
 use App\Models\Module;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
+use App\Services\Billing\Bank\BankPaymentProofAccess;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use RuntimeException;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
 final class OrganizationEntitlementQueryTest extends TestCase
 {
+    public function test_matching_foundation_skips_irrelevant_bank_reads_and_keeps_module_status_fresh(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $service = app(OrganizationEntitlementService::class);
+        self::assertSame(BankPaymentProofAccess::class, app(BankPaymentProofAccess::class)::class);
+        self::assertSame(PackageCatalogService::class, app(PackageCatalogService::class)::class);
+        self::assertContains('payments', app(PackageCatalogService::class)->foundationModules());
+        self::assertTrue(Schema::hasTable('commercial_bank_payment_proofs'));
+        $phase = null;
+        $reads = [];
+        DB::listen(static function ($query) use (&$phase, &$reads): void {
+            if ($phase === null) {
+                return;
+            }
+            $reads[$phase] ??= ['bank' => 0, 'modules' => 0];
+            if (str_contains($query->sql, 'commercial_bank_payment_proofs') || in_array('commercial_bank_payment_proofs', $query->bindings, true)) {
+                $reads[$phase]['bank']++;
+            }
+            if (preg_match('/^select\b.*from "modules"/is', $query->sql)) {
+                $reads[$phase]['modules']++;
+            }
+        });
+        try {
+            $phase = 'full';
+            self::assertContains('payments', $service->getEffectiveModuleSlugs($fixture->organization->id));
+            $phase = 'matching';
+            self::assertSame(['payments'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments'));
+            $phase = null;
+            Module::query()->where('slug', 'payments')->update(['is_active' => false]);
+            $phase = 'inactive';
+            self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments'));
+            $phase = null;
+            Module::query()->where('slug', 'payments')->update(['is_active' => true]);
+            $phase = 'restored';
+            self::assertSame(['payments'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments'));
+            $phase = 'full_models';
+            self::assertContains('payments', $service->getEffectiveModules($fixture->organization->id)->pluck('slug')->all());
+        } finally {
+            $phase = null;
+        }
+        self::assertSame(['bank' => 2, 'modules' => 1], $reads['full']);
+        self::assertSame(['bank' => 0, 'modules' => 1], $reads['matching']);
+        self::assertSame(['bank' => 0, 'modules' => 1], $reads['inactive']);
+        self::assertSame(['bank' => 0, 'modules' => 1], $reads['restored']);
+        self::assertSame(['bank' => 2, 'modules' => 1], $reads['full_models']);
+    }
+
+    public function test_matching_initial_candidate_still_requires_a_real_module_row(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $path = tempnam(sys_get_temp_dir(), 'most-foundation-catalog-');
+        self::assertIsString($path);
+        try {
+            file_put_contents($path, "<?php\ndeclare(strict_types=1);\nreturn ['foundation_modules' => ['missing-foundation-fixture']];\n");
+            $catalog = new PackageCatalogService(settingsPath: $path);
+            $service = new OrganizationEntitlementService($catalog);
+            self::assertSame(['missing-foundation-fixture'], $catalog->foundationModules());
+            self::assertFalse(Module::query()->where('slug', 'missing-foundation-fixture')->exists());
+            self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'missing-foundation-fixture'));
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function test_matching_and_full_reads_remain_safe_without_the_bank_proof_table(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create([]);
+        $service = app(OrganizationEntitlementService::class);
+        Schema::rename('commercial_bank_payment_proofs', 'commercial_bank_payment_proofs_foundation_probe');
+        try {
+            self::assertSame(['payments'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments'));
+            self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'ai-assistant'));
+            self::assertContains('payments', $service->getEffectiveModuleSlugs($fixture->organization->id));
+            self::assertSame(1, DB::selectOne('SELECT 1 AS value')->value);
+        } finally {
+            Schema::rename('commercial_bank_payment_proofs_foundation_probe', 'commercial_bank_payment_proofs');
+        }
+    }
+
+    public function test_matching_initial_candidates_preserve_custom_bank_calls_and_exceptions(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $bank = new class extends BankPaymentProofAccess {
+            public int $reads = 0;
+            public ?RuntimeException $failure = null;
+
+            public function packageSlugs(int $organizationId): array
+            {
+                $this->reads++;
+                if ($this->failure !== null) {
+                    throw $this->failure;
+                }
+
+                return [];
+            }
+        };
+        app()->instance(BankPaymentProofAccess::class, $bank);
+        $service = app(OrganizationEntitlementService::class);
+        self::assertSame(['payments'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments'));
+        self::assertSame(1, $bank->reads);
+        $bank->failure = new RuntimeException('custom_bank_failure');
+        try {
+            $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments');
+            self::fail('The original custom bank exception must propagate');
+        } catch (RuntimeException $exception) {
+            self::assertSame($bank->failure, $exception);
+        }
+        self::assertSame(2, $bank->reads);
+    }
+
+    public function test_matching_initial_candidates_preserve_custom_catalog_bank_tiers_and_exceptions(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create([]);
+        $this->createPendingBankProof($fixture, ['fixture-custom-bank-tier']);
+        self::assertSame(BankPaymentProofAccess::class, app(BankPaymentProofAccess::class)::class);
+        $catalog = new class extends PackageCatalogService {
+            public int $bankTierReads = 0;
+            public ?RuntimeException $failure = null;
+
+            public function tierModules(string $packageSlug, string $tier, bool $includeFoundation = false): array
+            {
+                if ($packageSlug === 'fixture-custom-bank-tier') {
+                    $this->bankTierReads++;
+                    if ($this->failure !== null) {
+                        throw $this->failure;
+                    }
+
+                    return ['payments'];
+                }
+
+                return parent::tierModules($packageSlug, $tier, $includeFoundation);
+            }
+        };
+        $service = new OrganizationEntitlementService($catalog);
+        self::assertContains('payments', $catalog->foundationModules());
+        self::assertSame(['payments'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments'));
+        self::assertSame(1, $catalog->bankTierReads);
+        $catalog->failure = new RuntimeException('custom_catalog_failure');
+        try {
+            $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments');
+            self::fail('The original custom catalog exception must propagate');
+        } catch (RuntimeException $exception) {
+            self::assertSame($catalog->failure, $exception);
+        }
+        self::assertSame(2, $catalog->bankTierReads);
+    }
+
+    public function test_paid_matching_reads_keep_real_bank_expiry_status_and_organization_guards(): void
+    {
+        $this->freezeTime();
+        $fixture = AssistantRealAuthorizationFixture::create([]);
+        $service = app(OrganizationEntitlementService::class);
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'ai-assistant'));
+        $proof = $this->createPendingBankProof($fixture, ['working-entry']);
+        self::assertSame(['ai-assistant'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'ai-assistant'));
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->foreignOrganization->id, 'ai-assistant'));
+        $proof->update(['status' => 'rejected']);
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'ai-assistant'));
+        $proof->update(['status' => 'pending']);
+        self::assertSame(['ai-assistant'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'ai-assistant'));
+        $this->travelTo($proof->temporary_expires_at);
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'ai-assistant'));
+        self::assertSame(['payments'], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'payments'));
+    }
+
     public function test_matching_module_queries_do_not_build_unrelated_package_predicates(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
@@ -207,6 +380,37 @@ final class OrganizationEntitlementQueryTest extends TestCase
             self::assertSame($expected ? [$paid[0]] : [], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]), $label);
             self::assertSame($expected, isset($service->getPackageModuleSources($fixture->organization->id)[$paid[0]]), $label);
         }
+    }
+
+    private function createPendingBankProof(AssistantRealAuthorizationFixture $fixture, array $packages): CommercialBankPaymentProof
+    {
+        $organizationId = $fixture->organization->id;
+        $account = OrganizationCommercialAccount::query()->where('organization_id', $organizationId)->sole();
+        $order = CommercialOrder::query()->create([
+            'public_id' => (string) Str::uuid(), 'organization_id' => $organizationId, 'commercial_account_id' => $account->id,
+            'user_id' => $fixture->owner->id, 'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 4,
+            'billing_period' => '30_days', 'renew_subscription' => true, 'selected_package_slugs' => $packages,
+            'current_package_slugs' => [], 'selected_resource_addons' => [], 'amount_minor' => 10000, 'amount' => '100.00',
+            'currency' => 'RUB', 'period_start_at' => now(), 'period_end_at' => now()->addMonth(),
+            'client_idempotency_key' => (string) Str::uuid(),
+        ]);
+        $payment = CommercialPayment::query()->create([
+            'commercial_order_id' => $order->id, 'provider' => 'tochka', 'provider_status' => 'created', 'amount_minor' => 10000,
+            'currency' => 'RUB', 'provider_idempotency_key' => (string) Str::uuid(),
+        ]);
+        $invoice = CommercialBankInvoice::query()->create([
+            'public_id' => (string) Str::uuid(), 'organization_id' => $organizationId, 'commercial_order_id' => $order->id,
+            'commercial_payment_id' => $payment->id, 'number' => 'MOST-'.str_pad((string) $order->id, 10, '0', STR_PAD_LEFT),
+            'amount_minor' => 10000, 'snapshot' => [], 'expires_at' => now()->addWeek(),
+        ]);
+
+        return CommercialBankPaymentProof::query()->create([
+            'public_id' => (string) Str::uuid(), 'organization_id' => $organizationId, 'commercial_account_id' => $account->id,
+            'commercial_bank_invoice_id' => $invoice->id, 'submitted_by' => $fixture->owner->id, 'status' => 'pending',
+            'storage_path' => 'org-'.$organizationId.'/billing/test.pdf', 'mime' => 'application/pdf', 'size_bytes' => 100,
+            'sha256' => str_repeat('a', 64), 'package_slugs' => $packages, 'resource_addons' => [],
+            'submitted_at' => now(), 'temporary_expires_at' => now()->addMinute(),
+        ]);
     }
 
     public function test_retired_package_alias_and_unknown_package_preserve_module_access(): void

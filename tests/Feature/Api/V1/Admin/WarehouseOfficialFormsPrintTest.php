@@ -76,6 +76,8 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
             'material' => $material, 'warehouse' => $warehouse, 'movements' => $movements,
         ]));
 
+        $this->assertNull($sheet->getCell('C9')->getValue());
+        $this->assertNull($sheet->getCell('A14')->getValue());
         $this->assertSame($warehouse->name, $sheet->getCell('E14')->getValue());
         $this->assertSame($material->code, $sheet->getCell('M14')->getValue());
         $this->assertSame($movements->first()->document_number, $sheet->getCell('B28')->getValue());
@@ -115,6 +117,133 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
             $this->assertEmpty($sheet->getCell('H18')->getValue(), $case);
             $this->assertEmpty($sheet->getCell('I18')->getValue(), $case);
         }
+    }
+
+    public function test_m17_reservation_and_placement_do_not_change_physical_turnover(): void
+    {
+        [$material, $warehouse, $movements] = $this->fixture(false, 1);
+        foreach ([
+            ['reservation', null], ['unreservation', null],
+            [WarehouseMovement::TYPE_TRANSFER_OUT, WarehouseMovement::CATEGORY_PLACEMENT],
+            [WarehouseMovement::TYPE_TRANSFER_IN, WarehouseMovement::CATEGORY_PLACEMENT],
+        ] as [$type, $category]) {
+            $movements->push($movements->first()->replicate()->fill([
+                'movement_type' => $type, 'operation_category' => $category, 'quantity' => 0.5,
+            ]));
+        }
+
+        $sheet = $this->sheet(app(M17ExportStrategy::class)->export([
+            'material' => $material, 'warehouse' => $warehouse, 'movements' => $movements,
+        ]));
+
+        $this->assertSame('Всего:', $sheet->getCell('A29')->getValue());
+        $this->assertSame(1.25, (float) $sheet->getCell('N29')->getValue());
+        $this->assertSame(0.0, (float) $sheet->getCell('O29')->getValue());
+        $this->assertSame(1.25, (float) $sheet->getCell('P29')->getValue());
+    }
+
+    public function test_m17_counts_only_own_side_of_a_paired_warehouse_transfer(): void
+    {
+        [$material, $source, $movements] = $this->fixture(false, 1);
+        $target = $source->replicate();
+        $target->name = 'Другой учебный склад';
+        $target->code = 'PRINT-TRANSFER-TARGET';
+        $target->save();
+        $outgoing = $movements->first()->replicate()->fill([
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT, 'quantity' => 0.25,
+            'warehouse_id' => $source->id, 'to_warehouse_id' => $target->id,
+        ]);
+        $outgoing->save();
+        $incoming = $outgoing->replicate()->fill([
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_IN,
+            'warehouse_id' => $target->id, 'from_warehouse_id' => $source->id, 'to_warehouse_id' => null,
+        ]);
+        $incoming->save();
+        $movements->push($outgoing, $incoming);
+
+        $sourceSheet = $this->sheet(app(M17ExportStrategy::class)->export([
+            'material' => $material, 'warehouse' => $source, 'movements' => $movements,
+        ]));
+        $this->assertSame('Всего:', $sourceSheet->getCell('A30')->getValue());
+        $this->assertSame(1.0, (float) $sourceSheet->getCell('P30')->getValue());
+        $this->assertSame(0.25, (float) $sourceSheet->getCell('O30')->getValue());
+
+        $targetSheet = $this->sheet(app(M17ExportStrategy::class)->export([
+            'material' => $material, 'warehouse' => $target, 'movements' => $movements,
+        ]));
+        $this->assertSame('Всего:', $targetSheet->getCell('A29')->getValue());
+        $this->assertSame(0.25, (float) $targetSheet->getCell('P29')->getValue());
+        $this->assertSame(0.0, (float) $targetSheet->getCell('O29')->getValue());
+    }
+
+    public static function m17AdjustmentCases(): array
+    {
+        return [
+            'increase' => ['2.125', 3.375, 3.375, 0.0, 30],
+            'decrease' => ['-0.125', 1.125, 1.25, 0.125, 30],
+            'unchanged' => ['0', 1.25, 1.25, 0.0, 29],
+        ];
+    }
+
+    #[DataProvider('m17AdjustmentCases')]
+    public function test_m17_uses_explicit_signed_adjustment_delta(
+        string $delta, float $balance, float $income, float $expense, int $totalRow,
+    ): void {
+        [$material, $warehouse, $movements] = $this->fixture(false, 1);
+        $movements->push($movements->first()->replicate()->fill([
+            'movement_type' => WarehouseMovement::TYPE_ADJUSTMENT,
+            'quantity' => 99, 'metadata' => ['on_hand_delta' => $delta],
+        ]));
+        $sheet = $this->sheet(app(M17ExportStrategy::class)->export([
+            'material' => $material, 'warehouse' => $warehouse, 'movements' => $movements,
+        ]));
+
+        $this->assertSame('Всего:', $sheet->getCell('A'.$totalRow)->getValue());
+        $this->assertSame($balance, (float) $sheet->getCell('P'.$totalRow)->getValue());
+        $this->assertSame($income, (float) $sheet->getCell('N'.$totalRow)->getValue());
+        $this->assertSame($expense, (float) $sheet->getCell('O'.$totalRow)->getValue());
+    }
+
+    public function test_m17_rejects_adjustment_without_a_saved_physical_delta(): void
+    {
+        [$material, $warehouse, $movements] = $this->fixture(false, 1);
+        $movements->push($movements->first()->replicate()->fill([
+            'movement_type' => WarehouseMovement::TYPE_ADJUSTMENT,
+            'quantity' => 99, 'metadata' => [],
+        ]));
+        $this->expectException(\UnexpectedValueException::class);
+
+        app(M17ExportStrategy::class)->export([
+            'material' => $material, 'warehouse' => $warehouse, 'movements' => $movements,
+        ]);
+    }
+
+    public static function m4PriceCases(): array
+    {
+        return [
+            'unknown' => [null, null, null],
+            'known-zero' => ['0.00', '0,00', '0,00'],
+            'known-positive' => ['100.00', '100,00', '125,00'],
+        ];
+    }
+
+    #[DataProvider('m4PriceCases')]
+    public function test_m4_preserves_unknown_price_and_amount_instead_of_substituting_zero(
+        ?string $price,
+        ?string $expectedPrice,
+        ?string $expectedAmount,
+    ): void {
+        [, , $movements] = $this->fixture(false, 1);
+        $movement = $movements->first();
+        $movement->price = $price;
+        $movement->save();
+        $movement->refresh();
+        $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+
+        $this->assertSame($expectedPrice, $sheet->getCell('H17')->getValue());
+        $this->assertSame($expectedAmount, $sheet->getCell('I17')->getValue());
+        $this->assertSame(1.25, (float) $sheet->getCell('F17')->getValue());
+        $this->assertSame($price, $movement->fresh()->price);
     }
 
     public function test_m7_preserves_known_document_quantities_including_zero_and_calculates_differences(): void

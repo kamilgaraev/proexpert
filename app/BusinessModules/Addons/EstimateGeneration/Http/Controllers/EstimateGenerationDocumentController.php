@@ -32,6 +32,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureDetails;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\Domain\Authorization\Http\Middleware\InterfaceRequestProvenance;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -176,6 +177,38 @@ class EstimateGenerationDocumentController extends Controller
             'session_id' => $session->id,
             'document_id' => $document->id,
         ]);
+    }
+
+    public function cellReviews(Request $request, Project $project, EstimateGenerationSession $session, EstimateGenerationDocument $document,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReviewSpreadsheetCellInterpretation $reviews): JsonResponse
+    {
+        return $this->safeReadResponse(function () use ($request, $project, $session, $document, $reviews): JsonResponse {
+            $this->guardDocument($request, $project, $session, $document);
+
+            return AdminResponse::success(['state_version' => (int) $session->state_version,
+                'items' => $reviews->rows($request->user(), $session, (int) $document->id)]);
+        }, 'list cell interpretations', ['session_id' => $session->id, 'document_id' => $document->id]);
+    }
+
+    public function reviewCell(\App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ReviewSpreadsheetCellRequest $request,
+        Project $project, EstimateGenerationSession $session, EstimateGenerationDocument $document,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReviewSpreadsheetCellInterpretation $reviews): JsonResponse
+    {
+        $this->guardDocument($request, $project, $session, $document);
+        $input = $request->all();
+        if (InterfaceRequestProvenance::isTrustedServerDerived($request)) {
+            unset($input['current_interface']);
+        }
+        try {
+            return AdminResponse::success($reviews->handle($request->user(), (int) $project->id, (int) $session->id,
+                (int) $document->id, $input));
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        }
     }
 
     public function retry(

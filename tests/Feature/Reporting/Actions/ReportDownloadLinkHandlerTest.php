@@ -29,6 +29,8 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinReportHistoricalReadCompatibility;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureCandidateContract;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionBuiltinPublishedReport;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionCandidateContract;
 use App\Services\Storage\FileService;
@@ -44,7 +46,7 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 final class ReportDownloadLinkHandlerTest extends TestCase
 {
     #[DataProvider('downloadCases')]
-    public function test_created_artifact_key_is_the_same_current_key_signed_for_download(bool $legacy, bool $revoked): void
+    public function test_created_artifact_key_is_the_same_current_key_signed_for_download(bool $legacy, bool $revoked, bool $rendererTransition = false): void
     {
         $baseContext = (new ReportExecutionContextBuilder)->build();
         $context = (new ReportExecutionContextBuilder)
@@ -54,17 +56,19 @@ final class ReportDownloadLinkHandlerTest extends TestCase
                 $baseContext->actor->permissionSlugs,
             ))
             ->build();
+        $extension = $rendererTransition ? 'xlsx' : 'csv';
+        $artifactKey = 'org-1/reports/exports/01J00000000000000000000001/user-7/artifact.'.$extension;
         $export = new ReportExport(
             '01J00000000000000000000001',
             '01J00000000000000000000000',
             ReportExportStatus::READY,
             new Sha256Hash(str_repeat('d', 64)),
-            'csv',
+            $extension,
             ['name'],
             new ReportWindowSort('name', ReportSortDirection::ASC),
             'ru-RU',
             new DateTimeZone('Europe/Moscow'),
-            'org-1/reports/exports/01J00000000000000000000001/user-7/artifact.csv',
+            $artifactKey,
             'etag-1',
             new Sha256Hash(str_repeat('e', 64)),
             128,
@@ -103,9 +107,15 @@ final class ReportDownloadLinkHandlerTest extends TestCase
         };
         $clock = $this->createStub(ReportExecutionClock::class);
         $clock->method('now')->willReturn(new DateTimeImmutable('2026-07-29T08:31:00+00:00'));
-        $builtin = new AcceptedProductionBuiltinPublishedReport(new AcceptedProductionCandidateContract);
+        $accepted = new AcceptedProductionBuiltinPublishedReport(new AcceptedProductionCandidateContract);
+        $contract = new ContractSettlementExposureBuiltinPublishedReport(new ContractSettlementExposureCandidateContract);
+        $builtin = $rendererTransition ? $contract : $accepted;
         $document = $builtin->document();
-        $document['capabilities'] = ['supports_subscriptions' => false, 'reproducible_scheduled_snapshot' => false];
+        if ($rendererTransition) {
+            $document['versions']['renderer'] = '1.0.0';
+        } else {
+            $document['capabilities'] = ['supports_subscriptions' => false, 'reproducible_scheduled_snapshot' => false];
+        }
         $definition = $legacy ? (new ReportDefinitionFactory)->fromManifest($document) : (new ReportDefinitionBuilder)->payload();
         $snapshot = new ReportSnapshotRef(
             'report',
@@ -169,21 +179,21 @@ final class ReportDownloadLinkHandlerTest extends TestCase
             $clock,
             new ReportExecutionContextFactory,
             $subjects,
-            new BuiltinReportHistoricalReadCompatibility($builtin),
+            new BuiltinReportHistoricalReadCompatibility($accepted, $contract),
         ))->handle($context, new CreateReportDownloadLinkData($export->id, 300));
 
         self::assertSame([
-            ['org-1/reports/exports/01J00000000000000000000001/user-7/artifact.csv', 120],
+            [$artifactKey, 120],
         ], $files->requests);
         self::assertSame(
-            'org-1/reports/exports/01J00000000000000000000001/user-7/artifact.csv',
+            $artifactKey,
             $link->storageKey,
         );
     }
 
     public static function downloadCases(): array
     {
-        return [[false, false], [true, false], [true, true]];
+        return [[false, false], [true, false], [true, true], [true, false, true], [true, true, true]];
     }
 
     public function test_expired_export_returns_exact_gone_error_before_parent_or_url_generation(): void

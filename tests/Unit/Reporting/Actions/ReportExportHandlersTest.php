@@ -190,7 +190,9 @@ final class ReportExportHandlersTest extends TestCase
             },
         );
         $handler = new GetReportExportHandler($store, $definitions, $authorizer, new ReportExecutionContextFactory,
-            $subjects, new BuiltinReportHistoricalReadCompatibility($builtin));
+            $subjects, new BuiltinReportHistoricalReadCompatibility($builtin,
+                new \App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport(
+                    new \App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureCandidateContract)));
         if ($revoked) {
             $this->expectException(ReportContractException::class);
         }

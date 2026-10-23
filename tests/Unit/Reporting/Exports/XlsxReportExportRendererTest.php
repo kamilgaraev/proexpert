@@ -8,11 +8,143 @@ require_once __DIR__.'/CsvReportExportRendererTest.php';
 
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportLimits;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportExportStore;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
+use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionClass;
 use Throwable;
 use ZipArchive;
 
 final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
 {
+    public static function printCases(): array
+    {
+        return [
+            'empty-thirteen' => [13, 0],
+            'long-thirteen' => [13, 1],
+            'many-thirteen' => [13, 45],
+            'wide-twenty-seven' => [27, 2],
+            'small-three' => [3, 2],
+        ];
+    }
+
+    #[DataProvider('printCases')]
+    public function test_print_layout_preserves_all_selected_columns_and_full_values(int $columnCount, int $rowCount): void
+    {
+        $labels = ['Договор', 'Сумма договора', 'Дата отчёта', 'Проект', 'Контрагент', 'Валюта', 'Направление расчётов', 'Принято работ', 'Оплачено', 'Сальдо расчётов', 'Неоплаченные обязательства', 'Неисполненные обязательства', 'Срок задолженности'];
+        $values = [
+            str_repeat('УЧ-102 — учебный договор ремонта офиса ', 3), '123456.78', '2026-10-23',
+            str_repeat('Учебный проект ремонта офиса ', 3), str_repeat('Учебный подрядчик по ремонту офиса ', 4), 'RUB',
+            'Расход', '100000.00', '0.00', '23456.78', '23456.78', '23456.78', 'До 30 дней',
+        ];
+        $schema = [];
+        $row = [];
+        for ($index = 0; $index < $columnCount; $index++) {
+            $id = ['name', 'amount', 'date'][$index] ?? 'column_'.$index;
+            $schema[] = ['id' => $id, 'labels' => ['ru-RU' => $labels[$index] ?? 'Дополнительная колонка '.($index + 1)]];
+            $row[$id] = $values[$index] ?? 'Учебное значение '.($index + 1);
+        }
+        [$source, $definition] = $this->source($rowCount, rowSchema: $schema, rendererVersion: '1.1.0', reportCode: 'contract_settlement_exposure');
+        $stream = new InMemoryReportArtifactStream;
+        $rows = array_fill(0, $rowCount, $row);
+        (new XlsxReportExportRenderer)->forDefinition($definition)->render($source, $this->data('xlsx', array_column($schema, 'id')), $rows === [] ? [] : [$this->chunk($source, $rows)], $stream);
+        if ($directory = getenv('MOST_REPORT_XLSX_PRINT_QA_DIR')) {
+            file_put_contents($directory.'/report-'.$columnCount.'-columns-'.$rowCount.'-rows.xlsx', $stream->bytes());
+        }
+        $path = tempnam(sys_get_temp_dir(), 'report-print-');
+        self::assertIsString($path);
+        try {
+            file_put_contents($path, $stream->bytes());
+            $sheet = IOFactory::load($path)->getActiveSheet();
+            self::assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
+            self::assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+            self::assertGreaterThanOrEqual(1, $sheet->getPageSetup()->getFitToWidth());
+            self::assertSame([1, 1], array_map('intval', $sheet->getPageSetup()->getRowsToRepeatAtTop()));
+            self::assertSame('A2', $sheet->getFreezePane());
+            self::assertSame('Arial', $sheet->getStyle('A1')->getFont()->getName());
+            self::assertTrue($sheet->getStyle('A1')->getFont()->getBold());
+            self::assertTrue($sheet->getStyle('A1')->getAlignment()->getWrapText());
+            self::assertCount($columnCount, $sheet->rangeToArray('A1:'.$sheet->getHighestColumn().'1')[0]);
+            foreach ($schema as $index => $column) {
+                self::assertSame($column['labels']['ru-RU'], (string) $sheet->getCell([$index + 1, 1])->getValue());
+            }
+            if ($rowCount > 0) {
+                self::assertSame($row['name'], (string) $sheet->getCell('A'.($rowCount + 1))->getValue());
+                self::assertSame(123456.78, $sheet->getCell('B'.($rowCount + 1))->getValue());
+                self::assertSame('2026-10-23', (string) $sheet->getCell('C'.($rowCount + 1))->getValue());
+                self::assertTrue($sheet->getStyle('A2')->getAlignment()->getWrapText());
+                self::assertNotSame(0, $sheet->getCell('A2')->getXfIndex());
+            }
+            if ($columnCount === 27) {
+                self::assertSame('Учебное значение 27', (string) $sheet->getCell('AA3')->getValue());
+                self::assertGreaterThan(1, $sheet->getPageSetup()->getFitToWidth());
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public static function legacyDefinitions(): array
+    {
+        return [
+            ['contract_settlement_exposure', '1.0.0'],
+            ['other_report', '1.1.0'],
+            ['contract_settlement_exposure', 'unregistered-version'],
+        ];
+    }
+
+    public function test_renderer_transition_changes_export_identity_without_a_hidden_hash_suffix(): void
+    {
+        $store = (new ReflectionClass(EloquentReportExportStore::class))->newInstanceWithoutConstructor();
+        $identity = (new ReflectionClass(EloquentReportExportStore::class))->getMethod('identity');
+        [$old] = $this->source(0, rendererVersion: '1.0.0', reportCode: 'contract_settlement_exposure');
+        [$current] = $this->source(0, rendererVersion: '1.1.0', reportCode: 'contract_settlement_exposure');
+        $data = $this->data('xlsx');
+        $oldIdentity = $identity->invoke($store, $old, $data, $data->columns);
+        $currentIdentity = $identity->invoke($store, $current, $data, $data->columns);
+        self::assertNotSame($oldIdentity['export_hash'], $currentIdentity['export_hash']);
+        self::assertNotSame($oldIdentity['input_fingerprint'], $currentIdentity['input_fingerprint']);
+        self::assertSame($currentIdentity, $identity->invoke($store, $current, $data, $data->columns));
+    }
+
+    #[DataProvider('legacyDefinitions')]
+    public function test_existing_renderer_versions_preserve_the_original_archive_entries(string $code, string $version): void
+    {
+        [$source, $definition] = $this->source(1, rendererVersion: $version, reportCode: $code);
+        $stream = new InMemoryReportArtifactStream;
+        (new XlsxReportExportRenderer)->forDefinition($definition)->render(
+            $source,
+            $this->data('xlsx', ['name'], 'en-US'),
+            [$this->chunk($source, [['name' => 'Original value']])],
+            $stream,
+        );
+        $entries = $this->archiveEntries($stream->bytes());
+        self::assertSame(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+            .'<row r="1"><c r="A1" s="1" t="inlineStr"><is><t>Name</t></is></c></row>'
+            .'<row r="2"><c r="A2" t="inlineStr"><is><t>Original value</t></is></c></row>'
+            .'</sheetData></worksheet>',
+            $entries['xl/worksheets/sheet1.xml'],
+        );
+        self::assertSame(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            .'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            .'<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            $entries['xl/workbook.xml'],
+        );
+        self::assertSame(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            .'<fonts count="2"><font/><font><b/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+            .'<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>'
+            .'<cellXfs count="2"><xf xfId="0"/><xf xfId="0" fontId="1" applyFont="1"/></cellXfs></styleSheet>',
+            $entries['xl/styles.xml'],
+        );
+    }
+
     public function test_accepted_excel_headers_are_localized_without_mutating_persisted_schema(): void
     {
         $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on']];

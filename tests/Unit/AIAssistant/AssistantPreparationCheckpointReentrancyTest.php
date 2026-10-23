@@ -529,13 +529,15 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         app()->instance(AssistantRequestExecutionContext::class, $this->execution);
         app()->instance(AssistantReadConcurrencyLimiter::class, new AssistantReadConcurrencyLimiter);
         $this->service = (new ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
+        (new ReflectionProperty(AIAssistantService::class, 'scopedContext'))->setValue($this->service, null);
         (new ReflectionProperty(AIAssistantService::class, 'toolEligibilityPolicy'))->setValue($this->service,
             new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy);
         (new ReflectionProperty(AIAssistantService::class, 'dataAccess'))->setValue($this->service, $this->policy);
         (new ReflectionProperty(AIAssistantService::class, 'activeActor'))->setValue($this->service, $this->actor);
         (new ReflectionProperty(AIAssistantService::class, 'permissionChecker'))->setValue($this->service, new AIPermissionChecker($authorization));
         $registry = new AIToolRegistry;
-        $registry->registerTool(new DiscoverAssistantDomainCapabilitiesTool($catalog, $this->policy, $authorization));
+        $registry->registerTool(new DiscoverAssistantDomainCapabilitiesTool($catalog, $this->policy, $registry,
+            new AIPermissionChecker($authorization), new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy));
         $stockTool = $this->createMock(AIToolInterface::class);
         $stockTool->method('getName')->willReturn('get_material_stock');
         $stockTool->method('getDescription')->willReturn('Current material stock');

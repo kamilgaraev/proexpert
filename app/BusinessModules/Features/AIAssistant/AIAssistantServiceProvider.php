@@ -43,6 +43,9 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVer
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
@@ -207,6 +210,12 @@ class AIAssistantServiceProvider extends ServiceProvider
             };
         });
 
+        $this->app->scoped(OrdinaryAssistantScopedContext::class);
+        $this->app->scoped(OrdinaryAssistantEgress::class, fn ($app) => new OrdinaryAssistantEgress($app->make(OrdinaryAssistantScopedContext::class)));
+        $this->app->when(AIAssistantService::class)
+            ->needs(LLMProviderInterface::class)
+            ->give(fn ($app) => $app->make(OrdinaryAssistantProviderFactory::class)->make());
+
         // Регистрация реестра инструментов
         $this->app->scoped(AIToolRegistry::class, function ($app) {
             $registry = new AIToolRegistry;
@@ -299,6 +308,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'get_rag_index_status' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetRagIndexStatusTool::class,
                 'get_organization_calculation_health' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationCalculationHealthTool::class,
                 'get_organization_quality_defect_control' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationQualityDefectControlTool::class,
+                'get_organization_handover_control' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationHandoverControlTool::class,
                 'get_organization_advance_settings' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationAdvanceSettingsTool::class,
                 'get_organization_effective_modules' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationEffectiveModulesTool::class,
                 'get_own_project_access' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOwnProjectAccessTool::class,

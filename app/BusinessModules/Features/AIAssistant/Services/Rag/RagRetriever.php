@@ -12,6 +12,8 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLi
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCorpus;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
@@ -26,6 +28,8 @@ use Throwable;
 final class RagRetriever
 {
     private const RECIPROCAL_RANK_OFFSET = 60;
+    private const MAX_RESULTS = 20;
+    private const MAX_LEXICAL_TERMS = 24;
 
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
@@ -40,27 +44,35 @@ final class RagRetriever
      * @param  array<string, mixed>  $requestContext
      * @return array<int, RagSearchResult>
      */
-    public function search(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null): array
+    public function search(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null, ?AssistantDocumentCorpus $corpus = null): array
     {
-        return $this->searchWithDiagnostics($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard)['results'];
+        return $this->searchWithDiagnostics($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard, $corpus)['results'];
     }
 
-    public function searchWithDiagnostics(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null): array
+    public function searchWithDiagnostics(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null, ?AssistantDocumentCorpus $corpus = null): array
     {
         $diagnostics = ['status' => 'available', 'error_code' => null, 'semantic_available' => true, 'lexical_used' => false];
-        $results = $this->executeSearch($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard, $diagnostics);
+        $results = $this->executeSearch($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard, $diagnostics, $corpus);
         return ['results' => $results, 'diagnostics' => $diagnostics];
     }
 
-    private function executeSearch(string $query, int $organizationId, User $user, array $requestContext, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard, array &$diagnostics): array
+    private function executeSearch(string $query, int $organizationId, User $user, array $requestContext, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard, array &$diagnostics, ?AssistantDocumentCorpus $corpus): array
     {
+        if ($corpus !== null) {
+            $corpus->assertActor($user, $organizationId);
+            if (($requestContext['project_id'] ?? null) !== $corpus->projectId
+                || ($requestContext['source_types'] ?? null) !== ['file_document'] || ($requestContext['retrieval_mode'] ?? null) !== 'lexical') {
+                throw new AssistantEgressDenied('scope_mismatch');
+            }
+        }
         $checkpoint?->__invoke();
         if (! $this->belongsToOrganization($user, $organizationId)) {
             return [];
         }
 
-        $limit = $this->configInt('ai-assistant.rag.max_chunks', 8);
+        $limit = min(self::MAX_RESULTS, $this->configInt('ai-assistant.rag.max_chunks', 8));
         if (isset($requestContext['limit']) && is_numeric($requestContext['limit'])) { $limit = max(1, min($limit, (int) $requestContext['limit'])); }
+        $fusionRankLimit = $limit * 4;
         $threshold = $this->configFloat('ai-assistant.rag.min_similarity', 0.72);
         $requestProjectId = $this->requestProjectId($requestContext);
         $allowedProjectIds = $this->allowedProjectIds($user, $organizationId);
@@ -68,14 +80,16 @@ final class RagRetriever
         $preferredSourceTypes = $this->preferredSourceTypes($query);
         $learningChecks = [];
         $typeCandidates = RagSource::query()->where('ai_rag_sources.organization_id', $organizationId)
-            ->whereExists(static function ($chunks) use ($organizationId, $requestProjectId, $allowedProjectIds): void {
+            ->whereExists(static function ($chunks) use ($organizationId, $requestProjectId, $allowedProjectIds, $corpus): void {
                 $chunks->selectRaw('1')->from('ai_rag_chunks as candidate_chunks')->whereColumn('candidate_chunks.source_id', 'ai_rag_sources.id')
                     ->where('candidate_chunks.organization_id', $organizationId)->where(static function ($projects) use ($requestProjectId, $allowedProjectIds): void {
                         $projects->whereNull('candidate_chunks.project_id');
                         if ($requestProjectId !== null) { $projects->orWhere('candidate_chunks.project_id', $requestProjectId); }
                         elseif ($allowedProjectIds !== []) { $projects->orWhereIn('candidate_chunks.project_id', $allowedProjectIds); }
                     });
+                if ($corpus !== null) { $chunks->whereIn('candidate_chunks.id', $corpus->chunkIds())->where('candidate_chunks.project_id', $corpus->projectId); }
             });
+        if ($corpus !== null) { $typeCandidates->whereIn('ai_rag_sources.id', $corpus->sourceIds()); }
         if (isset($requestContext['source_types']) && is_array($requestContext['source_types'])) {
             $typeCandidates->whereIn('ai_rag_sources.source_type', array_filter($requestContext['source_types'], 'is_string'));
         }
@@ -86,7 +100,7 @@ final class RagRetriever
             $allowedSourceTypes = array_values(array_intersect($allowedSourceTypes, array_filter($requestContext['source_types'], 'is_string')));
         }
         $sourceTypes = $allowedSourceTypes;
-        $includeOrganizationWideSources = $this->includeOrganizationWideSources($sourceTypes);
+        $includeOrganizationWideSources = $corpus === null && $this->includeOrganizationWideSources($sourceTypes);
 
         if ($sourceTypes === []) {
             return [];
@@ -96,7 +110,7 @@ final class RagRetriever
             $diagnostics['semantic_available'] = false;
             $diagnostics['lexical_used'] = true;
             return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit,
-                $sourceTypes, $includeOrganizationWideSources, [], $user, $learningChecks, $checkpoint, $readWrapper, $readGuard);
+                $sourceTypes, $includeOrganizationWideSources, [], $user, $learningChecks, $checkpoint, $readWrapper, $readGuard, corpus: $corpus);
         }
 
         if ($requestProjectId !== null && ! in_array($requestProjectId, $allowedProjectIds, true)) {
@@ -253,7 +267,7 @@ final class RagRetriever
                     $embedding,
                     $provider,
                     $organizationId,
-                    max($limit * 4, $limit),
+                    $fusionRankLimit,
                     $sourceTypes,
                     $allowedProjectIds,
                     $requestProjectId,
@@ -268,9 +282,9 @@ final class RagRetriever
             $learningRejected = false;
             $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
             $eligible = array_filter($rows, static fn (object $row): bool => (float) $row->similarity >= $threshold);
-            if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < $limit) {
+            if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < $fusionRankLimit) {
                 $rows = $this->timed('semantic_sql', $organizationId, $user, fn (): iterable => $this->runRead(
-                    fn (): iterable => $this->candidateRows($embedding, $provider, $organizationId, max($limit * 8, $limit),
+                    fn (): iterable => $this->candidateRows($embedding, $provider, $organizationId, $fusionRankLimit * 2,
                         $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources),
                     $checkpoint, $organizationId, $readWrapper, $readGuard
                 ));
@@ -306,7 +320,8 @@ final class RagRetriever
                     excerpt: $this->excerpt((string) $row->content),
                     similarity: $similarity,
                     metadata: $this->referenceMetadata($row),
-                    updatedAt: $this->date($row->source_indexed_at)
+                    updatedAt: $this->date($row->source_indexed_at),
+                    content: (string) $row->content
                 );
 
                 if (! isset($rankedResults[$identity])) {
@@ -332,18 +347,9 @@ final class RagRetriever
         }
         $diagnostics['semantic_available'] = count($supportedProfiles) > count($queryEmbeddingFailures);
 
-        if ($rankedResults !== []) {
-            $merged = array_values($rankedResults);
-            usort($merged, static fn (array $left, array $right): int =>
-                ($right['fusion_score'] <=> $left['fusion_score'])
-                ?: ($left['best_rank'] <=> $right['best_rank'])
-                ?: ($left['sequence'] <=> $right['sequence']));
-
-            return array_map(static fn (array $item): RagSearchResult => $item['result'], array_slice($merged, 0, $limit));
-        }
-
         $diagnostics['lexical_used'] = true;
-        $results = $this->lexicalFallback(
+        $lexicalIdentities = [];
+        $lexicalResults = $this->lexicalFallback(
             $query,
             $organizationId,
             $allowedProjectIds,
@@ -356,8 +362,48 @@ final class RagRetriever
             $learningChecks,
             $checkpoint,
             $readWrapper,
-            $readGuard
+            $readGuard,
+            $lexicalIdentities,
+            $fusionRankLimit
         );
+        uasort($rankedResults, static fn (array $left, array $right): int =>
+            ($right['fusion_score'] <=> $left['fusion_score'])
+            ?: ($left['best_rank'] <=> $right['best_rank'])
+            ?: ($left['sequence'] <=> $right['sequence']));
+        $fused = [];
+        $semanticRank = 0;
+        foreach (array_slice($rankedResults, 0, $fusionRankLimit, true) as $identity => $candidate) {
+            $rank = ++$semanticRank;
+            $fused[$identity] = [
+                'fusion_score' => 1.0 / (self::RECIPROCAL_RANK_OFFSET + $rank),
+                'semantic_rank' => $rank,
+                'lexical_rank' => PHP_INT_MAX,
+                'sequence' => count($fused),
+                'result' => $candidate['result'],
+            ];
+        }
+        foreach ($lexicalResults as $index => $result) {
+            $identity = $lexicalIdentities[$index];
+            $rank = $index + 1;
+            if (! isset($fused[$identity])) {
+                $fused[$identity] = [
+                    'fusion_score' => 0.0,
+                    'semantic_rank' => PHP_INT_MAX,
+                    'lexical_rank' => $rank,
+                    'sequence' => count($fused),
+                    'result' => $result,
+                ];
+            }
+            $fused[$identity]['lexical_rank'] = $rank;
+            $fused[$identity]['fusion_score'] += 1.0 / (self::RECIPROCAL_RANK_OFFSET + $rank);
+        }
+        usort($fused, static fn (array $left, array $right): int =>
+            ($right['fusion_score'] <=> $left['fusion_score'])
+            ?: (in_array($right['result']->sourceType, $preferredSourceTypes, true) <=> in_array($left['result']->sourceType, $preferredSourceTypes, true))
+            ?: ($left['lexical_rank'] <=> $right['lexical_rank'])
+            ?: ($left['semantic_rank'] <=> $right['semantic_rank'])
+            ?: ($left['sequence'] <=> $right['sequence']));
+        $results = array_map(static fn (array $candidate): RagSearchResult => $candidate['result'], array_slice($fused, 0, $limit));
         if (! $diagnostics['semantic_available']) {
             $diagnostics['status'] = $results === [] ? 'unavailable' : 'partial';
         }
@@ -647,14 +693,15 @@ final class RagRetriever
         }));
     }
 
-    private function authorizedSourceIds(int $organizationId, User $actor, array $sourceTypes, array $projectIds, ?int $projectId, bool $includeOrganizationWideSources, ?array $embedding, array $terms, ?callable $checkpoint): array
+    private function authorizedSourceIds(int $organizationId, User $actor, array $sourceTypes, array $projectIds, ?int $projectId, bool $includeOrganizationWideSources, ?array $embedding, array $terms, ?callable $checkpoint, ?AssistantDocumentCorpus $corpus = null): array
     {
         $policy = $this->accessPolicy();
-        return $policy->withCurrentChecks($actor, $organizationId, function () use ($policy, $organizationId, $actor, $sourceTypes, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms, $checkpoint): array {
+        return $policy->withCurrentChecks($actor, $organizationId, function () use ($policy, $organizationId, $actor, $sourceTypes, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms, $checkpoint, $corpus): array {
             $candidates = RagSource::query()->where('ai_rag_sources.organization_id', $organizationId)->whereIn('ai_rag_sources.source_type', $sourceTypes)
-                ->whereExists(function ($chunks) use ($organizationId, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms): void {
+                ->whereExists(function ($chunks) use ($organizationId, $projectIds, $projectId, $includeOrganizationWideSources, $embedding, $terms, $corpus): void {
                     $chunks->selectRaw('1')->from('ai_rag_chunks as candidate_chunks')
                         ->whereColumn('candidate_chunks.source_id', 'ai_rag_sources.id')->where('candidate_chunks.organization_id', $organizationId);
+                    if ($corpus !== null) { $chunks->whereIn('candidate_chunks.id', $corpus->chunkIds()); }
                     if ($projectId !== null) {
                         $chunks->where(function ($projects) use ($projectId, $includeOrganizationWideSources): void {
                             $projects->where('candidate_chunks.project_id', $projectId);
@@ -671,16 +718,19 @@ final class RagRetriever
                             ->where('candidate_chunks.embedding_model', $this->embeddingProvider->model());
                         if (DB::connection()->getDriverName() === 'pgsql') { $chunks->whereRaw('vector_dims(candidate_chunks.embedding) = ?', [count($embedding)]); }
                     } elseif ($terms !== []) {
-                        $chunks->where(function ($matches) use ($terms): void {
+                        $chunks->where(function ($matches) use ($terms, $corpus): void {
+                            $contentExpression = $corpus === null ? 'candidate_chunks.content' : 'left(candidate_chunks.content, '.AssistantDocumentCorpus::CONTENT_CHARS.')';
+                            $titleExpression = $corpus === null ? 'ai_rag_sources.title' : 'left(ai_rag_sources.title, '.AssistantDocumentCorpus::TITLE_CHARS.')';
                             foreach ($terms as $term) {
-                                $pattern = '%'.$term.'%';
-                                $titlePattern = '%'.mb_convert_case($term, MB_CASE_TITLE, 'UTF-8').'%';
-                                $matches->orWhereRaw('lower(candidate_chunks.content) like ?', [$pattern])->orWhereRaw('lower(ai_rag_sources.title) like ?', [$pattern])
-                                    ->orWhere('candidate_chunks.content', 'like', $titlePattern)->orWhere('ai_rag_sources.title', 'like', $titlePattern);
+                                $pattern = $this->lexicalPattern($term);
+                                $titlePattern = $this->lexicalPattern(mb_convert_case($term, MB_CASE_TITLE, 'UTF-8'));
+                                $matches->orWhereRaw("replace(lower($contentExpression), 'ё', 'е') like ?", [$pattern])->orWhereRaw("replace(lower($titleExpression), 'ё', 'е') like ?", [$pattern])
+                                    ->orWhereRaw("$contentExpression like ?", [$titlePattern])->orWhereRaw("$titleExpression like ?", [$titlePattern]);
                             }
                         });
                     }
                 });
+            if ($corpus !== null) { $candidates->whereIn('ai_rag_sources.id', $corpus->sourceIds()); }
             $ids = [];
             $branches = 0;
             $maxSqlBytes = 0;
@@ -785,8 +835,14 @@ final class RagRetriever
         array &$learningChecks,
         ?callable $checkpoint = null,
         ?callable $readWrapper = null,
-        ?callable $readGuard = null
+        ?callable $readGuard = null,
+        ?array &$candidateIdentities = null,
+        ?int $rankLimit = null,
+        ?AssistantDocumentCorpus $corpus = null
     ): array {
+        if ($candidateIdentities !== null) {
+            $candidateIdentities = [];
+        }
         $terms = $this->lexicalTerms($query);
         $preferredTypes = $this->preferredSourceTypes($query);
         if ($terms === []) {
@@ -794,11 +850,13 @@ final class RagRetriever
         }
 
         $checkpoint?->__invoke();
-        $accessibleSources = $this->timed('lexical_source_acl', $organizationId, $actor, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $actor, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, null, $terms, $readCheckpoint), $checkpoint, $organizationId, $readWrapper, $readGuard));
+        $accessibleSources = $this->timed('lexical_source_acl', $organizationId, $actor, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $actor, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, null, $terms, $readCheckpoint, $corpus), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $accessibleSources = RagSource::query()->whereIntegerInRaw('id', $accessibleSources)->select('id');
         $checkpoint?->__invoke();
-        $order = implode(' + ', array_fill(0, count($terms), "CASE WHEN lower(c.content || ' ' || s.title) LIKE ? THEN 1 ELSE 0 END"));
-        $orderBindings = array_map(static fn (string $term): string => '%'.$term.'%', $terms);
+        $contentExpression = $corpus === null ? 'c.content' : 'left(c.content, '.AssistantDocumentCorpus::CONTENT_CHARS.')';
+        $titleExpression = $corpus === null ? 's.title' : 'left(s.title, '.AssistantDocumentCorpus::TITLE_CHARS.')';
+        $order = implode(' + ', array_fill(0, count($terms), "CASE WHEN replace(lower($contentExpression || ' ' || $titleExpression), 'ё', 'е') LIKE ? THEN 1 ELSE 0 END"));
+        $orderBindings = array_map($this->lexicalPattern(...), $terms);
         $candidates = DB::table('ai_rag_chunks as c')
             ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
             ->where('c.organization_id', $organizationId)
@@ -825,20 +883,21 @@ final class RagRetriever
                     }
                 })
             )
-            ->where(static function ($builder) use ($terms): void {
+            ->where(function ($builder) use ($terms, $contentExpression, $titleExpression): void {
                 foreach ($terms as $term) {
-                    $lowerPattern = '%'.$term.'%';
-                    $titlePattern = '%'.mb_convert_case($term, MB_CASE_TITLE, 'UTF-8').'%';
+                    $lowerPattern = $this->lexicalPattern($term);
+                    $titlePattern = $this->lexicalPattern(mb_convert_case($term, MB_CASE_TITLE, 'UTF-8'));
 
                     $builder
-                        ->orWhereRaw('lower(c.content) like ?', [$lowerPattern])
-                        ->orWhereRaw('lower(s.title) like ?', [$lowerPattern])
-                        ->orWhere('c.content', 'like', $titlePattern)
-                        ->orWhere('s.title', 'like', $titlePattern);
+                        ->orWhereRaw("replace(lower($contentExpression), 'ё', 'е') like ?", [$lowerPattern])
+                        ->orWhereRaw("replace(lower($titleExpression), 'ё', 'е') like ?", [$lowerPattern])
+                        ->orWhereRaw("$contentExpression like ?", [$titlePattern])
+                        ->orWhereRaw("$titleExpression like ?", [$titlePattern]);
                 }
             })
             ->select([
                 'c.id',
+                'c.chunk_index',
                 'c.project_id',
                 'c.content',
                 'c.metadata as chunk_metadata',
@@ -851,41 +910,56 @@ final class RagRetriever
                 's.checksum as rag_source_checksum',
                 's.source_version as rag_source_version',
             ])
-            ->orderByRaw('('.$order.') DESC', $orderBindings);
+            ->orderByRaw('('.$order.') DESC', $orderBindings)
+            ->orderBy('c.id');
+        if ($corpus !== null) { $candidates->whereIn('c.id', $corpus->chunkIds())->where('s.project_id', $corpus->projectId); }
         $candidateLimit = max($limit * 12, 48);
         $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(
             fn () => (clone $candidates)->limit($candidateLimit)->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $checkpoint?->__invoke();
         $learningRejected = false;
         $rows = $this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
-        if ($learningRejected && count(array_filter($rows, fn (object $row): bool => $this->lexicalScore($row, $terms) > 0)) < $limit) {
+        $eligible = array_filter($rows, fn (object $row): bool => $this->lexicalScore($row, $terms, $corpus) > 0);
+        if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < ($rankLimit ?? $limit)) {
             $rows = $this->timed('lexical_sql', $organizationId, $actor, fn () => $this->runRead(
                 fn () => (clone $candidates)->limit($candidateLimit * 2)->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
             $rows = $this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
         }
 
         return collect($rows)
-            ->map(function (object $row) use ($terms): object {
-                $row->lexical_score = $this->lexicalScore($row, $terms);
+            ->map(function (object $row) use ($terms, $corpus): object {
+                $row->lexical_score = $this->lexicalScore($row, $terms, $corpus);
 
                 return $row;
             })
             ->filter(static fn (object $row): bool => (int) $row->lexical_score > 0)
             ->sortByDesc(static fn (object $row): float => (float) $row->lexical_score + (in_array($row->source_type, $preferredTypes, true) ? 0.05 : 0.0))
-            ->take($limit)
+            ->unique(fn (object $row): string => $this->candidateIdentity($row))
+            ->take($rankLimit ?? $limit)
             ->values()
-            ->map(fn (object $row): RagSearchResult => new RagSearchResult(
-                sourceType: (string) $row->source_type,
-                entityType: (string) $row->entity_type,
-                entityId: (string) $row->entity_id,
-                projectId: $row->project_id !== null ? (int) $row->project_id : null,
-                title: (string) $row->title,
-                excerpt: $this->excerpt((string) $row->content),
-                similarity: min(0.69, 0.5 + ((int) $row->lexical_score * 0.03)),
-                metadata: $this->referenceMetadata($row),
-                updatedAt: $this->date($row->source_indexed_at)
-            ))
+            ->map(function (object $row) use (&$candidateIdentities): RagSearchResult {
+                if ($candidateIdentities !== null) {
+                    $candidateIdentities[] = $this->candidateIdentity($row);
+                }
+                return new RagSearchResult(
+                    sourceType: (string) $row->source_type,
+                    entityType: (string) $row->entity_type,
+                    entityId: (string) $row->entity_id,
+                    projectId: $row->project_id !== null ? (int) $row->project_id : null,
+                    title: (string) $row->title,
+                    excerpt: $this->excerpt((string) $row->content),
+                    similarity: min(0.69, 0.5 + ((int) $row->lexical_score * 0.03)),
+                    metadata: $this->referenceMetadata($row),
+                    updatedAt: $this->date($row->source_indexed_at),
+                    content: (string) $row->content
+                );
+            })
             ->all();
+    }
+
+    private function lexicalPattern(string $term): string
+    {
+        return '%'.addcslashes($term, '\\%_').'%';
     }
 
     /**
@@ -939,6 +1013,7 @@ final class RagRetriever
         $sql = <<<SQL
 WITH compatible_chunks AS MATERIALIZED (
 SELECT c.id,
+       c.chunk_index,
        c.project_id,
        c.content,
        c.metadata AS chunk_metadata,
@@ -959,7 +1034,7 @@ WHERE c.organization_id = ?
   AND c.embedding_model = ?
   AND vector_dims(c.embedding) = ?
 {$sourceFilter}{$projectFilter})
-SELECT id, project_id, content, chunk_metadata, source_type, entity_type, entity_id, title, source_indexed_at, rag_source_id, rag_source_checksum, rag_source_version,
+SELECT id, chunk_index, project_id, content, chunk_metadata, source_type, entity_type, entity_id, title, source_indexed_at, rag_source_id, rag_source_checksum, rag_source_version,
        1 - (embedding <=> ?::vector) AS similarity
 FROM compatible_chunks
 ORDER BY embedding <=> ?::vector
@@ -1008,6 +1083,7 @@ SQL;
             })
             ->select([
                 'c.id',
+                'c.chunk_index',
                 'c.project_id',
                 'c.content',
                 'c.metadata as chunk_metadata',
@@ -1098,11 +1174,12 @@ SQL;
             'укажи',
             'что',
         ];
-        $terms = [];
+        $terms = array_values(array_filter($this->identifierTerms($query, $normalized),
+            static fn (string $term): bool => ! in_array($term, $stopWords, true)));
 
         foreach ($tokens as $token) {
             $token = trim($token);
-            if (mb_strlen($token) < 4 || in_array($token, $stopWords, true)) {
+            if (mb_strlen($token) < 4 || mb_strlen($token) > 200 || in_array($token, $stopWords, true)) {
                 continue;
             }
 
@@ -1114,7 +1191,27 @@ SQL;
             $terms[] = $term;
         }
 
-        return array_values(array_unique(array_merge($terms, $this->expandedLexicalTerms($terms, $normalized))));
+        return array_slice(array_values(array_unique(array_merge($terms, $this->expandedLexicalTerms($terms, $normalized)))), 0, self::MAX_LEXICAL_TERMS);
+    }
+
+    private function identifierTerms(string $query, string $normalized): array
+    {
+        preg_match_all('~(?:[№#][\t ]*)?[\p{L}\p{N}][\p{L}\p{N}_./\\\\%№#-]*~u', $normalized, $matches);
+        $terms = [];
+        foreach ($matches[0] as $token) {
+            $token = rtrim($token, '.-/\\');
+            if (mb_strlen($token) <= 200 && preg_match('/[\p{N}%_]/u', $token) === 1) {
+                $terms[] = $token;
+            }
+        }
+        preg_match_all('~(?<![\p{L}\p{N}_./\\\\%№#-])\p{Lu}{2,3}(?![\p{L}\p{N}_./\\\\%№#-])~u', $query, $shortCodes);
+        foreach ($shortCodes[0] as $token) {
+            $terms[] = str_replace('ё', 'е', mb_strtolower($token));
+        }
+        if (preg_match('/^\p{L}{2,3}$/u', trim($normalized)) === 1) {
+            $terms[] = trim($normalized);
+        }
+        return $terms;
     }
 
     /**
@@ -1212,9 +1309,11 @@ SQL;
     /**
      * @param  array<int, string>  $terms
      */
-    private function lexicalScore(object $row, array $terms): int
+    private function lexicalScore(object $row, array $terms, ?AssistantDocumentCorpus $corpus = null): int
     {
-        $haystack = str_replace('ё', 'е', mb_strtolower((string) $row->title.' '.(string) $row->content));
+        $title = $corpus === null ? (string) $row->title : mb_substr((string) $row->title, 0, AssistantDocumentCorpus::TITLE_CHARS);
+        $content = $corpus === null ? (string) $row->content : mb_substr((string) $row->content, 0, AssistantDocumentCorpus::CONTENT_CHARS);
+        $haystack = str_replace('ё', 'е', mb_strtolower($title.' '.$content));
         $score = 0;
 
         foreach ($terms as $term) {
@@ -1303,6 +1402,8 @@ SQL;
             $metadata['rag_source_checksum'] = $row->rag_source_checksum ?? null;
         }
         $metadata['source_id'] = isset($row->rag_source_id) ? (int) $row->rag_source_id : null;
+        $metadata['chunk_id'] = isset($row->id) ? (int) $row->id : null;
+        $metadata['chunk_index'] = isset($row->chunk_index) ? (int) $row->chunk_index : null;
         $metadata['source_version'] = $row->rag_source_version ?? null;
         $metadata['checksum'] = $row->rag_source_checksum ?? null;
         return $metadata;

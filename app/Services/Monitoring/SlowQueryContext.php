@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Monitoring;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCollectorQueryContext;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceBatchQueryContext;
 use DateTimeInterface;
 use Illuminate\Database\Events\QueryExecuted;
 
@@ -37,8 +38,10 @@ final class SlowQueryContext
             'transaction_level' => $query->connection->transactionLevel(),
             'connection_state' => self::safeConnectionState($connectionState),
             'query_event_intervals' => self::safeEventIntervals($connectionState),
+            'pdo_runtime' => self::safePdoRuntime($connectionState),
             'execution_context' => $this->tracing->executionContext(),
             'rag_collector' => RagCollectorQueryContext::current(),
+            'rag_source_batch' => RagSourceBatchQueryContext::current(),
             'source' => self::source(),
             ...$this->tracing->slowQueryTrace($query),
         ];
@@ -75,6 +78,36 @@ final class SlowQueryContext
                 return ['observed' => false];
             }
             $safe[$field] = $state[$field];
+        }
+
+        return $safe;
+    }
+
+    private static function safePdoRuntime(?array $state): array
+    {
+        $runtime = $state['pdo_runtime'] ?? null;
+        if (self::safeConnectionState($state)['observed'] !== true || ! is_array($runtime)
+            || ($runtime['observed'] ?? null) !== true || ! is_int($runtime['php_version_id'] ?? null)
+            || $runtime['php_version_id'] < 80000 || $runtime['php_version_id'] > 99999) {
+            return ['observed' => false];
+        }
+        $safe = ['observed' => true, 'php_version_id' => $runtime['php_version_id']];
+        foreach (['write', 'read'] as $name) {
+            $handle = $runtime[$name] ?? null;
+            if (! is_array($handle)) {
+                return ['observed' => false];
+            }
+            if (($handle['observed'] ?? null) === false) {
+                $safe[$name] = ['observed' => false];
+                continue;
+            }
+            if (($handle['observed'] ?? null) !== true || $state[$name.'_ready_after'] !== true
+                || ($handle['driver'] ?? null) !== 'pgsql' || ! is_bool($handle['emulate_prepares'] ?? null)
+                || ! is_bool($handle['disable_prepares'] ?? null)) {
+                return ['observed' => false];
+            }
+            $safe[$name] = ['observed' => true, 'driver' => 'pgsql',
+                'emulate_prepares' => $handle['emulate_prepares'], 'disable_prepares' => $handle['disable_prepares']];
         }
 
         return $safe;
@@ -128,6 +161,7 @@ final class SlowQueryContext
             }
             if ($file !== __FILE__ && $relative !== 'app/Providers/AppServiceProvider.php'
                 && $relative !== 'app/BusinessModules/Features/AIAssistant/Services/Rag/RagCollectorQueryContext.php'
+                && $relative !== 'app/BusinessModules/Features/AIAssistant/Services/Rag/RagSourceBatchQueryContext.php'
                 && preg_match('#^(?:app/|database/|tests/|routes/|artisan$)#', $relative) === 1) {
                 return ['file' => $relative, 'line' => $frame['line'] ?? null];
             }

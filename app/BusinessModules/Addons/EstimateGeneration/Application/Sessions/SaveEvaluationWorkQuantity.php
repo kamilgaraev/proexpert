@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\NativeQuantityFactEligibility;
@@ -29,7 +31,8 @@ final readonly class SaveEvaluationWorkQuantity
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
         private ProjectModelRepository $models, private UserWorkQuantityFactWriter $numbers, private UserEvaluationChoiceWriter $choices,
         private EvaluationInputFingerprint $inputs, private BuildMostEstimateDraft $artifacts,
-        private UniversalReviewSummaryProjector $reviews, private CurrentWorkEntityBindingProof $bindings) {}
+        private UniversalReviewSummaryProjector $reviews, private CurrentWorkEntityBindingProof $bindings,
+        private PlanningReanalysisTrigger $planning) {}
 
     public function handle(User $actor, int $projectId, int $sessionId, array $input): array
     {
@@ -167,6 +170,8 @@ final readonly class SaveEvaluationWorkQuantity
                 $this->authorization->authorize($actor, $session, 'estimate_generation.review');
             }
             $session->update($changes);
+            $this->planning->trigger($sessionId, new ActorContext((int) $session->organization_id, $projectId,
+                (int) $actor->id, $input['request_id']));
 
             return $result;
         }, 3);

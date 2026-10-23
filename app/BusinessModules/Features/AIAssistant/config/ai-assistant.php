@@ -29,6 +29,7 @@ $lunaModelsEnv = static function (string $key, string $default = 'openai/gpt-6-l
 };
 return [
     'enabled' => $configEnv('AI_ASSISTANT_ENABLED', true),
+    'read_tool_discovery_enabled' => false,
     'status_snapshots' => $configEnv('AI_ASSISTANT_STATUS_SNAPSHOTS', $configEnv('APP_ENV', 'production') === 'production'),
     'status_snapshot_release' => $configEnv('MOST_RELEASE_SHA'),
 
@@ -120,6 +121,7 @@ return [
 
     'rag' => [
         'enabled' => true,
+        'expanded_context_enabled' => false,
         'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'timeweb'),
         'embedding_api_key' => $configEnv('AI_RAG_EMBEDDING_API_KEY'),
         'embedding_base_uri' => $configEnv('AI_RAG_EMBEDDING_BASE_URI'),

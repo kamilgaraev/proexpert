@@ -47,6 +47,8 @@ class SiteRequest extends Model
 {
     use HasActorAwareDraftVisibility, HasFactory, SoftDeletes;
 
+    private const MACHINERY_CALENDAR_TIMEZONE = 'Europe/Moscow';
+
     protected $table = 'site_requests';
 
     protected $fillable = [
@@ -485,9 +487,7 @@ class SiteRequest extends Model
      */
     public function hasCalendarEvent(): bool
     {
-        return $this->required_date !== null ||
-               $this->work_start_date !== null ||
-               $this->rental_start_date !== null;
+        return $this->getCalendarStartDate() !== null;
     }
 
     /**
@@ -495,6 +495,11 @@ class SiteRequest extends Model
      */
     public function getCalendarStartDate(): ?Carbon
     {
+        $equipmentStart = $this->getAttribute('equipment_start_at');
+        if ($this->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $equipmentStart instanceof Carbon) {
+            return $equipmentStart->copy()->setTimezone(self::MACHINERY_CALENDAR_TIMEZONE);
+        }
+
         return $this->work_start_date
             ?? $this->rental_start_date
             ?? $this->required_date;
@@ -505,6 +510,12 @@ class SiteRequest extends Model
      */
     public function getCalendarEndDate(): ?Carbon
     {
+        if ($this->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $this->getAttribute('equipment_start_at') instanceof Carbon) {
+            $equipmentEnd = $this->getAttribute('equipment_end_at');
+
+            return $equipmentEnd instanceof Carbon ? $equipmentEnd->copy()->setTimezone(self::MACHINERY_CALENDAR_TIMEZONE) : null;
+        }
+
         return $this->work_end_date
             ?? $this->rental_end_date;
     }

@@ -18,6 +18,9 @@ use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Services\ContextBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgressRequest;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\IntentRecognizer;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -28,6 +31,10 @@ use App\Models\User;
 use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\AssistantEgressFixtureAuthority;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\Middleware;
+use GuzzleHttp\Psr7\Response;
 
 interface NativeResponsesTestProvider extends LLMProviderInterface
 {
@@ -303,18 +310,46 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertNotEmpty($failures);
     }
 
-    public function test_current_project_estimate_tools_use_the_ui_scope_even_with_another_model_project(): void
+    public function test_nullable_estimate_project_uses_required_current_or_named_scope_with_real_tool_schema(): void
+    {
+        foreach ([\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
+            \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool::class] as $class) {
+            foreach ([false, true] as $namedScope) {
+                $definition = (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+                $schema = $definition->getParametersSchema();
+                $arguments = ['query' => 'Выбери одну доступную смету.', 'project_id' => null];
+                if (isset($schema['properties']['estimate_id'])) { $arguments['estimate_id'] = null; }
+                $expected = array_replace($arguments, ['project_id' => $namedScope ? 102 : 52]);
+                $tool = $this->createMock(AIToolInterface::class);
+                $tool->method('getName')->willReturn($definition->getName());
+                $tool->method('getParametersSchema')->willReturn($schema);
+                $tool->expects($this->once())->method('execute')->with($expected, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+                $registry = new AIToolRegistry;
+                $registry->registerTool($tool);
+                $question = $namedScope ? 'Выбери одну доступную смету проекта Альфа.' : 'Выбери одну доступную смету текущего проекта.';
+                $plan = ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+                if ($namedScope) { $plan['named_project_scope'] = ['project_id' => 102, 'message_sha256' => hash('sha256', $question)]; }
+                $failures = [];
+
+                $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $tool->getName(),
+                    'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
+
+                self::assertSame('success', $result['status']);
+                self::assertSame([], $failures);
+            }
+        }
+    }
+
+    public function test_current_project_estimate_tools_reject_another_model_project(): void
     {
         foreach (['resolve_estimate', 'get_estimate_answer'] as $name) {
             $arguments = ['query' => 'Выбери одну доступную смету.', 'project_id' => 95];
-            $expected = $arguments;
-            $expected['project_id'] = 52;
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn($name);
             $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
                 'query' => ['type' => 'string'], 'project_id' => ['type' => ['integer', 'null']],
             ], 'additionalProperties' => false]);
-            $tool->expects($this->once())->method('execute')->with($expected, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+            $tool->expects($this->never())->method('execute');
             $registry = new AIToolRegistry;
             $registry->registerTool($tool);
             $query = 'Выбери одну доступную смету текущего проекта.';
@@ -323,15 +358,15 @@ class AIAssistantServiceBudgetTest extends TestCase
             $failures = [];
             $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'scope_'.$name, 'name' => $name,
                 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
-            self::assertSame('success', $result['status']);
+            self::assertSame('current_project_scope_mismatch', $result['reason']);
             self::assertSame([], $failures);
         }
     }
 
-    public function test_current_object_contract_snapshot_binds_omitted_null_and_foreign_model_project_to_ui_scope(): void
+    public function test_current_object_contract_snapshot_defaults_omitted_scope_and_accepts_matching_model_project(): void
     {
         $schema = (new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetContractSnapshotTool)->getParametersSchema();
-        foreach ([[], ['project_id' => null], ['project_id' => 100]] as $arguments) {
+        foreach ([[], ['project_id' => 52]] as $arguments) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('get_contract_snapshot');
             $tool->method('getParametersSchema')->willReturn($schema);
@@ -348,13 +383,13 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
-    public function test_manager_attention_uses_verified_ui_project_and_closed_read_arguments(): void
+    public function test_manager_attention_preserves_valid_model_focus_and_limit_with_verified_project(): void
     {
         $schema = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectAttentionTool::class))->newInstanceWithoutConstructor()->getParametersSchema();
         $tool = $this->createMock(AIToolInterface::class);
         $tool->method('getName')->willReturn('get_project_attention');
         $tool->method('getParametersSchema')->willReturn($schema);
-        $tool->expects($this->once())->method('execute')->with(['project_id' => 52, 'focus' => 'all', 'limit' => 3], $this->anything(), $this->anything())
+        $tool->expects($this->once())->method('execute')->with(['project_id' => 52, 'focus' => 'quality', 'limit' => 20], $this->anything(), $this->anything())
             ->willReturn(['status' => 'success', 'source_refs' => [], 'attention_evidence' => ['version' => str_repeat('a', 64)]]);
         $registry = new AIToolRegistry;
         $registry->registerTool($tool);
@@ -362,7 +397,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
         $failures = [];
         $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'get_project_attention',
-            'arguments' => json_encode(['project_id' => 999, 'focus' => 'quality', 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+            'arguments' => json_encode(['project_id' => 52, 'focus' => 'quality', 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
         self::assertSame('success', $result['status']);
         self::assertSame([], $failures);
     }
@@ -446,8 +481,8 @@ class AIAssistantServiceBudgetTest extends TestCase
     public function test_current_object_domain_project_read_uses_own_key_and_contract_search_uses_project_filter(): void
     {
         foreach (['assistant_domain_read', 'assistant_domain_search'] as $name) {
-            $arguments = $name === 'assistant_domain_read' ? ['entity_type' => 'project', 'id' => 100]
-                : ['entity_type' => 'contract', 'project_id' => null];
+            $arguments = $name === 'assistant_domain_read' ? ['entity_type' => 'project']
+                : ['entity_type' => 'contract'];
             $expected = $name === 'assistant_domain_read' ? ['entity_type' => 'project', 'id' => 52]
                 : ['entity_type' => 'contract', 'project_id' => 52];
             $tool = $this->createMock(AIToolInterface::class);
@@ -470,9 +505,9 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
-    public function test_current_project_search_uses_real_tool_schema_and_trusted_context_instead_of_model_selection(): void
+    public function test_current_project_search_uses_real_tool_schema_and_defaults_only_missing_scope(): void
     {
-        foreach ([['query' => 'текущий проект'], ['query' => 'текущий проект', 'project_id' => 100]] as $arguments) {
+        foreach ([['query' => 'текущий проект'], ['query' => 'текущий проект', 'project_id' => 52]] as $arguments) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('search_projects');
             $tool->method('getParametersSchema')->willReturn((new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool)->getParametersSchema());
@@ -1955,26 +1990,40 @@ class AIAssistantServiceBudgetTest extends TestCase
     {
         $call = ['type' => 'function_call', 'id' => 'fc_service', 'status' => 'completed', 'call_id' => 'call_service',
             'name' => 'search_projects', 'arguments' => '{}'];
-        $provider = $this->createMock(NativeResponsesTestProvider::class);
-        $provider->expects($this->never())->method('chat');
-        $provider->method('getModel')->willReturn('openai/gpt-6-luna');
-        $provider->expects($this->exactly(2))->method('responses')->willReturnCallback(function (array $input, array $options) use ($call): array {
-            self::assertInstanceOf(\App\Support\AI\PreparedTokenBudget::class, $options['_prepared_token_budget']);
-            self::assertSame('function', $options['tools'][0]['type']);
-            self::assertArrayNotHasKey('function', $options['tools'][0]);
-            self::assertSame('Запрос', $input[0]['content']);
-
-            return ['content' => '', 'output' => [$call], 'function_calls' => [$call], 'response_status' => 'completed',
-                'model' => 'openai/gpt-6-luna', 'input_tokens' => 10, 'output_tokens' => 5, 'tokens_used' => 15];
-        });
+        config(['ai-assistant.llm.provider' => 'timeweb', 'ai-assistant.llm.timeweb.api_key' => 'offline-only-key',
+            'ai-assistant.llm.timeweb.base_uri' => 'https://offline.invalid/v1', 'ai-assistant.llm.timeweb.model' => 'openai/gpt-6-luna']);
+        $wire = new Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'id' => 'resp_offline', 'object' => 'response', 'created_at' => 1791540000, 'status' => 'completed', 'model' => 'openai/gpt-6-luna',
+            'output' => [$call], 'max_output_tokens' => 2048, 'parallel_tool_calls' => false,
+            'previous_response_id' => null, 'temperature' => null, 'top_p' => null, 'tool_choice' => 'auto', 'tools' => [],
+            'usage' => ['input_tokens' => 10, 'output_tokens' => 5, 'total_tokens' => 15,
+                'input_tokens_details' => ['cached_tokens' => 0], 'output_tokens_details' => ['reasoning_tokens' => 0]],
+        ], JSON_THROW_ON_ERROR));
+        $authority = new AssistantEgressFixtureAuthority;
+        $egress = new OrdinaryAssistantEgress($authority);
+        $history = [];
+        $provider = (new OrdinaryAssistantProviderFactory($egress, $this->createMock(LoggingService::class)))
+            ->make(Middleware::history($history)(new MockHandler([$wire, $wire])));
         $registry = new AIToolRegistry;
         $registry->registerTool($this->makeTool('search_projects'));
-        $service = $this->makeService($registry, provider: $provider);
+        $service = $this->makeService($registry, provider: $provider, egress: $egress);
         $tools = $registry->getToolsDefinitions(['search_projects'], true);
         $input = [['role' => 'user', 'content' => 'Запрос']];
+        $actor = new User(['is_active' => true, 'current_organization_id' => 15]);
+        $actor->id = 7;
+        [$preparedInput, $preparedOptions] = $service->exposePrepareProviderPayload($input, ['tools' => $tools]);
+        $authority->approve(OrdinaryAssistantEgressRequest::capture($preparedInput, $preparedOptions, 15, $actor, $provider->getModel()));
         $first = $service->exposeRequestAssistantResponse($input, ['tools' => $tools]);
-        self::assertSame([$call], $first['response']['function_calls']);
+        self::assertEqualsCanonicalizing([$call], $first['response']['function_calls']);
+        self::assertCount(1, $history);
+        $payload = json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame('function', $payload['tools'][0]['type']);
+        self::assertArrayNotHasKey('function', $payload['tools'][0]);
+        self::assertSame('Запрос', $payload['input'][0]['content']);
+        self::assertSame($authority->approvedPayload, $payload);
         $input = [...$input, ...$first['response']['output'], ['type' => 'function_call_output', 'call_id' => 'call_service', 'output' => '{"found":2}']];
+        [$preparedInput, $preparedOptions] = $service->exposePrepareProviderPayload($input, ['tools' => $tools]);
+        $authority->approve(OrdinaryAssistantEgressRequest::capture($preparedInput, $preparedOptions, 15, $actor, $provider->getModel()));
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('assistant_native_replayed_output');
         $service->exposeRequestAssistantResponse($input, ['tools' => $tools]);
@@ -2081,7 +2130,174 @@ class AIAssistantServiceBudgetTest extends TestCase
         (new \ReflectionMethod(AIAssistantService::class, 'savePendingSummary'))->invoke($service, new User(['id' => 9, 'current_organization_id' => 15]));
     }
 
-    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null, array $history = []): TestableAIAssistantService
+    public function test_valid_model_financial_period_is_preserved_during_actual_tool_handling(): void
+    {
+        $arguments = ['project_id' => 52, 'period_start' => '2026-03-10', 'period_end' => '2026-03-20', 'currency' => 'USD'];
+        $schema = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectFinanceOverviewTool::class))
+            ->newInstanceWithoutConstructor()->getParametersSchema();
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_project_finance_overview');
+        $tool->method('getParametersSchema')->willReturn($schema);
+        $tool->expects($this->once())->method('execute')->with($arguments, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $plan = ['request' => ['message' => 'Сравни бюджет и расходы нашего проекта за март 2026, с 10 по 20 число.',
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $tool->getName(),
+            'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
+
+        self::assertSame('success', $result['status']);
+        self::assertSame([], $failures);
+    }
+
+    public function test_explicit_model_scope_conflict_is_rejected_before_tool_execution(): void
+    {
+        foreach ([[999, false, 'get_project_snapshot'], [null, false, 'get_project_snapshot'], [999, true, 'get_project_snapshot'],
+            [999, false, 'get_bim_model_elements']] as [$projectId, $namedScope, $toolName]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn($toolName);
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer']]]);
+            $tool->expects($this->never())->method('execute');
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry, true);
+            $question = $namedScope ? 'Покажи сведения проекта Альфа.' : 'Покажи сведения этого проекта.';
+            $plan = ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            if ($namedScope) {
+                $plan['named_project_scope'] = ['project_id' => 52, 'message_sha256' => hash('sha256', $question)];
+            }
+            $failures = [];
+
+            $result = $service->exposeHandleToolCall(['name' => $tool->getName(), 'arguments' => json_encode(['project_id' => $projectId], JSON_THROW_ON_ERROR)], $plan, $failures);
+
+            self::assertSame('current_project_scope_mismatch', $result['reason']);
+            self::assertSame([], $result['source_refs']);
+            self::assertSame([], (new \ReflectionProperty(AIAssistantService::class, 'activeToolResults'))->getValue($service));
+        }
+    }
+
+    public function test_ui_project_does_not_override_authorized_cross_project_search_in_organization_analysis(): void
+    {
+        $arguments = ['domain' => 'projects', 'entity_type' => 'project', 'project_id' => 100, 'query' => '', 'limit' => 5];
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('assistant_domain_search');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['domain' => ['type' => 'string'],
+            'entity_type' => ['type' => 'string'], 'project_id' => ['type' => 'integer'], 'query' => ['type' => 'string'], 'limit' => ['type' => 'integer']], 'additionalProperties' => false]);
+        $tool->expects($this->once())->method('execute')->with($arguments, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $plan = ['request' => ['message' => 'Сравни доступные сведения по всем проектам.', 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $tool->getName(),
+            'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
+
+        self::assertSame('success', $result['status']);
+        self::assertSame([], $failures);
+    }
+
+    public function test_explicit_invalid_model_focus_is_not_replaced_with_a_valid_default(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('analyze_project_schedule_impact');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer'],
+            'focus' => ['type' => 'string', 'enum' => ['dependencies', 'overdue_impact']]], 'additionalProperties' => false]);
+        $tool->expects($this->never())->method('execute');
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $plan = ['request' => ['message' => 'Какая из просроченных задач сильнее всего влияет на общий срок проекта? Покажи почему так и что надо разблокировать.',
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $tool->getName(),
+            'arguments' => '{"project_id":52,"focus":"invalid_focus"}'], $plan, $failures);
+
+        self::assertArrayHasKey('error', $result);
+        self::assertNotEmpty($failures);
+    }
+
+    public function test_invalid_model_project_values_reach_schema_validation_without_scope_defaults(): void
+    {
+        foreach ([0, -2, '52', []] as $projectId) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_project_snapshot');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1]]]);
+            $tool->expects($this->never())->method('execute');
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => 'Покажи сведения этого проекта.', 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $tool->getName(),
+                'arguments' => json_encode(['project_id' => $projectId], JSON_THROW_ON_ERROR)], $plan, $failures);
+
+            self::assertArrayHasKey('error', $result);
+            self::assertNotEmpty($failures);
+        }
+    }
+
+    public function test_current_project_entity_key_conflict_is_rejected_before_execution(): void
+    {
+        foreach ([[100, true], ['100', true], [null, true], [100, false]] as [$projectId, $includeEntityType]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('assistant_domain_read');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'entity_type' => ['type' => 'string'], 'id' => ['type' => ['integer', 'string']]]]);
+            $tool->expects($this->never())->method('execute');
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => 'Какой бюджет у нашего объекта? В какой валюте сумма?', 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $tool->getName(),
+                'arguments' => json_encode(['id' => $projectId] + ($includeEntityType ? ['entity_type' => 'project'] : []), JSON_THROW_ON_ERROR)], $plan, $failures);
+
+            self::assertSame('current_project_scope_mismatch', $result['reason']);
+            self::assertSame([], $result['source_refs']);
+        }
+    }
+
+    public function test_model_selected_generic_identity_must_belong_to_the_required_project_before_execution(): void
+    {
+        foreach (['assistant_domain_read', 'assistant_domain_navigation'] as $name) {
+            foreach ([[false, true], [true, true], [false, false]] as [$belongs, $requested]) {
+                $shouldExecute = ! $requested || $belongs;
+                $arguments = ['domain' => 'contracts', 'entity_type' => 'contract', 'id' => 315, 'fields' => ['number'],
+                    'projection' => null, 'projection_offset' => 0, 'projection_limit' => 20];
+                if ($name === 'assistant_domain_navigation') { $arguments = array_intersect_key($arguments, ['domain' => true, 'entity_type' => true, 'id' => true]); }
+                $tool = $this->createMock(AIToolInterface::class);
+                $tool->method('getName')->willReturn($name);
+                $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['domain' => ['type' => 'string'],
+                    'entity_type' => ['type' => 'string'], 'id' => ['type' => 'integer'], 'fields' => ['type' => 'array', 'items' => ['type' => 'string']],
+                    'projection' => ['type' => ['string', 'null']], 'projection_offset' => ['type' => 'integer'], 'projection_limit' => ['type' => 'integer']]]);
+                $tool->expects($shouldExecute ? $this->once() : $this->never())->method('execute')
+                    ->with($arguments, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+                $registry = new AIToolRegistry;
+                $registry->registerTool($tool);
+                $service = $this->makeService($registry, true);
+                $service->entityInRequestedProject = $belongs;
+                $question = $requested ? 'Какой бюджет у нашего объекта? В какой валюте сумма?' : 'Сравни договоры всех проектов нашей организации.';
+                $plan = ['request' => ['message' => $question,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+                $failures = [];
+
+                $result = $service->exposeHandleToolCall(['name' => $name, 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
+
+                self::assertSame($requested ? [['contract', 315, 52]] : [], $service->requestedProjectEntityChecks);
+                self::assertSame([], $failures);
+                if ($shouldExecute) { self::assertSame('success', $result['status']); }
+                else {
+                    self::assertSame('current_project_scope_mismatch', $result['reason']);
+                    self::assertSame([], $result['source_refs']);
+                    self::assertSame([], (new \ReflectionProperty(AIAssistantService::class, 'activeToolResults'))->getValue($service));
+                }
+            }
+        }
+    }
+
+    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null, array $history = [], ?OrdinaryAssistantEgress $egress = null): TestableAIAssistantService
     {
         $llmProvider = $provider ?? $this->createMock(NativeResponsesTestProvider::class);
         $conversationManager = $this->createMock(ConversationManager::class);
@@ -2116,7 +2332,8 @@ class AIAssistantServiceBudgetTest extends TestCase
                 {
                     return array_fill(0, mb_strlen($text), 1);
                 }
-            }))
+            })),
+            ordinaryEgress: $egress ?? new OrdinaryAssistantEgress,
         );
     }
 
@@ -2160,6 +2377,17 @@ class AIAssistantServiceBudgetTest extends TestCase
 
 class TestableAIAssistantService extends AIAssistantService
 {
+    public bool $entityInRequestedProject = true;
+
+    public array $requestedProjectEntityChecks = [];
+
+    protected function canReadEntityInRequestedProject(User $actor, int $organizationId, string $type, int|string $id, int $projectId): bool
+    {
+        $this->requestedProjectEntityChecks[] = [$type, $id, $projectId];
+
+        return $this->entityInRequestedProject;
+    }
+
     public array|string|null $freshProjectSearch = null;
 
     public array $freshProjectSearchCalls = [];
@@ -2212,7 +2440,7 @@ class TestableAIAssistantService extends AIAssistantService
 
     public function exposeRequestAssistantResponse(array $input, array $options): array
     {
-        $actor = new User;
+        $actor = new User(['is_active' => true, 'current_organization_id' => 15]);
         $actor->id = 7;
 
         return $this->requestAssistantResponse($input, $options, 15, $actor);

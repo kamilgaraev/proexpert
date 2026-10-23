@@ -46,6 +46,7 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_handover_control' => AssistantOrganizationHandoverControlReader::class,
         'get_organization_quality_defect_control' => AssistantOrganizationQualityDefectControlReader::class,
         'get_rag_index_status' => AssistantRagIndexStatusReader::class,
         'get_organization_calculation_health' => AssistantOrganizationCalculationHealthReader::class,
@@ -90,6 +91,10 @@ final class AssistantOperationalReaderRegistry
     public static function intent(string $query): ?array
     {
         $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
+        if (AssistantOrganizationHandoverControlReader::hasIntent($query)) {
+            return AssistantOrganizationHandoverControlReader::matches($query)
+                ? ['name' => 'get_organization_handover_control', 'reader' => AssistantOrganizationHandoverControlReader::class] : null;
+        }
         if (\App\BusinessModules\Features\AIAssistant\Services\AssistantJournalEntriesIntent::hasIntent($query)) {
             return AssistantProjectJournalEntriesReader::matches($query)
                 ? ['name' => 'get_project_journal_entries', 'reader' => AssistantProjectJournalEntriesReader::class] : null;
