@@ -28,6 +28,7 @@
     "admin.reports.export",
     "admin.logs.view",
     "admin.system.monitoring",
+    "admin.ai_assistant.egress.manage",
     "admin.catalogs.manage",
     "profile.view",
     "profile.edit"

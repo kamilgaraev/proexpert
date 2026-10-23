@@ -285,7 +285,7 @@ final class UserAskedMutationProposalTest extends TestCase
         $registry = new AIToolRegistry;
         $registry->registerTool($tool);
         $service = (new ReflectionClass(ProposalBoundaryAssistantService::class))->newInstanceWithoutConstructor();
-        foreach (['toolRegistry' => $registry, 'permissionChecker' => $checker, 'logging' => $this->createMock(LoggingService::class), 'toolArguments' => new AssistantToolArgumentValidator, 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy, 'legacyLiveEvidence' => null] as $property => $value) {
+        foreach (['toolRegistry' => $registry, 'permissionChecker' => $checker, 'logging' => $this->createMock(LoggingService::class), 'toolArguments' => new AssistantToolArgumentValidator, 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy, 'legacyLiveEvidence' => null, 'scopedContext' => null] as $property => $value) {
             (new ReflectionProperty(AIAssistantService::class, $property))->setValue($service, $value);
         }
         $service->toolName = $tool->getName();
@@ -321,7 +321,7 @@ final class ProposalBoundaryAssistantService extends AIAssistantService
         $actor->current_organization_id = 15;
         $executed = null;
         $evidence = $failures = $proposals = $urls = [];
-        $response = $this->handleToolCall(['function' => ['name' => $this->toolName, 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)]], $organization, $actor, 15, $plan, $allowActions, $executed, $evidence, $failures, $proposals, $urls);
+        $response = $this->handleToolCall(['name' => $this->toolName, 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $organization, $actor, 15, $plan, $allowActions, $executed, $evidence, $failures, $proposals, $urls);
         return ['response' => $response, 'proposals' => $proposals, 'failures' => $failures, 'executed_action' => $executed];
     }
 }

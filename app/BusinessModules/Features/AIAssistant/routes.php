@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadC
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantAttachmentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantCreditsController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantDocumentController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantEgressEnrollmentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantMemoryController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantSharingController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\ProjectPulseController;
@@ -61,6 +62,11 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
 
 Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
     ->prefix('api/v1/admin/ai-assistant')->name('admin.ai-assistant.')->group(static function (): void {
+        Route::post('egress/cohorts', [AssistantEgressEnrollmentController::class, 'assign'])->name('egress.cohorts.assign');
+        Route::delete('egress/cohorts/{cohort}', [AssistantEgressEnrollmentController::class, 'revokeCohort'])->whereUuid('cohort')->name('egress.cohorts.revoke');
+        Route::post('egress/enrollments/preview', [AssistantEgressEnrollmentController::class, 'preview'])->name('egress.enrollments.preview');
+        Route::post('egress/enrollments/{enrollment}/confirm', [AssistantEgressEnrollmentController::class, 'confirm'])->whereUuid('enrollment')->name('egress.enrollments.confirm');
+        Route::delete('egress/enrollments/{enrollment}', [AssistantEgressEnrollmentController::class, 'revoke'])->whereUuid('enrollment')->name('egress.enrollments.revoke');
         Route::get('report-tasks/{taskId}', [\App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantPublishedReportController::class, 'show'])
             ->whereUlid('taskId')->middleware('authorize:ai_assistant.reports.generate')->name('report-tasks.show');
         Route::post('rag/reindex', [AIAssistantRagController::class, 'reindex'])->middleware('authorize:admin.ai_assistant.rag.manage')->name('rag.reindex');

@@ -90,7 +90,7 @@ final class AssistantReadToolCatalogTest extends TestCase
         });
         $class = new ReflectionClass(AIAssistantService::class);
         $service = $class->newInstanceWithoutConstructor();
-        foreach (['toolRegistry' => $registry, 'activeActor' => $actor, 'permissionChecker' => $permissions, 'dataAccess' => null,
+        foreach (['toolRegistry' => $registry, 'activeActor' => $actor, 'permissionChecker' => $permissions, 'dataAccess' => null, 'scopedContext' => null,
             'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $key => $value) {
             $class->getProperty($key)->setValue($service, $value);
         }

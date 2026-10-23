@@ -196,6 +196,8 @@ final class AIAssistantController extends AbstractAssistantApiController
             return $this->reject($request, trans_message('ai_assistant.request_in_progress'), 409);
         } catch (AssistantRequestCancelled) {
             return $this->reject($request, trans_message('ai_assistant.request_cancelled'), 409);
+        } catch (\App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied) {
+            return $this->reject($request, trans_message('ai_assistant.assistant_egress_denied'), 409);
         } catch (AssistantBudgetExceeded) {
             return $this->reject($request, trans_message('ai_assistant.approved_budget_exceeded'), 409);
         } catch (AssistantResponseIncomplete $exception) {
