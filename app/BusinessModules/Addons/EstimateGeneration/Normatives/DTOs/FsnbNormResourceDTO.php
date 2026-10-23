@@ -10,7 +10,7 @@ final readonly class FsnbNormResourceDTO
         public ?string $code,
         public string $name,
         public ?string $unit = null,
-        public ?float $quantity = null,
+        public ?string $quantity = null,
         public ?string $resourceType = null,
         public ?array $rawData = null,
     ) {
