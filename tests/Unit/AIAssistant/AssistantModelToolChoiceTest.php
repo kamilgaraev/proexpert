@@ -40,7 +40,7 @@ final class AssistantModelToolChoiceTest extends TestCase
         $permissions->method('canExposeTool')->willReturnCallback(static fn (User $user, string $name): bool => $name !== 'search_users');
         $class = new ReflectionClass(AIAssistantService::class);
         $service = $class->newInstanceWithoutConstructor();
-        foreach (['toolRegistry' => $registry, 'activeActor' => $actor, 'permissionChecker' => $permissions, 'dataAccess' => null,
+        foreach (['toolRegistry' => $registry, 'activeActor' => $actor, 'permissionChecker' => $permissions, 'dataAccess' => null, 'scopedContext' => null,
             'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
             $class->getProperty($property)->setValue($service, $value);
         }

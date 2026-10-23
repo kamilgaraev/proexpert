@@ -95,6 +95,7 @@ final class AssistantToolSchemaBudgetTest extends TestCase
             foreach (['summary', 'find', 'reports', 'estimates', 'payments'] as $intent) {
                 $service = (new ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
                 $reflection = new ReflectionClass(AIAssistantService::class);
+                $reflection->getProperty('scopedContext')->setValue($service, null);
                 $reflection->getProperty('toolRegistry')->setValue($service, $registry);
                 $reflection->getProperty('toolEligibilityPolicy')->setValue($service, new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy);
                 $reflection->getProperty('logging')->setValue($service, $this->createMock(\App\Services\Logging\LoggingService::class));

@@ -56,6 +56,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Psr\Log\AbstractLogger;
 use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\Support\AssistantEgressFixtureRuntime;
 use Tests\TestCase;
 use Stringable;
 use Throwable;
@@ -94,6 +95,10 @@ final class AssistantRequestLifecycleTest extends TestCase
         Schema::create('organization_user', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id'); $table->foreignId('user_id'); $table->boolean('is_active')->default(true); $table->boolean('is_owner')->default(false); $table->timestamps();
         });
+        Schema::create('projects', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('organization_id'); $table->timestamps();
+        });
+        (require app_path('BusinessModules/Features/AIAssistant/migrations/2026_10_23_120000_create_assistant_egress_admissions.php'))->up();
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id'); $table->string('status'); $table->string('billing_period')->default('30_days');
             $table->timestampTz('current_period_start_at')->nullable(); $table->timestampTz('current_period_end_at')->nullable(); $table->timestamps();
@@ -1314,6 +1319,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         );
         $service = $this->providerService($provider, $registry);
         $payload = $this->quote(['message' => 'Покажи точные суммы проекта']);
+        $service->egressFixtureToolDefinitions = $registry->getToolsDefinitions([$name], true);
         $response = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
         $this->assertSame('insufficient_data', $response['message']['metadata']['outcome']);
         $this->assertFalse($response['message']['metadata']['service_error']);
@@ -1436,15 +1442,19 @@ final class AssistantRequestLifecycleTest extends TestCase
             'entity_type' => 'user', 'entity_id' => $this->actor->id, 'organization_id' => $this->organization->id,
         ]]]];
 
-        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
-
-        $this->assertSame([], $response['message']['metadata']['source_refs']);
-        $this->assertTrue($response['message']['metadata']['needs_clarification']);
-        $this->assertStringNotContainsString('Отчёт создан', $response['message']['content']);
-        $this->assertEmpty($response['message']['metadata']['proposed_actions'] ?? []);
-        $this->assertArrayNotHasKey('executed_action', $response);
-        $this->assertSame(0, $response['credit_usage']['charged_minor']);
-        $this->assertSame(2, AssistantRequest::query()->sole()->calls_used);
+        try {
+            $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
+            $this->fail('Unadvertised report call was accepted');
+        } catch (DomainException $exception) {
+            $this->assertSame('assistant_native_call_invalid', $exception->getMessage());
+        }
+        $request = AssistantRequest::query()->sole();
+        $this->assertSame('failed', $request->status);
+        $this->assertSame(2, $request->calls_used);
+        $this->assertSame(0, Message::query()->where('role', 'assistant')->count());
+        $this->assertSame(0, AICreditReservation::query()->findOrFail($request->reservation_id)->consumed_minor);
+        $this->assertSame('cancelled', AICreditReservation::query()->findOrFail($request->reservation_id)->status);
+        $this->assertSame(2, AICreditProviderUsage::query()->count());
     }
 
     #[DataProvider('terminalRequestChanges')]
@@ -1562,7 +1572,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $provider->method('getModel')->willReturn('gpt-6-luna');
         $provider->expects(self::never())->method('chat');
         $call = 0;
-        $provider->expects($this->exactly(3))->method('responses')->willReturnCallback(function (array $messages, array $options) use (&$call, $transcription, $explanation): array {
+        $provider->expects($this->exactly(2))->method('responses')->willReturnCallback(function (array $messages, array $options) use (&$call, $transcription, $explanation): array {
             $call++;
             $this->assertEmpty($options['tools'] ?? []);
             $this->assertStringContainsString(trans_message('ai_assistant.image_discussion_instructions'), $messages[0]['content']);
@@ -1586,10 +1596,9 @@ final class AssistantRequestLifecycleTest extends TestCase
                 $this->assertContains(trans_message('ai_assistant.image_discussion_history', ['text' => $transcription]), array_column($messages, 'content'));
                 $this->assertContains('что это может значить', array_column($messages, 'content'));
             }
-            return $this->nativeResponse($call === 1 ? $transcription : ($call === 2 ? '' : $explanation), [
+            return $this->nativeResponse($call === 1 ? $transcription : $explanation, [
                 'input_tokens' => $call === 1 ? 3020 : 150, 'output_tokens' => 40, 'tokens_used' => $call === 1 ? 3060 : 190,
-                'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true],
-                $call === 2 ? [['call_id' => 'unrelated_estimate', 'name' => 'assistant_domain_read', 'arguments' => '{"domain":"estimates","entity_type":"estimate_item","id":280417}']] : []);
+                'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true]);
         });
         $registry = $this->createMock(AIToolRegistry::class);
         $registry->expects($this->never())->method('getTool');
@@ -1626,6 +1635,26 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame('unverified', $result['message']['metadata']['validation_status']);
         $this->assertSame([], $conversation->fresh()->context['last_request_context']['entity_refs']);
         $this->assertTrue($conversation->fresh()->context['last_image_discussion']);
+        $this->assertSame(2, AICreditProviderUsage::query()->count());
+        $invalid = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $invalid->method('getModel')->willReturn('gpt-6-luna');
+        $invalid->expects(self::never())->method('chat');
+        $invalid->expects(self::once())->method('responses')->willReturnCallback(function (array $messages, array $options): array {
+            $this->assertEmpty($options['tools'] ?? []);
+            return $this->nativeResponse('', ['input_tokens' => 150, 'output_tokens' => 40, 'tokens_used' => 190,
+                'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true],
+                [['call_id' => 'unrelated_estimate', 'name' => 'assistant_domain_read', 'arguments' => '{"domain":"estimates","entity_type":"estimate_item","id":280417}']]);
+        });
+        $blocked = $this->quote(['message' => 'что это может значить', 'profile' => 'normal', 'context' => $background], conversationId: $first['conversation_id']);
+        try {
+            $this->providerService($invalid, $registry, $orchestrator)->ask($blocked['message'], $this->organization->id,
+                $this->actor, $first['conversation_id'], $blocked);
+            $this->fail('Unadvertised image followup tool was accepted');
+        } catch (DomainException $exception) {
+            $this->assertSame('assistant_native_call_invalid', $exception->getMessage());
+        }
+        $this->assertSame('failed', AssistantRequest::query()->where('request_id', $blocked['request_id'])->sole()->status);
+        $this->assertSame(0, Message::query()->where('role', 'assistant')->where('metadata->request_id', $blocked['request_id'])->count());
         $this->assertSame(3, AICreditProviderUsage::query()->count());
         $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
     }
@@ -1716,7 +1745,7 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     private function tables(): array
     {
-        return ['user_role_assignments', 'organization_custom_roles', 'authorization_contexts', 'ai_assistant_report_access', 'report_files', 'personal_files', 'ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
+        return ['ai_assistant_egress_enrollments', 'ai_assistant_egress_cohorts', 'projects', 'user_role_assignments', 'organization_custom_roles', 'authorization_contexts', 'ai_assistant_report_access', 'report_files', 'personal_files', 'ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
     }
 
     public static function unverifiedReportResults(): array
@@ -1884,13 +1913,13 @@ final class AssistantRequestLifecycleTest extends TestCase
     private function nativeResponse(string $content, array $usage, array $calls = []): array
     {
         $calls = array_map(static fn (array $call): array => $call + ['type' => 'function_call', 'id' => 'fc_'.$call['call_id'], 'status' => 'completed'], $calls);
-        $output = $calls;
+        $output = [];
         if ($content !== '') {
             $output[] = ['type' => 'message', 'id' => 'msg_'.Str::ulid(), 'status' => 'completed', 'role' => 'assistant',
                 'content' => [['type' => 'output_text', 'text' => $content, 'annotations' => []]]];
         }
 
-        return $usage + ['content' => $content, 'output' => $output, 'function_calls' => $calls, 'response_status' => 'completed',
+        return $usage + ['content' => $content, 'output' => [...$output, ...$calls], 'function_calls' => $calls, 'response_status' => 'completed',
             'tokens_used' => ($usage['input_tokens'] ?? 0) + ($usage['output_tokens'] ?? 0)];
     }
 
@@ -2125,8 +2154,10 @@ final class AssistantRequestLifecycleTest extends TestCase
             $orchestrator->method('plan')->willReturn(['request' => ['context' => []], 'task_type' => 'summary', 'access_context_public' => [], 'capability' => []]);
         }
 
-        return new LifecycleProviderAIAssistantService(
-            $provider, $this->conversations,
+        $fixtureRuntime = new AssistantEgressFixtureRuntime((int) $this->organization->id, (int) $this->actor->id,
+            $provider, $this->createMock(\App\Services\Logging\LoggingService::class));
+        $service = new LifecycleProviderAIAssistantService(
+            $fixtureRuntime->provider, $this->conversations,
             $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\ContextBuilder::class),
             $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\IntentRecognizer::class),
             $usage,
@@ -2141,7 +2172,11 @@ final class AssistantRequestLifecycleTest extends TestCase
             requestLifecycle: $this->lifecycle,
             dataAccess: app(AssistantDataAccessPolicy::class),
             tokenBudget: new TokenBudgetService(new TokenCounter),
+            ordinaryEgress: $fixtureRuntime->egress,
         );
+        $service->egressFixture = $fixtureRuntime;
+
+        return $service;
     }
 }
 
@@ -2152,6 +2187,23 @@ interface LifecycleNativeResponsesProvider extends LLMProviderInterface
 
 final class LifecycleProviderAIAssistantService extends AIAssistantService
 {
+    public ?AssistantEgressFixtureRuntime $egressFixture = null;
+
+    public ?array $egressFixtureToolDefinitions = null;
+
+    protected function resolveToolDefinitions(array $taskPlan, array $selectedReadTools = []): array
+    {
+        return $this->egressFixtureToolDefinitions ?? parent::resolveToolDefinitions($taskPlan, $selectedReadTools);
+    }
+
+    protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array
+    {
+        $prepared = parent::prepareProviderPayload($messages, $options, $organizationId, $user);
+        $this->egressFixture?->approvePrepared($prepared[0], $prepared[1], $organizationId, $user);
+
+        return $prepared;
+    }
+
     public bool $probeProviderDuringAsk = false;
     public bool $failOnRagBuild = false;
     public ?array $ragContextOverride = null;
