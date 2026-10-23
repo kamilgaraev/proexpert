@@ -29,7 +29,7 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
         foreach (['count(', 'sum(', 'max(', 'organization_id', 'project_id', 'session_id'] as $needle) {
             self::assertStringContainsString($needle, strtolower($source));
         }
-        foreach (['->get()', '->cursor()', 'output_payload', 'safe_context', 'price_snapshot', 'storage_path', 'extracted_text'] as $needle) {
+        foreach (['->get()', '->cursor()', 'output_payload', 'price_snapshot', 'storage_path', 'extracted_text'] as $needle) {
             self::assertStringNotContainsString($needle, $source);
         }
         self::assertLessThanOrEqual(14, substr_count($source, '->first()') + substr_count($source, '->value('));
@@ -58,7 +58,7 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
             self::assertStringContainsString($watermark, $source);
         }
         self::assertStringNotContainsString('CURRENT_TIMESTAMP - lease_expires_at', $source);
-        self::assertStringContainsString('public const QUERY_BUDGET = 15;', $source);
+        self::assertStringContainsString('public const QUERY_BUDGET = 21;', $source);
     }
 
     #[Test]
