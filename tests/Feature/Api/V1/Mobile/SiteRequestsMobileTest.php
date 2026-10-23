@@ -18,6 +18,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Mobile\MobileDashboardService;
+use App\Services\Auth\JwtTokenIssuer;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -25,11 +26,32 @@ use Illuminate\Support\Facades\Event;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 final class SiteRequestsMobileTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_mobile_delivery_update_returns_merged_interval_validation_errors_instead_of_a_server_error(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $request = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id, 'user_id' => $context->user->id,
+            'title' => 'Delivery interval fixture', 'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::DRAFT->value, 'priority' => SiteRequestPriorityEnum::MEDIUM->value,
+            'material_name' => 'Concrete', 'material_quantity' => 1, 'material_unit' => 'm3',
+            'delivery_time_from' => '09:00', 'delivery_time_to' => '10:00',
+        ]);
+        $url = "/api/v1/mobile/site-requests/{$request->id}";
+        $this->withHeaders($context->mobileAuthHeaders())->putJson($url, ['delivery_time_from' => '10:01'])
+            ->assertUnprocessable()->assertJsonValidationErrors('delivery_time_to', 'errors');
+        $this->assertSame('09:00:00', $request->fresh()->delivery_time_from);
+        $this->assertSame('10:00:00', $request->fresh()->delivery_time_to);
+        $this->withHeaders($context->mobileAuthHeaders())->putJson($url, ['delivery_time_to' => null])->assertOk();
+        $this->assertNull($request->fresh()->delivery_time_to);
+    }
 
     public function test_mobile_create_update_and_admin_readback_stay_in_sync(): void
     {
@@ -169,7 +191,7 @@ final class SiteRequestsMobileTest extends TestCase
             'material_quantity' => 1,
             'material_unit' => 'm3',
         ]);
-        $token = JWTAuth::claims(['organization_id' => $context->organization->id])->fromUser($reviewer);
+        $token = app(JwtTokenIssuer::class)->issue($reviewer, ['guard' => 'api_mobile', 'organization_id' => $context->organization->id]);
         $this->allowAccess();
 
         $this->withHeaders([
@@ -227,7 +249,7 @@ final class SiteRequestsMobileTest extends TestCase
             'material_quantity' => 2,
             'material_unit' => 'pcs',
         ]);
-        $token = JWTAuth::claims(['organization_id' => $context->organization->id])->fromUser($reviewer);
+        $token = app(JwtTokenIssuer::class)->issue($reviewer, ['guard' => 'api_mobile', 'organization_id' => $context->organization->id]);
         $this->allowAccess();
 
         $response = $this->withHeaders([

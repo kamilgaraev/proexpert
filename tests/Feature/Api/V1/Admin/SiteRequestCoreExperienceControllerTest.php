@@ -855,6 +855,35 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->assertFalse($closure->isAvailable($request->fresh()));
     }
 
+    public function test_delivery_interval_update_uses_persisted_clock_values_and_returns_field_errors_without_mutation(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $request = $this->createSiteRequest($context, $project);
+        $request->update(['status' => 'pending', 'delivery_time_from' => '09:00', 'delivery_time_to' => '10:00']);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $url = "/api/v1/admin/site-requests/{$request->id}";
+        foreach ([
+            ['delivery_time_from' => '09:00', 'delivery_time_to' => '08:00'],
+            ['delivery_time_from' => '10:01'], ['delivery_time_to' => '08:59'], ['delivery_time_to' => '09:00'],
+        ] as $changes) {
+            $this->withHeaders($context->authHeaders())->putJson($url, $changes)
+                ->assertUnprocessable()->assertJsonValidationErrors('delivery_time_to', 'errors');
+            $this->assertSame('09:00:00', $request->fresh()->delivery_time_from);
+            $this->assertSame('10:00:00', $request->fresh()->delivery_time_to);
+        }
+        foreach ([
+            ['delivery_time_from' => '09:30'], ['delivery_time_to' => '10:30'],
+            ['delivery_time_to' => null], ['delivery_time_from' => null], ['delivery_time_to' => '11:00'],
+        ] as $changes) {
+            $this->withHeaders($context->authHeaders())->putJson($url, $changes)->assertOk();
+        }
+        $this->assertNull($request->fresh()->delivery_time_from);
+        $this->assertSame('11:00:00', $request->fresh()->delivery_time_to);
+    }
+
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest
     {
         return SiteRequest::query()->create([

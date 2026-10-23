@@ -265,6 +265,8 @@ class SiteRequestController extends Controller
                 new SiteRequestGroupResource($updatedGroup),
                 trans_message('site_requests.group_updated_success')
             );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
@@ -331,6 +333,8 @@ class SiteRequestController extends Controller
                 201
             );
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
@@ -364,6 +368,8 @@ class SiteRequestController extends Controller
                 new SiteRequestResource($updated),
                 trans_message('site_requests.updated_success')
             );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return AdminResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {

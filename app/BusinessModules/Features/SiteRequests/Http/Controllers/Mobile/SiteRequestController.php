@@ -288,6 +288,8 @@ class SiteRequestController extends Controller
                 trans_message('site_requests::mobile.store_success'),
                 201
             );
+        } catch (ValidationException $e) {
+            return MobileResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
@@ -327,6 +329,8 @@ class SiteRequestController extends Controller
                 $this->makeSiteRequestPayload($updated, $request, $user, $organizationId),
                 trans_message('site_requests::mobile.update_success')
             );
+        } catch (ValidationException $e) {
+            return MobileResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
@@ -380,6 +384,8 @@ class SiteRequestController extends Controller
                 ],
                 trans_message('site_requests::mobile.group_update_success')
             );
+        } catch (ValidationException $e) {
+            return MobileResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {

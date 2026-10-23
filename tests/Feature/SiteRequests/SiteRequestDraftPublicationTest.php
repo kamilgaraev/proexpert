@@ -326,6 +326,96 @@ final class SiteRequestDraftPublicationTest extends TestCase
         $this->assertNotContains($request->id, $visibleRequests);
     }
 
+    public function test_invalid_partial_delivery_intervals_are_rejected_before_the_source_or_either_calendar_changes(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext(true);
+        $this->actingAs(User::query()->findOrFail($request->user_id));
+        $request->update(['status' => SiteRequestStatusEnum::PENDING->value, 'delivery_time_from' => '09:00', 'delivery_time_to' => '10:00']);
+        $calendarService->createCalendarEvent($request->fresh());
+        $source = SiteRequestCalendarEvent::query()->where('site_request_id', $request->id)->sole();
+        $mirrorId = $source->schedule_event_id;
+        $historyCount = $request->history()->count();
+        foreach ([
+            ['delivery_time_from' => '09:00', 'delivery_time_to' => '08:00'],
+            ['delivery_time_from' => '10:01'], ['delivery_time_to' => '08:59'], ['delivery_time_to' => '09:00'],
+        ] as $changes) {
+            Event::fake([SiteRequestUpdated::class]);
+            $errors = [];
+            try {
+                app(SiteRequestService::class)->update($request->fresh(), $request->user_id, $changes);
+            } catch (\Illuminate\Validation\ValidationException $exception) {
+                $errors = $exception->errors();
+            }
+            foreach (Event::dispatched(SiteRequestUpdated::class) as [$update]) {
+                (new UpdateCalendarEventOnSiteRequest($calendarService))->handle($update);
+            }
+            $this->assertArrayHasKey('delivery_time_to', $errors);
+            $this->assertSame('09:00:00', $request->fresh()->delivery_time_from);
+            $this->assertSame('10:00:00', $request->fresh()->delivery_time_to);
+            $this->assertSame($historyCount, $request->history()->count());
+            $source->refresh();
+            $this->assertSame('09:00:00', $source->start_time);
+            $this->assertSame('10:00:00', $source->end_time);
+            $this->assertSame($mirrorId, $source->schedule_event_id);
+            $this->assertStringEndsWith('T10:00:00', ProjectEvent::query()->findOrFail($mirrorId)->getCalendarEndLocal());
+            Event::assertNotDispatched(SiteRequestUpdated::class);
+        }
+    }
+
+    public function test_source_service_rejects_invalid_creation_and_partial_equipment_or_date_changes(): void
+    {
+        [$request] = $this->publicationContext();
+        $service = app(SiteRequestService::class);
+        $errors = [];
+        try {
+            $service->create($request->organization_id, $request->user_id, [
+                'project_id' => $request->project_id, 'title' => 'Rejected delivery', 'request_type' => 'other',
+                'delivery_time_from' => '10:00', 'delivery_time_to' => '09:00',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $errors = $exception->errors();
+        }
+        $this->assertArrayHasKey('delivery_time_to', $errors);
+        $this->assertDatabaseCount('site_requests', 1);
+        $request->update([
+            'request_type' => SiteRequestTypeEnum::EQUIPMENT_REQUEST->value,
+            'equipment_start_at' => '2026-10-27T06:15:00Z', 'equipment_end_at' => '2026-10-28T07:45:00Z',
+        ]);
+        $errors = [];
+        try {
+            $service->update($request, $request->user_id, ['equipment_start_at' => '2026-10-29T06:15:00Z']);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $errors = $exception->errors();
+        }
+        $this->assertArrayHasKey('equipment_end_at', $errors);
+        $this->assertSame('2026-10-27', $request->fresh()->equipment_start_at->toDateString());
+        $request->update(['equipment_start_at' => null, 'equipment_end_at' => null, 'work_start_date' => '2026-10-27', 'work_end_date' => '2026-10-28']);
+        $errors = [];
+        try {
+            $service->update($request, $request->user_id, ['work_start_date' => '2026-10-29']);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $errors = $exception->errors();
+        }
+        $this->assertArrayHasKey('work_end_date', $errors);
+        $this->assertSame('2026-10-27', $request->fresh()->work_start_date->toDateString());
+    }
+
+    public function test_a_known_end_date_without_a_clock_keeps_its_legacy_end_of_day_in_the_mirror(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext(true);
+        $this->actingAs(User::query()->findOrFail($request->user_id));
+        $request->update([
+            'status' => 'pending', 'required_date' => '2026-10-27', 'work_end_date' => '2026-10-28',
+            'delivery_time_from' => '09:00', 'delivery_time_to' => null,
+        ]);
+        $calendarService->createCalendarEvent($request->fresh());
+        $source = SiteRequestCalendarEvent::query()->where('site_request_id', $request->id)->sole();
+        $mirror = ProjectEvent::query()->findOrFail($source->schedule_event_id);
+        $this->assertSame('2026-10-28T23:59:59', $mirror->getCalendarEndLocal());
+        $this->assertNull($mirror->end_time);
+        $this->assertNull($mirror->duration_minutes);
+    }
+
     public function test_equipment_mirror_preserves_the_source_interval_when_times_change_or_are_cleared(): void
     {
         [$request, , $calendarService] = $this->publicationContext(true);
