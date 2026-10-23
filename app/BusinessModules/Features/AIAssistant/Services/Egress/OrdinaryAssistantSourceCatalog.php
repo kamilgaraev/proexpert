@@ -9,11 +9,51 @@ use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\Models\Organization;
 use App\Models\User;
+use Throwable;
 
 final readonly class OrdinaryAssistantSourceCatalog
 {
     public function __construct(private AIToolRegistry $tools, private AIPermissionChecker $permissions,
         private OrdinaryAssistantSourceProjection $projection) {}
+
+    public function freshReviewer(?int $reviewerId, int $organizationId): User
+    {
+        try {
+            $reviewer = $reviewerId === null || $reviewerId < 1 ? null : User::query()->whereKey($reviewerId)
+                ->where('is_active', true)->where('current_organization_id', $organizationId)->first();
+            if ($reviewer === null || ! $reviewer->organizations()->where('organizations.id', $organizationId)
+                ->wherePivot('is_active', true)->exists()) {
+                throw new AssistantEgressDenied('access_denied');
+            }
+
+            return $reviewer;
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
+        }
+    }
+
+    public function captureForReview(User $actor, ?int $reviewerId, int $organizationId, int $projectId, string $name, array $arguments): array
+    {
+        try {
+            $reviewer = $this->freshReviewer($reviewerId, $organizationId);
+            $sameActor = (int) $actor->getKey() === (int) $reviewer->getKey();
+            $capture = $this->capture($sameActor ? $reviewer : $actor, $organizationId, $projectId, $name, $arguments);
+            if (! $sameActor) {
+                $review = $this->capture($reviewer, $organizationId, $projectId, $name, $arguments);
+                if (! hash_equals($capture['proof']['projection_hash'], $review['proof']['projection_hash'])) {
+                    throw new AssistantEgressDenied('access_denied');
+                }
+            }
+
+            return $capture;
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable $failure) {
+            throw OrdinaryAssistantExceptionBoundary::sanitize($failure);
+        }
+    }
 
     public function capture(User $actor, int $organizationId, int $projectId, string $name, array $arguments): array
     {

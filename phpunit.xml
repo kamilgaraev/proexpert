@@ -9,6 +9,10 @@
          displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
+        <testsuite name="OrdinaryAssistantPreviewReaderAccess">
+            <file>tests/Feature/AIAssistant/AssistantPreviewReaderAccessTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentPolicySnapshotTrackingTest.php</file>
+        </testsuite>
         <testsuite name="OrdinaryAssistantLocalDocumentProcessing">
             <file>tests/Feature/AIAssistant/AssistantLocalDocumentProcessingTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>

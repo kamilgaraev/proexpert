@@ -341,7 +341,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     {
         $this->assertFresh();
         foreach ($this->enrollment->sources as $source) {
-            $current = $this->catalog->capture($this->actor, (int) $this->cohort->organization_id,
+            $current = $this->catalog->captureForReview($this->actor, $this->enrollment->reviewed_by, (int) $this->cohort->organization_id,
                 (int) $this->cohort->project_id, $source['tool'], $source['arguments']);
             if (! hash_equals(OrdinaryAssistantSourceProjection::hash($current['proof']), OrdinaryAssistantSourceProjection::hash($source))) {
                 throw new AssistantEgressDenied('source_stale');
@@ -373,5 +373,6 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             throw new AssistantEgressDenied('access_denied');
         }
         $this->cohort = $current;
+        $this->enrollment = $manifest;
     }
 }
