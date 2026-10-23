@@ -161,12 +161,13 @@ class ProjectEvent extends Model
                 return null;
             }
             $definition = $series->definitionAt((int) $this->series_position);
+            $legacy = in_array('legacy', (array) $this->recurrence_overrides, true);
 
             return [
                 'series_id' => $series->id, 'position' => $this->series_position, 'revision' => $series->revision,
                 'enabled' => $definition['enabled'], 'pattern' => $definition['pattern'],
                 'until' => $definition['until'], 'end_known' => $definition['until'] !== null,
-                'legacy' => in_array('legacy', (array) $this->recurrence_overrides, true),
+                'legacy' => $legacy, 'planned_date' => $legacy ? null : $definition['plan']['event_date'],
                 'suppressed' => $this->recurrence_suppressed,
             ];
         }
@@ -179,7 +180,7 @@ class ProjectEvent extends Model
         return [
             'series_id' => null, 'position' => null, 'revision' => 0, 'enabled' => true,
             'pattern' => $sameScope ? $root->recurrence_pattern : null, 'until' => null,
-            'end_known' => false, 'legacy' => true, 'suppressed' => false,
+            'end_known' => false, 'legacy' => true, 'suppressed' => false, 'planned_date' => null,
         ];
     }
 

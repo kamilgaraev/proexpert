@@ -285,6 +285,69 @@ class ProjectEventRecurrenceScopeTest extends TestCase
         }
     }
 
+    public function test_future_partial_move_past_the_saved_end_is_rejected_atomically(): void
+    {
+        $root = $this->series();
+        $before = $this->members($root)->map->getAttributes()->all();
+        try {
+            $this->change($root, ['event_date' => '2026-11-01'], 'future');
+            $this->fail('A future move past the saved end was accepted');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('recurrence_until', $exception->errors());
+            $this->assertSame($before, $this->members($root)->map->getAttributes()->all());
+            $this->assertSame(0, $root->fresh()->recurrence_context['revision']);
+            $this->assertSame(1, DB::table('project_event_series_segments')->count());
+            $this->assertSame(0, DB::table('project_event_series_operations')->count());
+        }
+    }
+
+    public function test_future_text_edit_of_an_exception_outside_the_end_keeps_its_manual_date(): void
+    {
+        $root = $this->series();
+        $pivot = $this->members($root)[1];
+        $this->change($pivot, ['event_date' => '2026-11-07'], 'single');
+        $this->change($pivot->fresh(), ['description' => 'Future description only'], 'future');
+        $this->assertSame('2026-10-21', $pivot->fresh()->recurrence_context['planned_date']);
+        $this->change($pivot->fresh(), ['recurrence_until' => '2026-10-25'], 'future');
+        $this->assertSame('2026-11-07', $pivot->fresh()->event_date->toDateString());
+        $this->assertSame('Future description only', $this->members($root)->last()->description);
+        $this->assertSame('2026-10-25', $pivot->fresh()->recurrence_until);
+    }
+
+    public function test_mobile_readers_exclude_suppressed_occurrences_and_keep_visible_exceptions(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-20 08:00:00'));
+        $root = app(ProjectEventService::class)->createEvent($project->id, $context->organization->id, [
+            'event_type' => 'meeting', 'title' => 'Mobile teaching series', 'event_date' => '2026-10-20',
+            'event_time' => '09:00:00', 'is_recurring' => true, 'recurrence_pattern' => 'daily',
+            'recurrence_until' => '2026-10-23', 'is_blocking' => true,
+        ])->fresh();
+        $manual = $this->members($root)[2];
+        $this->change($manual, ['notes' => 'Keep this exception visible'], 'single');
+        $this->change($root->fresh(), ['recurrence_until' => '2026-10-20'], 'future');
+        $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class, function ($mock): void {
+            $mock->shouldReceive('getUserPermissionsStructured')->andReturn([
+                'system' => [], 'modules' => ['schedule-management' => ['schedule.view']],
+            ]);
+            $mock->shouldReceive('getUserRoles')->andReturn(collect());
+        });
+        $this->mock(\App\Modules\Core\AccessController::class, function ($mock): void {
+            $mock->shouldReceive('hasModuleAccess')->andReturn(true);
+        });
+        $schedule = app(\App\Services\Mobile\MobileScheduleService::class)->build($context->user, $project->id);
+        $this->assertSame([$root->id, $manual->id], array_column($schedule['events'], 'id'));
+        $this->assertSame(1, $schedule['summary']['today_count']);
+        $this->assertSame(2, $schedule['summary']['upcoming_count']);
+        $this->assertSame(2, $schedule['summary']['blocking_count']);
+        $dashboard = app(\App\Services\Mobile\MobileDashboardService::class)->build($context->user);
+        $widget = collect($dashboard['widgets'])->firstWhere('slug', 'schedule');
+        $this->assertNotNull($widget);
+        $this->assertSame(2, $widget['primary_metric']['value']);
+        $this->assertSame(2, $widget['secondary_metric']['value']);
+    }
+
     private function series(array $data = []): ProjectEvent
     {
         $context = AdminApiTestContext::create();

@@ -236,15 +236,23 @@ final class ProjectEventRecurrenceService
         }
         $enabled = $data['is_recurring'] ?? $previous['enabled'];
         $pattern = array_key_exists('recurrence_pattern', $data) ? $data['recurrence_pattern'] : $previous['pattern'];
+        $anchor = Carbon::parse($data['event_date'] ?? $event->event_date->toDateString(), 'UTC');
+        $legacy = in_array('legacy', (array) $event->recurrence_overrides, true);
         if ($enabled) {
             $this->validateRule($pattern, $data['recurrence_config'] ?? $previous['configuration']);
-            $this->requireEnd(array_key_exists('recurrence_until', $data) ? $data['recurrence_until'] : $previous['until']);
+            $until = $this->requireEnd(array_key_exists('recurrence_until', $data) ? $data['recurrence_until'] : $previous['until']);
+            $effectiveAnchor = isset($data['event_date']) || isset($data['recurrence_pattern']) || $legacy
+                ? $anchor : Carbon::parse($previous['plan']['event_date'], 'UTC');
+            if (Carbon::parse($until, 'UTC')->lt($effectiveAnchor)) {
+                throw ValidationException::withMessages([
+                    'recurrence_until' => trans_message('schedule_management.event_recurrence_end_before_start'),
+                ]);
+            }
         }
         $position = (int) $event->series_position;
-        $validate($data, $event);
-        $anchor = Carbon::parse($data['event_date'] ?? $event->event_date->toDateString(), 'UTC');
+        $validate(Arr::except($data, ['recurrence_until']), $event);
         $interval = [];
-        if (!isset($data['recurrence_pattern']) && (isset($data['event_date']) || in_array('legacy', (array) $event->recurrence_overrides, true))) {
+        if (!isset($data['recurrence_pattern']) && (isset($data['event_date']) || $legacy)) {
             $interval['shift_days'] = (int) Carbon::parse($previous['plan']['event_date'], 'UTC')->diffInDays($anchor, false);
         }
         if (array_key_exists('end_date', $data)) {

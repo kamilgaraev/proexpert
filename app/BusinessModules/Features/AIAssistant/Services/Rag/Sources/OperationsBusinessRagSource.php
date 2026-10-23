@@ -55,6 +55,9 @@ abstract class OperationsBusinessRagSource implements RagSourceCollectorInterfac
         $class = $record['model'];
         $query = $class::query();
         $table = $query->getModel()->getTable();
+        if ($type === 'project_event') {
+            $query->where($table.'.recurrence_suppressed', false);
+        }
         $columns = array_values(array_unique([$query->getModel()->getKeyName(), ...$record['rag_fields'], ...$record['version_columns'], ...array_keys($record['parents']),
             ...($record['project_column'] === null ? [] : [$record['project_column']])]));
         $query->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns));

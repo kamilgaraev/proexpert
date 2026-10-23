@@ -1469,6 +1469,9 @@ final class AssistantDataAccessPolicy
             return app(\App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeAccessFilter::class)->apply($model->newQuery()->where('status', 'published'), $context);
         }
         $query = $model->newQuery();
+        if ($type === 'project_event') {
+            $query->where($table.'.recurrence_suppressed', false);
+        }
         if ($restrictedAggregate && is_string($aggregate)) { $query->whereNotNull($table.'.'.$aggregate); }
         $safeColumns = AssistantExtendedDomainRegistry::values('safeSelectColumns')[$type] ?? null;
         if ($type === 'design_ifc_model_element' && $this->engineeringElementColumns !== []) {

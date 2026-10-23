@@ -123,11 +123,17 @@ class ProjectEventCoreExperienceControllerTest extends TestCase
         $this->assertSame(3, ProjectEvent::query()->where('recurring_parent_id', $eventId)->count());
         $shown = $this->withHeaders($context->authHeaders())->getJson("{$url}/{$eventId}")
             ->assertOk()->assertJsonPath('data.recurrence_until', '2026-10-23')
+            ->assertJsonPath('data.recurrence_context.planned_date', '2026-10-20')
             ->assertJsonMissingPath('data.recurrence_series')->assertJsonMissingPath('data.recurrence_overrides');
         $child = ProjectEvent::where('recurring_parent_id', $eventId)->firstOrFail();
         $this->withHeaders($context->authHeaders())->getJson("{$url}/{$child->id}")
             ->assertOk()->assertJsonPath('data.recurrence_context.series_id', $shown->json('data.recurrence_context.series_id'))
             ->assertJsonPath('data.recurrence_context.until', '2026-10-23');
+        $this->withHeaders($context->authHeaders())->putJson("{$url}/{$child->id}", [
+            'event_date' => '2026-11-07', 'recurrence_scope' => 'single',
+            'operation_id' => (string) \Illuminate\Support\Str::uuid(), 'expected_revision' => 0,
+        ])->assertOk()->assertJsonPath('data.event_date', '2026-11-07T00:00:00.000000Z')
+            ->assertJsonPath('data.recurrence_context.planned_date', $child->event_date->toDateString());
         $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/projects/{$otherProject->id}/events/{$child->id}", [
             'title' => 'No cross-project change', 'recurrence_scope' => 'future',
@@ -220,6 +226,26 @@ class ProjectEventCoreExperienceControllerTest extends TestCase
 
         $response->assertUnprocessable()->assertJsonValidationErrors('recurrence_until');
         $this->assertSame(0, ProjectEvent::query()->where('project_id', $project->id)->count());
+    }
+
+    public function test_future_move_without_a_new_end_returns_422_without_changing_the_series(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $root = app(ProjectEventService::class)->createEvent($project->id, $context->organization->id, [
+            'event_type' => 'meeting', 'title' => 'Saved recurrence end', 'event_date' => '2026-10-20',
+            'is_recurring' => true, 'recurrence_pattern' => 'daily', 'recurrence_until' => '2026-10-23',
+        ]);
+        $this->allowAdminAccess();
+        $response = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/events/{$root->id}", [
+                'event_date' => '2026-11-01', 'recurrence_scope' => 'future',
+                'operation_id' => (string) \Illuminate\Support\Str::uuid(), 'expected_revision' => 0,
+            ]);
+        $response->assertUnprocessable()->assertJsonValidationErrors('recurrence_until');
+        $this->assertSame('2026-10-20', $root->fresh()->event_date->toDateString());
+        $this->assertSame(0, $root->fresh()->recurrence_context['revision']);
+        $this->assertSame(4, ProjectEvent::query()->where('series_id', $root->fresh()->series_id)->count());
     }
 
     public function test_partial_update_validates_recurrence_end_against_the_existing_date(): void
