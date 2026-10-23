@@ -437,6 +437,54 @@ final class SiteRequestDraftPublicationTest extends TestCase
         $this->assertStringContainsString('DTSTAMP:20261023T090000Z', $ical);
     }
 
+    public function test_ical_export_only_includes_events_overlapping_the_selected_days(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext();
+        $request->forceFill(['status' => SiteRequestStatusEnum::PENDING->value])->saveQuietly();
+
+        foreach ([
+            ['Past single', '2026-10-13', null],
+            ['Past closed', '2026-10-13', '2026-10-18'],
+            ['Ongoing', '2026-10-13', '2026-10-20'],
+            ['Ends on first day', '2026-10-18', '2026-10-19'],
+            ['First day', '2026-10-19', null],
+            ['Last day', '2026-10-25', null],
+            ['Next single', '2026-10-26', null],
+            ['Next closed', '2026-10-26', '2026-10-28'],
+        ] as [$title, $startDate, $endDate]) {
+            $eventRequest = $request->replicate();
+            $eventRequest->saveQuietly();
+            SiteRequestCalendarEvent::query()->create([
+                'site_request_id' => $eventRequest->id,
+                'organization_id' => $request->organization_id,
+                'project_id' => $request->project_id,
+                'event_type' => CalendarEventTypeEnum::DEADLINE->value,
+                'title' => $title,
+                'color' => '#1976D2',
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'all_day' => true,
+            ]);
+        }
+
+        $start = Carbon::parse('2026-10-19');
+        $end = Carbon::parse('2026-10-25');
+        $expected = ['Ongoing', 'Ends on first day', 'First day', 'Last day'];
+        $events = $calendarService->getCalendarEvents($request->organization_id, $start, $end, $request->project_id);
+        $this->assertEqualsCanonicalizing($expected, $events->pluck('title')->all());
+        $onFirstDay = $calendarService->getEventsOnDate($request->organization_id, $start);
+        $this->assertEqualsCanonicalizing(['Ongoing', 'Ends on first day', 'First day'], $onFirstDay->pluck('title')->all());
+
+        $ical = $calendarService->exportToICal($request->organization_id, $start, $end, $request->project_id);
+        foreach ($expected as $title) {
+            $this->assertStringContainsString("SUMMARY:{$title}\r\n", $ical);
+        }
+        foreach (['Past single', 'Past closed', 'Next single', 'Next closed'] as $title) {
+            $this->assertStringNotContainsString("SUMMARY:{$title}\r\n", $ical);
+        }
+        $this->assertSame(4, substr_count($ical, 'BEGIN:VEVENT'));
+    }
+
     private function publicationContext(bool $scheduleManagement = false): array
     {
         $organization = Organization::factory()->verified()->create();
