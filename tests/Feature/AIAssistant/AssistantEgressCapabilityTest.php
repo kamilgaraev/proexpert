@@ -128,6 +128,23 @@ final class AssistantEgressCapabilityTest extends TestCase
         }
     }
 
+    public function test_valid_jsonb_non_arrays_remain_selected_unavailable_without_reporting_a_dependency_failure(): void
+    {
+        $cohort = $this->cohort($this->fixture->owner);
+        $this->getJson(self::PATH)->assertOk()->assertJsonPath('data.state', 'review_required')->assertJsonPath('data.can_review_sources', true);
+        Exceptions::fake();
+        foreach (['null', '"get_project_attention"', '17', 'true', 'false'] as $json) {
+            DB::table('ai_assistant_egress_cohorts')->where('id', $cohort->id)->update(['allowed_tools' => $json]);
+            self::assertTrue(DB::table('ai_assistant_egress_cohorts')->where('id', $cohort->id)->whereNotNull('allowed_tools')->exists());
+            self::assertSame(json_decode($json, true, 512, JSON_THROW_ON_ERROR), $cohort->refresh()->allowed_tools);
+            self::assertFalse(is_array($cohort->allowed_tools));
+            $this->getJson(self::PATH)->assertOk()->assertJsonPath('data.mode', 'guarded')
+                ->assertJsonPath('data.state', 'unavailable')->assertJsonPath('data.can_review_sources', false)
+                ->assertJsonPath('data.cohort', null);
+        }
+        Exceptions::assertReportedCount(0);
+    }
+
     public function test_current_membership_permissions_and_project_acl_are_rechecked_for_each_discovery(): void
     {
         $member = $this->fixture->member;

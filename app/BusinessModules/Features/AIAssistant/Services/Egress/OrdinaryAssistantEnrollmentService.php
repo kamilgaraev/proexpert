@@ -205,6 +205,7 @@ final readonly class OrdinaryAssistantEnrollmentService
     {
         $cohort = AssistantEgressCohort::query()->whereKey($id)->where('organization_id', $organizationId)->first();
         if ($cohort === null || ! Str::isUuid($cohort->generation) || (int) $cohort->project_id < 1 || $cohort->status !== 'active' || $cohort->expires_at->isPast()
+            || ! is_array($cohort->allowed_tools)
             || ! OrdinaryAssistantSourceProjection::allowsTools($cohort->policy_version, $cohort->allowed_tools)) {
             throw new AssistantEgressDenied('access_denied');
         }
