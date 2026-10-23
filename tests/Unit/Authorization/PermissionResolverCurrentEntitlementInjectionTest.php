@@ -437,16 +437,107 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         self::assertSame(['ai_assistant' => ['chat']], $resolver->getModulePermissions(self::assignment()));
     }
 
+    public static function permissionDecisionCases(): array
+    {
+        return [
+            'ordinary allow' => [false, false, true],
+            'ordinary deny' => [false, false, false],
+            'current allow' => [true, false, true],
+            'current deny' => [true, false, false],
+            'scoped current allow' => [true, true, true],
+            'scoped current deny' => [true, true, false],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('permissionDecisionCases')]
+    public function testCurrentPermissionChecksSkipUnusedDecisionCache(bool $current, bool $memoized, bool $allowed): void
+    {
+        $catalog = $this->countingRoleCatalog();
+        $catalog->put('user_permission_version_5', 7);
+        $catalog->put('permission_global_version', 11);
+        $catalog->put('authorization_roles_revision', 13);
+        $scanner = Mockery::mock(RoleScanner::class);
+        $scanner->shouldReceive('getSystemPermissions')->times($current && ! $memoized ? 2 : 1)
+            ->with('unit-fence-role')->andReturn($allowed ? ['reports.view'] : []);
+        $scanner->shouldReceive('getInterfaceAccess')->with('unit-fence-role')->andReturn([]);
+        $scanner->shouldReceive('getModulePermissions')->with('unit-fence-role')->andReturn([]);
+        $access = Mockery::mock(AccessController::class);
+        $access->shouldReceive('hasModuleAccess')->with(37, 'reports')->andReturn(false);
+        $logging = Mockery::mock(LoggingService::class);
+        $logging->shouldReceive('security')->andReturnNull();
+        $logging->shouldReceive('technical')->andReturnNull();
+        $ordinary = new PermissionResolver($scanner, new ModulePermissionChecker($access), $logging);
+        $assignment = self::assignment();
+        $context = ['organization_id' => 37];
+        $keyMethod = new \ReflectionMethod(PermissionResolver::class, 'getVersionedCacheKey');
+        $decisionKey = $keyMethod->invoke($ordinary, 5, 'unit-fence-role', 'reports.view', $context, 37);
+        $resolver = $ordinary;
+        if ($current) {
+            $source = Mockery::mock(OrganizationEntitlementService::class);
+            $source->shouldReceive('getEffectiveModuleSlugs')->andReturn([]);
+            $resolver = $ordinary->withCurrentEntitlementSource($source)->forCurrentChecks();
+            if ($memoized) { $resolver = $resolver->forReadScope(new Repository(new ArrayStore)); }
+            $catalog->put($decisionKey, ! $allowed);
+        }
+        $catalog->permissionVersionReads = [];
+        $catalog->roleRevisionReads = 0;
+        $catalog->decisionReads = [];
+        $catalog->decisionWrites = [];
+
+        self::assertSame($allowed, $resolver->hasPermission($assignment, 'reports.view', $context));
+        self::assertSame($allowed, $resolver->hasPermission($assignment, 'reports.view', $context));
+        self::assertCount($current ? 0 : 4, $catalog->permissionVersionReads);
+        self::assertGreaterThan(0, $catalog->roleRevisionReads);
+        self::assertSame($current ? [] : [$decisionKey, $decisionKey], $catalog->decisionReads);
+        self::assertSame($current ? [] : [$decisionKey], $catalog->decisionWrites);
+        self::assertSame($current ? ! $allowed : $allowed, $catalog->getStore()->get($decisionKey));
+    }
+
+    public static function currentPermissionModes(): array
+    {
+        return ['plain' => [false], 'memoized' => [true]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('currentPermissionModes')]
+    public function testCurrentWildcardKeepsOrganizationTypeValidation(bool $memoized): void
+    {
+        $scanner = Mockery::mock(RoleScanner::class);
+        $scanner->shouldReceive('getSystemPermissions')->andReturn(['*']);
+        $scanner->shouldReceive('getInterfaceAccess')->andReturn([]);
+        $logging = Mockery::mock(LoggingService::class);
+        $logging->shouldReceive('security')->andReturnNull();
+        $resolver = (new PermissionResolver($scanner, new ModulePermissionChecker(Mockery::mock(AccessController::class)),
+            $logging))->forCurrentChecks();
+        if ($memoized) { $resolver = $resolver->forReadScope(new Repository(new ArrayStore)); }
+
+        $this->expectException(\TypeError::class);
+        $resolver->hasPermission(self::assignment(), '*', ['organization_id' => []]);
+    }
+
     private function countingRoleCatalog(): Repository
     {
         $catalog = new class(new ArrayStore) extends Repository {
             public int $catalogReads = 0;
+            public array $permissionVersionReads = [];
+            public int $roleRevisionReads = 0;
+            public array $decisionReads = [];
+            public array $decisionWrites = [];
 
             public function get($key, $default = null): mixed
             {
                 if ($key === 'authorization_roles:v3') { $this->catalogReads++; }
+                if ($key === 'permission_global_version' || str_starts_with($key, 'user_permission_version_')) { $this->permissionVersionReads[] = $key; }
+                if ($key === 'authorization_roles_revision') { $this->roleRevisionReads++; }
+                if (str_starts_with($key, 'permission_v')) { $this->decisionReads[] = $key; }
 
                 return parent::get($key, $default);
+            }
+
+            public function put($key, $value, $ttl = null)
+            {
+                if (is_string($key) && str_starts_with($key, 'permission_v')) { $this->decisionWrites[] = $key; }
+
+                return parent::put($key, $value, $ttl);
             }
         };
         $this->application->instance('cache', $catalog);

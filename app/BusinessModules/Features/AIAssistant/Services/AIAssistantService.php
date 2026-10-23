@@ -25,6 +25,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSc
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateResolver;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\AssistantInterruptedProviderUsage;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
@@ -3134,6 +3135,10 @@ class AIAssistantService
 
     private function providerUsageFromFailure(Throwable $exception, ?array $response): array
     {
+        $interruptedUsage = AssistantInterruptedProviderUsage::take($exception);
+        if ($interruptedUsage !== null) {
+            return $interruptedUsage;
+        }
         if ($exception instanceof AssistantResponseIncomplete) {
             return $exception->providerUsage;
         }
