@@ -66,6 +66,36 @@ final class AssistantPreviewReaderAccessTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        if (getenv('MOST_VERIFY_NATIVE_SELECT') === '1') {
+            self::assertGreaterThanOrEqual(80500, PHP_VERSION_ID);
+            self::assertTrue(config('database.connections.pgsql.native_select_parameters'));
+            $factory = $this->app->make('db.factory');
+            self::assertInstanceOf(\App\Database\NativeParameterConnectionFactory::class, $factory);
+            $connection = DB::connection();
+            self::assertInstanceOf(\App\Database\NativeParameterPostgresConnection::class, $connection);
+            $pdo = $connection->getPdo();
+            self::assertContains($pdo::class, [\PDO::class, \Pdo\Pgsql::class]);
+            self::assertSame('pgsql', $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME));
+            self::assertFalse($pdo->getAttribute(\PDO::ATTR_EMULATE_PREPARES));
+            $original = $connection->getEventDispatcher();
+            $events = new \Illuminate\Events\Dispatcher($this->app);
+            $nativeStatements = [];
+            $events->listen(\Illuminate\Database\Events\StatementPrepared::class,
+                static function (\Illuminate\Database\Events\StatementPrepared $event) use ($connection, &$nativeStatements): void {
+                    $nativeStatements[] = $event->connection === $connection && $connection->usesNativeParameterStatement($event->statement);
+                });
+            $connection->setEventDispatcher($events);
+            try {
+                self::assertSame(1, (int) $connection->selectOne('select ?::integer as b4_native_probe', [1])->b4_native_probe);
+                self::assertSame([true], $nativeStatements);
+            } finally {
+                if ($original === null) { $connection->unsetEventDispatcher(); }
+                else { $connection->setEventDispatcher($original); }
+            }
+            fwrite(STDERR, 'B4_NATIVE_SELECT_ATTESTED '.json_encode(['php' => PHP_VERSION, 'native_select_parameters' => true,
+                'factory' => $factory::class, 'connection' => $connection::class, 'pdo' => $pdo::class,
+                'driver' => 'pgsql', 'emulated_prepares' => false, 'native_prepared_statement' => true], JSON_THROW_ON_ERROR).PHP_EOL);
+        }
         Carbon::setTestNow('2026-10-23 12:00:00');
         Queue::fake();
         Http::preventStrayRequests();
