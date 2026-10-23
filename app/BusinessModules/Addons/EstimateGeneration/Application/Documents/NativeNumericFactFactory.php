@@ -54,6 +54,7 @@ final class NativeNumericFactFactory
             || $page->excluded_at !== null || $page->source_version !== $context->sourceVersion
             || (int) $page->document_id !== $context->documentId || (int) $page->page_number !== $context->index
             || preg_match('/\A[a-f0-9]{64}\z/', (string) $document->checksum_sha256) !== 1
+            || ! hash_equals($context->sourceVersion, 'sha256:'.$document->checksum_sha256)
             || CanonicalPipelineJson::encode((array) $unit->locator) !== CanonicalPipelineJson::encode($context->locator)) {
             return null;
         }
