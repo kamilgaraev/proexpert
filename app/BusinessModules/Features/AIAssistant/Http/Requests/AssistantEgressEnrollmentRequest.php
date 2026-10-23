@@ -22,7 +22,7 @@ final class AssistantEgressEnrollmentRequest extends FormRequest
         return match ($this->route()?->getActionMethod()) {
             'assign' => ['organization_id' => ['required', 'integer', 'min:1'], 'actor_id' => ['required', 'integer', 'min:1'],
                 'project_id' => ['required', 'integer', 'min:1'], 'tools' => ['required', 'array', 'min:1', 'max:2'],
-                'policy_version' => ['sometimes', Rule::in([OrdinaryAssistantSourceProjection::VERSION, OrdinaryAssistantDocumentProjection::VERSION])],
+                'policy_version' => ['sometimes', Rule::in([OrdinaryAssistantSourceProjection::VERSION, OrdinaryAssistantDocumentProjection::VERSION, OrdinaryAssistantSourceProjection::MIXED_VERSION])],
                 'tools.*' => ['required', 'string', 'distinct', Rule::in([...OrdinaryAssistantSourceProjection::TOOLS, OrdinaryAssistantDocumentProjection::TOOL])]],
             'preview' => ['cohort_id' => ['required', 'uuid'], 'quote_id' => ['required', 'uuid'],
                 'input' => ['required', 'array:message,conversation_id,profile,allow_actions,context,goal,desired_mode'],

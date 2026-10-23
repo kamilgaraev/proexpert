@@ -31,7 +31,7 @@ final readonly class OrdinaryAssistantEnrollmentService
         if (! $actor->is_active || (int) $actor->current_organization_id !== $organizationId
             || ! User::query()->whereKey($actor->getKey())->where('is_active', true)->where('current_organization_id', $organizationId)->exists()
             || ! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)
-            || $tools === [] || array_diff($tools, OrdinaryAssistantSourceProjection::toolsForPolicy($policyVersion)) !== []) {
+            || ! OrdinaryAssistantSourceProjection::allowsTools($policyVersion, $tools)) {
             throw new AssistantEgressDenied('access_denied');
         }
         $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
@@ -70,6 +70,7 @@ final readonly class OrdinaryAssistantEnrollmentService
         if ($quote === null || ! is_string($input['message'] ?? null) || trim($input['message']) === ''
             || ! empty($input['attachment_ids']) || ! empty($input['attachment_manifest']) || ($input['allow_actions'] ?? false)
             || $requestedSources === [] || count($requestedSources) > 6
+            || ! OrdinaryAssistantSourceProjection::allowsTools($cohort->policy_version, array_column($requestedSources, 'tool'))
             || ($cohort->policy_version === OrdinaryAssistantDocumentProjection::VERSION && count($requestedSources) !== 1)) {
             throw new AssistantEgressDenied('scope_mismatch');
         }
@@ -83,6 +84,9 @@ final readonly class OrdinaryAssistantEnrollmentService
             $proofs[] = $capture['proof'];
             $previews[] = ['tool' => $capture['proof']['tool'], 'arguments' => $capture['proof']['arguments'],
                 'projection_hash' => $capture['proof']['projection_hash'], 'projection' => $capture['preview']];
+        }
+        if (! OrdinaryAssistantSourceProjection::allowsSources($cohort->policy_version, $proofs)) {
+            throw new AssistantEgressDenied('scope_mismatch');
         }
         $manifestHash = OrdinaryAssistantSourceProjection::hash(['cohort' => $cohort->getKey(), 'cohort_generation' => $cohort->generation,
             'input_hash' => $hash, 'sources' => $proofs]);
@@ -105,6 +109,7 @@ final readonly class OrdinaryAssistantEnrollmentService
         if ($declaration !== self::DECLARATION || (int) $enrollment->reviewed_by !== (int) $owner->id || $enrollment->status !== 'pending_review'
             || ! hash_equals((string) $cohort->generation, (string) $enrollment->cohort_generation)
             || array_diff(array_column($enrollment->sources, 'tool'), $cohort->allowed_tools) !== []
+            || ! OrdinaryAssistantSourceProjection::allowsSources($cohort->policy_version, $enrollment->sources)
             || $enrollment->expires_at->isPast() || ! hash_equals((string) $enrollment->manifest_hash, $manifestHash)) {
             throw new AssistantEgressDenied('access_denied');
         }
@@ -152,8 +157,7 @@ final readonly class OrdinaryAssistantEnrollmentService
     {
         $cohort = AssistantEgressCohort::query()->whereKey($id)->where('organization_id', $organizationId)->first();
         if ($cohort === null || ! Str::isUuid($cohort->generation) || (int) $cohort->project_id < 1 || $cohort->status !== 'active' || $cohort->expires_at->isPast()
-            || OrdinaryAssistantSourceProjection::toolsForPolicy($cohort->policy_version) === []
-            || $cohort->allowed_tools === [] || array_diff($cohort->allowed_tools, OrdinaryAssistantSourceProjection::toolsForPolicy($cohort->policy_version)) !== []) {
+            || ! OrdinaryAssistantSourceProjection::allowsTools($cohort->policy_version, $cohort->allowed_tools)) {
             throw new AssistantEgressDenied('access_denied');
         }
 

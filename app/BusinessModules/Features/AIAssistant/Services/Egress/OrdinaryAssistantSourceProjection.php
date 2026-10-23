@@ -11,6 +11,8 @@ final class OrdinaryAssistantSourceProjection
 {
     public const VERSION = 'ordinary-project-sql/1';
 
+    public const MIXED_VERSION = 'ordinary-project-sql-document/1';
+
     public const TOOLS = ['get_project_attention', 'get_project_production_schedule_summary'];
 
     public static function toolsForPolicy(string $version): array
@@ -18,8 +20,39 @@ final class OrdinaryAssistantSourceProjection
         return match ($version) {
             self::VERSION => self::TOOLS,
             OrdinaryAssistantDocumentProjection::VERSION => [OrdinaryAssistantDocumentProjection::TOOL],
+            self::MIXED_VERSION => [...self::TOOLS, OrdinaryAssistantDocumentProjection::TOOL],
             default => [],
         };
+    }
+
+    public static function allowsTools(string $version, array $tools): bool
+    {
+        return $tools !== [] && count(array_filter($tools, 'is_string')) === count($tools)
+            && array_diff($tools, self::toolsForPolicy($version)) === []
+            && ($version !== self::MIXED_VERSION || (count($tools) === 2 && count(array_unique($tools)) === 2
+                && in_array(OrdinaryAssistantDocumentProjection::TOOL, $tools, true)));
+    }
+
+    public static function projectionVersionForTool(string $tool): ?string
+    {
+        return in_array($tool, self::TOOLS, true) ? self::VERSION
+            : ($tool === OrdinaryAssistantDocumentProjection::TOOL ? OrdinaryAssistantDocumentProjection::VERSION : null);
+    }
+
+    public static function allowsSources(string $version, array $sources): bool
+    {
+        $tools = [];
+        foreach ($sources as $source) {
+            if (! is_array($source) || ! is_string($source['tool'] ?? null)
+                || self::projectionVersionForTool($source['tool']) === null
+                || ($source['projection_version'] ?? null) !== self::projectionVersionForTool($source['tool'])) {
+                return false;
+            }
+            $tools[] = $source['tool'];
+        }
+
+        return self::allowsTools($version, $tools)
+            && ($version !== OrdinaryAssistantDocumentProjection::VERSION || count($sources) === 1);
     }
 
     public function arguments(string $tool, array $arguments, int $projectId): array
