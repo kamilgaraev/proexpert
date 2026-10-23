@@ -515,6 +515,7 @@
         <testsuite name="NativePostgresSelect">
             <file>tests/Feature/AIAssistant/AssistantDocumentPolicySnapshotTrackingTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantEgressSnapshotTrackingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantCalendarSnapshotTrackingTest.php</file>
             <file>tests/Feature/Infrastructure/PostgresNativeParameterModeTest.php</file>
             <file>tests/Feature/Infrastructure/PostgresNativeSelectConnectionTest.php</file>
             <file>tests/Feature/Infrastructure/NativeParameterDatabaseBindingTest.php</file>
