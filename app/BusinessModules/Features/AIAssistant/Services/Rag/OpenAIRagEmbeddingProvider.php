@@ -83,7 +83,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         );
     }
 
-    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
+    public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT, ?callable $assertBeforeSend = null): array
     {
         $this->lastUsage = self::usageEvidence(null, $text);
         $this->usageAttempts = [];
@@ -130,8 +130,9 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         ];
 
         try {
-            $response = $this->createEmbeddingWithRetry($embeddings, $parameters, $text, $purpose === self::PURPOSE_QUERY ? 1 : self::RETRY_ATTEMPTS);
+            $response = $this->createEmbeddingWithRetry($embeddings, $parameters, $text, $purpose === self::PURPOSE_QUERY ? 1 : self::RETRY_ATTEMPTS, $assertBeforeSend);
         } catch (Throwable $exception) {
+            if ($assertBeforeSend !== null && $exception instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied) { throw $exception; }
             if ($executionContext !== null) {
                 $executionContext->assertCanContinue();
             }
@@ -168,12 +169,13 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<string, mixed>  $parameters
      */
-    private function createEmbeddingWithRetry(object $embeddings, array $parameters, string $text, int $maxAttempts): object
+    private function createEmbeddingWithRetry(object $embeddings, array $parameters, string $text, int $maxAttempts, ?callable $assertBeforeSend = null): object
     {
         $lastException = null;
         $callKey = 'embedding:'.bin2hex(random_bytes(16));
 
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            if ($assertBeforeSend !== null) { $assertBeforeSend(); }
             try {
                 $response = $embeddings->create($parameters);
                 $this->lastUsage = $this->usageFromResponse($response, $text);

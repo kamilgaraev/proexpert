@@ -23,6 +23,15 @@ final class AssistantDocumentOcrClient
 
     public function recognize(AIAssistantDocument $document, AICreditReservation $reservation, string $content, callable $assertAuthorized): bool
     {
+        try { return $this->recognizeCurrent($document, $reservation, $content, $assertAuthorized); }
+        catch (Throwable $failure) {
+            throw app(AssistantDocumentProcessingPolicyService::class)->sanitizeFailure((int) $document->id, $failure);
+        }
+    }
+
+    private function recognizeCurrent(AIAssistantDocument $document, AICreditReservation $reservation, string $content, callable $assertAuthorized): bool
+    {
+        app(AssistantDocumentProcessingPolicyService::class)->assertExternalAllowed((int) $document->id);
         $apiKey = (string) config('ai-assistant.llm.timeweb.api_key', '');
         $baseUri = rtrim((string) config('ai-assistant.llm.timeweb.base_uri', ''), '/');
         if ($apiKey === '' || ! str_starts_with($baseUri, 'https://')) {
@@ -41,6 +50,7 @@ final class AssistantDocumentOcrClient
             if ($assertAuthorized() === false) {
                 return true;
             }
+            app(AssistantDocumentProcessingPolicyService::class)->assertExternalAllowed((int) $document->id);
             if (AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', 'ocr_page')->where('unit_index', $page)->exists()) {
                 continue;
             }
@@ -49,6 +59,7 @@ final class AssistantDocumentOcrClient
                 if ($current->status !== AIAssistantDocument::STATUS_OCR_APPROVED || $this->isNativeSourceMissing($current)) {
                     return null;
                 }
+                app(AssistantDocumentProcessingPolicyService::class)->assertExternalAllowed((int) $document->id);
                 $reservation = AICreditReservation::query()->findOrFail($current->ocr_reservation_id);
                 if ($reservation->status !== 'reserved') {
                     return null;
@@ -66,11 +77,17 @@ final class AssistantDocumentOcrClient
             }
             $attemptMetadata = ['usage_key' => 'document:'.$document->id.':reservation:'.$reservation->id.':attempt:'.$attempt,
                 'request_id' => $reservation->request_id, 'document_id' => $document->id, 'page' => $page, 'attempt' => $attempt];
+            app(AssistantDocumentProcessingPolicyService::class)->assertExternalAllowed((int) $document->id);
+            $documentId = (int) $document->id;
             try {
                 $response = Http::withToken($apiKey)->acceptJson()->timeout(45)->connectTimeout(5)
                     ->withHeaders(['Idempotency-Key' => $reservation->request_id.':page:'.$page])
+                    ->beforeSending(static function () use ($documentId): void {
+                        app(AssistantDocumentProcessingPolicyService::class)->assertExternalAllowed($documentId);
+                    })
                     ->post($baseUri.'/chat/completions', $this->payload($page, $image, $maxOutput));
             } catch (Throwable $exception) {
+                if ($exception instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied) { throw $exception; }
                 $evidence = $this->usageEvidence($exception instanceof RequestException ? $exception->response->json() : null);
                 $this->credits->recordProviderCost($reservation, $evidence['cost_available'] ? $this->credits->costMicroRub($evidence['input_tokens'], $evidence['output_tokens'], $reservation) : 0,
                     'timeweb', LunaModelPolicy::TIMEWEB, 'ocr', $attemptMetadata + $evidence + ['is_successful' => false], false);
@@ -88,6 +105,7 @@ final class AssistantDocumentOcrClient
                 $current = AIAssistantDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
                 $this->credits->recordProviderCost($reservation, $cost, 'timeweb', LunaModelPolicy::TIMEWEB, 'ocr',
                     $attemptMetadata + $evidence + ['http_status' => $response->status(), 'is_successful' => $valid], $valid);
+                if (app(AssistantDocumentProcessingPolicyService::class)->selected((int) $document->id)) { return false; }
                 if ($current->status !== AIAssistantDocument::STATUS_OCR_APPROVED || $this->isNativeSourceMissing($current)) {
                     return false;
                 }

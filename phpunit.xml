@@ -9,6 +9,13 @@
          displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
+        <testsuite name="OrdinaryAssistantLocalDocumentProcessing">
+            <file>tests/Feature/AIAssistant/AssistantLocalDocumentProcessingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagIndexerTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/OpenAIRagEmbeddingProviderTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/EmbeddingAttemptEvidenceTest.php</file>
+        </testsuite>
         <testsuite name="OrdinaryAssistantDocumentAdmission">
             <file>tests/Feature/AIAssistant/AssistantDocumentAdmissionTest.php</file>
             <file>tests/Unit/AIAssistant/Documents/AssistantDocumentAdmissionContractTest.php</file>

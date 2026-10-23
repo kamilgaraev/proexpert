@@ -46,6 +46,7 @@ final class AssistantDocumentBudgetService
 
     public function authorizeBackground(AIAssistantDocument $document): bool
     {
+        if (app(AssistantDocumentProcessingPolicyService::class)->selected((int) $document->id)) { return false; }
         if ($document->status !== AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED) {
             return false;
         }
@@ -55,6 +56,7 @@ final class AssistantDocumentBudgetService
             if ($document->status !== AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED) {
                 return false;
             }
+            if (app(AssistantDocumentProcessingPolicyService::class)->selected((int) $document->id)) { return false; }
             $settings = AssistantDocumentSettings::query()->where('organization_id', $document->organization_id)->lockForUpdate()->first();
             if ($settings === null || ! $settings->background_ocr_enabled || $settings->approved_by === null) {
                 return false;

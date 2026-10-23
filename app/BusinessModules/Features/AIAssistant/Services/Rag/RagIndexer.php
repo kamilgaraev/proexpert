@@ -48,16 +48,38 @@ class RagIndexer
         if (in_array(AssistantExtendedDomainRegistry::retrievalMode($chunk->entityType), ['live_only', 'unavailable'], true)) {
             return;
         }
-        Cache::lock($this->sourceIndexLockKey($chunk), $this->sourceIndexLockTtlSeconds())
-            ->block($this->sourceIndexLockWaitSeconds(), function () use ($chunk, $reconciledAt, $guard): void {
-                $this->indexChunkUnderLock($chunk, $reconciledAt, $guard);
-            });
+        try {
+            Cache::lock($this->sourceIndexLockKey($chunk), $this->sourceIndexLockTtlSeconds())
+                ->block($this->sourceIndexLockWaitSeconds(), function () use ($chunk, $reconciledAt, $guard): void {
+                    $this->indexChunkUnderLock($chunk, $reconciledAt, $guard);
+                });
+        } catch (Throwable $failure) {
+            if ($chunk->sourceType === 'file_document' && $chunk->entityType === 'assistant_document') {
+                throw app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentProcessingPolicyService::class)
+                    ->sanitizeFailure((int) $chunk->entityId, $failure);
+            }
+            throw $failure;
+        }
     }
 
     private function indexChunkUnderLock(RagChunkData $chunk, ?DateTimeInterface $reconciledAt, ?callable $guard): void
     {
         if ($guard !== null) {
             $guard();
+        }
+        $documentPolicy = null;
+        if ($chunk->sourceType === 'file_document' && $chunk->entityType === 'assistant_document') {
+            $documentPolicy = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentProcessingPolicyService::class);
+            $captured = $documentPolicy->capture((int) $chunk->entityId);
+            $previousGuard = $guard;
+            $guard = static function () use ($documentPolicy, $captured, $previousGuard, $chunk): void {
+                if ($previousGuard !== null) { $previousGuard(); }
+                $documentPolicy->assertCurrent((int) $chunk->entityId, $captured, DB::transactionLevel() > 0);
+            };
+            if ($captured !== null) {
+                $this->indexLocalDocumentChunk($chunk, $reconciledAt, $guard);
+                return;
+            }
         }
         $existing = RagSource::query()
             ->where('organization_id', $chunk->organizationId)
@@ -87,6 +109,7 @@ class RagIndexer
             && in_array($existing->checksum, [$checksum, $this->sourceFingerprint($chunk)], true);
 
         if ($existing instanceof RagSource && $sourceChecksumMatches && $vectorsCompatible) {
+            if ($documentPolicy !== null && $guard !== null) { $guard(); }
             $checksumChanged = $existing->checksum !== $checksum;
             $values = $existing->checksum === $checksum ? [] : [
                 'source_version' => $this->sourceVersion($chunk),
@@ -98,7 +121,8 @@ class RagIndexer
                 $values['last_reconciled_at'] = $reconciledAt;
             }
             if ($checksumChanged) {
-                $changed = DB::transaction(function () use ($existing, $values, $chunk, $checksum): bool {
+                $changed = DB::transaction(function () use ($existing, $values, $chunk, $checksum, $documentPolicy, $guard): bool {
+                    if ($documentPolicy !== null && $guard !== null) { $guard(); }
                     $existing->forceFill($values)->save();
                     return $this->recordCoverageChange($chunk, $checksum);
                 });
@@ -196,6 +220,42 @@ class RagIndexer
         if ($coverageChanged) {
             $this->coverageMutationVersion++;
         }
+        app(RagEmbeddingCheckpointStore::class)->discard($chunk->organizationId, $this->sourceIndexLockKey($chunk));
+    }
+
+    private function indexLocalDocumentChunk(RagChunkData $chunk, ?DateTimeInterface $reconciledAt, callable $guard): void
+    {
+        $contentChunks = $this->splitContent($chunk->content);
+        if ($contentChunks === []) { return; }
+        $checksum = $this->sourceFingerprint($chunk);
+        $changed = DB::transaction(function () use ($chunk, $reconciledAt, $guard, $contentChunks, $checksum): bool {
+            $guard();
+            $document = \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::query()->find((int) $chunk->entityId);
+            $unit = \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocumentUnit::query()
+                ->where('document_id', $chunk->entityId)->whereKey($chunk->metadata['unit_id'] ?? null)->lockForUpdate()->first();
+            if ($document === null || $document->status !== 'ready' || $unit === null
+                || ! hash_equals((string) $unit->checksum, hash('sha256', $unit->text))
+                || $document->organization_id !== $chunk->organizationId || $document->project_id !== $chunk->projectId
+                || ! hash_equals($checksum, $this->sourceFingerprint(\App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource::chunkForUnit($document, $unit)))) {
+                throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('source_stale');
+            }
+            $source = RagSource::query()->updateOrCreate([
+                'organization_id' => $chunk->organizationId, 'identity_project_id' => $chunk->projectId ?? 0,
+                'identity_part_key' => $this->partKey($chunk), 'source_type' => $chunk->sourceType,
+                'entity_type' => $chunk->entityType, 'entity_id' => (string) $chunk->entityId,
+            ], $this->sourceAttributes($chunk, $checksum, $reconciledAt));
+            $source->chunks()->delete();
+            foreach ($contentChunks as $index => $content) {
+                RagChunk::query()->forceCreate(['source_id' => $source->id, 'organization_id' => $chunk->organizationId,
+                    'project_id' => $chunk->projectId, 'chunk_index' => $index, 'content' => $content,
+                    'content_hash' => hash('sha256', $this->normalizeText($content)),
+                    'metadata' => array_merge($chunk->metadata, ['chunk_index' => $index, 'chunk_count' => count($contentChunks)]),
+                    'embedding' => null, 'embedding_provider' => null, 'embedding_model' => null, 'embedding_created_at' => null]);
+            }
+            $guard();
+            return $this->recordCoverageChange($chunk, $checksum);
+        }, 3);
+        if ($changed) { $this->coverageMutationVersion++; }
         app(RagEmbeddingCheckpointStore::class)->discard($chunk->organizationId, $this->sourceIndexLockKey($chunk));
     }
 
@@ -1064,15 +1124,17 @@ class RagIndexer
                 continue;
             }
             try {
-                $embedding = $embeddingProvider->embed(
-                    $content,
-                    RagEmbeddingProviderInterface::PURPOSE_DOCUMENT
-                );
+                $embedding = $embeddingProvider instanceof OpenAIRagEmbeddingProvider && $chunk->sourceType === 'file_document' && $chunk->entityType === 'assistant_document'
+                    ? $embeddingProvider->embed($content, RagEmbeddingProviderInterface::PURPOSE_DOCUMENT, $guard)
+                    : $embeddingProvider->embed($content, RagEmbeddingProviderInterface::PURPOSE_DOCUMENT);
                 if (count($embedding) !== $embeddingProvider->dimensions()) {
                     throw new RagEmbeddingDimensionMismatch($embeddingProvider->dimensions(), count($embedding));
                 }
             } catch (Throwable $throwable) {
-                $this->recordEmbeddingUsage($chunk, $content, $index, $embeddingProvider, false);
+                if (! ($throwable instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied
+                    && $embeddingProvider instanceof OpenAIRagEmbeddingProvider && $embeddingProvider->usageAttempts() === [])) {
+                    $this->recordEmbeddingUsage($chunk, $content, $index, $embeddingProvider, false);
+                }
                 Log::warning('ai_assistant.rag.embedding_failed', [
                     'organization_id' => $chunk->organizationId,
                     'project_id' => $chunk->projectId,
@@ -1087,6 +1149,7 @@ class RagIndexer
             }
 
             $this->recordEmbeddingUsage($chunk, $content, $index, $embeddingProvider);
+            if ($chunk->sourceType === 'file_document' && $chunk->entityType === 'assistant_document' && $guard !== null) { $guard(); }
             $vector = $this->vectorLiteral($embedding);
             $checkpoints->save($chunk->organizationId, $sourceKey, $profileKey, $hash, $vector);
             $vectors[$hash] = ['vector' => $vector, 'created_at' => now()];
