@@ -68,7 +68,7 @@ final class RagCoverageService
                     $progress?->__invoke('source_counts');
                     $counts = $counts->merge($scoped->get()->keyBy('source_type'));
                     $progress?->__invoke('source_acl');
-                });
+                }, specializeDesignCandidates: true);
         } else {
             foreach ($policy->sourceIdentityQueries($sources, $actor, $organizationId, $checkpoint) as $accessible) {
                 $scoped = $accessible->select(['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'])->toBase();

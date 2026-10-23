@@ -689,9 +689,9 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds)[0] ?? null;
     }
 
-    public function aggregateSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, ?callable $aggregateBranch = null, ?callable $consume = null): array
+    public function aggregateSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, ?callable $aggregateBranch = null, ?callable $consume = null, bool $specializeDesignCandidates = false): array
     {
-        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8, aggregateBranch: $aggregateBranch, consume: $consume);
+        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8, aggregateBranch: $aggregateBranch, consume: $consume, specializeDesignCandidates: $specializeDesignCandidates);
     }
 
     public function aggregateExpectedSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, ?callable $consume = null): array
@@ -699,13 +699,13 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, expectedProjection: true, joinSourceIds: true, batchSize: 8, consume: $consume);
     }
 
-    private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null, ?callable $aggregateBranch = null, ?callable $consume = null): array
+    private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null, ?callable $aggregateBranch = null, ?callable $consume = null, bool $specializeDesignCandidates = false): array
     {
         if ($expectedProjection) { $this->sourceQueries->assertExpectedSourceQuery($query); }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_source_aggregate_during_query_compilation'); }
 
         $compiled = [];
-        $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds, $batchSize, $aggregateBranch, $consume, &$compiled): ?Builder {
+        $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds, $batchSize, $aggregateBranch, $consume, $specializeDesignCandidates, &$compiled): ?Builder {
             $metricsRequest = app()->bound('request') ? app('request') : null;
             $processingPhase = 'rag_acl_discovery';
             $processingCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
@@ -730,6 +730,8 @@ final class AssistantDataAccessPolicy
                     array_map(static fn (string $column): string => $table.'.'.$column, ['id', 'organization_id', 'source_type', 'entity_type', 'entity_id', 'project_id']))));
                 if ($expectedProjection && $joinSourceIds) { $candidateColumns = [$table.'.*']; }
                 $query->select($candidateColumns);
+                $unrevisedDesignSources = $specializeDesignCandidates && ! $expectedProjection && $aggregateBranch !== null ? clone $query : null;
+                $revised = [];
                 if (! $expectedProjection) {
                     $revised = array_keys(\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revisions());
                     $guarded = (clone $query)->whereIn($table.'.entity_type', $revised);
@@ -741,11 +743,28 @@ final class AssistantDataAccessPolicy
                 $sourceCounts = $batchSize === null ? null : [];
                 $identityCounts = $sourceCounts === null ? null : [];
                 $identities = $this->discoverSourceIdentities($candidates, $sourceCounts, $identityCounts);
+                $designEntities = [];
+                if ($unrevisedDesignSources !== null) {
+                    foreach ($this->entities() as $entityType => $definition) {
+                        if (isset($identities[$entityType]['design_additional'])
+                            && in_array('design_additional', AssistantEntityAccessCatalog::indexedSourceTypes($entityType, $definition[0]), true)) {
+                            $designEntities[] = $entityType;
+                        }
+                    }
+                }
                 $planned = $this->sourceQueries->planBatches($identities, $sourceCounts ?? [], $batchSize, $expectedProjection);
+                $designCandidates = null;
                 foreach ($planned as $entry) {
                     $nextProcessingPhase('rag_acl_batch_compile');
                     $types = $entry['types'];
-                    $batch = clone $candidates;
+                    if ($unrevisedDesignSources !== null && $types === ['design_additional'] && $designEntities !== []
+                        && array_intersect($designEntities, $revised) === []) {
+                        $designCandidates ??= $this->aclCompiler->register('__assistant_design_source_candidates',
+                            (clone $unrevisedDesignSources)->whereIn($table.'.entity_type', $designEntities), [], materialize: false);
+                        $batch = clone $designCandidates;
+                    } else {
+                        $batch = clone $candidates;
+                    }
                     $batchIdentities = $identities;
                     if ($types !== null) {
                         $batch->whereIn($table.'.source_type', $types);

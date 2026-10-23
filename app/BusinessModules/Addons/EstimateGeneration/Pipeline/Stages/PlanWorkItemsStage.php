@@ -178,6 +178,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $intents,
             $composerInput->derivedQuantities,
             $composerInput->facts,
+            $composerInput->directQuantityBindings,
         );
         \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {

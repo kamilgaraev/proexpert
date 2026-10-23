@@ -1029,6 +1029,7 @@ class AIAssistantService
 
             $verificationTimer = AssistantRequestPhaseTimer::start($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, 'final_verification');
             $assistantContent = trim((string) ($response['content'] ?? ''));
+            $clarification = $restricted ? AssistantClarificationOutcome::fromText($assistantContent) : null;
             $plannedPresentation = $proposedActions === [] ? (new AssistantPresentationPlanner)->render($assistantContent, $verificationToolResults, $query) : null;
             $rawPresentationPlan = $proposedActions === [] && AssistantPresentationPlanner::isPlanCandidate($assistantContent)
                 ? $assistantContent : null;
@@ -1046,6 +1047,9 @@ class AIAssistantService
             $financialCheck = $imageDiscussion ? null : $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $verificationToolResults, $rawPresentationPlan, $query);
             if (is_array($financialCheck) && is_string($financialCheck['text'] ?? null)) {
                 $assistantContent = $financialCheck['text'];
+            }
+            if ($clarification !== null && ! ($financialCheck['replaced'] ?? false)) {
+                $assistantContent = trans_message('ai_assistant_facts.live_proof_required');
             }
             $scopedModelContent = $assistantContent;
             $rejectedFinancialPlan = $rawPresentationPlan !== null && AssistantPresentationPlanner::hasFinancialSelection($rawPresentationPlan)
@@ -1151,7 +1155,7 @@ class AIAssistantService
 
             if ($this->scopedContext?->isGuarded() ?? false) {
                 $approvedReferences = $this->scopedContext->validateResults($verificationToolResults);
-                if ($approvedReferences !== [] && ! ($financialCheck['replaced'] ?? false) && $rawPresentationPlan === null
+                if ($clarification === null && $approvedReferences !== [] && ! ($financialCheck['replaced'] ?? false) && $rawPresentationPlan === null
                     && ! $rejectedFinancialPlan && ! $terminalToolResponse && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
                     $assistantContent = $scopedModelContent;
                     $structuredCheck = ['text' => $assistantContent, 'replaced' => false, 'validation_status' => 'partial',
@@ -1352,6 +1356,14 @@ class AIAssistantService
                 $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'unverified',
                     'source_refs' => [], 'needs_clarification' => false];
                 $degradedMode = true;
+            }
+            if ($clarification !== null && ! ($financialCheck['replaced'] ?? false) && $rawPresentationPlan === null
+                && ! $rejectedFinancialPlan && ! $reportServerClarification && ! $missingCustomReport
+                && ! $terminalToolResponse && $budgetStopNotice === null && ! $degradedMode
+                && $toolFailures === [] && $proposedActions === [] && $executedAction === null && $this->requestOutcome === null) {
+                $structuredCheck = $clarification->verification();
+                $assistantContent = $structuredCheck['text'];
+                $this->recordRequestOutcome('insufficient_data');
             }
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'artifacts' => $reportArtifacts,
@@ -3945,7 +3957,7 @@ class AIAssistantService
     protected function buildMessages(Conversation $conversation, array $context, array $taskPlan, string $ragPrompt = '', ?string $currentQuery = null): array
     {
         if ($this->scopedContext?->isGuarded() ?? false) {
-            return $this->scopedContext->initialMessages($this->contextBuilder->buildSystemPrompt(), (string) $currentQuery);
+            return $this->scopedContext->initialMessages($this->contextBuilder->buildSystemPrompt()."\n\n".trans_message('ai_assistant.clarification_protocol'), (string) $currentQuery);
         }
         $currentQuery ??= (string) ($taskPlan['request']['message'] ?? '');
         $conversationNumberRequest = $this->isConversationNumberRequest($taskPlan, $currentQuery);

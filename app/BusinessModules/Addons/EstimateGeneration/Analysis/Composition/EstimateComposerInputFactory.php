@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use InvalidArgumentException;
@@ -180,19 +184,21 @@ final readonly class EstimateComposerInputFactory
                 ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::ANSWER_PROMPT_CONTRACT;
         }
 
+        $quantities = array_map($this->derivedQuantity(...), $derivedQuantities);
         $input = new EstimateComposerInput(
             organizationId: $organizationId,
             projectId: $projectId,
             sessionId: $sessionId,
             snapshotToken: (string) $capture['token'],
             facts: $facts,
-            derivedQuantities: array_map($this->derivedQuantity(...), $derivedQuantities),
+            derivedQuantities: $quantities,
             decisions: array_map($this->decision(...), $decisions),
             candidates: $candidates,
             missingDocuments: $missingDocuments,
             contractVersion: $contractVersion,
             wireScope: $wireScope,
             allowedWorkSections: $allowedWorkSections,
+            directQuantityBindings: $this->directQuantityBindings($snapshot, $decisions, $quantities, (string) $capture['token'], array_column($facts, 'id')),
         );
         if ($input->claimAnswerFactIds !== [] && $this->learning !== null) {
             $references = $this->learning->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot, $decisions, $answerPolicy);
@@ -223,6 +229,70 @@ final readonly class EstimateComposerInputFactory
         }
 
         return $input;
+    }
+
+    private function directQuantityBindings(ProjectModelSnapshot $snapshot, array $decisions, array $quantities, string $token, array $eligibleFactIds): array
+    {
+        $facts = array_column($snapshot->facts, null, 'id');
+        $choices = array_column($decisions, null, 'id');
+        $eligible = array_fill_keys($eligibleFactIds, true);
+        $bindings = [];
+        foreach ($quantities as $quantity) {
+            if (($quantity['formula_key'] ?? null) !== 'direct_quantity') {
+                continue;
+            }
+            $basis = $quantity['quantity_basis'];
+            $formula = $basis['formula_inputs'] ?? [];
+            $operands = $formula['operands'] ?? [];
+            $proof = $operands[0]['quantity_binding'] ?? [];
+            $binding = $facts[$proof['fact_id'] ?? ''] ?? null;
+            $decision = $choices[$proof['decision_id'] ?? ''] ?? null;
+            if (! $binding instanceof Fact || ! $decision instanceof Decision || count($operands) !== 1
+                || ! isset($eligible[$binding->id]) || ($basis['model_version'] ?? null) !== $token
+                || ($formula['snapshot_identity']['input_fingerprint'] ?? null) !== $token) {
+                continue;
+            }
+            $source = (new DirectQuantityBinding)->source($snapshot, $binding, $decision);
+            if ($source === null || ! isset($eligible[$source->id]) || ($quantity['operand_fact_ids'] ?? []) !== [$source->id]
+                || ($quantity['id'] ?? null) !== $binding->value['quantity_key']
+                || $quantity['quantity_key'] !== $quantity['id'] || ($basis['key'] ?? null) !== $quantity['id']) {
+                continue;
+            }
+            $fresh = (new DerivedQuantityFactory)->derive($snapshot, $decisions, [
+                'quantity_id' => $quantity['id'], 'formula_identity' => 'direct_quantity', 'formula_version' => '1',
+                'entity_id' => $source->entityId, 'operands' => ['measurement' => $source->id],
+                'quantity_binding_fact_id' => $binding->id, 'quantity_binding_decision_id' => $decision->id,
+                'output_unit' => DirectQuantityBinding::canonicalUnit($source->unit), 'rounding_mode' => 'half_up',
+                'rounding_scale' => 8, 'snapshot' => $formula['snapshot_identity'],
+            ]);
+            $current = $fresh->quantity;
+            $expectedSource = $source->origin === 'user_assumption' ? 'estimated' : 'evidenced';
+            $expectedAssumptions = $source->origin === 'user_assumption' ? [$source->id] : [];
+            $evidence = $basis['evidence_ids'] ?? [];
+            $currentEvidence = $current?->evidenceIds ?? [];
+            if (! is_array($evidence) || ! array_is_list($evidence)) {
+                continue;
+            }
+            sort($evidence, SORT_STRING);
+            sort($currentEvidence, SORT_STRING);
+            if (! $fresh->isReady() || $current === null || $quantity['entity_id'] !== $current->entityId
+                || ($formula['entity_id'] ?? null) !== $current->entityId
+                || $quantity['value'] !== $current->value || ($basis['amount'] ?? null) !== $current->value
+                || $quantity['unit'] !== $current->unit || ($basis['unit'] ?? null) !== $current->unit
+                || ($basis['formula_key'] ?? null) !== 'direct_quantity' || ($basis['formula_version'] ?? null) !== '1'
+                || $quantity['source'] !== $expectedSource || ($basis['source'] ?? null) !== $expectedSource
+                || ($basis['assumptions'] ?? []) !== $expectedAssumptions
+                || $quantity['review_blockers'] !== [] || ($basis['review_blockers'] ?? []) !== []
+                || $evidence !== $currentEvidence
+                || CanonicalPipelineJson::encode($operands) !== CanonicalPipelineJson::encode($current->operands)) {
+                continue;
+            }
+            $bindings[$quantity['id']] = ['work_item_key' => $binding->value['work_item_key'], 'entity_id' => $source->entityId,
+                'binding_fact_id' => $binding->id, 'decision_id' => $decision->id,
+                'quantity_hash' => hash('sha256', CanonicalPipelineJson::encode($quantity))];
+        }
+
+        return $bindings;
     }
 
     private function composerAnswerRelatedEntities(Fact $answer, array $context, array $facts, array $eligibleFacts, array $entities, array $evidence): array

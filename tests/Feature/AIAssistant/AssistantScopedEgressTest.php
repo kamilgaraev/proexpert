@@ -565,6 +565,130 @@ final class AssistantScopedEgressTest extends TestCase
                 'period_start' => '2026-10-02', 'period_end' => '2026-10-19']]];
     }
 
+    public static function clarificationReadCounts(): array
+    {
+        return ['before-reads' => [0, 'period'], 'after-one-read' => [1, 'focus'], 'after-two-reads' => [2, 'goal']];
+    }
+
+    #[DataProvider('clarificationReadCounts')]
+    public function test_typed_clarification_survives_zero_one_or_two_approved_reads(int $reads, string $missing): void
+    {
+        config(['ai-assistant-credits.profiles.short' => ['input_tokens' => 12288, 'output_tokens' => 1024, 'max_calls' => 3]]);
+        $sources = $this->sequentialSources();
+        [$cohort, $payload] = $this->enroll($sources, 'Сколько открытых задач на текущем проекте?', profile: 'short');
+        $calls = 0;
+        $provider = $this->responses(function (array $input, array $options) use (&$calls, $reads, $missing, $sources): array {
+            self::assertSame('auto', $options['tool_choice']);
+            self::assertStringContainsString('"kind":"clarification"', $input[0]['content']);
+            self::assertCount($calls, array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call_output'));
+            if ($calls < $reads) {
+                $source = $sources[$calls++];
+
+                return $this->nativeToolCall($source['tool'], $source['arguments'], 'clarification_'.$calls);
+            }
+            $calls++;
+
+            return array_replace($this->answer(), ['content' => json_encode(['kind' => 'clarification', 'missing' => $missing], JSON_THROW_ON_ERROR)]);
+        });
+        $response = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+            app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertSame($reads + 1, $calls);
+        self::assertSame(trans_message('ai_assistant.clarification_'.$missing), $response['message']['content']);
+        $stored = Message::query()->findOrFail($response['message']['id']);
+        self::assertSame($response['message']['content'], $stored->content);
+        foreach ([$response['message']['metadata'], $stored->metadata] as $metadata) {
+            self::assertTrue($metadata['needs_clarification']);
+            self::assertSame('insufficient_data', $metadata['outcome']);
+            self::assertSame('unverified', $metadata['validation_status']);
+            self::assertSame([], $metadata['source_refs']);
+        }
+        $request = AssistantRequest::query()->where('request_id', $response['request_id'])->sole();
+        self::assertSame($calls, $request->calls_used);
+        self::assertSame([], $request->response['message']['metadata']['source_refs']);
+        self::assertTrue($request->response['message']['metadata']['needs_clarification']);
+    }
+
+    public static function invalidClarifications(): array
+    {
+        return ['unknown' => ['{"kind":"clarification","missing":"organization_id"}'],
+            'wrong-kind' => ['{"kind":"answer","missing":"period"}'],
+            'extra-field' => ['{"kind":"clarification","missing":"period","question":"Непроверенный вывод?"}'],
+            'value' => ['{"kind":"clarification","missing":"period","value":"2026-10-01"}'],
+            'malformed' => ['{"kind":"clarification","missing":"period"'],
+            'financial-field' => ['{"kind":"clarification","missing":"period","question":"Бюджет 123456 рублей?"}'],
+            'plain-financial-claim' => ['Бюджет текущего проекта составляет 123456 рублей.']];
+    }
+
+    #[DataProvider('invalidClarifications')]
+    public function test_invalid_clarification_cannot_publish_a_question_or_financial_claim_after_a_read(string $text): void
+    {
+        [$cohort, $payload] = $this->enroll($this->sequentialSources(), 'Сколько открытых задач на текущем проекте?');
+        $calls = 0;
+        $provider = $this->responses(function () use (&$calls, $text): array {
+            if (++$calls === 1) {
+                $source = $this->sequentialSources()[0];
+
+                return $this->nativeToolCall($source['tool'], $source['arguments'], 'invalid_clarification');
+            }
+
+            return array_replace($this->answer(), ['content' => $text]);
+        });
+        $response = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+            app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertSame(2, $calls);
+        self::assertSame(trans_message('ai_assistant_facts.live_proof_required'), $response['message']['content']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+        self::assertStringNotContainsString('123456', json_encode($response, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('Непроверенный вывод', $response['message']['content']);
+    }
+
+    public static function staleClarifications(): array
+    {
+        return ['zero-reads' => [false, false], 'one-read' => [true, false], 'actor-revoked' => [false, true]];
+    }
+
+    #[DataProvider('staleClarifications')]
+    public function test_typed_clarification_cannot_skip_fresh_publication_checks(bool $readFirst, bool $revokeActor): void
+    {
+        [$cohort, $payload] = $this->enroll($this->sequentialSources(), 'Сколько открытых задач на текущем проекте?');
+        $calls = 0;
+        $provider = $this->responses(function () use (&$calls, $readFirst, $revokeActor): array {
+            if (++$calls === 1 && $readFirst) {
+                $source = $this->sequentialSources()[0];
+
+                return $this->nativeToolCall($source['tool'], $source['arguments'], 'stale_clarification');
+            }
+            if ($revokeActor) {
+                $this->fixture->owner->updateQuietly(['is_active' => false]);
+            } else {
+                $this->task->updateQuietly(['name' => 'Изменённый источник перед публикацией']);
+            }
+
+            return array_replace($this->answer(), ['content' => '{"kind":"clarification","missing":"goal"}']);
+        });
+        try {
+            AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+                app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+            self::fail('Clarification bypassed the fresh source check');
+        } catch (AssistantEgressDenied) {
+            self::assertSame($readFirst ? 2 : 1, $calls);
+            self::assertSame(0, Message::query()->where('role', 'assistant')->whereIn('conversation_id',
+                Conversation::query()->where('organization_id', $this->fixture->organization->id)->select('id'))->count());
+        }
+    }
+
+    public function test_typed_clarification_does_not_authorize_actions_or_new_input(): void
+    {
+        [$cohort, $payload] = $this->enroll($this->sequentialSources(), 'Сколько открытых задач на текущем проекте?');
+        $payload['allow_actions'] = true;
+        $provider = $this->responses(static function (): never {
+            self::fail('Action-enabled input reached the clarification model');
+        });
+        $this->expectException(AssistantEgressDenied::class);
+        AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
+            app(OrdinaryAssistantScopedContext::class))->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+    }
+
     private function enroll(?array $sources = null, ?string $query = null, ?int $conversationId = null, string $profile = 'normal'): array
     {
         $sources ??= [['tool' => 'get_project_attention', 'arguments' => ['project_id' => $this->project->id, 'focus' => 'schedule', 'limit' => 3]]];

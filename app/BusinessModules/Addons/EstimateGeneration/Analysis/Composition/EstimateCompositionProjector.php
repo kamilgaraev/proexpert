@@ -60,7 +60,7 @@ final readonly class EstimateCompositionProjector
     }
 
     /** @param list<array<string, mixed>> $intents @param list<array<string, mixed>> $derivedQuantities @param list<array<string, mixed>> $facts */
-    public function apply(array $localEstimates, array $intents, array $derivedQuantities, array $facts = []): array
+    public function apply(array $localEstimates, array $intents, array $derivedQuantities, array $facts = [], array $directQuantityBindings = []): array
     {
         $byId = [];
         $supplementary = [];
@@ -123,7 +123,7 @@ final readonly class EstimateCompositionProjector
                     'sections' => [[
                         'key' => $package,
                         'title' => trans_message('estimate_generation.composition.supplementary_section'),
-                        'work_items' => $this->supplementaryItems($group, $derivedQuantities, $facts, $positionKeys),
+                        'work_items' => $this->supplementaryItems($group, $derivedQuantities, $facts, $positionKeys, $directQuantityBindings),
                     ]],
                 ];
             }
@@ -133,9 +133,9 @@ final readonly class EstimateCompositionProjector
     }
 
     /** @param array<string, array<string, mixed>> $supplementary @param list<array<string, mixed>> $derivedQuantities @param list<array<string, mixed>> $facts */
-    private function supplementaryItems(array $supplementary, array $derivedQuantities, array $facts, array $positionKeys): array
+    private function supplementaryItems(array $supplementary, array $derivedQuantities, array $facts, array $positionKeys, array $directQuantityBindings = []): array
     {
-        $quantityProvenance = new ComposedQuantityProvenance($derivedQuantities, $facts);
+        $quantityProvenance = new ComposedQuantityProvenance($derivedQuantities, $facts, $directQuantityBindings);
         $items = [];
         foreach ($supplementary as $candidateId => $intent) {
             $binding = $quantityProvenance->binding($intent);

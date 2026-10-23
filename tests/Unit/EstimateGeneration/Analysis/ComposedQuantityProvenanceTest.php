@@ -5,11 +5,83 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Analysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\ComposedQuantityProvenance;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use PHPUnit\Framework\TestCase;
 
 final class ComposedQuantityProvenanceTest extends TestCase
 {
+    public function test_direct_quantity_needs_an_exact_server_binding_and_preserves_human_assumptions(): void
+    {
+        [$quantity, $facts, $map] = $this->directFixture();
+        $intent = ['work_key' => 'custom.assembly', 'entity_id' => 'equipment:1', 'unit' => 'count',
+            'derived_quantity_id' => $quantity['id'], 'source_fact_ids' => ['fact:manual']];
+        $proof = new ComposedQuantityProvenance([$quantity], $facts, $map);
+        $binding = $proof->binding($intent);
+        self::assertTrue($binding['eligible']);
+        self::assertSame('estimated', $proof->basis($binding)['source']);
+        self::assertSame(['fact:manual'], $proof->basis($binding)['assumptions']);
+        self::assertFalse($proof->binding([...$intent, 'work_key' => 'custom.other'])['eligible']);
+        self::assertFalse((new ComposedQuantityProvenance([$quantity], $facts))->binding($intent)['eligible']);
+        self::assertFalse((new ComposedQuantityProvenance([[...$quantity, 'value' => '4']], $facts, $map))->binding($intent)['eligible']);
+        $spoofed = [...$quantity, 'source' => 'evidenced', 'quantity_key' => 'equipment.count'];
+        self::assertFalse((new ComposedQuantityProvenance([$spoofed], $facts))->binding([...$intent, 'work_key' => 'equipment.install'])['eligible']);
+        try {
+            (new ComposedQuantityProvenance([$quantity], $facts))->correction(['operation' => 'add_work',
+                'work_key' => 'custom.assembly', 'derived_quantity_id' => $quantity['id'], 'source_fact_ids' => ['fact:manual']]);
+            self::fail('An audit without current server authority admitted a human quantity.');
+        } catch (\InvalidArgumentException $error) {
+            self::assertSame('estimate_composer_correction_quantity_purpose_unverified', $error->getMessage());
+        }
+    }
+
+    public function test_server_quantity_binding_does_not_change_wire_fingerprints_or_paid_batch_count(): void
+    {
+        [$quantity, $facts, $map] = $this->directFixture();
+        foreach (range(1, 18) as $index) {
+            $facts[] = ['id' => 'fact:context-'.$index, 'entity_id' => 'equipment:'.$index, 'value' => str_repeat('context ', 128)];
+        }
+        $baseline = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [$quantity], [], [], [], RunEstimateComposer::PROMPT_CONTRACT);
+        $withProof = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [$quantity], [], [], [],
+            RunEstimateComposer::PROMPT_CONTRACT, directQuantityBindings: $map);
+        self::assertSame($baseline->canonicalPayload(), $withProof->canonicalPayload());
+        self::assertSame($baseline->fingerprint(), $withProof->fingerprint());
+        self::assertSame($map, $withProof->withSourceClaimReferences([])->withNativeCellContext([])->directQuantityBindings);
+        $planner = new EstimateComposerBatchPlanner(6000);
+        $expected = $planner->plan($baseline);
+        $actual = $planner->plan($withProof);
+        self::assertGreaterThan(1, count($expected));
+        self::assertCount(count($expected), $actual);
+        $copies = 0;
+        foreach ($actual as $index => $part) {
+            self::assertSame($expected[$index]->canonicalPayload(), $part->canonicalPayload());
+            self::assertSame($expected[$index]->fingerprint(), $part->fingerprint());
+            self::assertSame(CanonicalPipelineJson::encode(['project' => $expected[$index]->canonicalPayload()]),
+                CanonicalPipelineJson::encode(['project' => $part->canonicalPayload()]));
+            self::assertSame(array_intersect_key($map, array_fill_keys(array_column($part->derivedQuantities, 'id'), true)), $part->directQuantityBindings);
+            $copies += count($part->directQuantityBindings);
+        }
+        self::assertGreaterThan(0, $copies);
+    }
+
+    private function directFixture(): array
+    {
+        $quantity = ['id' => 'quantity:direct:manual', 'entity_id' => 'equipment:1', 'quantity_key' => 'quantity:direct:manual',
+            'value' => '3', 'unit' => 'count', 'operand_fact_ids' => ['fact:manual'], 'formula_key' => 'direct_quantity',
+            'source' => 'estimated', 'review_blockers' => [], 'quantity_basis' => ['amount' => '3', 'unit' => 'count',
+                'formula_key' => 'direct_quantity', 'source' => 'estimated', 'assumptions' => ['fact:manual'],
+                'formula_inputs' => ['entity_id' => 'equipment:1', 'operands' => [['fact_id' => 'fact:manual',
+                    'quantity_binding' => ['fact_id' => 'fact:choice', 'decision_id' => 'decision:choice', 'work_item_key' => 'custom.assembly']]]]]];
+        $facts = [['id' => 'fact:manual', 'entity_id' => 'equipment:1', 'value' => '3']];
+        $map = [$quantity['id'] => ['work_item_key' => 'custom.assembly', 'entity_id' => 'equipment:1',
+            'binding_fact_id' => 'fact:choice', 'decision_id' => 'decision:choice', 'quantity_hash' => hash('sha256', CanonicalPipelineJson::encode($quantity))]];
+
+        return [$quantity, $facts, $map];
+    }
+
     public function test_engineering_count_formula_uses_existing_purpose_without_bypassing_entity_unit_or_review_guards(): void
     {
         $facts = [['id' => 'count:a', 'entity_id' => 'equipment:a', 'value' => '7', 'unit' => 'count'],
