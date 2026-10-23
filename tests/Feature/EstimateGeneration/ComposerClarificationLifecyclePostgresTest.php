@@ -48,6 +48,86 @@ use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
 
 final class ComposerClarificationLifecyclePostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_current_work_question_is_readable_but_not_writable_outside_review(): void
+    {
+        [$actor, $session, $project] = $this->publish('universal', true);
+        $controller = app(EstimateGenerationQuestionController::class);
+        $request = Request::create('/', 'GET');
+        $request->setUserResolver(static fn (): User => $actor);
+        foreach (['generating', 'ready_to_apply'] as $status) {
+            $session->update(['status' => $status]);
+            $cards = $controller->index($request, $project, $session->fresh())->getData(true)['data']['items'];
+            self::assertCount(1, $cards);
+            self::assertSame([], $cards[0]['actions']);
+            $input = ['response' => 'other', 'other' => 'Допущение пользователя.', 'idempotency_key' => 'work-read-only-'.$status,
+                'expected_source_version' => $cards[0]['source_version'], 'answer_fingerprint' => $cards[0]['answer_fingerprint']];
+            self::assertSame(409, $controller->answer($this->answerRequest($actor, $project, $input), $project,
+                $session->fresh(), $cards[0]['code'])->getStatusCode());
+        }
+        $session->update(['status' => 'estimate_review_required']);
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturn(false);
+        $this->app->instance(AuthorizationService::class, $authorization);
+        self::assertSame([], $controller->index($request, $project, $session->fresh())->getData(true)['data']['items'][0]['actions']);
+    }
+
+    public function test_excluded_work_loses_current_question_and_composer_context_without_erasing_history(): void
+    {
+        [$actor, $session, $project] = $this->publish('universal', true, true);
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $controller = app(EstimateGenerationQuestionController::class);
+        $request = Request::create('/', 'GET');
+        $request->setUserResolver(static fn (): User => $actor);
+        $cards = $controller->index($request, $project, $session->fresh())->getData(true)['data']['items'];
+        self::assertCount(2, $cards);
+        $excluded = array_values(array_filter($cards, static fn (array $card): bool => $card['source_locator']['work_key'] === 'custom_equipment_second'))[0];
+        $input = ['response' => 'other', 'other' => 'Допущение для исключаемой работы.', 'idempotency_key' => 'work-before-exclusion',
+            'expected_source_version' => $excluded['source_version'], 'answer_fingerprint' => $excluded['answer_fingerprint']];
+        self::assertSame(200, $controller->answer($this->answerRequest($actor, $project, $input), $project, $session->fresh(), $excluded['code'])->getStatusCode());
+        $session->refresh();
+        $items = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope)->items($session->draft_payload);
+        $selected = array_keys(array_filter($items, static fn (array $item): bool => $item['binding']['work_key'] === 'custom_equipment_installation'));
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection::class)->handle($actor, $project->id, $session->id,
+            ['request_id' => (string) Str::uuid(), 'state_version' => $session->state_version, 'selected_sections' => $session->input_payload['selected_sections'],
+                'profile_id' => 'construction', 'construction_type' => 'new_construction', 'price_policy' => 'normative',
+                'artifact_hash' => $session->draft_payload['artifact_hash'], 'selected_work_item_keys' => $selected,
+                'scope_reason' => 'Для текущей оценки выбрана только первая работа.']);
+        self::assertCount(1, $controller->index($request, $project, $session->fresh())->getData(true)['data']['items']);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation::class)->handle($actor,
+            $project->id, $session->id, $session->fresh()->state_version, (string) Str::uuid());
+        $current = $controller->index($request, $project, $session->fresh())->getData(true)['data']['items'];
+        self::assertCount(1, $current);
+        self::assertSame('custom_equipment_installation', $current[0]['source_locator']['work_key']);
+        $capture = app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null,
+            $session->input_payload['selected_sections'], 'universal', $session->fresh()->input_payload]);
+        self::assertCount(1, $capture->workTechnologyContext);
+        self::assertSame('custom_equipment_installation', $capture->workTechnologyContext[0]['context']['binding']['work_key']);
+        $input['idempotency_key'] = 'work-after-exclusion';
+        self::assertSame(409, $controller->answer($this->answerRequest($actor, $project, $input), $project, $session->fresh(), $excluded['code'])->getStatusCode());
+        $history = array_filter(app(ProjectModelRepository::class)->snapshot(...$scope)->facts,
+            static fn ($fact): bool => is_array($fact->value) && ($fact->value['question_key'] ?? null) === $excluded['code']);
+        self::assertCount(1, $history);
+    }
+
+    public function test_current_work_question_basis_uses_only_current_scoped_sources_in_read_states(): void
+    {
+        [$actor, $session, $project] = $this->publish('universal', true);
+        $scope = [(int) $session->organization_id, (int) $project->id, (int) $session->id];
+        $catalog = app(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class);
+        $card = $catalog->allCurrent(...$scope)[0];
+        $basis = app(\App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\AnalysisBasisPayloadService::class);
+        foreach (['estimate_review_required', 'generating', 'ready_to_apply'] as $status) {
+            $session->update(['status' => $status]);
+            $payload = $basis->handle(...[...$scope, 'question', $card->question->code]);
+            self::assertSame($card->question->reason, $payload['explanation'] ?? null);
+            self::assertSame($card->question->impact, $payload['impact'] ?? null);
+            self::assertNotEmpty($payload['sources']);
+            self::assertArrayNotHasKey('answer', $payload);
+        }
+        self::assertNull($basis->handle($scope[0], $scope[1] + 1, $scope[2], 'question', $card->question->code));
+        self::assertNull($basis->handle(...[...$scope, 'question', 'composer_work_technology_'.str_repeat('f', 40)]));
+    }
+
     public function test_work_technology_answers_are_append_only_project_context_with_current_document_pins(): void
     {
         [$actor, $session, $project] = $this->publish('universal', true);
@@ -283,7 +363,7 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
         return [['legacy'], ['universal']];
     }
 
-    private function publish(string $mode, bool $workQuestion = false): array
+    private function publish(string $mode, bool $workQuestion = false, bool $secondWork = false): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         Http::fake();
@@ -298,7 +378,7 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
         $authorization->allows('can')->andReturn(true);
         $this->app->instance(AuthorizationService::class, $authorization);
         $input = ['evaluation_mode' => $mode, 'building_type' => 'bridge', 'profile_id' => 'construction', 'generation_mode' => 'ai_assisted',
-            'selected_sections' => $mode === 'universal' ? ['heating', 'roofing', 'equipment'] : [],
+            'selected_sections' => $mode === 'universal' ? ($workQuestion ? ['equipment'] : ['heating', 'roofing', 'equipment']) : [],
             'description' => 'Монтаж неизвестной установки и покрытия'];
         $session = app(CreateEstimateGenerationSession::class)->handle(['organization_id' => $organization->id,
             'project_id' => $project->id, 'user_id' => $actor->id, 'input_payload' => $input], $actor);
@@ -308,14 +388,16 @@ final class ComposerClarificationLifecyclePostgresTest extends EstimateGeneratio
             'generation_evaluation_input_hash' => $inputHash]])->save();
         $source = app(ProjectModelRepository::class)->snapshot((int) $organization->id, (int) $project->id, (int) $session->id)->facts[0];
         $model = $this->createMock(EstimateComposerModel::class);
-        $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $captured, callable $reserved) use ($source, $workQuestion): array {
+        $model->expects(self::once())->method('compose')->willReturnCallback(static function (EstimateComposerInput $captured, callable $reserved) use ($source, $workQuestion, $secondWork): array {
             $reserved((string) Str::uuid());
             if ($workQuestion) {
-                return ['work_intents' => [['kind' => 'supplementary', 'work_key' => 'custom_equipment_installation',
+                $intent = ['kind' => 'supplementary', 'work_key' => 'custom_equipment_installation',
                     'name' => 'Монтаж неизвестной установки', 'work_section' => 'equipment', 'unit' => 'count', 'derived_quantity_id' => null,
                     'source_fact_ids' => [$source->id], 'entity_id' => $source->entityId, 'technology_package_candidate' => null,
                     'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
-                    'technology_clarification' => ['question' => 'Как выполняется крепление этой установки?', 'reason' => 'В исходных данных не указан способ монтажа.']]]];
+                    'technology_clarification' => ['question' => 'Как выполняется крепление этой установки?', 'reason' => 'В исходных данных не указан способ монтажа.']];
+
+                return ['work_intents' => [$intent, ...($secondWork ? [[...$intent, 'work_key' => 'custom_equipment_second', 'name' => 'Монтаж второй неизвестной установки']] : [])]];
             }
 
             return ['work_intents' => array_map(static fn (array $work): array => [

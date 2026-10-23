@@ -6,6 +6,9 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Questions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DocumentRequirementAcceptance;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationSelectionVerifier;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -94,6 +97,20 @@ final readonly class ResolveCurrentEstimateClarification
                 $draft['scope_identity']['session_id'] ?? null] !== $scope) {
             return [];
         }
+        $selection = $input['scope_selection'] ?? $draft['evaluation_policy']['scope_selection'] ?? null;
+        $workSelection = $selection['work_scope'] ?? null;
+        $selectedKeys = null;
+        if ($workSelection !== null) {
+            $expected = ['selected_sections' => $policy['selected_sections'], 'profile_id' => $policy['profile_id'],
+                'construction_type' => $input['construction_type'] ?? 'new_construction',
+                'price_policy' => $input['price_policy'] ?? 'normative', 'profile_version' => ScopeCompletenessEvaluator::VERSION,
+                'work_scope' => $workSelection];
+            if (! (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $selection, 'evaluation_scope', $expected)
+                || ! (new EvaluationWorkScope)->current($draft, $workSelection)) {
+                return [];
+            }
+            $selectedKeys = array_fill_keys(array_column($workSelection['selected_items'], 'key'), true);
+        }
         $result = [];
         $duplicates = [];
         $sourceFacts = array_column($snapshot->facts, null, 'id');
@@ -101,6 +118,9 @@ final readonly class ResolveCurrentEstimateClarification
         foreach ($draft['local_estimates'] ?? [] as $local) {
             foreach ($local['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $work) {
+                    if ($selectedKeys !== null && ! isset($selectedKeys[$work['key'] ?? ''])) {
+                        continue;
+                    }
                     $context = $work['metadata']['work_technology_context'] ?? null;
                     $binding = self::workTechnologyBinding($work);
                     if (! is_array($context) || $binding === null || ($context['schema_version'] ?? null) !== 1

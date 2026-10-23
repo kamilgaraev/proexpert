@@ -56,7 +56,8 @@ final readonly class EloquentEstimateClarificationSource implements EstimateClar
                 $questions[] = $composer;
             }
         }
-        if ($session !== null && $session->status === EstimateGenerationStatus::EstimateReviewRequired) {
+        if ($session !== null && ($session->status === EstimateGenerationStatus::EstimateReviewRequired
+            || (is_array($session->draft_payload) && str_contains(json_encode($session->draft_payload, JSON_THROW_ON_ERROR), 'work_technology_context')))) {
             $entries = $this->currentWorkContexts($organizationId, $projectId, $sessionId, $capture['snapshot']);
             $questions = [...$questions, ...$this->resolver->workTechnologyQuestions($entries, $capture['token'], (int) $session->state_version)];
         }

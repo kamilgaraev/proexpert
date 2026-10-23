@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog;
 use Closure;
 use Illuminate\Database\DatabaseManager;
 
@@ -18,6 +19,7 @@ final readonly class AnalysisBasisPayloadService
         private DatabaseManager $database,
         private ProjectModelRepository $models,
         ?Closure $translate = null,
+        private ?EstimateClarificationCatalog $clarifications = null,
     ) {
         $this->translate = $translate ?? static fn (string $key): string => trans_message($key);
     }
@@ -86,6 +88,26 @@ final readonly class AnalysisBasisPayloadService
     /** @return array<string, mixed>|null */
     private function question(int $organizationId, int $projectId, int $sessionId, string $id): ?array
     {
+        if (str_starts_with($id, 'composer_work_technology_')) {
+            foreach ($this->clarifications?->allCurrent($organizationId, $projectId, $sessionId) ?? [] as $current) {
+                if ($current->question->code !== $id || ($current->question->sourceLocator['kind'] ?? null) !== 'composer_work_technology') {
+                    continue;
+                }
+                $ids = $current->composerContext['work_context']['binding']['source_fact_ids'];
+                $evidence = [];
+                foreach ($this->models->factsByIds($organizationId, $projectId, $sessionId, $ids) as $fact) {
+                    if ([$fact->organizationId, $fact->projectId, $fact->sessionId] === [$organizationId, $projectId, $sessionId]
+                        && in_array($fact->id, $ids, true)) {
+                        $evidence = [...$evidence, ...$fact->evidenceIds];
+                    }
+                }
+
+                return [...$this->questionPayload($id, $current->question->toArray()),
+                    'sources' => $this->sources($organizationId, $projectId, $sessionId, $evidence)];
+            }
+
+            return null;
+        }
         $understanding = $this->models->currentUnderstanding($organizationId, $projectId, $sessionId);
         foreach (is_array($understanding['questions'] ?? null) ? $understanding['questions'] : [] as $question) {
             if (! is_array($question) || (string) ($question['conflict_id'] ?? $question['id'] ?? '') !== $id) {
