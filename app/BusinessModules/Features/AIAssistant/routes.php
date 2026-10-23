@@ -62,6 +62,10 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
 
 Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
     ->prefix('api/v1/admin/ai-assistant')->name('admin.ai-assistant.')->group(static function (): void {
+        Route::post('documents/{document}/local-processing', [\App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantDocumentProcessingController::class, 'assign'])
+            ->whereNumber('document')->name('documents.local-processing.assign');
+        Route::delete('documents/{document}/local-processing', [\App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantDocumentProcessingController::class, 'revoke'])
+            ->whereNumber('document')->name('documents.local-processing.revoke');
         Route::post('egress/cohorts', [AssistantEgressEnrollmentController::class, 'assign'])->name('egress.cohorts.assign');
         Route::delete('egress/cohorts/{cohort}', [AssistantEgressEnrollmentController::class, 'revokeCohort'])->whereUuid('cohort')->name('egress.cohorts.revoke');
         Route::post('egress/enrollments/preview', [AssistantEgressEnrollmentController::class, 'preview'])->name('egress.enrollments.preview');

@@ -136,14 +136,17 @@ final class AssistantDocumentService
 
     public function process(int $documentId): AIAssistantDocument
     {
-        return Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId): AIAssistantDocument {
+        return $this->processingBoundary($documentId, fn (): AIAssistantDocument => Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId): AIAssistantDocument {
             $document = AIAssistantDocument::query()->findOrFail($documentId);
+            $processing = app(AssistantDocumentProcessingPolicyService::class);
+            $captured = $processing->capture($documentId);
             if ($document->status !== AIAssistantDocument::STATUS_QUEUED && $document->status !== AIAssistantDocument::STATUS_FAILED) {
                 return $document;
             }
             $this->assertCurrentFile($document);
             $result = $this->extractor->extract($this->documentContent($document), $document->mime_type, $document->filename);
-            DB::transaction(function () use ($document, $result): void {
+            DB::transaction(function () use ($document, $result, $processing, $captured): void {
+                $processing->assertCurrent((int) $document->id, $captured, true);
                 AIAssistantDocumentUnit::query()->where('document_id', $document->id)->delete();
                 foreach ($result['units'] as $unit) {
                     AIAssistantDocumentUnit::query()->create(['document_id' => $document->id, 'unit_type' => $unit['type'],
@@ -151,16 +154,19 @@ final class AssistantDocumentService
                 }
                 $document->update(['status' => $result['status'], 'coverage_status' => $result['coverage'], 'extracted_text' => $result['text'],
                     'metadata' => $this->extractionMetadata($document, $result), 'processed_at' => now(), 'last_error' => null]);
+                $processing->assertCurrent((int) $document->id, $captured, true);
             });
 
             return $document->refresh();
-        });
+        }));
     }
 
     public function recoverEmptyDocx(int $documentId, string $checksum, string $version): AIAssistantDocument
     {
-        return Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId, $checksum, $version): AIAssistantDocument {
+        return $this->processingBoundary($documentId, fn (): AIAssistantDocument => Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId, $checksum, $version): AIAssistantDocument {
             $document = AIAssistantDocument::query()->findOrFail($documentId);
+            $processing = app(AssistantDocumentProcessingPolicyService::class);
+            $captured = $processing->capture($documentId);
             if (! $this->isPendingEmptyDocxRecovery($document, $checksum, $version)) {
                 return $document;
             }
@@ -168,8 +174,9 @@ final class AssistantDocumentService
             $this->assertCurrentFile($document);
             $result = $this->extractor->extract($this->documentContent($document), $document->mime_type, $document->filename);
 
-            return DB::transaction(function () use ($document, $checksum, $version, $result): AIAssistantDocument {
+            return DB::transaction(function () use ($document, $checksum, $version, $result, $processing, $captured): AIAssistantDocument {
                 $current = AIAssistantDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+                $processing->assertCurrent((int) $document->id, $captured, true);
                 if (! $this->isPendingEmptyDocxRecovery($current, $checksum, $version)) {
                     return $current;
                 }
@@ -184,14 +191,16 @@ final class AssistantDocumentService
                 $manualOcr = $result['status'] === AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED;
                 $current->update(['status' => $result['status'], 'coverage_status' => $result['coverage'], 'extracted_text' => $result['text'],
                     'metadata' => $metadata, 'processed_at' => now(), 'last_error' => $manualOcr ? 'docx_recovery_manual_ocr_required' : null]);
+                $processing->assertCurrent((int) $document->id, $captured, true);
 
                 return $current->refresh();
             });
-        });
+        }));
     }
 
     public function quoteOcr(User $actor, int $organizationId, AIAssistantDocument $document): array
     {
+        app(AssistantDocumentProcessingPolicyService::class)->assertExternalAllowed((int) $document->id);
         $this->assertReadable($actor, $organizationId, $document);
         $this->assertOcrRequired($document);
         if (empty($document->metadata['ocr_request_id'])) {
@@ -219,6 +228,7 @@ final class AssistantDocumentService
     {
         return DB::transaction(function () use ($actor, $organizationId, $document, $quoteId, $requestId): AIAssistantDocument {
             $document = AIAssistantDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+            app(AssistantDocumentProcessingPolicyService::class)->assertExternalAllowed((int) $document->id);
             $this->assertReadable($actor, $organizationId, $document);
             $this->assertOwner($actor, $organizationId);
             if ($document->ocr_reservation_id !== null) {
@@ -246,8 +256,9 @@ final class AssistantDocumentService
 
     public function processOcr(int $documentId): AIAssistantDocument
     {
-        return Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId): AIAssistantDocument {
+        return $this->processingBoundary($documentId, fn (): AIAssistantDocument => Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId): AIAssistantDocument {
             $document = AIAssistantDocument::query()->findOrFail($documentId);
+            if (app(AssistantDocumentProcessingPolicyService::class)->selected($documentId)) { return $this->blockLocalOcr($documentId); }
             if ($this->isNativeSourceMissing($document) || $document->status === AIAssistantDocument::STATUS_READY) {
                 return $document;
             }
@@ -276,6 +287,7 @@ final class AssistantDocumentService
                 }
                 return true;
             });
+            if (app(AssistantDocumentProcessingPolicyService::class)->selected($documentId)) { return $this->blockLocalOcr($documentId); }
             if (! $complete) {
                 \App\Jobs\ProcessAssistantDocumentOcr::dispatch((int) $document->id)->afterCommit();
                 return $document->refresh();
@@ -301,7 +313,36 @@ final class AssistantDocumentService
 
                 return $current->refresh();
             });
-        });
+        }), true);
+    }
+
+    private function processingBoundary(int $documentId, callable $operation, bool $ocr = false): AIAssistantDocument
+    {
+        try { return $operation(); }
+        catch (\Throwable $failure) {
+            $policies = app(AssistantDocumentProcessingPolicyService::class);
+            try { $selected = $policies->selected($documentId); }
+            catch (\Throwable) { throw $policies->sanitizeFailure($documentId, $failure); }
+            if ($ocr && $selected) {
+                try { return $this->blockLocalOcr($documentId); }
+                catch (\Throwable $cleanupFailure) { throw $policies->sanitizeFailure($documentId, $cleanupFailure); }
+            }
+            throw $policies->sanitizeFailure($documentId, $failure);
+        }
+    }
+
+    private function blockLocalOcr(int $documentId): AIAssistantDocument
+    {
+        return DB::transaction(function () use ($documentId): AIAssistantDocument {
+            $document = AIAssistantDocument::query()->whereKey($documentId)->lockForUpdate()->firstOrFail();
+            $this->settleOcrReservationAndBudget($document);
+            if ($document->status !== AIAssistantDocument::STATUS_READY && ! $this->isNativeSourceMissing($document)) {
+                $document->update(['status' => AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED,
+                    'coverage_status' => AIAssistantDocumentUnit::query()->where('document_id', $documentId)->whereRaw("length(trim(text)) > 0")->exists() ? 'partial' : 'empty',
+                    'last_error' => 'local_processing_ocr_disabled']);
+            }
+            return $document->refresh();
+        }, 3);
     }
 
     public function markNativeSourceMissing(int $documentId): void
@@ -421,6 +462,25 @@ final class AssistantDocumentService
             && strtolower(pathinfo($document->filename, PATHINFO_EXTENSION)) === 'docx'
             && ($document->metadata['docx_recovery_pending_version'] ?? null) === $version
             && ($document->metadata['docx_text_extraction_version'] ?? null) !== $version;
+    }
+
+    public function assertProcessingSource(User $actor, AIAssistantDocument $document): void
+    {
+        try {
+            $this->policy->withCurrentChecks($actor, (int) $document->organization_id, function () use ($actor, $document): void {
+                if (! $actor->is_active || ! $this->policy->belongsToOrganization($actor, (int) $document->organization_id)) {
+                    throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('access_denied');
+                }
+                $this->assertReadable($actor, (int) $document->organization_id, $document);
+            }, true);
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException|\Illuminate\Auth\Access\AuthorizationException) {
+            throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('access_denied');
+        } catch (RuntimeException $failure) {
+            if ($failure::class !== RuntimeException::class || $failure->getMessage() !== 'ai_assistant_document_access_denied') {
+                throw $failure;
+            }
+            throw new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied('access_denied');
+        }
     }
 
     private function assertReadable(User $actor, int $organizationId, AIAssistantDocument $document): void
