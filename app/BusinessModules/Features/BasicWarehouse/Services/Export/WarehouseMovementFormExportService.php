@@ -40,7 +40,7 @@ final readonly class WarehouseMovementFormExportService
         }
 
         $timezone = $form === 'm4' ? (new OrganizationBusinessTimezone)->resolve($movement->organization) : null;
-        $movements = $this->documentResolver->resolve($movement, $timezone);
+        $movements = $this->documentResolver->resolve($movement, $timezone, $form === 'm4' ? ['supplier_name', 'invoice_number'] : []);
         $movements->loadMissing([
             'organization',
             'warehouse',

@@ -663,6 +663,36 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->assertDatabaseCount('warehouse_balances', 0);
     }
 
+    public function test_receipt_vat_keeps_large_json_numeric_values_exact(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Numeric tax material', 'TAX-NUMERIC');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Numeric tax warehouse', 'TAX-NUMERIC');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+            'quantity' => 999999999999.999, 'price' => 0, 'vat_mode' => 'none',
+            'metadata' => ['supplier_quantity' => 999999999999.999],
+        ])->assertCreated()
+            ->assertJsonPath('data.metadata.receipt_tax.quantity', '999999999999.999')
+            ->assertJsonPath('data.metadata.metadata.supplier_quantity', '999999999999.999');
+
+        $this->assertSame('999999999999.999', WarehouseMovement::findOrFail($response->json('data.id'))->quantity);
+        $this->assertSame('999999999999.999', WarehouseBalance::query()->where('warehouse_id', $warehouse->id)->sole()->available_quantity);
+
+        $priceResponse = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+            'quantity' => 1, 'price' => 9999999999999.99, 'vat_mode' => 'none',
+        ])->assertCreated()
+            ->assertJsonPath('data.metadata.receipt_tax.unit_price', '9999999999999.99')
+            ->assertJsonPath('data.metadata.receipt_tax.gross_amount', '9999999999999.99');
+        $this->assertSame('9999999999999.99', WarehouseMovement::findOrFail($priceResponse->json('data.id'))->price);
+    }
+
     public function test_transfer_to_contractor_uses_scoped_ids_and_preserves_project_on_movements(): void
     {
         $context = AdminApiTestContext::create();

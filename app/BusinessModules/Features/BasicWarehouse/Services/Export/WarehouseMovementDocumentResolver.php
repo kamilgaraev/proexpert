@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Collection;
 final class WarehouseMovementDocumentResolver
 {
     /** @return Collection<int, WarehouseMovement> */
-    public function resolve(WarehouseMovement $movement, ?DateTimeZone $documentTimezone = null): Collection
+    public function resolve(WarehouseMovement $movement, ?DateTimeZone $documentTimezone = null, array $documentMetadataKeys = []): Collection
     {
         if ($movement->document_number === null || trim($movement->document_number) === '') {
             return $movement->newCollection([$movement]);
@@ -38,6 +38,16 @@ final class WarehouseMovementDocumentResolver
             $end = $start->copy()->addDay();
             $query->where('movement_date', '>=', $start->utc())
                 ->where('movement_date', '<', $end->utc());
+        }
+
+        $metadata = $movement->metadata ?? [];
+        $entered = is_array($metadata['metadata'] ?? null) ? $metadata['metadata'] : [];
+        foreach ($documentMetadataKeys as $key) {
+            $value = $metadata[$key] ?? $entered[$key] ?? null;
+            if ($value !== null && ! is_string($value) && ! is_int($value)) {
+                return $movement->newCollection([$movement]);
+            }
+            $query->whereRaw("COALESCE(metadata->>?, metadata->'metadata'->>?) IS NOT DISTINCT FROM ?", [$key, $key, $value === null ? null : (string) $value]);
         }
 
         // Одинаковый пользовательский номер не объединяет документы разных подрядчиков.

@@ -160,7 +160,7 @@ final class WarehouseMovementDocumentPolicyTest extends TestCase
         }
     }
 
-    public function test_m4_export_groups_lines_by_the_organization_business_day(): void
+    public function test_m4_export_groups_lines_by_the_business_day_and_supplier_document(): void
     {
         Storage::fake('s3');
         $context = AdminApiTestContext::create();
@@ -168,10 +168,19 @@ final class WarehouseMovementDocumentPolicyTest extends TestCase
         $this->allowAdminAccess();
         [$warehouse, $material] = $this->warehouseMaterial($context->organization->id);
         $selected = $this->movement($context->organization->id, $warehouse, $material, WarehouseMovement::TYPE_RECEIPT);
-        $selected->update(['document_number' => 'M4-BUSINESS-DAY', 'movement_date' => '2026-10-31 22:30:00']);
+        $identity = ['supplier_name' => 'Учебный поставщик А', 'invoice_number' => 'УЧ-СОПР-А'];
+        $selected->update(['document_number' => 'M4-BUSINESS-DAY', 'movement_date' => '2026-10-31 22:30:00', 'metadata' => $identity]);
         foreach (['2026-11-01 12:00:00', '2026-10-31 20:59:59', '2026-11-01 21:00:00'] as $date) {
             $line = $this->movement($context->organization->id, $warehouse, $material, WarehouseMovement::TYPE_RECEIPT);
-            $line->update(['document_number' => $selected->document_number, 'movement_date' => $date]);
+            $line->update(['document_number' => $selected->document_number, 'movement_date' => $date, 'metadata' => $identity]);
+        }
+        foreach ([
+            ['supplier_name' => 'Учебный поставщик Б', 'invoice_number' => 'УЧ-СОПР-А'],
+            ['supplier_name' => 'Учебный поставщик А', 'invoice_number' => 'УЧ-СОПР-Б'],
+            ['metadata' => $identity],
+        ] as $metadata) {
+            $line = $this->movement($context->organization->id, $warehouse, $material, WarehouseMovement::TYPE_RECEIPT);
+            $line->update(['document_number' => $selected->document_number, 'movement_date' => '2026-11-01 13:00:00', 'metadata' => $metadata]);
         }
 
         $response = $this->withHeaders($context->authHeaders())
@@ -185,8 +194,9 @@ final class WarehouseMovementDocumentPolicyTest extends TestCase
             self::assertSame('01.11.2026', $sheet->getCell('J11')->getValue());
             self::assertSame(1.0, (float) $sheet->getCell('F23')->getValue());
             self::assertSame(1.0, (float) $sheet->getCell('F24')->getValue());
-            self::assertSame('Принял', $sheet->getCell('A26')->getValue());
-            self::assertSame(30, $sheet->getHighestRow());
+            self::assertSame(31, $sheet->getHighestRow());
+            self::assertSame(1.0, (float) $sheet->getCell('F25')->getValue());
+            self::assertSame('Принял', $sheet->getCell('A27')->getValue());
         } finally {
             @unlink($temporaryPath);
         }

@@ -18,16 +18,19 @@ class ReceiptRequest extends FormRequest
             $material['measurement_unit_id'] = $this->nullableInteger($material['measurement_unit_id'] ?? null);
             $material['default_price'] = $this->nullableFloat($material['default_price'] ?? null);
         }
+        if (is_array($metadata) && array_key_exists('supplier_quantity', $metadata)) {
+            $metadata['supplier_quantity'] = $this->decimalInput($metadata['supplier_quantity']);
+        }
 
         $this->merge([
             'warehouse_id' => $this->nullableInteger($this->input('warehouse_id')),
             'cell_id' => $this->nullableInteger($this->input('cell_id')),
             'material_id' => $this->nullableInteger($this->input('material_id')),
             'material' => $material,
-            'quantity' => $vatMode === null ? $this->nullableFloat($this->input('quantity')) : $this->normalizeNullableValue($this->input('quantity')),
-            'price' => $vatMode === null ? $this->nullableFloat($this->input('price')) : $this->normalizeNullableValue($this->input('price')),
+            'quantity' => $vatMode === null ? $this->nullableFloat($this->input('quantity')) : $this->decimalInput($this->input('quantity')),
+            'price' => $vatMode === null ? $this->nullableFloat($this->input('price')) : $this->decimalInput($this->input('price')),
             'vat_mode' => $vatMode,
-            'vat_rate' => $this->normalizeNullableValue($this->input('vat_rate')),
+            'vat_rate' => $this->decimalInput($this->input('vat_rate')),
             'project_id' => $this->nullableInteger($this->input('project_id')),
             'metadata' => $metadata,
         ]);
@@ -169,5 +172,14 @@ class ReceiptRequest extends FormRequest
         return in_array(mb_strtolower($normalized), ['', 'null', 'undefined'], true)
             ? null
             : $normalized;
+    }
+
+    private function decimalInput(mixed $value): mixed
+    {
+        $value = $this->normalizeNullableValue($value);
+
+        return is_float($value) && is_finite($value)
+            ? json_encode($value, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR)
+            : $value;
     }
 }
