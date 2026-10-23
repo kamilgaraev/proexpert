@@ -89,7 +89,8 @@ final readonly class ResolveCurrentEstimateClarification
             'technology_package_candidate' => $intent['technology_package_candidate'] ?? null, 'source_fact_ids' => $ids];
     }
 
-    public function workTechnologyContexts(array $draft, array $input, ProjectModelSnapshot $snapshot, array $decisions, array $scope, array $documents): array
+    public function workTechnologyContexts(array $draft, array $input, ProjectModelSnapshot $snapshot, array $decisions, array $scope, array $documents,
+        ?string $localEstimateKey = null): array
     {
         $policy = self::composerPolicy($input);
         if ($policy === null || ! (new BuildMostEstimateDraft)->verifyArtifact($draft)
@@ -111,11 +112,22 @@ final readonly class ResolveCurrentEstimateClarification
             }
             $selectedKeys = array_fill_keys(array_column($workSelection['selected_items'], 'key'), true);
         }
+        $locals = $draft['local_estimates'] ?? [];
+        if ($localEstimateKey !== null) {
+            if (trim($localEstimateKey) === '' || strlen($localEstimateKey) > 255) {
+                return [];
+            }
+            $locals = array_values(array_filter($locals, static fn (mixed $local): bool => is_array($local)
+                && ($local['key'] ?? null) === $localEstimateKey));
+            if (count($locals) !== 1) {
+                return [];
+            }
+        }
         $result = [];
         $duplicates = [];
         $sourceFacts = array_column($snapshot->facts, null, 'id');
         $checkedAnswers = [];
-        foreach ($draft['local_estimates'] ?? [] as $local) {
+        foreach ($locals as $local) {
             foreach ($local['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $work) {
                     if ($selectedKeys !== null && ! isset($selectedKeys[$work['key'] ?? ''])) {

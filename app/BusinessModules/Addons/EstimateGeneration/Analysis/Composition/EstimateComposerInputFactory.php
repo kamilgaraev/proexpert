@@ -47,6 +47,7 @@ final readonly class EstimateComposerInputFactory
         array $allowedWorkSections = [],
         ?string $evaluationMode = null,
         array $answerPolicy = [],
+        ?string $localEstimateKey = null,
     ): EstimateComposerInput {
         $capture = $this->models->snapshotForPlanning(
             $organizationId,
@@ -81,8 +82,8 @@ final readonly class EstimateComposerInputFactory
             $sessionId,
             $this->maxFacts + 1,
         );
-        $workContexts = $this->clarifications?->currentWorkContexts($organizationId, $projectId, $sessionId, $snapshot, $decisions) ?? [];
-        $verifiedWorkContexts = $this->clarifications?->currentWorkContexts($organizationId, $projectId, $sessionId, $verified['snapshot'], $decisions) ?? [];
+        $workContexts = $this->clarifications?->currentWorkContexts($organizationId, $projectId, $sessionId, $snapshot, $decisions, $localEstimateKey) ?? [];
+        $verifiedWorkContexts = $this->clarifications?->currentWorkContexts($organizationId, $projectId, $sessionId, $verified['snapshot'], $decisions, $localEstimateKey) ?? [];
         if (! hash_equals((string) $capture['token'], (string) $verified['token']) || $workContexts !== $verifiedWorkContexts) {
             throw new InvalidArgumentException('estimate_composer_snapshot_changed');
         }

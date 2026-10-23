@@ -117,7 +117,8 @@ final readonly class EstimatorKnownContextSnapshot
                 answerPolicy: ['evaluation_mode' => $session->input_payload['evaluation_mode'] ?? 'legacy',
                     'profile_id' => $session->input_payload['profile_id'] ?? 'construction',
                     'selected_sections' => $session->input_payload['selected_sections'] ?? [],
-                    'description' => trim((string) ($session->input_payload['description'] ?? ''))]);
+                    'description' => trim((string) ($session->input_payload['description'] ?? ''))],
+                localEstimateKey: $localEstimateKey);
         $auditInput = $staleDraft || $workCount === 0 ? null : $this->audit->capture($organizationId, $projectId, $sessionId, $draft,
             draftView: $wirePolicy['audit_draft_view'] ?? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftView::LEGACY);
         $links = $questions = [];

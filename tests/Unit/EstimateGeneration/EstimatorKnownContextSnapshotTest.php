@@ -21,6 +21,40 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimatorKnownContextSnapshotTest extends TestCase
 {
+    public function test_local_quote_forwards_the_existing_target_to_work_context_capture(): void
+    {
+        $previous = Container::getInstance();
+        $container = new Container;
+        $container->instance('config', new Repository([]));
+        Container::setInstance($container);
+        try {
+            $models = new InMemoryProjectModelRepository;
+            $source = 'sha256:'.str_repeat('a', 64);
+            $models->saveSourceModel([new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('description:1', 10, 20, 30, $source, 'quantity', 'description')],
+                [new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:description', 10, 20, 30, $source, 'description:1', 'evaluation_answer',
+                    ['kind' => 'initial_description', 'description' => 'Монтаж оборудования', 'numeric_parameters_confirmed' => false],
+                    null, 0.0, 'user_input', 'confirmed', ['evidence:description'])],
+                [new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence('evidence:description', 10, 20, 30, $source, 'input:30', 'user_input',
+                    nativeReference: 'input_payload.description', producerName: 'user_input_normalizer')]);
+            $catalog = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class);
+            $catalog->expects(self::exactly(2))->method('currentWorkContexts')->with(10, 20, 30, self::anything(), self::anything(), 'local:target')->willReturn([]);
+            $session = new EstimateGenerationSession;
+            $session->setRawAttributes(['id' => 30, 'organization_id' => 10, 'project_id' => 20,
+                'input_payload' => '{"evaluation_mode":"universal","profile_id":"construction","selected_sections":["equipment"],"description":"Монтаж оборудования"}',
+                'draft_payload' => '{"local_estimates":[{"key":"local:target","sections":[]},{"key":"local:foreign","sections":[]}]}']);
+            $capture = new EstimatorKnownContextSnapshot($models, new EstimateComposerInputFactory($models, 2000, clarifications: $catalog),
+                new EstimateAuditInputFactory($models, $this->createMock(EvidenceRepository::class), 2000), new ProjectSynthesisInputFactory($models),
+                new EstimateCompositionProjector, new TargetedConflictResolver(static fn (string $key): string => $key),
+                ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts,
+                $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway::class));
+            $quote = $capture->capture($session, false, localEstimateKey: 'local:target');
+            self::assertSame(0, $quote['known_work_count']);
+            self::assertSame(1, $quote['part_limits']['composer']);
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     public function test_legacy_quote_measures_the_generation_semantic_policy_and_invalidates_old_policy_identity(): void
     {
         $previous = Container::getInstance();

@@ -144,6 +144,7 @@ final class RequestEstimateGeneration
             $requestedMode ?? ($session->input_payload['generation_mode'] ?? null),
         )->value;
         $generationInput = EstimateGenerationExecutionActor::identity($actor);
+        $generationInput['rebuild_section_key'] = null;
         $generationInput['generation_credit_operation_id'] = $creditOperationId;
         if ($creditOperationId !== null) {
             $generationInput['generation_credit_operation_id'] = $creditOperationId;

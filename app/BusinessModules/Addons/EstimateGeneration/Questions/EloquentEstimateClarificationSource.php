@@ -66,7 +66,8 @@ final readonly class EloquentEstimateClarificationSource implements EstimateClar
     }
 
     public function currentWorkContexts(int $organizationId, int $projectId, int $sessionId,
-        ?\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot = null, ?array $decisions = null): array
+        ?\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot = null, ?array $decisions = null,
+        ?string $localEstimateKey = null): array
     {
         $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)
             ->where('project_id', $projectId)->whereKey($sessionId)->first();
@@ -78,7 +79,7 @@ final readonly class EloquentEstimateClarificationSource implements EstimateClar
         $decisions ??= $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
 
         return $this->resolver->workTechnologyContexts($session->draft_payload, $session->input_payload ?? [], $snapshot, $decisions,
-            [$organizationId, $projectId, $sessionId], self::currentDocuments($organizationId, $projectId, $sessionId));
+            [$organizationId, $projectId, $sessionId], self::currentDocuments($organizationId, $projectId, $sessionId), $localEstimateKey);
     }
 
     public static function currentDocuments(int $organizationId, int $projectId, int $sessionId, bool $lock = false, ?array $ids = null): array

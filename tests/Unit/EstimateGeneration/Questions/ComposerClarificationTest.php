@@ -19,6 +19,42 @@ use PHPUnit\Framework\TestCase;
 
 final class ComposerClarificationTest extends TestCase
 {
+    public function test_local_work_context_is_filtered_before_aggregate_cap_and_rejects_invalid_targets(): void
+    {
+        [$draft, $input, $snapshot] = $this->fixture('universal');
+        $work = static function (string $key): array {
+            $intent = ['kind' => 'supplementary', 'work_key' => $key, 'name' => 'Монтаж неизвестной установки',
+                'entity_id' => 'entity:equipment', 'work_section' => 'equipment', 'unit' => 'count',
+                'source_fact_ids' => ['fact:specification'], 'technology_clarification' => [
+                    'question' => 'Как выполняется крепление этой установки?', 'reason' => 'Способ крепления не указан в исходных данных.']];
+
+            return ['key' => 'position:'.$key, 'work_key' => $key, 'name' => $intent['name'], 'composition_intent' => $intent,
+                'metadata' => ['scope_entity_id' => 'entity:equipment']];
+        };
+        $locals = [['key' => 'local:target', 'sections' => [['key' => 'section:target', 'work_items' => [$work('custom_target')]]]],
+            ['key' => 'local:foreign', 'sections' => [['key' => 'section:foreign',
+                'work_items' => array_map(static fn (int $i): array => $work('custom_foreign_'.$i), range(1, 201))]]]];
+        $locals = ResolveCurrentEstimateClarification::bindWorkTechnologyContexts($locals, $snapshot, [10, 20, 30],
+            ResolveCurrentEstimateClarification::composerPolicy($input), []);
+        $draft = (new BuildMostEstimateDraft)->seal([...$draft, 'source_info_only' => false, 'local_estimates' => $locals]);
+        try {
+            $entries = $this->resolver()->workTechnologyContexts($draft, $input, $snapshot, [], [10, 20, 30], [], 'local:target');
+        } catch (\InvalidArgumentException $error) {
+            self::fail('Local target must be filtered before aggregate cap: '.$error->getMessage());
+        }
+        self::assertCount(1, $entries);
+        self::assertSame('custom_target', $entries[0]['context']['binding']['work_key']);
+        foreach (['local:missing', '', str_repeat('x', 256)] as $key) {
+            self::assertSame([], $this->resolver()->workTechnologyContexts($draft, $input, $snapshot, [], [10, 20, 30], [], $key));
+        }
+        $ambiguous = (new BuildMostEstimateDraft)->seal([...$draft, 'local_estimates' => [$locals[0], $locals[0]]]);
+        self::assertSame([], $this->resolver()->workTechnologyContexts($ambiguous, $input, $snapshot, [], [10, 20, 30], [], 'local:target'));
+        self::assertSame([], $this->resolver()->workTechnologyContexts([...$draft, 'title' => 'Подменённый полный артефакт'],
+            $input, $snapshot, [], [10, 20, 30], [], 'local:target'));
+        $this->expectExceptionMessage('estimate_composer_entity_context_too_large');
+        $this->resolver()->workTechnologyContexts($draft, $input, $snapshot, [], [10, 20, 30], []);
+    }
+
     public function test_work_context_rechecks_dependencies_of_an_existing_aggregate_answer_source(): void
     {
         [$input, $snapshot, $answer, $decision] = $this->answered('universal', 'entity:equipment');
