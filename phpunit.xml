@@ -9,6 +9,14 @@
          displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
+        <testsuite name="NativePostgresSelect">
+            <file>tests/Feature/Infrastructure/PostgresNativeParameterModeTest.php</file>
+            <file>tests/Feature/Infrastructure/PostgresNativeSelectConnectionTest.php</file>
+            <file>tests/Feature/Infrastructure/NativeParameterDatabaseBindingTest.php</file>
+            <file>tests/Unit/Monitoring/SqlConnectionStateTest.php</file>
+            <file>tests/Unit/Monitoring/SlowQueryContextTest.php</file>
+            <file>tests/Feature/Monitoring/SqlConnectionStatePostgresRuntimeTest.php</file>
+        </testsuite>
         <testsuite name="AIAssistantDocumentFollowupSearch">
             <file>tests/Feature/AIAssistant/AssistantDocumentFollowupSearchTest.php</file>
         </testsuite>

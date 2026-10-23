@@ -123,6 +123,9 @@ final class SlowQueryContextTest extends TestCase
             $serialized = $handler->getRecords()[0]->formatted;
             self::assertSame($runtime, json_decode($serialized, true, 512, JSON_THROW_ON_ERROR)['context']['pdo_runtime']);
             self::assertStringNotContainsString('private-value', $serialized);
+            $logger->warning('slow_query', $factory->forQuery($event, $state + ['pdo_runtime' => $nativeRuntime]));
+            $nativeSerialized = $handler->getRecords()[1]->formatted;
+            self::assertSame($nativeRuntime, json_decode($nativeSerialized, true, 512, JSON_THROW_ON_ERROR)['context']['pdo_runtime']);
             self::assertSame(['observed' => false], $factory->forQuery($event, $state)['pdo_runtime']);
             foreach ([null, ['observed' => false], $runtime + ['ignored' => 'private-value']] as $candidate) {
                 $context = $factory->forQuery($event, $state + ['pdo_runtime' => $candidate]);
