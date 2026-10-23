@@ -16,5 +16,5 @@ final class AssistantEgressEnrollment extends Model
 
     protected $guarded = [];
 
-    protected $casts = ['sources' => 'array', 'expires_at' => 'immutable_datetime', 'approved_at' => 'immutable_datetime'];
+    protected $casts = ['sources' => 'array', 'input_context' => 'array', 'expires_at' => 'immutable_datetime', 'approved_at' => 'immutable_datetime'];
 }

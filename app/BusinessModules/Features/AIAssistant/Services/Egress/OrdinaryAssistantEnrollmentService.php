@@ -74,6 +74,7 @@ final readonly class OrdinaryAssistantEnrollmentService
             || ($cohort->policy_version === OrdinaryAssistantDocumentProjection::VERSION && count($requestedSources) !== 1)) {
             throw new AssistantEgressDenied('scope_mismatch');
         }
+        $inputContext = app(OrdinaryAssistantClarificationContext::class)->preview($input, $actor, $cohort, (int) $owner->id);
         $proofs = $previews = [];
         foreach ($requestedSources as $source) {
             if (! is_array($source) || ! in_array($source['tool'] ?? null, $cohort->allowed_tools, true)
@@ -88,17 +89,18 @@ final readonly class OrdinaryAssistantEnrollmentService
         if (! OrdinaryAssistantSourceProjection::allowsSources($cohort->policy_version, $proofs)) {
             throw new AssistantEgressDenied('scope_mismatch');
         }
-        $manifestHash = OrdinaryAssistantSourceProjection::hash(['cohort' => $cohort->getKey(), 'cohort_generation' => $cohort->generation,
-            'input_hash' => $hash, 'sources' => $proofs]);
+        $manifestHash = OrdinaryAssistantClarificationContext::manifestHash(['cohort' => $cohort->getKey(), 'cohort_generation' => $cohort->generation,
+            'input_hash' => $hash, 'sources' => $proofs], $inputContext['proof'] ?? null);
         $enrollment = AssistantEgressEnrollment::query()->create(['id' => (string) Str::uuid(), 'cohort_id' => $cohort->id, 'cohort_generation' => $cohort->generation,
-            'reviewed_by' => $owner->id, 'input_hash' => $hash, 'manifest_hash' => $manifestHash,
+            'reviewed_by' => $owner->id, 'input_hash' => $hash, 'manifest_hash' => $manifestHash, 'input_context' => $inputContext['proof'] ?? null,
             'sources' => $proofs, 'status' => 'pending_review', 'expires_at' => now()->addMinutes(15)]);
 
         return ['enrollment_id' => $enrollment->id, 'manifest_hash' => $manifestHash, 'input_hash' => $hash,
             'project_id' => $cohort->project_id, 'cohort_generation' => $cohort->generation, 'purpose' => OrdinaryAssistantEgressRequest::PURPOSE,
             'provider' => $cohort->provider, 'model' => $cohort->model, 'endpoint' => $cohort->endpoint, 'policy_version' => $cohort->policy_version,
             'declaration_version' => self::DECLARATION,
-            'sources' => $previews, 'expires_at' => $enrollment->expires_at->toISOString()];
+            'sources' => $previews, 'expires_at' => $enrollment->expires_at->toISOString()]
+            + ($inputContext === null ? [] : ['input_context' => $inputContext['preview'] + ['current_reply' => $input['message']]]);
     }
 
     public function confirm(User $owner, int $organizationId, string $enrollmentId, string $manifestHash, string $declaration): AssistantEgressEnrollment
@@ -114,14 +116,15 @@ final readonly class OrdinaryAssistantEnrollmentService
             throw new AssistantEgressDenied('access_denied');
         }
         $actor = User::query()->findOrFail($cohort->actor_id);
+        if ($enrollment->input_context !== null) { app(OrdinaryAssistantClarificationContext::class)->refresh($enrollment->input_context, $actor, $cohort, $enrollment->reviewed_by); }
         foreach ($enrollment->sources as $source) {
             $current = $this->sources->captureForReview($actor, $enrollment->reviewed_by, $organizationId, (int) $cohort->project_id, $source['tool'], $source['arguments']);
             if (! hash_equals(OrdinaryAssistantSourceProjection::hash($current['proof']), OrdinaryAssistantSourceProjection::hash($source))) {
                 throw new AssistantEgressDenied('source_stale');
             }
         }
-        $currentManifest = OrdinaryAssistantSourceProjection::hash(['cohort' => $cohort->getKey(), 'cohort_generation' => $cohort->generation,
-            'input_hash' => $enrollment->input_hash, 'sources' => $enrollment->sources]);
+        $currentManifest = OrdinaryAssistantClarificationContext::manifestHash(['cohort' => $cohort->getKey(), 'cohort_generation' => $cohort->generation,
+            'input_hash' => $enrollment->input_hash, 'sources' => $enrollment->sources], $enrollment->input_context);
         if (! hash_equals($currentManifest, $manifestHash)) {
             throw new AssistantEgressDenied('source_stale');
         }
