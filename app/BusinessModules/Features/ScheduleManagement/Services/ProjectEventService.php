@@ -7,6 +7,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class ProjectEventService
@@ -356,6 +358,21 @@ class ProjectEventService
      */
     private function validateEventData(array $data, ?ProjectEvent $event = null): void
     {
+        if ($event !== null) {
+            $types = ['inspection', 'delivery', 'meeting', 'maintenance', 'weather', 'other'];
+            $priorities = ['low', 'normal', 'high', 'critical'];
+            if ($event->event_type === 'site_request') {
+                $types[] = 'site_request';
+            }
+            if ($event->priority === 'medium') {
+                $priorities[] = 'medium';
+            }
+            Validator::make($data, [
+                'event_type' => ['sometimes', 'string', Rule::in($types)],
+                'priority' => ['sometimes', 'string', Rule::in($priorities)],
+            ])->validate();
+        }
+
         // Проверка обязательных полей
         if ($event === null && (!isset($data['title']) || empty($data['title']))) {
             throw new \InvalidArgumentException('Название события обязательно');

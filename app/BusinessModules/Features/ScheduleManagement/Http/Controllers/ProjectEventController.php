@@ -242,7 +242,7 @@ class ProjectEventController extends Controller
                 ->findOrFail($eventId);
 
             $validated = $request->validate([
-                'event_type' => 'sometimes|string|in:inspection,delivery,meeting,maintenance,weather,other',
+                'event_type' => 'sometimes|string|in:inspection,delivery,meeting,maintenance,weather,other,site_request',
                 'title' => 'sometimes|string|max:255',
                 'description' => 'nullable|string',
                 'location' => 'nullable|string|max:255',
@@ -253,7 +253,7 @@ class ProjectEventController extends Controller
                 'is_all_day' => 'sometimes|boolean',
                 'end_date' => 'nullable|date|after_or_equal:event_date',
                 'is_blocking' => 'sometimes|boolean',
-                'priority' => 'sometimes|string|in:low,normal,high,critical',
+                'priority' => 'sometimes|string|in:low,normal,high,critical,medium',
                 'status' => 'sometimes|string|in:scheduled,in_progress,completed,cancelled',
                 'schedule_id' => 'nullable|integer',
                 'related_task_id' => 'nullable|integer',
