@@ -33,7 +33,7 @@ final class EstimateGenerationLearningEvidenceService
     ) {}
 
     public function sourceClaimReferences(int $organizationId, int $projectId, int $sessionId,
-        ProjectModelSnapshot $snapshot, array $decisions, array $input, ?string $localEstimateKey = null): array
+        ProjectModelSnapshot $snapshot, array $decisions, array $input, ?string $localEstimateKey = null, bool $includeSourceDetails = false): array
     {
         if (min($organizationId, $projectId, $sessionId) < 1 || count($snapshot->facts) > 10000) {
             return [];
@@ -138,6 +138,12 @@ final class EstimateGenerationLearningEvidenceService
                     'value' => $candidate['value'], 'unit' => null, 'document_fact_ids' => $candidate['document_fact_ids'],
                     'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved',
                     'source_answer_fact_id' => $candidate['source_answer_fact_id']];
+                if ($includeSourceDetails && isset($fresh['identity']['work_context'])) {
+                    $source = $fresh['identity']['source'];
+                    $result[array_key_last($result)]['source_proof'] = ['reference' => $source['evidence_id'],
+                        'document_id' => $source['literal_witness']['document_id'], 'source_version' => $source['source_version'],
+                        'cell' => $source['literal_witness']['cell']];
+                }
                 break;
             }
         }

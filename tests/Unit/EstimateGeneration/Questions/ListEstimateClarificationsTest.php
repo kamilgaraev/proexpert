@@ -34,6 +34,26 @@ final class ListEstimateClarificationsTest extends TestCase
         self::assertArrayNotHasKey('snapshot_token', $items[0]);
     }
 
+    public function test_work_answer_without_authorized_consistent_proof_keeps_the_card_without_source_checks(): void
+    {
+        $base = $this->current('work_question', 'Способ монтажа', 'sha256:'.str_repeat('a', 64), 'fact:answer', 'b');
+        $answer = ['response' => 'other', 'other' => 'Допущение о монтаже.', 'fact_id' => 'fact:answer',
+            'decision_id' => 'decision:answer', 'document_ids' => [17], 'trust' => 'user_assumption',
+            'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false];
+        $question = new EstimateClarificationQuestion($base->question->code, $base->question->subject,
+            $base->question->reason, $base->question->impact, $base->question->recommendation, $base->question->choices,
+            ['kind' => 'composer_work_technology', 'entity_id' => 'entity:equipment']);
+        $current = new CurrentEstimateClarification($question, $base->sourceVersion, $base->snapshotToken,
+            $base->answerFingerprint, $base->targetFactId, workAnswer: $answer);
+        $items = (new ListEstimateClarifications(new FixedClarificationCatalog([$current]), new FixedListAnswerRegistry([])))
+            ->handle(10, 20, 40);
+
+        self::assertCount(1, $items);
+        self::assertSame('answered', $items[0]['status']);
+        self::assertSame($answer, $items[0]['answer']);
+        self::assertSame([], $items[0]['actions']);
+        self::assertSame([], $items[0]['source_checks']);
+    }
     private function current(
         string $code,
         string $subject,

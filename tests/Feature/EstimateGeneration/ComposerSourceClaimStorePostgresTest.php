@@ -56,6 +56,11 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\SystemAdmin;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Enums\AuthSessionStatus;
+use App\Services\Auth\WebAuthTokenService;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use Tests\Support\AssistantRealAuthorizationFixture;
 use App\Services\Credits\AICreditService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -100,7 +105,13 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
     public function test_active_work_answer_uses_independent_attached_native_literal_through_terminal_learning_and_next_composer(bool $replaceWork): void
     {
         Queue::fake();
-        [$actor, $session, $initialAnswer, $sources] = $this->answeredSourceFixture(naturalInitial: true, targetMode: 'selected', selectedSections: ['equipment', 'finishing']);
+        config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
+        $rights = AssistantRealAuthorizationFixture::create(['working-entry']);
+        $rights->memberRole->update(['module_permissions' => ['ai-estimates' => ['estimate_generation.create', 'estimate_generation.generate',
+            'estimate_generation.view', 'estimate_generation.review', 'estimate_generation.upload_documents']], 'system_permissions' => ['admin.access']]);
+        $rights->member->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
+        [$actor, $session, $initialAnswer, $sources] = $this->answeredSourceFixture(naturalInitial: true, targetMode: 'selected',
+            selectedSections: ['equipment', 'finishing'], realActor: $rights->member);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $organization = Organization::query()->findOrFail($scope[0]);
         $project = Project::query()->findOrFail($scope[1]);
@@ -207,12 +218,111 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             return app(EstimateComposerInputFactory::class)->capture(...[...$scope, [], [], [], null,
                 $session->input_payload['selected_sections'], 'universal', $session->input_payload, $local]);
         };
+        AuthorizationContext::getProjectContext($scope[1], $scope[0]);
+        foreach ([\App\Domain\Authorization\Services\AuthorizationService::class,
+            \App\Services\Entitlements\OrganizationEntitlementService::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications::class,
+            EstimateGenerationQuestionController::class] as $service) {
+            $this->app->forgetInstance($service);
+        }
+        $headers = $this->sourceHeaders($actor);
+        $url = '/api/v1/admin/projects/'.$scope[1].'/estimate-generation/sessions/'.$scope[2];
         if ($replaceWork) {
             self::assertSame([], $currentInput()->sourceClaimReferences);
             self::assertSame($sourceBefore, get_object_vars($models->fact(...[...$scope, $sources[0]->id])));
             self::assertSame(1, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
 
+            foreach ($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items') as $item) {
+                self::assertSame([], $item['source_checks'] ?? []);
+            }
             return;
+        }
+        $counts = fn (): array => [DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count(),
+            DB::table('estimate_generation_ai_role_runs')->where('session_id', $scope[2])->count(),
+            DB::table('estimate_generation_credit_attempts')->where('session_id', $scope[2])->count(),
+            DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count(),
+            DB::table('estimate_generation_project_model_corrections')->where('session_id', $scope[2])->count(),
+            DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->count(),
+            EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count()];
+        $beforeRead = $counts();
+        $response = $this->getJson($url.'/questions', $headers)->assertOk();
+        self::assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
+        $card = array_values(array_filter($response->json('data.items'), static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+        $check = $card['source_checks'][0] ?? null;
+        self::assertSame(CanonicalPipelineJson::encode(['source_answer_fact_id' => $workAnswerId, 'entity_id' => $sources[0]->entityId,
+            'fact_type' => 'equipment_specification', 'value' => ['type' => 'string', 'data' => $sources[0]->value],
+            'source' => ['reference' => $row->context_payload['source_claim_validation']['identity']['source']['evidence_id'],
+                'document_id' => (int) $document->id, 'source_version' => $document->source_version,
+                'cell' => $row->context_payload['source_claim_validation']['identity']['source']['literal_witness']['cell']],
+            'interpretation_status' => 'proposed', 'source_correspondence' => 'passed',
+            'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false]), CanonicalPipelineJson::encode($check));
+        self::assertSame('user_assumption', $card['answer']['trust']);
+        self::assertCount(10, $currentInput()->sourceClaimReferences[0]);
+        $originalStatus = $session->status;
+        try {
+            foreach (['generating', 'ready_to_apply'] as $status) {
+                $session->update(['status' => $status]);
+                $readOnly = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+                $readOnlyCard = array_values(array_filter($readOnly, static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+                self::assertSame($check, $readOnlyCard['source_checks'][0]);
+                self::assertSame([], $readOnlyCard['actions']);
+            }
+        } finally {
+            $session->update(['status' => $originalStatus]);
+        }
+        $source = $this->getJson($url.'/evidence-sources?'.http_build_query(['references' => [$check['source']['reference']]]), $headers)
+            ->assertOk()->json('data.sources.0');
+        self::assertSame('available', $source['status']);
+        self::assertSame((int) $document->id, $source['target']['artifact_id']);
+        self::assertStringContainsString($check['source']['cell'], $source['target']['native_reference']);
+        $reviewer = $rights->addMember(['ai-estimates' => ['estimate_generation.review']], ['admin.access']);
+        $reviewer->organizations()->updateExistingPivot($scope[0], ['project_access_mode' => 'all_projects']);
+        $reviewHeaders = $this->sourceHeaders($reviewer);
+        $review = $this->getJson($url.'/questions', $reviewHeaders)->assertOk();
+        $reviewCard = array_values(array_filter($review->json('data.items'), static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+        self::assertSame($card['answer'], $reviewCard['answer']);
+        self::assertSame([], $reviewCard['source_checks']);
+        self::assertStringNotContainsString($check['source']['reference'], $review->getContent());
+        self::assertStringNotContainsString($sources[0]->value, json_encode($review->json(), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $this->getJson($url.'/evidence-sources?'.http_build_query(['references' => [$check['source']['reference']]]), $reviewHeaders)->assertForbidden();
+        self::assertContains($this->getJson($url.'/questions', $this->sourceHeaders($rights->foreignOwner))->status(), [403, 404]);
+        DB::beginTransaction();
+        try {
+            $nested = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+            self::assertSame([], array_values(array_filter($nested, static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0]['source_checks']);
+            self::assertSame('off', DB::selectOne('SHOW transaction_read_only')->transaction_read_only);
+        } finally {
+            DB::rollBack();
+        }
+        self::assertSame($beforeRead, $counts());
+        $originalDocument = ['checksum_sha256' => $document->checksum_sha256, 'source_version' => $document->source_version];
+        $raced = false;
+        config(['database.connections.source_check_race' => DB::connection()->getConfig()]);
+        DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$raced, $scope, $document): void {
+            if ($raced || $query->connectionName === 'source_check_race' || $query->connection->transactionLevel() !== 1
+                || ! str_contains($query->sql, 'estimate_generation_project_model_assertions')) {
+                return;
+            }
+            $raced = true;
+            DB::connection('source_check_race')->table('estimate_generation_documents')->where('organization_id', $scope[0])
+                ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('id', $document->id)
+                ->update(['checksum_sha256' => str_repeat('e', 64), 'source_version' => 'sha256:'.str_repeat('e', 64)]);
+        });
+        try {
+            $during = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+            self::assertTrue($raced);
+            $duringCard = array_values(array_filter($during, static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+            self::assertSame($check, $duringCard['source_checks'][0]);
+            self::assertSame('sha256:'.str_repeat('e', 64), $document->fresh()->source_version);
+            $after = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+            foreach ($after as $item) {
+                self::assertSame([], $item['source_checks'] ?? []);
+            }
+            self::assertSame($beforeRead, $counts());
+        } finally {
+            $document->refresh()->update($originalDocument);
+            DB::purge('source_check_race');
         }
         self::assertCount(1, $currentInput('ai-composer-supplementary:equipment')->sourceClaimReferences);
         self::assertSame([], $currentInput('ai-composer-supplementary:finishing')->sourceClaimReferences);
@@ -278,6 +388,10 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                             'scope_reason' => 'Для текущего состава выбрана только подготовка поверхности.']);
                 }
                 self::assertSame([], $currentInput()->sourceClaimReferences, $drift);
+                if ($drift === 'excluded') {
+                    $excluded = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+                    self::assertNotContains($card['code'], array_column($excluded, 'code'));
+                }
                 self::assertSame($sourceBefore, get_object_vars($models->fact(...[...$scope, $sources[0]->id])));
                 self::assertSame(1, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
             } finally {
@@ -286,6 +400,15 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 $document->refresh();
             }
         }
+        $active = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+        $activeCard = array_values(array_filter($active, static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+        self::assertCount(1, $activeCard['source_checks']);
+        self::assertSame(200, $this->answerComposerCard($actor, $project, $session->fresh(), $activeCard, ['response' => 'revoke', 'other' => null]));
+        $revoked = $this->getJson($url.'/questions', $headers)->assertOk()->json('data.items');
+        $revokedCard = array_values(array_filter($revoked, static fn (array $item): bool => ($item['source_locator']['kind'] ?? null) === 'composer_work_technology'))[0];
+        self::assertSame('revoked', $revokedCard['status']);
+        self::assertSame([], $revokedCard['source_checks']);
+        self::assertSame($sourceBefore, get_object_vars($models->fact(...[...$scope, $sources[0]->id])));
         self::assertSame($priorCalls + 6, DB::table('estimate_generation_ai_usage')->where('organization_id', $scope[0])->count());
         Http::assertNothingSent();
     }
@@ -949,6 +1072,18 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         Http::assertNothingSent();
     }
 
+    private function sourceHeaders(User $actor): array
+    {
+        $uuid = (string) Str::uuid();
+        $session = UserAuthSession::query()->create(['user_id' => $actor->id, 'organization_id' => $actor->current_organization_id,
+            'session_uuid' => $uuid, 'device_fingerprint' => hash('sha256', $uuid), 'device_name' => 'MOST source proof readback',
+            'ip_address' => '127.0.0.1', 'risk_score' => 0, 'risk_flags' => [], 'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(), 'last_seen_at' => now()]);
+        $tokens = app(WebAuthTokenService::class)->issue($actor, 'admin', $session->session_uuid, (int) $actor->current_organization_id, false);
+
+        return ['Accept' => 'application/json', 'Origin' => 'https://admin.fixture.test', 'Authorization' => 'Bearer '.$tokens->accessToken];
+    }
+
     private function paidReceipt(string $contract, mixed $candidates, bool $measured = true, ?array $fixture = null, bool $settle = true, ?callable $compose = null, ?string $reuseOperationId = null, ?int $maxWorkItems = null): array
     {
         [$organization, $project, $actor, $session] = $fixture ?? $this->fixture();
@@ -1125,14 +1260,16 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [$organization, $project, $actor, $session];
     }
 
-    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false, ?string $uploadMoment = null, string $targetMode = 'unique', array $selectedSections = ['equipment']): array
+    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false, ?string $uploadMoment = null, string $targetMode = 'unique', array $selectedSections = ['equipment'], ?User $realActor = null): array
     {
         Http::fake();
         Http::preventStrayRequests();
-        $organization = Organization::factory()->create();
+        $organization = $realActor === null ? Organization::factory()->create() : Organization::query()->findOrFail($realActor->current_organization_id);
         $project = Project::factory()->for($organization)->createQuietly();
-        $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
-        $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $actor = $realActor ?? User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+        if ($realActor === null) {
+            $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        }
         $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $authorization->allows('canCurrent')->andReturn(true);
         $authorization->allows('can')->andReturn(true);

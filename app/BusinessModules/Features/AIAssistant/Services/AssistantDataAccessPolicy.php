@@ -145,6 +145,14 @@ final class AssistantDataAccessPolicy
         $this->knowledgeContexts = new AssistantKnowledgeArticleAccessContextFactory($modules);
     }
 
+    public function independentAuthorizationScope(): self
+    {
+        $policy = new self($this->authorization, $this->projectAccess, $this->modules, $this->sourceQueries, $this->schemaMetadata);
+        $policy->setTrustedSurface($this->trustedSurface);
+
+        return $policy;
+    }
+
     public function canReadSource(User $user, int $organizationId, array $source): bool
     {
         if (! $this->belongsToOrganization($user, $organizationId)) {
