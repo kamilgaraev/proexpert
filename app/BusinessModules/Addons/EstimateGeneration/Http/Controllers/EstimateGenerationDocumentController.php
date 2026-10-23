@@ -32,6 +32,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureDetails;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\Domain\Authorization\Http\Middleware\InterfaceRequestProvenance;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -194,9 +195,13 @@ class EstimateGenerationDocumentController extends Controller
         \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReviewSpreadsheetCellInterpretation $reviews): JsonResponse
     {
         $this->guardDocument($request, $project, $session, $document);
+        $input = $request->all();
+        if (InterfaceRequestProvenance::isTrustedServerDerived($request)) {
+            unset($input['current_interface']);
+        }
         try {
             return AdminResponse::success($reviews->handle($request->user(), (int) $project->id, (int) $session->id,
-                (int) $document->id, $request->all()));
+                (int) $document->id, $input));
         } catch (AuthorizationException) {
             return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (ValidationException $exception) {
