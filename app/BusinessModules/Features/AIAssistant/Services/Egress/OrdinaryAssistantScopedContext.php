@@ -1,0 +1,315 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\AIAssistant\Services\Egress;
+
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantEgressCohort;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantEgressEnrollment;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\Models\User;
+use App\Services\Credits\AICreditService;
+use App\Services\Privacy\Contracts\PrivacyDecision;
+use Throwable;
+
+final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAuthority
+{
+    private ?bool $guarded = null;
+
+    private ?AssistantEgressCohort $cohort = null;
+
+    private ?AssistantEgressEnrollment $enrollment = null;
+
+    private ?User $actor = null;
+
+    private ?string $inputHash = null;
+
+    private ?string $queryHash = null;
+
+    private array $initial = [];
+
+    private array $modelItems = [];
+
+    private array $calls = [];
+
+    private array $toolOutputs = [];
+
+    public function __construct(private readonly OrdinaryAssistantEnrollmentService $enrollments,
+        private readonly OrdinaryAssistantSourceCatalog $catalog, private readonly OrdinaryAssistantSourceProjection $projection,
+        private readonly AssistantDataAccessPolicy $access, private readonly AICreditService $credits) {}
+
+    public function enter(User $actor, int $organizationId, string $query, array $payload, ?int $conversationId): void
+    {
+        $this->clear();
+        try {
+            $cohort = AssistantEgressCohort::query()->where('organization_id', $organizationId)->where('actor_id', $actor->getKey())->first();
+            $this->guarded = $cohort !== null;
+            if ($cohort === null) {
+                return;
+            }
+            $this->cohort = $cohort;
+            $this->actor = $actor;
+            $this->queryHash = hash('sha256', $query);
+            $this->inputHash = $this->credits->canonicalAssistantRequest(array_merge($payload, ['message' => $query, 'conversation_id' => $conversationId]));
+            $this->enrollment = AssistantEgressEnrollment::query()->where('cohort_id', $cohort->id)->where('input_hash', $this->inputHash)
+                ->where('cohort_generation', $cohort->generation)
+                ->where('status', 'approved')->where('expires_at', '>', now())->latest('approved_at')->first();
+            if ($this->enrollment === null || ! empty($payload['attachment_ids']) || ! empty($payload['attachment_manifest'])
+                || ($payload['allow_actions'] ?? false)) {
+                throw new AssistantEgressDenied('access_denied');
+            }
+            $this->assertFresh();
+        } catch (AssistantEgressDenied $denied) {
+            throw $denied;
+        } catch (Throwable) {
+            throw new AssistantEgressDenied('dependency_unavailable');
+        }
+    }
+
+    public function isGuarded(): bool
+    {
+        return $this->guarded !== false;
+    }
+
+    public function isLegacy(): bool
+    {
+        return $this->guarded === false;
+    }
+
+    public function allowsExpansion(string $capability): bool
+    {
+        return false;
+    }
+
+    public function projectId(): int
+    {
+        $this->assertFresh();
+
+        return (int) $this->cohort->project_id;
+    }
+
+    public function allowedToolNames(): array
+    {
+        if ($this->enrollment === null) {
+            return [];
+        }
+        $this->assertFresh();
+
+        return array_values(array_intersect(array_unique(array_column($this->enrollment->sources, 'tool')), $this->cohort->allowed_tools));
+    }
+
+    public function filterToolDefinitions(array $tools): array
+    {
+        if ($this->isLegacy()) {
+            return $tools;
+        }
+        $this->assertFresh();
+        $filtered = [];
+        foreach ($tools as $tool) {
+            if (! is_array($tool) || ! in_array($tool['name'] ?? null, $this->allowedToolNames(), true)) {
+                continue;
+            }
+            $arguments = array_column(array_values(array_filter($this->enrollment->sources,
+                static fn (array $source): bool => $source['tool'] === $tool['name'])), 'arguments');
+            if (! is_array($tool['parameters']['properties'] ?? null)) {
+                throw new AssistantEgressDenied('source_unknown');
+            }
+            foreach ($tool['parameters']['properties'] as $key => &$property) {
+                $values = array_values(array_unique(array_map(static fn (array $args): mixed => $args[$key] ?? null, $arguments), SORT_REGULAR));
+                $property['enum'] = $values;
+            }
+            unset($property);
+            $filtered[] = $tool;
+        }
+
+        return $filtered;
+    }
+
+    public function initialMessages(string $systemPrompt, string $query): array
+    {
+        $this->assertFresh();
+        if ($this->queryHash === null || ! hash_equals($this->queryHash, hash('sha256', $query))) {
+            throw new AssistantEgressDenied('scope_mismatch');
+        }
+        $this->initial = [['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => json_encode(['kind' => 'approved_project_scope', 'project_id' => (int) $this->cohort->project_id], JSON_THROW_ON_ERROR)],
+            ['role' => 'user', 'content' => $query]];
+
+        return $this->initial;
+    }
+
+    public function assertTool(string $name, array $arguments, User $actor, int $organizationId): void
+    {
+        if ($this->isLegacy()) {
+            return;
+        }
+        $this->assertFresh();
+        if ((int) $actor->getKey() !== (int) $this->cohort->actor_id || $organizationId !== (int) $this->cohort->organization_id) {
+            throw new AssistantEgressDenied('scope_mismatch');
+        }
+        $this->source($name, $arguments);
+    }
+
+    public function projectToolResult(string $name, array $arguments, array|string $result): array
+    {
+        $this->assertFresh();
+        $source = $this->source($name, $arguments);
+        $projected = $this->projection->project($name, $result, (int) $this->cohort->organization_id,
+            (int) $this->cohort->actor_id, (int) $this->cohort->project_id);
+        $provider = $this->projection->forProvider($projected);
+        if (! hash_equals($source['projection_hash'], OrdinaryAssistantSourceProjection::hash($provider))) {
+            throw new AssistantEgressDenied('source_stale');
+        }
+        $this->toolOutputs[OrdinaryAssistantSourceProjection::hash(['tool' => $name, 'arguments' => $source['arguments']])] = $provider;
+
+        $provider['source_refs'] = array_map(fn (array $ref): array => $ref + ['organization_id' => (int) $this->cohort->organization_id], $provider['source_refs']);
+
+        return $provider;
+    }
+
+    public function providerToolResult(array $result): array
+    {
+        return $this->projection->forProvider($result);
+    }
+
+    public function rememberResponse(array $response): void
+    {
+        if ($this->isLegacy()) {
+            return;
+        }
+        $this->assertFresh();
+        foreach ($response['output'] ?? [] as $item) {
+            if (($item['type'] ?? null) === 'function_call') {
+                $arguments = json_decode($item['arguments'], true, 512, JSON_THROW_ON_ERROR);
+                $source = $this->source($item['name'], $arguments);
+                $this->calls[$item['call_id']] = ['tool' => $item['name'], 'arguments' => $source['arguments']];
+            }
+            $this->modelItems[OrdinaryAssistantSourceProjection::hash($item)] = true;
+        }
+    }
+
+    public function validateResults(array $results): array
+    {
+        $this->assertSourcesFresh();
+        $references = [];
+        foreach ($results as $result) {
+            if (! is_array($result) || ! in_array($result['_tool_name'] ?? null, $this->allowedToolNames(), true)) {
+                throw new AssistantEgressDenied('source_unknown');
+            }
+            $candidate = $this->projection->forProvider(array_intersect_key($result,
+                array_flip(['status', 'data', 'source_refs', 'egress_projection_version'])));
+            if (! in_array($candidate, $this->toolOutputs, true)) {
+                throw new AssistantEgressDenied('source_stale');
+            }
+            $references = [...$references, ...$result['source_refs']];
+        }
+
+        return array_values(array_unique($references, SORT_REGULAR));
+    }
+
+    public function assertPublication(array $references): void
+    {
+        $this->assertSourcesFresh();
+        foreach ($references as $ref) {
+            if ($ref !== ['entity_type' => 'project', 'entity_id' => (int) $this->cohort->project_id,
+                'project_id' => (int) $this->cohort->project_id, 'organization_id' => (int) $this->cohort->organization_id]) {
+                throw new AssistantEgressDenied('source_unknown');
+            }
+        }
+    }
+
+    public function authorize(OrdinaryAssistantEgressRequest $request): PrivacyDecision
+    {
+        try {
+            $this->assertFresh();
+            $scope = $request->scope();
+            if ($scope['organization_id'] !== (int) $this->cohort->organization_id || $scope['actor_id'] !== (int) $this->cohort->actor_id
+                || $scope['provider'] !== $this->cohort->provider || $scope['model'] !== $this->cohort->model
+                || $scope['endpoint'] !== $this->cohort->endpoint || $scope['purpose'] !== OrdinaryAssistantEgressRequest::PURPOSE
+                || $scope['policy_version'] !== OrdinaryAssistantEgressRequest::POLICY_VERSION || $this->initial === []) {
+                throw new AssistantEgressDenied('scope_mismatch');
+            }
+            $payload = $request->payload();
+            if (($payload['tool_choice'] ?? 'auto') !== 'auto' || array_slice($payload['input'], 0, count($this->initial)) !== $this->initial
+                || $this->filterToolDefinitions($payload['tools']) !== $payload['tools']) {
+                throw new AssistantEgressDenied('source_unknown');
+            }
+            foreach (array_slice($payload['input'], count($this->initial)) as $item) {
+                if (isset($this->modelItems[OrdinaryAssistantSourceProjection::hash($item)])) {
+                    continue;
+                }
+                $call = $this->calls[$item['call_id'] ?? ''] ?? null;
+                $key = $call === null ? null : OrdinaryAssistantSourceProjection::hash($call);
+                if (($item['type'] ?? null) !== 'function_call_output' || $key === null || ! isset($this->toolOutputs[$key])
+                    || json_decode($item['output'] ?? '', true, 512, JSON_THROW_ON_ERROR) !== $this->toolOutputs[$key]) {
+                    throw new AssistantEgressDenied('source_unknown');
+                }
+            }
+            $this->assertSourcesFresh();
+
+            return PrivacyDecision::ready($request->binding());
+        } catch (AssistantEgressDenied $denied) {
+            return PrivacyDecision::blocked($denied->reason);
+        } catch (Throwable) {
+            return PrivacyDecision::blocked('dependency_unavailable');
+        }
+    }
+
+    public function clear(): void
+    {
+        $this->guarded = null;
+        $this->cohort = $this->enrollment = $this->actor = null;
+        $this->inputHash = null;
+        $this->queryHash = null;
+        $this->initial = $this->modelItems = $this->calls = $this->toolOutputs = [];
+    }
+
+    private function source(string $name, array $arguments): array
+    {
+        $arguments = $this->projection->arguments($name, $arguments, (int) $this->cohort->project_id);
+        foreach ($this->enrollment->sources as $source) {
+            if ($source['tool'] === $name && hash_equals(OrdinaryAssistantSourceProjection::hash($source['arguments']), OrdinaryAssistantSourceProjection::hash($arguments))) {
+                return $source;
+            }
+        }
+        throw new AssistantEgressDenied('unsupported_purpose');
+    }
+
+    private function assertSourcesFresh(): void
+    {
+        $this->assertFresh();
+        foreach ($this->enrollment->sources as $source) {
+            $current = $this->catalog->capture($this->actor, (int) $this->cohort->organization_id,
+                (int) $this->cohort->project_id, $source['tool'], $source['arguments']);
+            if (! hash_equals(OrdinaryAssistantSourceProjection::hash($current['proof']), OrdinaryAssistantSourceProjection::hash($source))) {
+                throw new AssistantEgressDenied('source_stale');
+            }
+        }
+    }
+
+    private function assertFresh(): void
+    {
+        if ($this->guarded !== true || $this->cohort === null || $this->enrollment === null || $this->actor === null) {
+            throw new AssistantEgressDenied('required_stage_unavailable');
+        }
+        $current = $this->enrollments->cohort((string) $this->cohort->id, (int) $this->cohort->organization_id);
+        $manifest = AssistantEgressEnrollment::query()->whereKey($this->enrollment->id)->where('status', 'approved')
+            ->where('cohort_generation', $current->generation)
+            ->where('declaration_version', OrdinaryAssistantEnrollmentService::DECLARATION)
+            ->where('expires_at', '>', now())->first();
+        $expectedHash = $manifest === null ? null : OrdinaryAssistantSourceProjection::hash(['cohort' => $current->getKey(),
+            'cohort_generation' => $current->generation, 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources]);
+        if ($manifest === null || ! hash_equals((string) $current->generation, (string) $this->cohort->generation)
+            || array_diff(array_column($manifest->sources, 'tool'), $current->allowed_tools) !== []
+            || ! hash_equals((string) $manifest->manifest_hash, (string) $this->enrollment->manifest_hash)
+            || $expectedHash === null || ! hash_equals((string) $manifest->manifest_hash, $expectedHash)
+            || ! hash_equals((string) $manifest->input_hash, (string) $this->inputHash)
+            || ! User::query()->whereKey($this->actor->getKey())->where('is_active', true)
+                ->where('current_organization_id', $this->cohort->organization_id)->exists()
+            || ! $this->access->canReadEntity($this->actor, (int) $this->cohort->organization_id, 'project', (int) $this->cohort->project_id)) {
+            throw new AssistantEgressDenied('access_denied');
+        }
+        $this->cohort = $current;
+    }
+}

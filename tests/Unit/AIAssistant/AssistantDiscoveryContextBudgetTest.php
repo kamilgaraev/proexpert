@@ -269,13 +269,14 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $policy = new AssistantDataAccessPolicy($authorization, $projects, $modules);
         $reader = new AssistantDomainReadService($catalog, $policy, $authorization);
         $registry = new AIToolRegistry;
-        foreach ([new SearchAssistantDomainTool($catalog, $reader), new ReadAssistantDomainTool($catalog, $reader), new NavigationAssistantDomainTool($catalog, $reader), new DiscoverAssistantDomainCapabilitiesTool($catalog, $policy, $authorization)] as $tool) {
-            $registry->registerTool($tool);
-        }
         $permissions = $this->createMock(AIPermissionChecker::class);
         $permissions->method('canUseAssistant')->willReturn(true);
         $permissions->method('canExecuteTool')->willReturn(true);
         $permissions->method('canExposeTool')->willReturn(true);
+        foreach ([new SearchAssistantDomainTool($catalog, $reader), new ReadAssistantDomainTool($catalog, $reader), new NavigationAssistantDomainTool($catalog, $reader),
+            new DiscoverAssistantDomainCapabilitiesTool($catalog, $policy, $registry, $permissions, new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy)] as $tool) {
+            $registry->registerTool($tool);
+        }
         $context = $this->createMock(ContextBuilder::class);
         $context->method('buildSystemPrompt')->willReturn('Соблюдай текущие права и явный запрос пользователя.');
         $conversations = $this->createMock(ConversationManager::class);
@@ -297,7 +298,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
             $this->assertNull($projectScope);
         }
         $service = (new ReflectionClass(DiscoveryContextAssistantService::class))->newInstanceWithoutConstructor();
-        foreach (['toolRegistry' => $registry, 'permissionChecker' => $permissions, 'activeActor' => $actor, 'dataAccess' => $policy, 'contextBuilder' => $context, 'conversationManager' => $conversations, 'memoryService' => null, 'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
+        foreach (['toolRegistry' => $registry, 'permissionChecker' => $permissions, 'activeActor' => $actor, 'dataAccess' => $policy, 'contextBuilder' => $context, 'conversationManager' => $conversations, 'memoryService' => null, 'scopedContext' => null, 'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
             (new ReflectionProperty(AIAssistantService::class, $property))->setValue($service, $value);
         }
         return $service;

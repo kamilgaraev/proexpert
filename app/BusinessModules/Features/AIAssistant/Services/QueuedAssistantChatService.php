@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob;
+use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantScopedContext;
 use App\Models\Organization;
 use App\Models\User;
 use InvalidArgumentException;
@@ -12,13 +13,14 @@ use Throwable;
 
 final class QueuedAssistantChatService
 {
-    public function __construct(private readonly AssistantRequestLifecycle $requests) {}
+    public function __construct(private readonly AssistantRequestLifecycle $requests, private readonly ?OrdinaryAssistantScopedContext $scopedContext = null) {}
 
     public function submit(int $organizationId, User $actor, ?int $conversationId, array $payload, string $surface): array
     {
         if (!in_array($surface, ['admin', 'lk', 'mobile'], true)) {
             throw new InvalidArgumentException('Unsupported assistant surface');
         }
+        $this->scopedContext?->enter($actor, $organizationId, (string) ($payload['message'] ?? ''), $payload, $conversationId);
         $organization = Organization::query()->findOrFail($organizationId);
         $started = $this->requests->startQueued($organization, $actor, $conversationId, $payload, $surface);
         if ($started['request']->status === 'running' && $started['request']->stage === 'queued'

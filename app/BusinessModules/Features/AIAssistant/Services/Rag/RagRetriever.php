@@ -63,6 +63,7 @@ final class RagRetriever
 
         $limit = min(self::MAX_RESULTS, $this->configInt('ai-assistant.rag.max_chunks', 8));
         if (isset($requestContext['limit']) && is_numeric($requestContext['limit'])) { $limit = max(1, min($limit, (int) $requestContext['limit'])); }
+        $fusionRankLimit = $limit * 4;
         $threshold = $this->configFloat('ai-assistant.rag.min_similarity', 0.72);
         $requestProjectId = $this->requestProjectId($requestContext);
         $allowedProjectIds = $this->allowedProjectIds($user, $organizationId);
@@ -255,7 +256,7 @@ final class RagRetriever
                     $embedding,
                     $provider,
                     $organizationId,
-                    max($limit * 4, $limit),
+                    $fusionRankLimit,
                     $sourceTypes,
                     $allowedProjectIds,
                     $requestProjectId,
@@ -270,9 +271,9 @@ final class RagRetriever
             $learningRejected = false;
             $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard, $learningChecks, $learningRejected);
             $eligible = array_filter($rows, static fn (object $row): bool => (float) $row->similarity >= $threshold);
-            if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < $limit) {
+            if ($learningRejected && count(array_unique(array_map($this->candidateIdentity(...), $eligible))) < $fusionRankLimit) {
                 $rows = $this->timed('semantic_sql', $organizationId, $user, fn (): iterable => $this->runRead(
-                    fn (): iterable => $this->candidateRows($embedding, $provider, $organizationId, max($limit * 8, $limit),
+                    fn (): iterable => $this->candidateRows($embedding, $provider, $organizationId, $fusionRankLimit * 2,
                         $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources),
                     $checkpoint, $organizationId, $readWrapper, $readGuard
                 ));
@@ -352,7 +353,7 @@ final class RagRetriever
             $readWrapper,
             $readGuard,
             $lexicalIdentities,
-            $limit * 4
+            $fusionRankLimit
         );
         uasort($rankedResults, static fn (array $left, array $right): int =>
             ($right['fusion_score'] <=> $left['fusion_score'])
@@ -360,7 +361,7 @@ final class RagRetriever
             ?: ($left['sequence'] <=> $right['sequence']));
         $fused = [];
         $semanticRank = 0;
-        foreach (array_slice($rankedResults, 0, $limit * 4, true) as $identity => $candidate) {
+        foreach (array_slice($rankedResults, 0, $fusionRankLimit, true) as $identity => $candidate) {
             $rank = ++$semanticRank;
             $fused[$identity] = [
                 'fusion_score' => 1.0 / (self::RECIPROCAL_RANK_OFFSET + $rank),

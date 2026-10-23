@@ -84,7 +84,7 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         $registry->registerTool((new ReflectionClass(GetEstimatePositionsTool::class))->newInstanceWithoutConstructor());
         $class = new ReflectionClass(AIAssistantService::class);
         $service = $class->newInstanceWithoutConstructor();
-        foreach (['activeActor' => $actor, 'permissionChecker' => $checker, 'dataAccess' => null,
+        foreach (['activeActor' => $actor, 'permissionChecker' => $checker, 'dataAccess' => null, 'scopedContext' => null,
             'toolRegistry' => $registry, 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
             $class->getProperty($property)->setValue($service, $value);
         }

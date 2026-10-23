@@ -565,6 +565,49 @@ class RagRetrieverTest extends TestCase
         self::assertCount(2, $currentExampleReads);
     }
 
+    #[DataProvider('semanticFusionCandidatePools')]
+    public function test_hybrid_semantic_refill_uses_the_fusion_rank_limit_without_growing_past_the_cap(int $limit, array $expectedLimits): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        config()->set('ai-assistant.rag.max_chunks', $limit);
+        foreach (range(1, 8) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'semantic current '.$index);
+            $this->indexLearning($example);
+        }
+        foreach (range(1, $limit * 4 - 8) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'semantic stale '.$index);
+            $this->indexLearning($example, [1.0, 0.01, 0.0]);
+            $example->update(['quality_flags' => ['do_not_index']]);
+        }
+        $lateIds = [];
+        foreach (range(1, 24) as $index) {
+            $example = $this->learningExample($organization->id, $project->id, 'semanticneedle late '.$index);
+            $this->indexLearning($example, [0.8, 0.6, 0.0]);
+            $lateIds[] = (string) $example->id;
+        }
+        $provider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $results = $this->retriever($provider)->search('semanticneedle', $organization->id, $user,
+                ['project_id' => $project->id, 'source_types' => ['estimate_generation_learning'], 'limit' => $limit]);
+            $queries = $this->candidateQueries(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+        $semanticQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'WITH compatible_chunks AS MATERIALIZED')));
+        self::assertSame($expectedLimits, array_map(static fn (array $query): int => (int) $query['bindings'][array_key_last($query['bindings'])], $semanticQueries));
+        self::assertCount($limit, $results);
+        self::assertSame([], array_diff(array_column($results, 'entityId'), $lateIds));
+        self::assertSame(1, $provider->queryCalls);
+    }
+
+    public static function semanticFusionCandidatePools(): iterable
+    {
+        yield 'refill rank32 after eight current candidates' => [8, [32, 64]];
+        yield 'existing maximum eighty then one hundred sixty candidates' => [20, [80, 160]];
+    }
+
     public function test_hybrid_lexical_refill_uses_the_fusion_rank_limit_after_stale_candidates(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
