@@ -39,7 +39,7 @@ final class EstimateGenerationQuestionController extends Controller
             );
 
             return ['items' => $items, 'count' => count($items)];
-        }, $session);
+        }, $session)->header('Cache-Control', 'private, no-store');
     }
 
     public function answer(

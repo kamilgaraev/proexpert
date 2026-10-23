@@ -578,7 +578,15 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             ),
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\AnswerEstimateClarification::class);
-        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications::class,
+            static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+                $app->make('db'), (int) config('estimate-generation.project_planning.max_facts') + 1,
+            ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot::class,
             static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot => new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot(
