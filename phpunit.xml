@@ -9,6 +9,10 @@
          displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
+        <testsuite name="AIAssistantClarificationContinuation">
+            <file>tests/Feature/AIAssistant/AssistantClarificationContinuationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantScopedEgressTest.php</file>
+        </testsuite>
         <testsuite name="AIAssistantDocumentFollowupSearch">
             <file>tests/Feature/AIAssistant/AssistantDocumentFollowupSearchTest.php</file>
         </testsuite>

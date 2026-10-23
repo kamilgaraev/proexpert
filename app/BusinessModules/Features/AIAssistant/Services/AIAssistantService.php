@@ -1030,6 +1030,7 @@ class AIAssistantService
             $verificationTimer = AssistantRequestPhaseTimer::start($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, 'final_verification');
             $assistantContent = trim((string) ($response['content'] ?? ''));
             $clarification = $restricted ? AssistantClarificationOutcome::fromText($assistantContent) : null;
+            $acceptedClarification = null;
             $plannedPresentation = $proposedActions === [] ? (new AssistantPresentationPlanner)->render($assistantContent, $verificationToolResults, $query) : null;
             $rawPresentationPlan = $proposedActions === [] && AssistantPresentationPlanner::isPlanCandidate($assistantContent)
                 ? $assistantContent : null;
@@ -1361,6 +1362,7 @@ class AIAssistantService
                 && ! $rejectedFinancialPlan && ! $reportServerClarification && ! $missingCustomReport
                 && ! $terminalToolResponse && $budgetStopNotice === null && ! $degradedMode
                 && $toolFailures === [] && $proposedActions === [] && $executedAction === null && $this->requestOutcome === null) {
+                $acceptedClarification = $clarification;
                 $structuredCheck = $clarification->verification();
                 $assistantContent = $structuredCheck['text'];
                 $this->recordRequestOutcome('insufficient_data');
@@ -1444,6 +1446,14 @@ class AIAssistantService
                 (string) ($response['model'] ?? $this->llmProvider->getModel()),
                 $assistantPayload
             );
+
+            if ($acceptedClarification !== null && $this->activeRequest !== null) {
+                $continuation = $this->scopedContext->recordClarification($this->activeRequest, $userMessage, $assistantMessage, $acceptedClarification);
+                if ($continuation !== null) {
+                    $assistantPayload['clarification_continuation'] = $continuation;
+                    $assistantMessage->forceFill(['metadata' => $assistantPayload])->save();
+                }
+            }
 
             $this->usageTracker->trackRequest(
                 $organizationId,

@@ -29,6 +29,10 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
 
     private ?string $queryHash = null;
 
+    private ?array $requestedContext = null;
+
+    private ?array $continuationPreview = null;
+
     private array $initial = [];
 
     private array $modelItems = [];
@@ -45,9 +49,15 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     {
         $this->clear();
         try {
+            $this->requestedContext = OrdinaryAssistantClarificationContext::envelope($payload);
+            if ($this->requestedContext !== null && (! OrdinaryAssistantClarificationContext::replyAllowed($query)
+                || ($payload['request_id'] ?? null) === $this->requestedContext['parent_request_id'])) {
+                throw new AssistantEgressDenied('scope_mismatch');
+            }
             $cohort = AssistantEgressCohort::query()->where('organization_id', $organizationId)->where('actor_id', $actor->getKey())->first();
             $this->guarded = $cohort !== null;
             if ($cohort === null) {
+                if ($this->requestedContext !== null) { throw new AssistantEgressDenied('unsupported_purpose'); }
                 return;
             }
             $this->cohort = $cohort;
@@ -154,9 +164,21 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         }
         $this->initial = [['role' => 'system', 'content' => $systemPrompt],
             ['role' => 'user', 'content' => json_encode(['kind' => 'approved_project_scope', 'project_id' => (int) $this->cohort->project_id], JSON_THROW_ON_ERROR)],
-            ['role' => 'user', 'content' => $query]];
+        ];
+        if ($this->continuationPreview !== null) {
+            $this->initial[] = ['role' => 'user', 'content' => json_encode(['kind' => 'approved_clarification_context'] + $this->continuationPreview, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
+        }
+        $this->initial[] = ['role' => 'user', 'content' => $query];
 
         return $this->initial;
+    }
+
+    public function recordClarification(\App\BusinessModules\Features\AIAssistant\Models\AssistantRequest $request,
+        \App\BusinessModules\Features\AIAssistant\Models\Message $user, \App\BusinessModules\Features\AIAssistant\Models\Message $assistant,
+        \App\BusinessModules\Features\AIAssistant\Services\AssistantClarificationOutcome $outcome): ?array
+    {
+        $this->assertSourcesFresh();
+        return app(OrdinaryAssistantClarificationContext::class)->record($request, $user, $assistant, $outcome, $this->cohort, $this->enrollment);
     }
 
     public function assertTool(string $name, array $arguments, User $actor, int $organizationId): void
@@ -307,6 +329,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         $this->cohort = $this->enrollment = $this->actor = null;
         $this->inputHash = null;
         $this->queryHash = null;
+        $this->requestedContext = $this->continuationPreview = null;
         $this->initial = $this->modelItems = $this->calls = $this->toolOutputs = [];
     }
 
@@ -359,8 +382,8 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
             ->where('cohort_generation', $current->generation)
             ->where('declaration_version', OrdinaryAssistantEnrollmentService::DECLARATION)
             ->where('expires_at', '>', now())->first();
-        $expectedHash = $manifest === null ? null : OrdinaryAssistantSourceProjection::hash(['cohort' => $current->getKey(),
-            'cohort_generation' => $current->generation, 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources]);
+        $expectedHash = $manifest === null ? null : OrdinaryAssistantClarificationContext::manifestHash(['cohort' => $current->getKey(),
+            'cohort_generation' => $current->generation, 'input_hash' => $manifest->input_hash, 'sources' => $manifest->sources], $manifest->input_context);
         if ($manifest === null || ! hash_equals((string) $current->generation, (string) $this->cohort->generation)
             || array_diff(array_column($manifest->sources, 'tool'), $current->allowed_tools) !== []
             || ! OrdinaryAssistantSourceProjection::allowsSources($current->policy_version, $manifest->sources)
@@ -371,6 +394,14 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
                 ->where('current_organization_id', $this->cohort->organization_id)->exists()
             || ! $this->access->canReadEntity($this->actor, (int) $this->cohort->organization_id, 'project', (int) $this->cohort->project_id)) {
             throw new AssistantEgressDenied('access_denied');
+        }
+        if (($manifest->input_context === null) !== ($this->requestedContext === null)) { throw new AssistantEgressDenied('scope_mismatch'); }
+        if ($manifest->input_context !== null) {
+            $envelope = array_intersect_key($manifest->input_context, array_flip(['version', 'parent_request_id', 'context_hash']));
+            if (! hash_equals(OrdinaryAssistantSourceProjection::hash($envelope), OrdinaryAssistantSourceProjection::hash($this->requestedContext))) {
+                throw new AssistantEgressDenied('scope_mismatch');
+            }
+            $this->continuationPreview = app(OrdinaryAssistantClarificationContext::class)->refresh($manifest->input_context, $this->actor, $current)['preview'];
         }
         $this->cohort = $current;
     }

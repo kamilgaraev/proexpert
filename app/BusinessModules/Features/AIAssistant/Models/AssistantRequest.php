@@ -22,6 +22,7 @@ final class AssistantRequest extends Model
         'approved_max_minor' => 'integer',
         'response' => 'array',
         'payload' => 'array',
+        'clarification_receipt' => 'array',
         'started_at' => 'datetime',
         'cancel_requested_at' => 'datetime',
         'heartbeat_at' => 'datetime',
