@@ -46,6 +46,10 @@ use App\Services\Credits\AICreditService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Enums\AuthSessionStatus;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Services\Auth\WebAuthTokenService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -54,9 +58,69 @@ use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
+use Tests\Support\AssistantRealAuthorizationFixture;
 
 final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_actual_admin_route_accepts_get_derived_cell_review_and_replays_without_new_writes(): void
+    {
+        [, $session, , $document, $headers] = $this->realHttpReview();
+        $url = '/api/v1/admin/projects/'.$session->project_id.'/estimate-generation/sessions/'.$session->id.'/documents/'.$document->id.'/cell-reviews';
+        $data = $this->getJson($url, $headers)->assertOk()->json('data');
+        self::assertCount(1, $data['items']);
+        self::assertSame(['accept', 'reject'], $data['items'][0]['actions']);
+        $input = $this->reviewRequest($session->fresh(), $data['items'][0]);
+        self::assertCount(9, $input);
+        self::assertArrayNotHasKey('current_interface', $input);
+        $usage = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count();
+        $accepted = $this->postJson($url, $input, $headers);
+        self::assertSame(200, $accepted->getStatusCode(), json_encode($accepted->json(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        $receipt = $accepted->json('data');
+        self::assertSame(['accept', 'confirmed_by_user', 'passed', 'unresolved', '0'],
+            [$receipt['decision'], $receipt['human_interpretation'], $receipt['source_correspondence'], $receipt['engineering_applicability'], $receipt['cost_units']]);
+        $rows = $this->getJson($url, $headers)->assertOk()->json('data');
+        self::assertSame($data['state_version'] + 1, $rows['state_version']);
+        self::assertSame(['accept', ['revoke']], [$rows['items'][0]['status'], $rows['items'][0]['actions']]);
+        $counts = $this->reviewCounts($session);
+        self::assertSame(CanonicalPipelineJson::encode($receipt), CanonicalPipelineJson::encode(
+            $this->postJson($url, $input, $headers)->assertOk()->json('data')));
+        self::assertSame($counts, $this->reviewCounts($session));
+        $this->postJson($url, [...$input, 'reason' => 'Другое объяснение для прежнего идентификатора.'], $headers)
+            ->assertStatus(422)->assertJsonStructure(['errors' => ['cell_review']]);
+        $this->postJson($url, [...$input, 'request_id' => (string) Str::uuid()], $headers)->assertStatus(409);
+        self::assertSame($counts, $this->reviewCounts($session));
+        self::assertSame($usage, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_actual_admin_route_rejects_client_interface_spoofs_unknown_fields_and_foreign_reviewers(): void
+    {
+        [$rights, $session, , $document, $headers] = $this->realHttpReview();
+        $url = '/api/v1/admin/projects/'.$session->project_id.'/estimate-generation/sessions/'.$session->id.'/documents/'.$document->id.'/cell-reviews';
+        $data = $this->getJson($url, $headers)->assertOk()->json('data');
+        $input = $this->reviewRequest($session->fresh(), $data['items'][0]);
+        $counts = $this->reviewCounts($session);
+        foreach ([['current_interface' => 'admin'], ['current_interface' => 'lk'], ['current_interface' => null], ['unexpected' => true]] as $extra) {
+            $this->postJson($url, [...$input, ...$extra], $headers)->assertStatus(422)->assertJsonStructure(['errors' => ['cell_review']]);
+            self::assertSame($counts, $this->reviewCounts($session));
+        }
+        $this->postJson($url.'?current_interface=admin', $input, $headers)->assertStatus(422)->assertJsonStructure(['errors' => ['cell_review']]);
+        $viewer = $rights->addMember(['ai-estimates' => ['estimate_generation.view']], ['admin.access']);
+        $viewer->organizations()->updateExistingPivot($session->organization_id, ['project_access_mode' => 'all_projects']);
+        $viewerHeaders = $this->reviewHeaders($viewer);
+        $this->getJson($url, $viewerHeaders)->assertOk();
+        $this->postJson($url, $input, $viewerHeaders)->assertStatus(403);
+        self::assertContains($this->postJson($url, $input, $this->reviewHeaders($rights->foreignOwner))->getStatusCode(), [403, 404]);
+        $otherProject = Project::factory()->for($rights->organization)->create(['is_archived' => false]);
+        AuthorizationContext::getProjectContext((int) $otherProject->id, (int) $rights->organization->id);
+        $foreignUrl = '/api/v1/admin/projects/'.$otherProject->id.'/estimate-generation/sessions/'.$session->id.'/documents/'.$document->id.'/cell-reviews';
+        $this->postJson($foreignUrl, $input, $headers)->assertForbidden();
+        self::assertSame($counts, $this->reviewCounts($session));
+        self::assertSame([], $session->fresh()->input_payload['document_cell_review_receipts'] ?? []);
+        self::assertSame([], $session->fresh()->input_payload['document_cell_review_rows'] ?? []);
+        Http::assertNothingSent();
+    }
+
     public function test_public_review_contract_rejects_stale_forged_and_collision_inputs_and_current_reader_excludes_changed_source(): void
     {
         [$session, $actor, $document] = $this->ordinaryWorkbook();
@@ -762,15 +826,17 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
-    private function ordinaryWorkbook(bool $multiple = false, bool $typed = false, bool $neighbors = false, bool $alternate = false, int $leadingTypedSheets = 0, int $extraLiteralRows = 0): array
+    private function ordinaryWorkbook(bool $multiple = false, bool $typed = false, bool $neighbors = false, bool $alternate = false, int $leadingTypedSheets = 0, int $extraLiteralRows = 0, ?User $realActor = null): array
     {
-        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
-        $entitlements->allows('hasModuleAccess')->andReturn(true);
-        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
-        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
-        $permissions->allows('canCurrent')->andReturn(true);
-        $permissions->allows('can')->andReturn(true);
-        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        if ($realActor === null) {
+            $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+            $entitlements->allows('hasModuleAccess')->andReturn(true);
+            $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
+            $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+            $permissions->allows('canCurrent')->andReturn(true);
+            $permissions->allows('can')->andReturn(true);
+            $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        }
         Http::fake([]);
         Http::preventStrayRequests();
         Queue::fake();
@@ -813,10 +879,12 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         $path = tempnam(sys_get_temp_dir(), 'most-cell-review-');
         try {
             (new Xlsx($spreadsheet))->save($path);
-            $organization = Organization::factory()->create();
+            $organization = $realActor === null ? Organization::factory()->create() : Organization::query()->findOrFail($realActor->current_organization_id);
             $project = Project::factory()->for($organization)->createQuietly();
-            $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
-            $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+            $actor = $realActor ?? User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+            if ($realActor === null) {
+                $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+            }
             $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
                 'user_id' => $actor->id, 'status' => 'draft', 'processing_stage' => 'draft', 'processing_progress' => 0,
                 'state_version' => 0, 'input_payload' => ['evaluation_mode' => 'universal', 'profile_id' => 'construction',
@@ -964,6 +1032,43 @@ final class DocumentCellReviewPostgresTest extends EstimateGenerationCanonicalPo
         }
 
         return [$operationId, $runId, $proposal, $input];
+    }
+
+    private function realHttpReview(): array
+    {
+        config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
+        $rights = AssistantRealAuthorizationFixture::create(['working-entry']);
+        $rights->memberRole->update(['module_permissions' => ['ai-estimates' => ['estimate_generation.create', 'estimate_generation.generate',
+            'estimate_generation.view', 'estimate_generation.review', 'estimate_generation.upload_documents']],
+            'system_permissions' => ['admin.access']]);
+        $rights->member->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
+        [$session, $actor, $document] = $this->ordinaryWorkbook(realActor: $rights->member);
+        AuthorizationContext::getProjectContext((int) $session->project_id, (int) $session->organization_id);
+        app(InitialProjectFactsWriter::class)->write($session, $actor);
+        $this->composeCells($session, $actor, publish: true);
+
+        return [$rights, $session->fresh(), $actor, $document, $this->reviewHeaders($actor)];
+    }
+
+    private function reviewHeaders(User $actor): array
+    {
+        $uuid = (string) Str::uuid();
+        $session = UserAuthSession::query()->create(['user_id' => $actor->id, 'organization_id' => $actor->current_organization_id,
+            'session_uuid' => $uuid, 'device_fingerprint' => hash('sha256', $uuid), 'device_name' => 'MOST cell review HTTP boundary',
+            'ip_address' => '127.0.0.1', 'risk_score' => 0, 'risk_flags' => [], 'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(), 'last_seen_at' => now()]);
+        $tokens = app(WebAuthTokenService::class)->issue($actor, 'admin', $session->session_uuid, (int) $actor->current_organization_id, false);
+
+        return ['Accept' => 'application/json', 'Origin' => 'https://admin.fixture.test', 'Authorization' => 'Bearer '.$tokens->accessToken];
+    }
+
+    private function reviewCounts(EstimateGenerationSession $session): array
+    {
+        return ['state' => (int) $session->fresh()->state_version,
+            'assertions' => DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count(),
+            'decisions' => DB::table('estimate_generation_project_model_corrections')->where('session_id', $session->id)->count(),
+            'learning' => EstimateGenerationLearningExample::query()->where('generation_session_id', $session->id)->count(),
+            'usage' => DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count()];
     }
 
     private function reviewRequest(EstimateGenerationSession $session, array $row, string $decision = 'accept'): array
