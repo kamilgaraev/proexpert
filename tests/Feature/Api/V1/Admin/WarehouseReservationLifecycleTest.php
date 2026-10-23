@@ -457,17 +457,17 @@ final class WarehouseReservationLifecycleTest extends TestCase
             ->getJson("/api/v1/admin/advanced-warehouse/reservations/{$reservation->id}/export-m8")
             ->assertOk();
         $path = ltrim((string) parse_url((string) $response->json('data.url'), PHP_URL_PATH), '/');
-        $temporaryPath = tempnam(sys_get_temp_dir(), 'm8_lifecycle_').'.xlsx';
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'm8_lifecycle_');
         file_put_contents($temporaryPath, Storage::disk('s3')->get(rawurldecode($path)));
         $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
 
-        self::assertSame('01.09.2026', $sheet->getCell('A16')->getValue());
-        self::assertSame('QA-REQ-OWNER-20260901-01', $sheet->getCell('C16')->getValue());
-        self::assertSame(2.0, (float) $sheet->getCell('G16')->getValue());
-        self::assertSame(8.0, (float) $sheet->getCell('J16')->getValue());
-        self::assertContains('C16:F16', $sheet->getMergeCells());
-        self::assertSame('A1:L16', $sheet->getPageSetup()->getPrintArea());
-        self::assertSame('landscape', $sheet->getPageSetup()->getOrientation());
+        self::assertSame('01.09.2026', $sheet->getCell('A29')->getValue());
+        self::assertSame('QA-REQ-OWNER-20260901-01', $sheet->getCell('C29')->getValue());
+        self::assertSame(2.0, (float) $sheet->getCell('G29')->getValue());
+        self::assertSame(8.0, (float) $sheet->getCell('H29')->getValue());
+        self::assertContains('C29:F29', $sheet->getMergeCells());
+        self::assertSame('A1:L29', $sheet->getPageSetup()->getPrintArea());
+        self::assertSame('portrait', $sheet->getPageSetup()->getOrientation());
         self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
         self::assertStringNotContainsString('ЧУЖОЕ-СПИСАНИЕ', json_encode($sheet->toArray(), JSON_THROW_ON_ERROR));
         @unlink($temporaryPath);
@@ -488,6 +488,94 @@ final class WarehouseReservationLifecycleTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/advanced-warehouse/reservations/{$foreignReservation->id}/export-m8")
             ->assertNotFound();
+    }
+
+    public function test_m8_includes_requisites_and_preserves_unknown_codes_prices_and_signatures_as_blank(): void
+    {
+        Storage::fake('s3');
+        [$context, $material, $warehouse] = $this->warehouseContext(10);
+        $context->organization->forceFill([
+            'legal_name' => 'ИП Учебный поставщик материалов',
+            'multi_org_settings' => ['default_timezone' => 'Europe/Moscow'],
+        ])->save();
+        $context->user->forceFill(['name' => 'Автор резерва, не подписант'])->save();
+        $material->forceFill(['name' => '=Учебный материал, буквальное наименование', 'code' => '001-M8-TEST'])->save();
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Учебный проект М-8',
+        ]);
+        $this->allowAdminAccess();
+        $reservation = AssetReservation::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'project_id' => $project->id,
+            'quantity' => 10,
+            'reserved_by' => $context->user->id,
+            'status' => AssetReservation::STATUS_ACTIVE,
+            'reserved_at' => '2026-08-31 23:30:00',
+            'expires_at' => '2026-09-01 07:30:00',
+            'reason' => 'Учебное основание резерва, без фактической выдачи',
+            'metadata' => ['document_number' => 'ЛЗК-УЧ-001'],
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/advanced-warehouse/reservations/{$reservation->id}/export-m8")
+            ->assertOk();
+        $path = rawurldecode(ltrim((string) parse_url((string) $response->json('data.url'), PHP_URL_PATH), '/'));
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'm8_requisites_');
+        self::assertIsString($temporaryPath);
+        $book = null;
+
+        try {
+            file_put_contents($temporaryPath, Storage::disk('s3')->get($path));
+            $book = IOFactory::load($temporaryPath);
+            $sheet = $book->getActiveSheet();
+            $values = [];
+            foreach ($book->getAllSheets() as $part) {
+                array_push($values, ...array_merge(...$part->toArray()));
+            }
+            $text = implode("\n", array_map(static fn ($value): string => (string) $value, $values));
+
+            foreach ([
+                'Дата составления', 'Код вида операции', 'Вид деятельности',
+                'Отправитель', 'Получатель', 'Корреспондирующий счет',
+                'Код аналитического учета', 'Учетная единица выпуска',
+                'Номенклатурный номер', 'Код ОКЕИ',
+                'Всего отпущено с учетом возврата', 'Цена, руб. коп.',
+                'Сумма без учета НДС, руб. коп.', 'Возвращено',
+                'Руководитель подразделения, установившего лимит',
+                'Руководитель подразделения, получившего материальные ценности',
+                'Заведующий складом', 'расшифровка подписи',
+            ] as $label) {
+                self::assertStringContainsString($label, $text);
+            }
+
+            self::assertStringContainsString('01.09.2026', $text);
+            self::assertStringContainsString($warehouse->name, $text);
+            self::assertStringContainsString($project->name, $text);
+            self::assertStringContainsString($reservation->reason, $text);
+            self::assertStringContainsString($material->code, $text);
+            self::assertStringContainsString('ИП Учебный поставщик материалов', $text);
+            self::assertStringNotContainsString('ООО "ИП', $text);
+            self::assertStringNotContainsString('Автор резерва, не подписант', $text);
+            self::assertSame(2, $book->getSheetCount());
+            self::assertSame('0315005', $sheet->getCell('L6')->getValue());
+            self::assertSame($material->name, $sheet->getCell('A21')->getValue());
+            self::assertSame('s', $sheet->getCell('A21')->getDataType());
+            self::assertSame('001-M8-TEST', $sheet->getCell('I21')->getValue());
+            foreach (['C12', 'E12', 'G12', 'J12', 'A14', 'E14', 'I14', 'A23', 'A25', 'D25', 'H25', 'J25', 'I29', 'K29'] as $cell) {
+                self::assertSame('', (string) $sheet->getCell($cell)->getValue(), $cell);
+            }
+            $reverse = $book->getSheetByName('Оборотная сторона');
+            self::assertNotNull($reverse);
+            foreach (['A12', 'G12', 'I12', 'K12', 'A20', 'E20', 'H20', 'A25', 'E25', 'H25', 'A30', 'E30', 'H30'] as $cell) {
+                self::assertSame('', (string) $reverse->getCell($cell)->getValue(), $cell);
+            }
+        } finally {
+            $book?->disconnectWorksheets();
+            unlink($temporaryPath);
+        }
     }
 
     private function warehouseContext(float $reservedQuantity): array
