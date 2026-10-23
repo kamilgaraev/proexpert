@@ -222,7 +222,8 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
 
     private function prompt(EstimateComposerInput $input): string
     {
-        $legacy = in_array($input->baseContractVersion(), [RunEstimateComposer::LEGACY_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
+        $legacy = in_array($input->baseContractVersion(), [RunEstimateComposer::LEGACY_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT,
+            'estimate-composer:legacy:v1', 'estimate-composer:legacy-answers:v2'], true);
         $answered = $input->acceptsSourceClaims();
         $relatedAnswers = $answered && array_filter($input->facts, static fn (array $fact): bool => ($fact['context_kind'] ?? null) === 'composer_answer'
             && ($fact['related_entity_ids'] ?? []) !== []) !== [];
@@ -278,6 +279,14 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
             .'technology_package_candidate, assumptions, exclusions, missing_document_recommendations. '
             .'Если allowed_work_sections переданы, для supplementary укажи work_section только из этого списка и unit как единицу работы (m, m2, m3, count, kg, t, h). '
             .'Единица классифицирует работу и не подтверждает никакое численное количество. Без основания оставляй derived_quantity_id null. '
+            .($input->acceptsWorkRequirements()
+                ? 'Для supplementary можно дополнительно указать nullable requirement_key: смысловой вид работы из пары work_section и requirement_key. Допустимые пары: '
+                    .json_encode(array_combine($input->allowedWorkSections, array_map(
+                        \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator::workRequirementsFor(...),
+                        $input->allowedWorkSections)), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES).'. '
+                    .'Выбирай только вид, прямо соответствующий смыслу этой работы; при неопределённости оставь null. Не меняй ради метки work_key, сущность, объём или технологию. '
+                    .'Метка обозначает только присутствие вида работы в составе: она не подтверждает инженерную применимость, нормы, цены, спецификацию или программу испытаний. Для existing оставляй requirement_key null. '
+                : '')
             .'Если allowed_work_sections отсутствует, не добавляй work_section и unit. Existing intent эти поля не изменяет.';
     }
 

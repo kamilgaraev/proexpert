@@ -58,6 +58,12 @@ final class ScopeCompletenessEvaluator
         return array_values(array_unique($requirements));
     }
 
+    public static function workRequirementsFor(string $section): array
+    {
+        return array_values(array_filter(self::REQUIREMENTS[$section] ?? [], static fn (string $requirement): bool =>
+            ! str_contains($requirement, 'test_program') && ! str_contains($requirement, 'specification')));
+    }
+
     public static function allowsNotApplicable(string $section, string $requirement): bool
     {
         return in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)
