@@ -109,6 +109,12 @@ final class SlowQueryContextTest extends TestCase
             $context = $factory->forQuery($event, $state + ['pdo_runtime' => $runtime + ['password' => 'private-value']]);
             self::assertSame($runtime, $context['pdo_runtime']);
             self::assertSame($state, $context['connection_state']);
+            $nativeRuntime = $runtime + ['statement_transport' => 'pgsql_native_parameters'];
+            self::assertSame($nativeRuntime, $factory->forQuery($event, $state + ['pdo_runtime' => $nativeRuntime])['pdo_runtime']);
+            foreach (['private-value', true, 1, [], null] as $transport) {
+                $candidate = $runtime + ['statement_transport' => $transport];
+                self::assertSame($runtime, $factory->forQuery($event, $state + ['pdo_runtime' => $candidate])['pdo_runtime']);
+            }
             $handler = new TestHandler;
             $handler->setFormatter(new JsonFormatter);
             $logger = new IlluminateLogger(new MonologLogger('slow_queries', [$handler]));

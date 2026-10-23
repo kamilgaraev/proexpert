@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\Infrastructure;
 
 use App\Services\Monitoring\SqlConnectionState;
+use App\Services\Monitoring\SlowQueryContext;
+use App\Database\NativeParameterConnectionFactory;
+use App\Database\NativeParameterPostgresConnection;
 use DateTimeImmutable;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -16,14 +19,15 @@ use Illuminate\Database\Events\StatementPrepared;
 use Illuminate\Database\PostgresConnection;
 use Illuminate\Database\QueryException;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Foundation\Application;
 use LogicException;
 use PDO;
 use PDOStatement;
 use Pdo\Pgsql;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Tests\Support\NativeParameterConnectionFactory;
-use Tests\Support\NativeParameterSelectConnection;
+use Tests\Support\NativeParameterSourceCaller;
+use WeakReference;
 
 final class PostgresNativeSelectConnectionTest extends TestCase
 {
@@ -85,11 +89,106 @@ final class PostgresNativeSelectConnectionTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_explicit_emulation_keeps_its_mode_and_does_not_claim_native_parameters(): void
+    {
+        $connection = $this->manager(true)->connection();
+        $pdo = $connection->getReadPdo();
+        $strategies = [];
+        $connection->getEventDispatcher()->listen(StatementPrepared::class, static function (StatementPrepared $event) use (&$strategies): void {
+            self::assertInstanceOf(NativeParameterPostgresConnection::class, $event->connection);
+            $strategies[] = $event->connection->usesNativeParameterStatement($event->statement);
+        });
+        $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+        try {
+            self::assertSame(3, $connection->selectOne('SELECT CAST(? AS integer) AS value', [3])->value);
+            self::assertTrue($pdo->getAttribute(PDO::ATTR_EMULATE_PREPARES));
+        } finally {
+            $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
+        }
+        self::assertSame(5, $connection->selectOne('SELECT CAST(? AS integer) AS value', [5])->value);
+        self::assertSame([false, true], $strategies);
+    }
+
+    public function test_custom_pdo_uses_standard_prepare_without_reading_its_attributes(): void
+    {
+        $inner = $this->manager(false)->connection()->getPdo();
+        $pdo = new class($inner) extends PDO
+        {
+            public array $options = [];
+
+            public int $attributeReads = 0;
+
+            public function __construct(private PDO $inner) {}
+
+            public function getAttribute(int $attribute): mixed
+            {
+                $this->attributeReads++;
+                throw new LogicException('Custom attributes must not be read');
+            }
+
+            public function prepare(string $query, array $options = []): PDOStatement|false
+            {
+                $this->options[] = $options;
+
+                return $this->inner->prepare($query, $options);
+            }
+        };
+        $connection = new NativeParameterPostgresConnection($pdo);
+        $strategies = [];
+        $events = new Dispatcher;
+        $connection->setEventDispatcher($events);
+        $events->listen(StatementPrepared::class, static function (StatementPrepared $event) use (&$strategies): void {
+            self::assertInstanceOf(NativeParameterPostgresConnection::class, $event->connection);
+            $strategies[] = $event->connection->usesNativeParameterStatement($event->statement);
+        });
+        self::assertSame(7, $connection->selectOne('SELECT CAST(? AS integer) AS value', [7])->value);
+        self::assertSame([false], $strategies);
+        self::assertSame([[]], $pdo->options);
+        self::assertSame(0, $pdo->attributeReads);
+    }
+
+    #[DataProvider('transports')]
+    public function test_statement_is_released_before_query_observers_run(bool $native): void
+    {
+        $connection = $this->manager($native)->connection();
+        $statement = null;
+        $released = [];
+        $connection->getEventDispatcher()->listen(StatementPrepared::class, static function (StatementPrepared $event) use (&$statement): void {
+            $statement = WeakReference::create($event->statement);
+        });
+        $connection->getEventDispatcher()->listen(QueryExecuted::class, static function () use (&$statement, &$released): void {
+            self::assertInstanceOf(WeakReference::class, $statement);
+            $released[] = $statement->get() === null;
+        });
+        self::assertSame(43, $connection->selectOne('SELECT CAST(? AS integer) AS value', [43])->value);
+        self::assertSame([true], $released);
+    }
+
+    #[DataProvider('transports')]
+    public function test_source_attribution_keeps_the_real_caller_beyond_the_connection_wrapper(bool $native): void
+    {
+        $previous = Container::getInstance();
+        new Application(dirname(__DIR__, 3));
+        try {
+            $connection = $this->manager($native)->connection();
+            $sources = [];
+            $connection->getEventDispatcher()->listen(QueryExecuted::class, static function () use (&$sources): void {
+                $sources[] = SlowQueryContext::source(['tests/Feature/Infrastructure/PostgresNativeSelectConnectionTest.php']);
+            });
+            self::assertSame(41, NativeParameterSourceCaller::read($connection));
+            self::assertCount(1, $sources);
+            self::assertSame('tests/Support/NativeParameterSourceCaller.php', $sources[0]['file']);
+            self::assertSame(13, $sources[0]['line']);
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     #[DataProvider('transports')]
     public function test_factory_driver_and_statement_transport_keep_connection_flags(bool $native): void
     {
         $connection = $this->manager($native)->connection();
-        self::assertInstanceOf($native ? NativeParameterSelectConnection::class : PostgresConnection::class, $connection);
+        self::assertInstanceOf($native ? NativeParameterPostgresConnection::class : PostgresConnection::class, $connection);
         self::assertInstanceOf(\Closure::class, $connection->getRawPdo());
         self::assertInstanceOf(\Closure::class, $connection->getRawReadPdo());
         $read = $connection->getReadPdo();
@@ -123,29 +222,57 @@ SQL)->fetchColumn();
     }
 
     #[DataProvider('transports')]
-    public function test_monitoring_keeps_runtime_flags_and_reports_custom_select_interval_limit(bool $native): void
+    public function test_monitoring_keeps_runtime_flags_and_observes_the_exact_select_transport(bool $native): void
     {
         $connection = $this->manager($native)->connection();
         $observer = new SqlConnectionState;
         $observer->watch($connection);
         $observations = [];
-        $connection->getEventDispatcher()->listen(StatementPrepared::class, static fn (StatementPrepared $event) => $observer->prepared($event->connection));
+        $connection->getEventDispatcher()->listen(StatementPrepared::class, static fn (StatementPrepared $event) => $observer->prepared($event->connection, $event->statement));
         $connection->getEventDispatcher()->listen(QueryExecuted::class, static function (QueryExecuted $event) use ($observer, &$observations): void {
             $observations[] = $observer->finish($event, true);
         });
         self::assertSame(3, $connection->selectOne('SELECT CAST(? AS integer) AS value', [3], false)->value);
         self::assertCount(1, $observations);
         self::assertTrue($observations[0]['observed']);
-        self::assertSame(! $native, $observations[0]['event_intervals']['observed']);
-        if ($native) {
-            self::assertSame(['observed' => false], $observations[0]['event_intervals']);
-        }
+        self::assertTrue($observations[0]['event_intervals']['observed']);
         self::assertSame([
             'observed' => true, 'php_version_id' => 80512,
             'write' => ['observed' => true, 'driver' => 'pgsql', 'emulate_prepares' => false, 'disable_prepares' => false],
             'read' => ['observed' => false],
+            ...($native ? ['statement_transport' => 'pgsql_native_parameters'] : []),
         ], $observations[0]['pdo_runtime']);
         self::assertInstanceOf(\Closure::class, $connection->getRawReadPdo());
+    }
+
+    #[DataProvider('transports')]
+    public function test_inherited_cursor_and_mutations_never_claim_native_select_transport(bool $native): void
+    {
+        $connection = $this->manager($native)->connection();
+        $observer = new SqlConnectionState;
+        $observer->watch($connection);
+        $observations = [];
+        $preparedStrategies = [];
+        $connection->getEventDispatcher()->listen(StatementPrepared::class, static function (StatementPrepared $event) use ($observer, &$preparedStrategies): void {
+            $preparedStrategies[] = $event->connection instanceof NativeParameterPostgresConnection && $event->connection->usesNativeParameterStatement($event->statement);
+            $observer->prepared($event->connection, $event->statement);
+        });
+        $connection->getEventDispatcher()->listen(QueryExecuted::class, static function (QueryExecuted $event) use ($observer, &$observations): void {
+            $observations[] = $observer->finish($event, true);
+        });
+        self::assertSame(29, $connection->selectOne('SELECT CAST(? AS integer) AS value', [29])->value);
+        $rows = iterator_to_array($connection->cursor('SELECT CAST(? AS integer) AS value', [31]));
+        self::assertCount(1, $rows);
+        self::assertSame(31, $rows[0]->value);
+        self::assertTrue($connection->statement('CREATE TEMPORARY TABLE native_transport_mutations (id integer, value integer)'));
+        self::assertTrue($connection->insert('INSERT INTO native_transport_mutations (id, value) VALUES (?, ?)', [1, 2]));
+        self::assertSame(1, $connection->update('UPDATE native_transport_mutations SET value = ? WHERE id = ?', [3, 1]));
+        self::assertSame([$native, false], $preparedStrategies);
+        self::assertCount(5, $observations);
+        foreach (array_slice($observations, 1) as $state) {
+            self::assertTrue($state['observed']);
+            self::assertArrayNotHasKey('statement_transport', $state['pdo_runtime']);
+        }
     }
 
     #[DataProvider('transports')]
@@ -394,6 +521,7 @@ SQL, ['value' => 9, 'document' => '{"key":true}', 'text' => "Тест ' ? :value
             'driver' => 'pgsql', 'host' => (string) getenv('DB_HOST'), 'port' => (string) getenv('DB_PORT'),
             'database' => (string) getenv('DB_DATABASE'), 'username' => (string) getenv('DB_USERNAME'), 'password' => (string) getenv('DB_PASSWORD'),
             'prefix' => '', 'charset' => 'utf8', 'search_path' => 'public', 'sticky' => $sticky,
+            'native_select_parameters' => true,
             'options' => [PDO::ATTR_EMULATE_PREPARES => false, Pgsql::ATTR_DISABLE_PREPARES => false, PDO::ATTR_STRINGIFY_FETCHES => false],
         ];
         if ($withRead) {
