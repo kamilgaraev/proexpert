@@ -6,6 +6,8 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Enums\WarehouseReceiptVatMode;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseReceiptTaxCalculator;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M17\M17ExportStrategy;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M4\M4ExportStrategy;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M7\M7ExportStrategy;
@@ -15,6 +17,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
@@ -31,12 +34,44 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
         return ['short' => [false, 1], 'long' => [true, 1], 'many' => [true, 45]];
     }
 
+    public function test_m4_contains_full_requisites_and_both_signature_blocks(): void
+    {
+        [, , $movements] = $this->fixture(false, 1);
+        $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+        $content = implode(' ', array_map(static fn (array $row): string => implode(' ', $row), $sheet->toArray()));
+        foreach (['Структурное подразделение', 'Код вида операции', 'Страховая компания', 'Корреспондирующий счет',
+            'сопроводительного', 'платежного', 'Номенклатурный номер', 'По документу', 'Принято',
+            'Сумма НДС', 'Всего с учетом НДС', 'Номер паспорта', 'картотеке', 'Принял', 'Сдал',
+            'должность', 'подпись', 'расшифровка подписи'] as $requisite) {
+            $this->assertStringContainsString($requisite, $content);
+        }
+    }
+
+    public function test_m4_does_not_claim_a_tax_exclusive_amount_without_saved_tax_context(): void
+    {
+        [$material, , $movements] = $this->fixture(false, 1);
+        $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+        $netColumn = null;
+        $materialRow = null;
+        foreach ($sheet->toArray() as $rowIndex => $values) {
+            foreach ($values as $columnIndex => $value) {
+                if (is_string($value) && preg_match('/Сумма без (?:учета )?НДС/u', str_replace(["\n", 'ё'], [' ', 'е'], $value))) {
+                    $netColumn = $columnIndex + 1;
+                }
+                if (is_string($value) && str_starts_with($value, $material->name."\n")) $materialRow = $rowIndex + 1;
+            }
+        }
+        $this->assertNotNull($netColumn);
+        $this->assertNotNull($materialRow);
+        $this->assertNull($sheet->getCell(Coordinate::stringFromColumnIndex($netColumn).$materialRow)->getValue());
+    }
+
     #[DataProvider('printCases')]
     public function test_receipt_forms_print_complete_width_with_wrapped_requisites(bool $long, int $count): void
     {
         [$material, $warehouse, $movements] = $this->fixture($long, $count);
 
-        foreach ([M4ExportStrategy::class => 16, M7ExportStrategy::class => 17] as $strategy => $headerRow) {
+        foreach ([M7ExportStrategy::class => 17] as $strategy => $headerRow) {
             $sheet = $this->sheet(app($strategy)->export($movements));
             $lastRow = $headerRow + $count + ($headerRow === 16 ? 2 : 3);
 
@@ -57,16 +92,88 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
                 $this->assertGreaterThan(30, $sheet->getRowDimension(11)->getRowHeight());
                 $this->assertGreaterThan(18, $sheet->getRowDimension($headerRow + 1)->getRowHeight());
             }
-            if ($headerRow === 16) {
-                $this->assertSame(1.25, (float) $sheet->getCell('F17')->getValue());
-                $this->assertSame('100,00', $sheet->getCell('H17')->getValue());
-                $this->assertSame('125,00', $sheet->getCell('I17')->getValue());
-            } else {
-                $this->assertSame(1.5, (float) $sheet->getCell('F18')->getValue());
-                $this->assertSame(1.25, (float) $sheet->getCell('G18')->getValue());
-                $this->assertSame(0.25, (float) $sheet->getCell('H18')->getValue());
-            }
+            $this->assertSame(1.5, (float) $sheet->getCell('F18')->getValue());
+            $this->assertSame(1.25, (float) $sheet->getCell('G18')->getValue());
+            $this->assertSame(0.25, (float) $sheet->getCell('H18')->getValue());
         }
+    }
+
+    #[DataProvider('printCases')]
+    public function test_m4_prints_twelve_columns_with_complete_identity_on_continuations(bool $long, int $count): void
+    {
+        [$material, $warehouse, $movements] = $this->fixture($long, $count);
+        $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+        $this->assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
+        $this->assertSame(PageSetup::PAPERSIZE_A4, $sheet->getPageSetup()->getPaperSize());
+        $this->assertSame(90, $sheet->getPageSetup()->getScale());
+        $this->assertFalse($sheet->getPageSetup()->getFitToPage());
+        $this->assertSame('A1:L'.(28 + $count), $sheet->getPageSetup()->getPrintArea());
+        $this->assertSame([19, 22], array_map('intval', $sheet->getPageSetup()->getRowsToRepeatAtTop()));
+        $this->assertSame('0315003', $sheet->getCell('K6')->getValue());
+        $this->assertSame($movements->first()->document_number, $sheet->getCell('H11')->getValue());
+        $this->assertStringContainsString($warehouse->code, $sheet->getCell('A19')->getValue());
+        $this->assertStringStartsWith($material->name, $sheet->getCell('A23')->getValue());
+        $this->assertSame($material->code, $sheet->getCell('B23')->getValue());
+        $this->assertNull($sheet->getCell('C23')->getValue());
+        $this->assertSame(1.5, (float) $sheet->getCell('E23')->getValue());
+        $this->assertSame(1.25, (float) $sheet->getCell('F23')->getValue());
+        $this->assertSame('n', $sheet->getCell('F23')->getDataType());
+        $this->assertSame('100,00', $sheet->getCell('G23')->getValue());
+        $this->assertFalse($sheet->getStyle('G23:J23')->getAlignment()->getWrapText());
+        $this->assertTrue($sheet->getStyle('G23:J23')->getAlignment()->getShrinkToFit());
+        $this->assertNull($sheet->getCell('H23')->getValue());
+        $this->assertSame('Принял', $sheet->getCell('A'.(24 + $count))->getValue());
+        $this->assertSame('Сдал', $sheet->getCell('A'.(27 + $count))->getValue());
+        $this->assertStringContainsString('Страница &P из &N', $sheet->getHeaderFooter()->getOddFooter());
+        $this->assertArrayNotHasKey('A22', $sheet->getBreaks());
+        if ($count === 1) $this->assertSame([], $sheet->getBreaks());
+        foreach (array_keys($sheet->getBreaks()) as $coordinate) {
+            [, $breakRow] = Coordinate::coordinateFromString($coordinate);
+            $this->assertLessThan(22 + $count, (int) $breakRow);
+        }
+        if ($long) {
+            $this->assertGreaterThan(18, $sheet->getRowDimension(11)->getRowHeight());
+            $this->assertGreaterThan(30, $sheet->getRowDimension(23)->getRowHeight());
+        }
+    }
+
+    public function test_m4_uses_only_a_matching_server_tax_snapshot_and_keeps_entered_price_explicit(): void
+    {
+        [, , $movements] = $this->fixture(false, 1);
+        $movement = $movements->first();
+        $movement->quantity = '2.345';
+        $movement->price = '12.34';
+        foreach ([['included', '24,12', '4,82', '28,94'], ['on_top', '28,94', '5,79', '34,73'], ['none', '28,94', 'Без НДС', '28,94']] as [$mode, $net, $vat, $gross]) {
+            $tax = (new WarehouseReceiptTaxCalculator)->calculate('2.345', '12.34', WarehouseReceiptVatMode::from($mode), $mode === 'none' ? null : '20')->toArray();
+            $movement->metadata = ['receipt_tax' => $tax];
+            $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+            $this->assertSame('12,34', $sheet->getCell('G23')->getValue());
+            $this->assertSame($net, $sheet->getCell('H23')->getValue());
+            $this->assertSame($vat, $sheet->getCell('I23')->getValue());
+            $this->assertSame($gross, $sheet->getCell('J23')->getValue());
+            $this->assertStringNotContainsString('Налоговый режим не указан', $sheet->getCell('A23')->getValue());
+        }
+        $movement->metadata = ['receipt_tax' => array_replace($tax, ['net_amount' => '999.99'])];
+        $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+        foreach (['H23', 'I23', 'J23'] as $coordinate) $this->assertNull($sheet->getCell($coordinate)->getValue());
+        $this->assertStringContainsString('Налоговый режим не указан', $sheet->getCell('A23')->getValue());
+        foreach ([['1.000', '0.00', '0', '0,00', '0,00', '0,00'], ['1.000', '0.03', '20', '0,02', '0,01', '0,03'], ['1.000', '9999999999999.99', '20', '8 333 333 333 333,32', '1 666 666 666 666,67', '9 999 999 999 999,99']] as [$quantity, $price, $rate, $net, $vat, $gross]) {
+            $movement->quantity = $quantity;
+            $movement->price = $price;
+            $movement->metadata = ['receipt_tax' => (new WarehouseReceiptTaxCalculator)->calculate($quantity, $price, WarehouseReceiptVatMode::Included, $rate)->toArray()];
+            $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+            $this->assertSame($net, $sheet->getCell('H23')->getValue());
+            $this->assertSame($vat, $sheet->getCell('I23')->getValue());
+            $this->assertSame($gross, $sheet->getCell('J23')->getValue());
+        }
+        $movement->quantity = '999999999999.999';
+        $movement->price = '0.00';
+        $movement->metadata = ['receipt_tax' => (new WarehouseReceiptTaxCalculator)->calculate('999999999999.999', '0.00', WarehouseReceiptVatMode::None)->toArray()];
+        $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
+        $this->assertSame('999999999999,999', $sheet->getCell('F23')->getValue());
+        $this->assertSame('s', $sheet->getCell('F23')->getDataType());
+        $this->assertFalse($sheet->getStyle('F23')->getAlignment()->getWrapText());
+        $this->assertTrue($sheet->getStyle('F23')->getAlignment()->getShrinkToFit());
     }
 
     #[DataProvider('printCases')]
@@ -118,6 +225,23 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
             'next-business-day' => ['Europe/Moscow', '2026-10-31 22:30:00', '2026-11-01'],
             'previous-business-day' => ['Pacific/Honolulu', '2026-11-01 05:30:00', '2026-10-31'],
         ];
+    }
+
+    #[DataProvider('m17BusinessDateCases')]
+    public function test_m4_uses_organization_business_date_without_changing_the_movement_instant(string $timezone, string $utc, string $expectedDate): void
+    {
+        [, , $movements] = $this->fixture(false, 1);
+        $movement = $movements->first();
+        $movement->loadMissing('organization');
+        $movement->organization->forceFill(['multi_org_settings' => ['default_timezone' => $timezone]]);
+        $movement->forceFill(['document_number' => null, 'movement_date' => Carbon::parse($utc, 'UTC')]);
+        $before = $movement->movement_date->format('c');
+        $path = app(M4ExportStrategy::class)->export($movements);
+        $sheet = $this->sheet($path);
+        $this->assertSame(Carbon::parse($expectedDate)->format('d.m.Y'), $sheet->getCell('J11')->getValue());
+        $this->assertStringContainsString(Carbon::parse($expectedDate)->format('d.m.Y'), $sheet->getCell('A19')->getValue());
+        $this->assertStringContainsString('_'.str_replace('-', '', $expectedDate).'_', $path);
+        $this->assertSame($before, $movement->movement_date->format('c'));
     }
 
     #[DataProvider('m17BusinessDateCases')]
@@ -274,8 +398,8 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
     {
         return [
             'unknown' => [null, null, null],
-            'known-zero' => ['0.00', '0,00', '0,00'],
-            'known-positive' => ['100.00', '100,00', '125,00'],
+            'known-zero' => ['0.00', '0,00', null],
+            'known-positive' => ['100.00', '100,00', null],
         ];
     }
 
@@ -292,9 +416,9 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
         $movement->refresh();
         $sheet = $this->sheet(app(M4ExportStrategy::class)->export($movements));
 
-        $this->assertSame($expectedPrice, $sheet->getCell('H17')->getValue());
-        $this->assertSame($expectedAmount, $sheet->getCell('I17')->getValue());
-        $this->assertSame(1.25, (float) $sheet->getCell('F17')->getValue());
+        $this->assertSame($expectedPrice, $sheet->getCell('G23')->getValue());
+        $this->assertSame($expectedAmount, $sheet->getCell('H23')->getValue());
+        $this->assertSame(1.25, (float) $sheet->getCell('F23')->getValue());
         $this->assertSame($price, $movement->fresh()->price);
     }
 
@@ -367,7 +491,9 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
     private function sheet(string $path): Worksheet
     {
         if ($directory = getenv('MOST_WAREHOUSE_PRINT_QA_DIR')) {
-            file_put_contents($directory.'/'.basename($path), Storage::disk('s3')->get($path));
+            $content = Storage::disk('s3')->get($path);
+            $target = $directory.'/'.pathinfo($path, PATHINFO_FILENAME).'-'.substr(hash('sha256', $content), 0, 12).'.xlsx';
+            if (! file_exists($target)) file_put_contents($target, $content);
         }
         $temporaryPath = tempnam(sys_get_temp_dir(), 'warehouse_print_');
         try {

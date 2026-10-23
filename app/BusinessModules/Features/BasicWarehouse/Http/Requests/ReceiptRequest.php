@@ -12,10 +12,14 @@ class ReceiptRequest extends FormRequest
     {
         $material = $this->decodeJsonInput($this->input('material'));
         $metadata = $this->decodeJsonInput($this->input('metadata'));
+        $vatMode = $this->normalizeNullableValue($this->input('vat_mode'));
 
         if (is_array($material)) {
             $material['measurement_unit_id'] = $this->nullableInteger($material['measurement_unit_id'] ?? null);
             $material['default_price'] = $this->nullableFloat($material['default_price'] ?? null);
+        }
+        if (is_array($metadata) && array_key_exists('supplier_quantity', $metadata)) {
+            $metadata['supplier_quantity'] = $this->decimalInput($metadata['supplier_quantity']);
         }
 
         $this->merge([
@@ -23,8 +27,10 @@ class ReceiptRequest extends FormRequest
             'cell_id' => $this->nullableInteger($this->input('cell_id')),
             'material_id' => $this->nullableInteger($this->input('material_id')),
             'material' => $material,
-            'quantity' => $this->nullableFloat($this->input('quantity')),
-            'price' => $this->nullableFloat($this->input('price')),
+            'quantity' => $vatMode === null ? $this->nullableFloat($this->input('quantity')) : $this->decimalInput($this->input('quantity')),
+            'price' => $vatMode === null ? $this->nullableFloat($this->input('price')) : $this->decimalInput($this->input('price')),
+            'vat_mode' => $vatMode,
+            'vat_rate' => $this->decimalInput($this->input('vat_rate')),
             'project_id' => $this->nullableInteger($this->input('project_id')),
             'metadata' => $metadata,
         ]);
@@ -38,6 +44,8 @@ class ReceiptRequest extends FormRequest
     public function rules(): array
     {
         $organizationId = $this->user()?->current_organization_id;
+        $hasVatContext = $this->input('vat_mode') !== null;
+        $taxable = in_array($this->input('vat_mode'), ['included', 'on_top'], true);
 
         return [
             'idempotency_key' => 'required|uuid',
@@ -70,8 +78,10 @@ class ReceiptRequest extends FormRequest
             'material.asset_type' => 'nullable|string|in:material,equipment,tool,furniture,consumable,structure',
             'material.default_price' => 'nullable|numeric|min:0',
             'material.description' => 'nullable|string',
-            'quantity' => 'required|numeric|min:0.001',
-            'price' => 'required|numeric|min:0',
+            'quantity' => $hasVatContext ? ['required', 'numeric', 'min:0.001', 'max:999999999999.999', 'decimal:0,3', 'regex:/\A\d+(?:\.\d+)?\z/'] : 'required|numeric|min:0.001',
+            'price' => $hasVatContext ? ['required', 'numeric', 'min:0', 'max:9999999999999.99', 'decimal:0,2', 'regex:/\A\d+(?:\.\d+)?\z/'] : 'required|numeric|min:0',
+            'vat_mode' => ['nullable', Rule::in(['none', 'included', 'on_top'])],
+            'vat_rate' => [Rule::requiredIf($taxable), Rule::prohibitedIf(! $taxable), 'nullable', 'numeric', 'min:0', 'max:100', 'decimal:0,2', 'regex:/\A\d+(?:\.\d+)?\z/'],
             'project_id' => [
                 'nullable',
                 'integer',
@@ -81,9 +91,40 @@ class ReceiptRequest extends FormRequest
             'reason' => 'nullable|string|max:255',
             'metadata' => 'nullable|array',
             'metadata.description' => 'nullable|string|max:1000',
+            'metadata.supplier_name' => 'nullable|string|max:255',
+            'metadata.invoice_number' => 'nullable|string|max:100',
+            'metadata.supplier_quantity' => ['nullable', 'numeric', 'min:0', 'max:999999999999.999', 'decimal:0,3', 'regex:/\A\d+(?:\.\d+)?\z/'],
             'photos' => 'nullable|array|max:4',
             'photos.*' => 'file|image|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
             'passport' => 'nullable|file|mimes:pdf,jpg,jpeg,png,webp|max:20480',
+        ];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'vat_mode' => trans_message('warehouse_basic.receipt_attributes.vat_mode'),
+            'vat_rate' => trans_message('warehouse_basic.receipt_attributes.vat_rate'),
+            'quantity' => trans_message('warehouse_basic.receipt_attributes.quantity'),
+            'price' => trans_message('warehouse_basic.receipt_attributes.price'),
+            'metadata.supplier_name' => trans_message('warehouse_basic.receipt_attributes.supplier_name'),
+            'metadata.invoice_number' => trans_message('warehouse_basic.receipt_attributes.invoice_number'),
+            'metadata.supplier_quantity' => trans_message('warehouse_basic.receipt_attributes.supplier_quantity'),
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'quantity.decimal' => trans_message('warehouse_basic.receipt_validation.quantity_decimal'),
+            'quantity.regex' => trans_message('warehouse_basic.receipt_validation.quantity_decimal'),
+            'price.decimal' => trans_message('warehouse_basic.receipt_validation.price_decimal'),
+            'price.regex' => trans_message('warehouse_basic.receipt_validation.price_decimal'),
+            'vat_rate.decimal' => trans_message('warehouse_basic.receipt_validation.vat_rate_decimal'),
+            'vat_rate.regex' => trans_message('warehouse_basic.receipt_validation.vat_rate_decimal'),
+            'vat_rate.prohibited' => trans_message('warehouse_basic.receipt_validation.vat_rate_prohibited'),
+            'metadata.supplier_quantity.decimal' => trans_message('warehouse_basic.receipt_validation.supplier_quantity_decimal'),
+            'metadata.supplier_quantity.regex' => trans_message('warehouse_basic.receipt_validation.supplier_quantity_decimal'),
         ];
     }
 
@@ -131,5 +172,14 @@ class ReceiptRequest extends FormRequest
         return in_array(mb_strtolower($normalized), ['', 'null', 'undefined'], true)
             ? null
             : $normalized;
+    }
+
+    private function decimalInput(mixed $value): mixed
+    {
+        $value = $this->normalizeNullableValue($value);
+
+        return is_float($value) && is_finite($value)
+            ? json_encode($value, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR)
+            : $value;
     }
 }

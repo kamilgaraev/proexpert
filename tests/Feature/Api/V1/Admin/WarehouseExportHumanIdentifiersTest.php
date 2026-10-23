@@ -62,7 +62,7 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
             $sheet = $this->sheetFromStorage($path);
 
             $this->assertSame($expectedNumber, $sheet->getCell($numberCell)->getValue(), $strategy);
-            $this->assertStringContainsString('20260830_101112', $path);
+            $this->assertStringContainsString($strategy === M4ExportStrategy::class ? '20260830_131112' : '20260830_101112', $path);
             $this->assertStringNotContainsString('_'.$movement->id.'.xlsx', $path);
         }
 
@@ -113,8 +113,8 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $withoutPersonnelSheet = $this->sheetFromStorage(app(M4ExportStrategy::class)->export($movement));
-        $this->assertStringContainsString('Владелец организации', $withoutPersonnelSheet->getCell('A19')->getValue());
-        $this->assertStringNotContainsString('technical_login', $withoutPersonnelSheet->getCell('A19')->getValue());
+        $this->assertStringContainsString('Владелец организации', $withoutPersonnelSheet->getCell('I25')->getValue());
+        $this->assertStringNotContainsString('technical_login', $withoutPersonnelSheet->getCell('I25')->getValue());
 
         WorkforceEmployee::query()->create([
             'organization_id' => $context->organization->id,
@@ -138,7 +138,7 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $forms = [
-            [M4ExportStrategy::class, 'A19'],
+            [M4ExportStrategy::class, 'I25'],
             [M11ExportStrategy::class, 'A19'],
             [M15ExportStrategy::class, 'AE16'],
         ];

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Enums\WarehouseReceiptVatMode;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ConsumeReservationRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\PlaceAssetRequest;
@@ -282,8 +283,9 @@ class WarehouseOperationsController extends Controller
 
         $warehouseId = (int) $validated['warehouse_id'];
         $materialId = (int) $materialId;
-        $quantity = (float) $validated['quantity'];
-        $price = (float) $validated['price'];
+        $hasVatContext = isset($validated['vat_mode']);
+        $quantity = $hasVatContext ? (string) $validated['quantity'] : (float) $validated['quantity'];
+        $price = $hasVatContext ? (string) $validated['price'] : (float) $validated['price'];
 
         try {
             $cell = $this->storageCellResolver->resolveForWarehouse(
@@ -309,7 +311,9 @@ class WarehouseOperationsController extends Controller
                         'idempotency_key' => $validated['idempotency_key'],
                     ],
                     $this->storageCellResolver->metadata($cell)
-                )
+                ),
+                vatMode: $hasVatContext ? WarehouseReceiptVatMode::from($validated['vat_mode']) : null,
+                vatRate: isset($validated['vat_rate']) ? (string) $validated['vat_rate'] : null,
             );
 
             if ($request->hasFile('photos')) {
