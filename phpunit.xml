@@ -9,6 +9,9 @@
          displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
+        <testsuite name="AIAssistantDocumentFollowupSearch">
+            <file>tests/Feature/AIAssistant/AssistantDocumentFollowupSearchTest.php</file>
+        </testsuite>
         <testsuite name="OrdinaryAssistantDocumentAdmission">
             <file>tests/Feature/AIAssistant/AssistantDocumentAdmissionTest.php</file>
             <file>tests/Unit/AIAssistant/Documents/AssistantDocumentAdmissionContractTest.php</file>
@@ -486,6 +489,11 @@
             <file>tests/Feature/Billing/CommercialCheckoutServiceTest.php</file>
             <file>tests/Feature/Billing/CommercialRenewalServiceTest.php</file>
             <file>tests/Feature/Api/V1/Landing/CommercialCheckoutControllerTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantMixedSourceAdmission">
+            <file>tests/Feature/AIAssistant/AssistantMixedSourceAdmissionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentAdmissionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantScopedEgressTest.php</file>
         </testsuite>
     </testsuites>
     <source>
