@@ -197,13 +197,22 @@ class SiteRequestCalendarService
         ?int $projectId = null,
         ?string $eventType = null,
         ?array $accessibleProjectIds = null,
+        ?string $requestType = null,
+        array $statuses = [],
     ): Collection {
         $query = SiteRequestCalendarEvent::query()
             ->forOrganization($organizationId)
             ->inDateRange($startDate, $endDate)
             ->whereHas(
                 'siteRequest',
-                static fn ($query) => $query->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
+                static fn ($query) => $query
+                    ->where('organization_id', $organizationId)
+                    ->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
+                    ->when($requestType !== null, static fn ($query) => $query->whereIn(
+                        'request_type',
+                        SiteRequestTypeEnum::tryFrom($requestType)?->storedValues() ?? [$requestType],
+                    ))
+                    ->when($statuses !== [], static fn ($query) => $query->whereIn('status', $statuses))
             )
             ->with(['siteRequest.project', 'siteRequest.user']);
 
@@ -623,9 +632,15 @@ class SiteRequestCalendarService
         int $organizationId,
         Carbon $startDate,
         Carbon $endDate,
-        ?int $projectId = null
+        ?int $projectId = null,
+        ?string $eventType = null,
+        ?string $requestType = null,
+        array $statuses = [],
     ): string {
-        $events = $this->getCalendarEvents($organizationId, $startDate, $endDate, $projectId);
+        $events = $this->getCalendarEvents(
+            $organizationId, $startDate, $endDate, $projectId, $eventType,
+            requestType: $requestType, statuses: $statuses,
+        );
 
         $ical = "BEGIN:VCALENDAR\r\n";
         $ical .= "VERSION:2.0\r\n";
