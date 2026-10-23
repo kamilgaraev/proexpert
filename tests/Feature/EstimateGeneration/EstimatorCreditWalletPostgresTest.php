@@ -440,8 +440,13 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 }
                 self::fail('An old partial generation quote passed '.$action);
             } catch (\Illuminate\Validation\ValidationException $error) {
-                self::assertSame([trans_message('estimate_generation.generation_cycle_budget_insufficient')],
-                    $error->errors()[$action === 'replay' ? 'quote' : 'quote_id']);
+                $key = $action === 'replay' ? 'quote' : 'quote_id';
+                self::assertSame([$key], array_keys($error->errors()));
+                self::assertCount(1, $error->errors()[$key]);
+                $message = $error->errors()[$key][0];
+                self::assertMatchesRegularExpression('/^Предельные расходы поставщика ИИ для полного плана: [0-9]+(?:,[0-9]{1,6})? ₽\. Лимит текущей операции: 1,08 ₽\./u', $message);
+                self::assertStringContainsString('Текущий предел работ: 32.', $message);
+                self::assertStringContainsString('Это не фактическое списание и не баланс вашего кошелька.', $message);
             }
         }
         self::assertEquals($before, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
@@ -481,7 +486,12 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 ->quote($actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), 'generation');
             self::fail('A partial QA allowance was offered as a full generation quote.');
         } catch (\Illuminate\Validation\ValidationException $error) {
-            self::assertSame([trans_message('estimate_generation.generation_cycle_budget_insufficient')], $error->errors()['quote']);
+            self::assertSame(['quote'], array_keys($error->errors()));
+            self::assertCount(1, $error->errors()['quote']);
+            $message = $error->errors()['quote'][0];
+            self::assertMatchesRegularExpression('/^Предельные расходы поставщика ИИ для полного плана: [0-9]+(?:,[0-9]{1,6})? ₽\. Лимит текущей операции: 1,8 ₽\./u', $message);
+            self::assertStringContainsString('Текущий предел работ: 32.', $message);
+            self::assertStringContainsString('Это не фактическое списание и не баланс вашего кошелька.', $message);
         }
         self::assertSame($quotes, DB::table('ai_credit_quotes')->where('organization_id', $scope->organizationId)->count());
         self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('organization_id', $scope->organizationId)->count());
