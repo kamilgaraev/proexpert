@@ -41,6 +41,7 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -62,6 +63,10 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
 
     private const SECONDARY_WORK_KEY = 'custom.exposition_positioning';
 
+    private const EXACT_RESOURCE_FIXTURE = ['coefficient' => '834.680000', 'unit_price' => '0.3333'];
+
+    private const EXACT_MONEY_ORACLE = ['net' => '8.35', 'gross' => '10.19', 'quantity' => '25.0404', 'coefficient' => '834.68'];
+
     private array $wireHistory = [];
 
     private array $composerProjects = [];
@@ -69,6 +74,144 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
     private ?\Throwable $recordingFailure = null;
 
     private ?MockHandler $wireHandler = null;
+
+    public function test_http_exact_resource_coefficient_and_price_round_only_at_money_boundaries_through_apply(): void
+    {
+        [, $project, $session, $catalog, $headers, $count, $revision] = $this->confirmedSession(
+            resourceFixture: self::EXACT_RESOURCE_FIXTURE, moneyOracle: self::EXACT_MONEY_ORACLE);
+        $url = $this->url($project, $session);
+        $original = get_object_vars($count);
+        $row = $this->installation($session->fresh());
+        $labor = $row['labor'][0];
+        self::assertSame('3', $row['quantity']);
+        self::assertSame('25.0404', $labor['quantity']);
+        self::assertSame('8.3468', (string) BigDecimal::of($labor['quantity_per_work_unit'])->strippedOfTrailingZeros());
+        self::assertSame('0.3333', $labor['unit_price']);
+        self::assertSame('8.34596532', (string) BigDecimal::of($labor['quantity'])->multipliedBy($labor['unit_price'])->strippedOfTrailingZeros());
+        self::assertSame('8.35', $labor['total_price']);
+        self::assertSame('834.680000', DB::table('estimate_norm_resources')->where('id', $catalog['resource_id'])->value('quantity'));
+        self::assertSame('0.3333', DB::table('estimate_resource_prices')->where('id', $catalog['price_id'])->value('base_price'));
+        self::assertSame([$catalog['norm_id'], $catalog['resource_id'], $catalog['price_id']],
+            [$labor['normative_ref']['norm_id'], $labor['normative_ref']['norm_resource_id'], $labor['normative_ref']['price_id']]);
+        $scenario = $revision['result']['scenarios'][0];
+        self::assertSame('8.35', $scenario['net_subtotals']['RUB']);
+        self::assertSame('1.84', $scenario['vat_subtotals']['RUB']);
+        self::assertSame('10.19', $scenario['gross_subtotals']['RUB']);
+        $this->getJson($url.'/evaluation', $headers)->assertOk()->assertJsonPath('data.result_stale', false);
+        $export = $this->getJson($url.'/export?format=json', $headers)->assertOk();
+        $exportDraft = json_decode($export->streamedContent(), true, 128, JSON_THROW_ON_ERROR);
+        $exportRows = array_merge(...array_map(static fn (array $estimate): array => array_merge(...array_column($estimate['sections'], 'work_items')),
+            $exportDraft['local_estimates']));
+        self::assertCount(1, $exportRows);
+        self::assertSame('25.0404', $exportRows[0]['labor'][0]['quantity']);
+        self::assertSame('0.3333', $exportRows[0]['labor'][0]['unit_price']);
+        self::assertSame('8.35', $exportRows[0]['total_cost']);
+        $apply = ['state_version' => $session->fresh()->state_version, 'artifact_hash' => $session->fresh()->draft_payload['artifact_hash'],
+            'idempotency_key' => (string) Str::uuid(), 'name' => 'Synthetic exact resource money acceptance', 'type' => 'local', 'estimate_date' => '2026-10-01'];
+        $applied = $this->postJson($url.'/apply', $apply, $headers)->assertOk()->json('data');
+        self::assertTrue($applied['created']);
+        $estimate = Estimate::query()->findOrFail($applied['estimate_id']);
+        $parent = $estimate->items()->whereNull('parent_work_id')->sole();
+        $child = $estimate->items()->whereNotNull('parent_work_id')->sole();
+        $resource = $parent->resources()->sole();
+        $identities = [$parent->id, $child->id, $resource->id];
+        for ($pass = 0; $pass < 2; $pass++) {
+            app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+            self::assertSame('8.35', $estimate->fresh()->total_amount);
+            self::assertSame('10.19', $estimate->fresh()->total_amount_with_vat);
+            self::assertSame('1.84', $parent->fresh()->metadata['generated_source_money']['money']['vat_amount']);
+            self::assertSame('25.0404', (string) BigDecimal::of($resource->fresh()->total_quantity)->strippedOfTrailingZeros());
+            self::assertSame('8.3468', (string) BigDecimal::of($resource->fresh()->quantity_per_unit)->strippedOfTrailingZeros());
+            self::assertSame('0.3333', (string) BigDecimal::of($resource->fresh()->unit_price)->strippedOfTrailingZeros());
+            self::assertSame('8.35', $resource->fresh()->total_amount);
+            self::assertSame([$catalog['norm_id'], $catalog['resource_id'], $catalog['price_id']],
+                [$child->fresh()->metadata['normative_ref']['norm_id'], $child->fresh()->metadata['normative_ref']['norm_resource_id'],
+                    $child->fresh()->metadata['normative_ref']['price_id']]);
+            self::assertSame($identities, [$parent->fresh()->id, $child->fresh()->id, $resource->fresh()->id]);
+            self::assertSame(2, $estimate->items()->count());
+        }
+        self::assertSame($original, get_object_vars(app(ProjectModelRepository::class)->factsByIds(
+            (int) $session->organization_id, (int) $project->id, (int) $session->id, [$count->id])[0]));
+        $this->assertNoExtraModelWork($session);
+    }
+
+    #[DataProvider('persistedResourceDriftCases')]
+    public function test_http_old_confirmation_cannot_publish_after_persisted_resource_source_drift(string $source, string $table,
+        string $column, string $reference, string $drifted): void
+    {
+        [, $project, $session, $catalog, $headers, $count] = $this->confirmedSession(
+            resourceFixture: self::EXACT_RESOURCE_FIXTURE, moneyOracle: self::EXACT_MONEY_ORACLE);
+        $url = $this->url($project, $session);
+        $before = $session->fresh()->getAttributes();
+        $rawCount = get_object_vars($count);
+        $revisionBefore = (array) DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->orderByDesc('revision')->first();
+        $target = DB::table($table)->where('id', $catalog[$reference]);
+        $sourceBefore = (array) (clone $target)->sole();
+        $versionBefore = $source === 'price'
+            ? (array) DB::table('estimate_regional_price_versions')->where('id', $catalog['version_id'])->sole() : null;
+        $finalizedReferences = DB::table('estimate_generation_package_item_price_inputs as input')
+            ->join('estimate_generation_package_items as item', 'item.id', '=', 'input.package_item_id')
+            ->where('input.'.($source === 'coefficient' ? 'norm_resource_id' : 'resource_price_id'), $catalog[$reference])
+            ->whereNotNull('item.pricing_finalized_at')->count();
+        try {
+            DB::transaction(fn () => (clone $target)->update([$column => $drifted]));
+        } catch (QueryException $error) {
+            self::assertSame('P0001', $error->errorInfo[0] ?? $error->getCode());
+            $publishedGuard = $source === 'price'
+                && str_contains($error->getMessage(), 'estimate_generation.published_pricing_catalog_is_immutable');
+            if ($publishedGuard) {
+                self::assertSame($catalog['version_id'], (int) $sourceBefore['regional_price_version_id']);
+                self::assertSame('active', $versionBefore['status']);
+                self::assertSame($versionBefore, (array) DB::table('estimate_regional_price_versions')->where('id', $catalog['version_id'])->sole());
+            } else {
+                self::assertStringContainsString('estimate_generation.used_pricing_source_is_immutable', $error->getMessage());
+                self::assertGreaterThan(0, $finalizedReferences);
+            }
+            self::assertSame($sourceBefore, (array) (clone $target)->sole());
+            self::assertSame($before, $session->fresh()->getAttributes());
+            $current = $this->getJson($url.'/evaluation', $headers)->assertOk();
+            self::assertNotNull($current->json('data.confirmed_scenario'));
+            $current->assertJsonPath('data.result_stale', false);
+            self::assertSame($revisionBefore, (array) DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->orderByDesc('revision')->first());
+            $this->assertNoExtraModelWork($session);
+            self::assertSame($before, $session->fresh()->getAttributes());
+            fwrite(STDERR, 'R08 '.$source.': '.($publishedGuard ? 'published_pricing_catalog_is_immutable' : 'used_pricing_source_is_immutable')
+                .' refused mutation; source/confirmation preserved; stale HTTP oracle not reached; finalized_refs='.$finalizedReferences.PHP_EOL);
+
+            return;
+        }
+        try {
+            self::assertSame(0, $finalizedReferences);
+            self::assertSame($drifted, (clone $target)->value($column));
+            self::assertSame($before, $session->fresh()->getAttributes());
+            $current = $this->getJson($url.'/evaluation', $headers)->assertOk();
+            $current->assertJsonPath('data.confirmed_scenario', null)->assertJsonPath('data.result_stale', true);
+            $this->getJson($url.'/export?format=json', $headers)->assertUnprocessable()->assertJsonValidationErrors('draft');
+            $this->postJson($url.'/apply', ['state_version' => $session->fresh()->state_version,
+                'artifact_hash' => $session->fresh()->draft_payload['artifact_hash'], 'idempotency_key' => (string) Str::uuid()], $headers)
+                ->assertUnprocessable()->assertJsonValidationErrors('draft');
+            self::assertSame($before, $session->fresh()->getAttributes());
+            self::assertSame($revisionBefore, (array) DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->orderByDesc('revision')->first());
+            self::assertNull($session->fresh()->applied_estimate_id);
+            self::assertSame(0, Estimate::query()->where('project_id', $project->id)->count());
+            self::assertSame($rawCount, get_object_vars(app(ProjectModelRepository::class)->factsByIds(
+                (int) $session->organization_id, (int) $project->id, (int) $session->id, [$count->id])[0]));
+            $this->assertNoExtraModelWork($session);
+            fwrite(STDERR, 'R08 '.$source.': persisted drift rejected by current confirmation/export/apply; rounded prior net=8.35'.PHP_EOL);
+        } finally {
+            (clone $target)->update([$column => $sourceBefore[$column]]);
+        }
+        self::assertSame($sourceBefore, (array) (clone $target)->sole());
+        self::assertNotNull($this->getJson($url.'/evaluation', $headers)->assertOk()->json('data.confirmed_scenario'));
+    }
+
+    public static function persistedResourceDriftCases(): array
+    {
+        return [
+            'coefficient changes but rounded money stays equal' => ['coefficient', 'estimate_norm_resources', 'quantity', 'resource_id', '834.690000'],
+            'published price mutation is blocked before HTTP stale checking' => ['price', 'estimate_resource_prices', 'base_price', 'price_id', '0.3334'],
+        ];
+    }
 
     #[DataProvider('regionalPriceCases')]
     public function test_http_uploaded_native_quantity_reaches_fresh_resource_money_export_apply_and_ordinary_recalculation(bool $withMatchingPrice): void
@@ -1047,9 +1190,11 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             'operations' => DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->orderBy('operation_id')->get()->toJson()];
     }
 
-    private function confirmedSession(?array $technologyClarification = null, bool $withTechnologyAssumption = false): array
+    private function confirmedSession(?array $technologyClarification = null, bool $withTechnologyAssumption = false,
+        array $resourceFixture = [], array $moneyOracle = []): array
     {
-        [$rights, $project, $session, $catalog, $headers, $count] = $this->generatedSession(technologyClarification: $technologyClarification);
+        [$rights, $project, $session, $catalog, $headers, $count] = $this->generatedSession(technologyClarification: $technologyClarification,
+            resourceFixture: $resourceFixture);
         $url = $this->url($project, $session);
         if ($withTechnologyAssumption) {
             $question = $this->workTechnologyQuestion($project, $session, $headers);
@@ -1091,13 +1236,13 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
                 'key', 'quantity', 'unit', 'metadata', 'composition_intent', 'labor', 'total_cost',
             ])),
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-        self::assertSame('30.00', $revision['result']['scenarios'][0]['known_subtotals']['RUB']);
-        self::assertSame('36.60', $revision['result']['scenarios'][0]['gross_subtotals']['RUB']);
+        self::assertSame($moneyOracle['net'] ?? '30.00', $revision['result']['scenarios'][0]['known_subtotals']['RUB']);
+        self::assertSame($moneyOracle['gross'] ?? '36.60', $revision['result']['scenarios'][0]['gross_subtotals']['RUB']);
         $row = $this->installation($session->fresh());
         self::assertSame('100 шт', $row['normative_match']['unit']);
-        self::assertSame('0.3', $row['labor'][0]['quantity']);
-        self::assertSame('10', $row['labor'][0]['quantity_per_unit']);
-        self::assertSame('30.00', $row['total_cost']);
+        self::assertSame($moneyOracle['quantity'] ?? '0.3', $row['labor'][0]['quantity']);
+        self::assertSame($moneyOracle['coefficient'] ?? '10', $row['labor'][0]['quantity_per_unit']);
+        self::assertSame($moneyOracle['net'] ?? '30.00', $row['total_cost']);
         self::assertSame([], $row['materials']);
         self::assertSame([], $row['machinery']);
         $this->postJson($url.'/evaluation/confirm-scenario', ['request_id' => (string) Str::uuid(),
@@ -1107,7 +1252,8 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         return [$rights, $project, $session, $catalog, $headers, $count, $revision];
     }
 
-    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, bool $withSecondaryWork = false, bool $withForeignSection = false): array
+    private function generatedSession(bool $withNormativeContext = true, bool $descriptionOnly = false, ?string $requirementKey = null, ?array $technologyClarification = null, bool $withSecondaryWork = false, bool $withForeignSection = false,
+        array $resourceFixture = []): array
     {
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
@@ -1134,7 +1280,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         foreach ([['Штука', 'шт', 'piece'], ['Час', 'ч', 'time']] as [$name, $unit, $type]) {
             MeasurementUnit::query()->create(['organization_id' => $rights->organization->id, 'name' => $name, 'short_name' => $unit, 'type' => $type]);
         }
-        $catalog = $withNormativeContext ? $this->catalog() : [];
+        $catalog = $withNormativeContext ? $this->catalog($resourceFixture) : [];
         $headers = $this->headers($rights->member);
         $created = $this->postJson('/api/v1/admin/projects/'.$project->id.'/estimate-generation/sessions', [
             'request_id' => (string) Str::uuid(), 'description' => $descriptionOnly
@@ -1409,7 +1555,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         ]));
     }
 
-    private function catalog(): array
+    private function catalog(array $resourceFixture = []): array
     {
         $now = now();
         $key = 'synthetic-http-money-'.strtolower((string) Str::ulid());
@@ -1429,7 +1575,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             'unit' => '100 шт', 'valid_from' => '2026-10-01', 'valid_to' => '2026-12-31', 'created_at' => $now, 'updated_at' => $now]);
         $resourceCode = 'SYNTHETIC-HTTP-LABOR-'.$dataset;
         $resource = DB::table('estimate_norm_resources')->insertGetId(['estimate_norm_id' => $norm, 'resource_code' => $resourceCode,
-            'resource_name' => 'Труд рабочих', 'unit' => 'h', 'quantity' => '10', 'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now]);
+            'resource_name' => 'Труд рабочих', 'unit' => 'h', 'quantity' => $resourceFixture['coefficient'] ?? '10', 'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now]);
         $region = DB::table('estimate_regions')->insertGetId(['code' => 'HTTP-'.$dataset, 'name' => 'Synthetic region',
             'fgiscs_subject_id' => random_int(100000, 999999), 'created_at' => $now, 'updated_at' => $now]);
         $zone = DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $region, 'name' => 'Synthetic zone',
@@ -1441,7 +1587,7 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
             'price_zone_id' => $zone, 'period_id' => $period, 'version_key' => $key, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
         $price = DB::table('estimate_resource_prices')->insertGetId(['dataset_version_id' => $prices, 'regional_price_version_id' => $version,
             'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period, 'resource_code' => $resourceCode,
-            'resource_name' => 'Труд рабочих', 'unit' => 'h', 'base_price' => '100', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
+            'resource_name' => 'Труд рабочих', 'unit' => 'h', 'base_price' => $resourceFixture['unit_price'] ?? '100', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
         DB::table('estimate_regional_price_versions')->where('id', $version)->update(['status' => 'active']);
 
         return ['norm_id' => $norm, 'resource_id' => $resource, 'price_id' => $price, 'version_id' => $version, 'dataset_key' => $key,
