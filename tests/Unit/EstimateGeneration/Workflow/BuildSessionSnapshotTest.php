@@ -32,6 +32,13 @@ final class BuildSessionSnapshotTest extends TestCase
 
         $this->app->instance(EstimateClarificationCatalog::class, new class implements EstimateClarificationCatalog
         {
+            public function currentWorkContexts(int $organizationId, int $projectId, int $sessionId,
+                ?\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot = null, ?array $decisions = null,
+                ?string $localEstimateKey = null): array
+            {
+                return [];
+            }
+
             public function allCurrent(int $organizationId, int $projectId, int $sessionId): array
             {
                 return [];
@@ -377,6 +384,29 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertSame('draft', $continued->recommendedStep);
         self::assertTrue($continued->workflowSteps[3]['available']);
         self::assertTrue($continued->workflowSteps[4]['available']);
+    }
+
+    public function test_qualitative_work_question_preserves_available_question_step_without_blocking_otherwise_ready_workflow(): void
+    {
+        $question = new \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationQuestion(
+            'composer_work_technology_'.str_repeat('a', 40), 'Какой способ монтажа предусмотрен?',
+            'В источнике не указан способ выполнения.', 'Ответ не заменяет проверку объёмов и норм.', 'Укажите способ выполнения и документы.',
+            [new \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationChoice('other', 'Другое', 'other'),
+                new \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationChoice('leave_unresolved', 'Оставить нерешённым', 'leave_unresolved')],
+            ['kind' => 'composer_work_technology']);
+        $current = new CurrentEstimateClarification($question, 'sha256:'.str_repeat('b', 64), str_repeat('c', 64), str_repeat('d', 64),
+            null, ['schema_version' => 2]);
+        $summary = ['total' => 1, 'ready' => 1, 'pending' => 0, 'action_required' => 0, 'ignored' => 0];
+        $this->bindClarifications([], []);
+        $baseline = app(BuildSessionSnapshot::class)->handle($this->makeSession(EstimateGenerationStatus::EstimateReviewRequired),
+            ['estimate_generation.review'], ['blockers' => [], 'warnings' => []], $summary);
+        $this->bindClarifications([$current], []);
+        $withQuestion = app(BuildSessionSnapshot::class)->handle($this->makeSession(EstimateGenerationStatus::EstimateReviewRequired),
+            ['estimate_generation.review'], ['blockers' => [], 'warnings' => []], $summary);
+        self::assertSame($baseline->workflowSteps, $withQuestion->workflowSteps);
+        self::assertTrue($withQuestion->workflowSteps[2]['available']);
+        self::assertTrue($withQuestion->workflowSteps[3]['available']);
+        self::assertTrue($withQuestion->workflowSteps[4]['available']);
     }
 
     #[Test]
@@ -726,6 +756,13 @@ final class BuildSessionSnapshotTest extends TestCase
             EstimateClarificationCatalog::class,
             new class($questions) implements EstimateClarificationCatalog
             {
+                public function currentWorkContexts(int $organizationId, int $projectId, int $sessionId,
+                    ?\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot = null, ?array $decisions = null,
+                    ?string $localEstimateKey = null): array
+                {
+                    return [];
+                }
+
                 public function __construct(private readonly array $questions) {}
 
                 public function allCurrent(int $organizationId, int $projectId, int $sessionId): array

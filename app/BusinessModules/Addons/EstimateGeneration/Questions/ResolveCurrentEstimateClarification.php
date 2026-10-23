@@ -6,6 +6,9 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Questions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DocumentRequirementAcceptance;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationSelectionVerifier;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -26,6 +29,235 @@ final readonly class ResolveCurrentEstimateClarification
     public function __construct(private ProjectUnderstandingQuestionProjector $projector, ?Closure $translate = null)
     {
         $this->translate = $translate ?? static fn (string $key): string => trans_message($key);
+    }
+
+    public static function bindWorkTechnologyContexts(array $locals, ProjectModelSnapshot $snapshot, array $scope, array $policy, array $prior): array
+    {
+        $previous = [];
+        foreach ($prior as $entry) {
+            $previous[$entry['context']['binding_hash']] = $entry['context'];
+        }
+        foreach ($locals as &$local) {
+            foreach ($local['sections'] as &$section) {
+                foreach ($section['work_items'] as &$work) {
+                    $binding = self::workTechnologyBinding($work);
+                    if ($binding === null || ! in_array($binding['work_section'], $policy['mode'] === 'legacy'
+                        ? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::WORK_SECTIONS : $policy['selected_sections'], true)) {
+                        continue;
+                    }
+                    $hash = hash('sha256', CanonicalPipelineJson::encode($binding));
+                    $context = $previous[$hash] ?? null;
+                    $question = $work['composition_intent']['technology_clarification'] ?? null;
+                    if ($context === null && is_array($question)) {
+                        $dependencies = self::dependencies($snapshot, $binding['source_fact_ids'], $scope);
+                        if ($dependencies === null || array_filter($dependencies, static fn (array $fact): bool => $fact['status'] !== 'confirmed') !== []) {
+                            continue;
+                        }
+                        $context = ['schema_version' => 1, 'binding' => $binding, 'binding_hash' => $hash,
+                            'policy' => $policy, 'dependencies' => $dependencies, 'question' => $question];
+                    }
+                    if ($context !== null) {
+                        $work['metadata']['work_technology_context'] = $context;
+                    }
+                }
+                unset($work);
+            }
+            unset($section);
+        }
+        unset($local);
+
+        return $locals;
+    }
+
+    private static function workTechnologyBinding(array $work): ?array
+    {
+        $intent = $work['composition_intent'] ?? null;
+        if (! is_array($intent) || ($intent['kind'] ?? null) !== 'supplementary'
+            || ! is_string($intent['entity_id'] ?? null) || ! is_string($intent['work_section'] ?? null)
+            || ($work['work_key'] ?? null) !== ($intent['work_key'] ?? null)
+            || ($work['name'] ?? null) !== ($intent['name'] ?? null)
+            || ($work['metadata']['scope_entity_id'] ?? null) !== $intent['entity_id']
+            || ! is_array($intent['source_fact_ids'] ?? null) || $intent['source_fact_ids'] === []) {
+            return null;
+        }
+        $ids = array_values(array_unique($intent['source_fact_ids']));
+        sort($ids, SORT_STRING);
+
+        return ['work_key' => $intent['work_key'], 'name' => $intent['name'], 'entity_id' => $intent['entity_id'],
+            'work_section' => $intent['work_section'], 'unit' => $intent['unit'] ?? null,
+            'requirement_key' => $intent['requirement_key'] ?? null,
+            'technology_package_candidate' => $intent['technology_package_candidate'] ?? null, 'source_fact_ids' => $ids];
+    }
+
+    public function workTechnologyContexts(array $draft, array $input, ProjectModelSnapshot $snapshot, array $decisions, array $scope, array $documents,
+        ?string $localEstimateKey = null): array
+    {
+        $policy = self::composerPolicy($input);
+        if ($policy === null || ! (new BuildMostEstimateDraft)->verifyArtifact($draft)
+            || [$draft['scope_identity']['organization_id'] ?? null, $draft['scope_identity']['project_id'] ?? null,
+                $draft['scope_identity']['session_id'] ?? null] !== $scope) {
+            return [];
+        }
+        $selection = $input['scope_selection'] ?? $draft['evaluation_policy']['scope_selection'] ?? null;
+        $workSelection = $selection['work_scope'] ?? null;
+        $selectedKeys = null;
+        if ($workSelection !== null) {
+            $expected = ['selected_sections' => $policy['selected_sections'], 'profile_id' => $policy['profile_id'],
+                'construction_type' => $input['construction_type'] ?? 'new_construction',
+                'price_policy' => $input['price_policy'] ?? 'normative', 'profile_version' => ScopeCompletenessEvaluator::VERSION,
+                'work_scope' => $workSelection];
+            if (! (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $selection, 'evaluation_scope', $expected)
+                || ! (new EvaluationWorkScope)->current($draft, $workSelection)) {
+                return [];
+            }
+            $selectedKeys = array_fill_keys(array_column($workSelection['selected_items'], 'key'), true);
+        }
+        $locals = $draft['local_estimates'] ?? [];
+        if ($localEstimateKey !== null) {
+            if (trim($localEstimateKey) === '' || strlen($localEstimateKey) > 255) {
+                return [];
+            }
+            $locals = array_values(array_filter($locals, static fn (mixed $local): bool => is_array($local)
+                && ($local['key'] ?? null) === $localEstimateKey));
+            if (count($locals) !== 1) {
+                return [];
+            }
+        }
+        $result = [];
+        $duplicates = [];
+        $sourceFacts = array_column($snapshot->facts, null, 'id');
+        $checkedAnswers = [];
+        foreach ($locals as $local) {
+            foreach ($local['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $work) {
+                    if ($selectedKeys !== null && ! isset($selectedKeys[$work['key'] ?? ''])) {
+                        continue;
+                    }
+                    $context = $work['metadata']['work_technology_context'] ?? null;
+                    $binding = self::workTechnologyBinding($work);
+                    if (! is_array($context) || $binding === null || ($context['schema_version'] ?? null) !== 1
+                        || ! self::sameWorkContext($context['binding'] ?? null, $binding) || ! self::sameWorkContext($context['policy'] ?? null, $policy)
+                        || ! in_array($binding['work_section'], $policy['mode'] === 'legacy'
+                            ? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::WORK_SECTIONS : $policy['selected_sections'], true)
+                        || ($context['binding_hash'] ?? null) !== hash('sha256', CanonicalPipelineJson::encode($binding))
+                        || ! self::sameWorkContext($context['dependencies'] ?? null, self::dependencies($snapshot, $binding['source_fact_ids'], $scope))
+                        || ! is_array($context['question'] ?? null)) {
+                        continue;
+                    }
+                    $key = self::workTechnologyCode($context);
+                    if (isset($result[$key])) {
+                        $duplicates[$key] = true;
+                        continue;
+                    }
+                    foreach ($binding['source_fact_ids'] as $id) {
+                        $source = $sourceFacts[$id] ?? null;
+                        if ($source?->type === 'evaluation_answer' && is_array($source->value) && ($source->value['kind'] ?? null) === 'composer_answer'
+                            && self::composerAnswerContext($source, $snapshot, $decisions, $input, $checkedAnswers) === null) {
+                            continue 2;
+                        }
+                    }
+                    $answer = $this->workTechnologyAnswer($context, $snapshot, $decisions, $scope, $documents);
+                    $previous = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_answer'
+                        && $fact->origin === 'user_assumption' && is_array($fact->value) && ($fact->value['question_key'] ?? null) === $key
+                        && ($fact->value['composer_context']['kind'] ?? null) === 'work_technology'
+                        && self::sameWorkContext($fact->value['composer_context']['work_context'] ?? null, $context)));
+                    $result[$key] = ['context' => $context, 'answer' => $answer, 'documents' => $documents,
+                        'previous_fact_id' => count($previous) === 1 ? $previous[0]->id : null,
+                        'status' => $answer === null ? 'unanswered' : match ($answer['response']) {
+                            'other' => 'answered', 'revoke' => 'revoked', default => 'left_unresolved',
+                        }];
+                }
+            }
+        }
+        if (count($result) > 200) {
+            throw new InvalidArgumentException('estimate_composer_entity_context_too_large');
+        }
+        ksort($result, SORT_STRING);
+
+        return array_values(array_diff_key($result, $duplicates));
+    }
+
+    public static function workTechnologyCode(array $context): string
+    {
+        return 'composer_work_technology_'.substr(hash('sha256', CanonicalPipelineJson::encode($context)), 0, 40);
+    }
+
+    private static function sameWorkContext(mixed $left, mixed $right): bool
+    {
+        return CanonicalPipelineJson::encode($left) === CanonicalPipelineJson::encode($right);
+    }
+
+    private function workTechnologyAnswer(array $context, ProjectModelSnapshot $snapshot, array $decisions, array $scope, array $documents): ?array
+    {
+        $code = self::workTechnologyCode($context);
+        $matches = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_answer'
+            && is_array($fact->value) && ($fact->value['question_key'] ?? null) === $code));
+        if (count($matches) !== 1) {
+            return null;
+        }
+        $fact = $matches[0];
+        $value = $fact->value;
+        if ([$fact->organizationId, $fact->projectId, $fact->sessionId] !== $scope || $fact->origin !== 'user_assumption'
+            || ! in_array($fact->status, ['confirmed', 'unresolved'], true) || $fact->unit !== null
+            || ($value['kind'] ?? null) !== 'composer_answer' || ($value['numeric_parameters_confirmed'] ?? null) !== false
+            || ($value['composer_context']['schema_version'] ?? null) !== 2 || ($value['composer_context']['kind'] ?? null) !== 'work_technology'
+            || ! self::sameWorkContext($value['composer_context']['work_context'] ?? null, $context)
+            || $fact->sourceVersion !== 'sha256:'.hash('sha256', CanonicalPipelineJson::encode($context))
+            || ! in_array($value['response'] ?? null, ['other', 'leave_unresolved', 'revoke'], true)
+            || ($value['response'] === 'other' && ($fact->status !== 'confirmed' || ! is_string($value['other'] ?? null) || trim($value['other']) === '' || mb_strlen($value['other']) > 500))
+            || ($value['response'] !== 'other' && ($fact->status !== 'unresolved' || ($value['other'] ?? null) !== null))
+            || ! is_array($value['documents'] ?? null)) {
+            return null;
+        }
+        $selected = array_values(array_filter($decisions, static fn (Decision $decision): bool => $decision->selectedFactId === $fact->id
+            && $decision->actorType === 'user' && [$decision->organizationId, $decision->projectId, $decision->sessionId] === $scope
+            && $decision->id === ($value['decision_id'] ?? null) && $decision->sourceVersion === $fact->sourceVersion
+            && $decision->version === $fact->version && $decision->reason === $context['question']['question']));
+        if (count($selected) !== 1 || $fact->evidenceIds === []) {
+            return null;
+        }
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $hash = hash('sha256', CanonicalPipelineJson::encode($value));
+        foreach ($fact->evidenceIds as $id) {
+            $proof = $proofs[$id] ?? null;
+            if ($proof === null || [$proof->organizationId, $proof->projectId, $proof->sessionId] !== $scope
+                || $proof->sourceType !== 'user_input' || $proof->nativeReference !== 'input_payload.composer_answer'
+                || $proof->sourceVersion !== $fact->sourceVersion || $proof->sourceArtifactId !== 'input:'.$scope[2]
+                || $proof->sourceReference !== 'input:'.$scope[2] || $proof->producerName !== 'user_input_normalizer' || $proof->choiceHash !== $hash) {
+                return null;
+            }
+        }
+        foreach ($value['documents'] as $document) {
+            if (! in_array(CanonicalPipelineJson::encode($document), array_map(CanonicalPipelineJson::encode(...), $documents), true)) {
+                return null;
+            }
+        }
+
+        return ['response' => $value['response'], 'other' => $value['other'] ?? null, 'decision_id' => $selected[0]->id,
+            'fact_id' => $fact->id, 'document_ids' => array_column($value['documents'], 'document_id'),
+            'trust' => $value['response'] === 'other' ? 'user_assumption' : 'no_active_claim',
+            'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false];
+    }
+
+    public function workTechnologyQuestions(array $entries, string $token, int $stateVersion): array
+    {
+        $result = [];
+        foreach ($entries as $entry) {
+            $work = $entry['context'];
+            $context = ['schema_version' => 2, 'kind' => 'work_technology', 'work_context' => $work,
+                'state_version' => $stateVersion, 'previous_fact_id' => $entry['previous_fact_id'] ?? $entry['answer']['fact_id'] ?? null, 'documents' => $entry['documents']];
+            $question = new EstimateClarificationQuestion(self::workTechnologyCode($work), $work['question']['question'],
+                $work['question']['reason'], ($this->translate)('estimate_generation.work_technology.impact'),
+                ($this->translate)('estimate_generation.work_technology.recommendation'),
+                [new EstimateClarificationChoice('other', ($this->translate)('estimate_generation.ai_questions.other'), 'other'),
+                    new EstimateClarificationChoice('leave_unresolved', ($this->translate)('estimate_generation.ai_questions.leave_unresolved'), 'leave_unresolved')],
+                ['kind' => 'composer_work_technology', 'work_key' => $work['binding']['work_key'], 'entity_id' => $work['binding']['entity_id'],
+                    'work_section' => $work['binding']['work_section'], 'definition_hash' => $work['binding_hash']]);
+            $result[] = new CurrentEstimateClarification($question, 'sha256:'.hash('sha256', CanonicalPipelineJson::encode($work)), $token,
+                hash('sha256', CanonicalPipelineJson::encode([$context, $token, $entry['answer']])), null, $context, [], $entry['answer']);
+        }
+
+        return $result;
     }
 
     public function resolveComposer(array $draft, array $input, ProjectModelSnapshot $snapshot, string $snapshotToken, array $scope, int $stateVersion = 0): ?CurrentEstimateClarification

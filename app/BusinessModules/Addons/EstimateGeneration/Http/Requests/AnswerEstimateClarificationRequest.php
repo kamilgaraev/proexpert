@@ -25,6 +25,8 @@ final class AnswerEstimateClarificationRequest extends FormRequest
             'expected_source_version' => ['required', 'string', 'regex:/^sha256:[a-f0-9]{64}$/D'],
             'answer_fingerprint' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/D'],
             'target_entity_id' => ['sometimes', 'required', 'string', 'regex:/^[a-z][a-z0-9._:-]{1,191}$/D', 'prohibited_unless:response,other'],
+            'document_ids' => ['sometimes', 'array', 'list', 'max:8', 'prohibited_unless:response,other'],
+            'document_ids.*' => ['required', 'integer', 'min:1', 'distinct:strict'],
         ];
     }
 }

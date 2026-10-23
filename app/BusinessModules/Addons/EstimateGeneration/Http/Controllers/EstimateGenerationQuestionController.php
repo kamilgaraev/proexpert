@@ -35,6 +35,7 @@ final class EstimateGenerationQuestionController extends Controller
                 (int) $session->organization_id,
                 (int) $project->id,
                 (int) $session->id,
+                $request->user(),
             );
 
             return ['items' => $items, 'count' => count($items)];
@@ -64,6 +65,7 @@ final class EstimateGenerationQuestionController extends Controller
                 (string) $request->validated('response'),
                 is_string($request->validated('other')) ? $request->validated('other') : null,
                 is_string($request->validated('target_entity_id')) ? $request->validated('target_entity_id') : null,
+                $request->validated('document_ids', []),
             );
 
             return (new EstimateClarificationAnswerResource($result))->resolve($request);

@@ -18,14 +18,15 @@ final readonly class EstimateClarificationQuestion
         public array $choices,
         public array $sourceLocator,
     ) {
+        $workTechnology = ($sourceLocator['kind'] ?? null) === 'composer_work_technology';
         if (preg_match('/^[a-z][a-z0-9_]{1,79}$/D', $code) !== 1
-            || trim($subject) === '' || mb_strlen($subject) > 160
+            || trim($subject) === '' || mb_strlen($subject) > ($workTechnology ? 500 : 160)
             || count($choices) < 2 || count($choices) > 10
             || $sourceLocator === [] || array_is_list($sourceLocator)) {
             throw new InvalidArgumentException('estimate_clarification_question_invalid');
         }
         foreach ([$subject, $reason, $impact, $recommendation] as $text) {
-            self::assertBusinessText($text);
+            self::assertBusinessText($text, $workTechnology && $text === $reason ? 800 : 500);
         }
         foreach ($choices as $choice) {
             if (! $choice instanceof EstimateClarificationChoice) {
@@ -48,12 +49,25 @@ final readonly class EstimateClarificationQuestion
         ];
     }
 
-    private static function assertBusinessText(string $text): void
+    private static function assertBusinessText(string $text, int $maxLength = 500): void
     {
         $normalized = mb_strtolower(trim($text));
-        if ($normalized === '' || mb_strlen($text) > 500 || preg_match('/[А-Яа-яЁё]/u', $text) !== 1
+        if ($normalized === '' || mb_strlen($text) > $maxLength || preg_match('/[А-Яа-яЁё]/u', $text) !== 1
             || preg_match('/needs? clarification|нужно уточнить|openai|timeweb|provider|fallback|payload|exception|timeout/ui', $normalized) === 1) {
             throw new InvalidArgumentException('estimate_clarification_business_text_invalid');
+        }
+    }
+
+    public static function assertWorkTechnologyText(array $value): void
+    {
+        if (count($value) !== 2 || ! is_string($value['question'] ?? null) || ! is_string($value['reason'] ?? null)) {
+            throw new InvalidArgumentException('estimate_work_intent_technology_question_invalid');
+        }
+        try {
+            self::assertBusinessText($value['question'], 500);
+            self::assertBusinessText($value['reason'], 800);
+        } catch (InvalidArgumentException) {
+            throw new InvalidArgumentException('estimate_work_intent_technology_question_invalid');
         }
     }
 }
