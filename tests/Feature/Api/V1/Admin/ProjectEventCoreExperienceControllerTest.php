@@ -218,6 +218,10 @@ class ProjectEventCoreExperienceControllerTest extends TestCase
                     '2026-10-24', '2026-10-27', '2026-10-24T00:00:00+02:00'],
                 [['event_date' => '2026-03-29', 'event_time' => '10:00', 'end_date' => '2026-03-30'],
                     '2026-03-29T10:00:00', '2026-03-30T23:59:59', '2026-03-29T10:00:00+02:00'],
+                [['event_date' => '2026-10-27', 'event_time' => '09:15:30', 'end_date' => '2026-10-28', 'end_time' => '10:45:15', 'duration_minutes' => null],
+                    '2026-10-27T09:15:30', '2026-10-28T10:45:15', '2026-10-27T09:15:30+01:00'],
+                [['event_date' => '2026-10-27', 'event_time' => '09:15:30', 'duration_minutes' => null],
+                    '2026-10-27T09:15:30', null, '2026-10-27T09:15:30+01:00'],
             ];
             $events = [];
             foreach ($cases as [$attributes, $start, $end, $legacyStart]) {
@@ -237,11 +241,39 @@ class ProjectEventCoreExperienceControllerTest extends TestCase
                 $this->assertSame($start, $row['start_local'] ?? null);
                 $this->assertSame($end, $row['end_local'] ?? null);
                 $this->assertSame($legacyStart, $row['start']);
-                $this->assertSame($event->getEndDateTimeAttribute()->toIso8601String(), $row['end']);
+                $this->assertSame($event->getEndDateTimeAttribute()?->toIso8601String(), $row['end']);
+                $this->assertSame($event->end_date?->toDateString(), $row['end_date']);
+                $this->assertSame($event->end_time, $row['end_time']);
             }
         } finally {
             date_default_timezone_set($previousTimezone);
         }
+    }
+
+    public function test_exact_end_accepts_seconds_and_partial_updates_validate_the_merged_interval(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::withoutEvents(static fn () => Project::factory()->create(['organization_id' => $context->organization->id]));
+        $this->allowAdminAccess();
+        $url = "/api/v1/admin/projects/{$project->id}/events";
+        $response = $this->withHeaders($context->authHeaders())->postJson($url, [
+            'event_type' => 'meeting', 'title' => 'Exact interval', 'event_date' => '2026-10-27',
+            'event_time' => '09:15:30', 'end_date' => '2026-10-28', 'end_time' => '10:45:15', 'duration_minutes' => null,
+        ]);
+        $response->assertCreated()->assertJsonPath('data.end_time', '10:45:15')->assertJsonPath('data.duration_minutes', null);
+        $eventId = $response->json('data.id');
+        $this->withHeaders($context->authHeaders())->putJson("{$url}/{$eventId}", ['title' => 'Unchanged interval'])
+            ->assertOk()->assertJsonPath('data.end_time', '10:45:15');
+        $this->withHeaders($context->authHeaders())->putJson("{$url}/{$eventId}", ['event_date' => '2026-10-29'])
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())->putJson("{$url}/{$eventId}", ['end_date' => '2026-10-27', 'end_time' => '09:15:29'])
+            ->assertUnprocessable()->assertJsonValidationErrors('end_time', 'errors');
+        $this->withHeaders($context->authHeaders())->putJson("{$url}/{$eventId}", ['end_time' => '24:00:00'])
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())->putJson("{$url}/{$eventId}", ['end_date' => null, 'end_time' => null, 'duration_minutes' => null])
+            ->assertOk()->assertJsonPath('data.end_time', null)->assertJsonPath('data.duration_minutes', null);
+        $this->withHeaders($context->authHeaders())->getJson("{$url}/calendar?start_date=2026-10-27&end_date=2026-10-28")
+            ->assertOk()->assertJsonPath('data.0.end_local', null)->assertJsonPath('data.0.end', null);
     }
 
     private function createProjectEvent(int $projectId, int $organizationId, int $userId, array $overrides = []): ProjectEvent

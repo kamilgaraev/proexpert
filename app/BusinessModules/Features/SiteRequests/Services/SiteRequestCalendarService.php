@@ -479,6 +479,8 @@ class SiteRequestCalendarService
                     'event_date' => $calendarEvent->start_date,
                     'end_date' => $calendarEvent->end_date,
                     'event_time' => $calendarEvent->start_time,
+                    'end_time' => $calendarEvent->all_day ? null : $calendarEvent->end_time,
+                    'duration_minutes' => null,
                     'is_all_day' => $calendarEvent->all_day,
                     'color' => $calendarEvent->color,
                     'event_type' => 'site_request',
@@ -560,6 +562,8 @@ class SiteRequestCalendarService
                     'event_date' => $calendarEvent->start_date,
                     'end_date' => $calendarEvent->end_date,
                     'event_time' => $calendarEvent->start_time,
+                    'end_time' => $calendarEvent->all_day ? null : $calendarEvent->end_time,
+                    'duration_minutes' => null,
                     'is_all_day' => $calendarEvent->all_day,
                     'color' => $calendarEvent->color,
                 ]);

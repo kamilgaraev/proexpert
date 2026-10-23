@@ -38,6 +38,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 use function trans_message;
 
@@ -61,6 +62,32 @@ class SiteRequestService
         private readonly MobileProjectAccessResolver $mobileProjectAccess,
         private readonly SiteRequestClosureService $closureService,
     ) {}
+
+    private function validateCalendarInterval(array $data, ?SiteRequest $request = null): void
+    {
+        $candidate = $request === null ? new SiteRequest() : clone $request;
+        $candidate->fill($data);
+        $start = $candidate->getCalendarStartDate();
+        $end = $candidate->getCalendarEndDate();
+        $errors = [];
+        if ($candidate->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST && $candidate->equipment_start_at !== null) {
+            if ($start !== null && $end !== null && $end->lessThanOrEqualTo($start)) {
+                $errors['equipment_end_at'] = trans_message('site_requests.errors.equipment_end_after_start');
+            }
+        } else {
+            if ($candidate->delivery_time_from !== null && $candidate->delivery_time_to !== null
+                && Carbon::parse($candidate->delivery_time_to, 'UTC')->format('H:i:s') <= Carbon::parse($candidate->delivery_time_from, 'UTC')->format('H:i:s')) {
+                $errors['delivery_time_to'] = trans_message('site_requests.errors.delivery_end_after_start');
+            }
+            if ($start !== null && $end !== null && $end->copy()->startOfDay()->lessThan($start->copy()->startOfDay())) {
+                $field = $candidate->work_end_date !== null ? 'work_end_date' : 'rental_end_date';
+                $errors[$field] = trans_message('site_requests.errors.calendar_end_before_start');
+            }
+        }
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+    }
 
     public function mobileMeta(int $organizationId): array
     {
@@ -223,6 +250,8 @@ class SiteRequestService
                 return $existing->fresh(['project', 'user', 'estimateItem.measurementUnit']);
             }
         }
+
+        $this->validateCalendarInterval($data);
 
         // Проверяем лимиты
         $this->checkLimits($organizationId);
@@ -528,9 +557,17 @@ class SiteRequestService
 
         $data = $this->prepareEstimateResourceData($request->organization_id, $data, $request);
         $data = $this->prepareMaterialCatalogData($request->organization_id, $data);
-        $oldValues = $request->only(array_keys($data));
+        $oldValues = [];
 
-        DB::transaction(function () use ($request, $userId, $data, $oldValues) {
+        DB::transaction(function () use ($request, $userId, $data, &$oldValues) {
+            $locked = SiteRequest::query()->lockForUpdate()->findOrFail($request->id);
+            $request->setRawAttributes($locked->getAttributes(), true);
+            $this->ensureDraftOwnedByActor($request, $userId);
+            if (!$request->canBeEdited()) {
+                throw new \DomainException(trans_message('site_requests.errors.not_editable_status'));
+            }
+            $this->validateCalendarInterval($data, $request);
+            $oldValues = $request->only(array_keys($data));
             $request->update($data);
 
             // Записываем в историю

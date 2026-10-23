@@ -22,6 +22,7 @@ use App\Traits\HasOnboardingDemo;
  * @property Carbon $event_date
  * @property Carbon|null $end_date
  * @property string|null $event_time
+ * @property string|null $end_time
  * @property int|null $duration_minutes
  * @property bool $is_all_day
  * @property bool $is_recurring
@@ -48,6 +49,7 @@ class ProjectEvent extends Model
         'location',
         'event_date',
         'event_time',
+        'end_time',
         'duration_minutes',
         'is_all_day',
         'end_date',
@@ -147,9 +149,13 @@ class ProjectEvent extends Model
     /**
      * Получить дату и время окончания события
      */
-    public function getEndDateTimeAttribute(): Carbon
+    public function getEndDateTimeAttribute(): ?Carbon
     {
         $start = $this->getStartDateTimeAttribute();
+
+        if (!$this->is_all_day && $this->end_time !== null) {
+            return Carbon::parse(($this->end_date ?? $this->event_date)->format('Y-m-d') . ' ' . $this->end_time);
+        }
         
         if ($this->end_date) {
             return $this->end_date->endOfDay();
@@ -159,7 +165,7 @@ class ProjectEvent extends Model
             return $this->event_date->endOfDay();
         }
         
-        return $start->copy()->addMinutes($this->duration_minutes);
+        return $this->duration_minutes === null ? null : $start->copy()->addMinutes($this->duration_minutes);
     }
 
     public function getCalendarStartLocal(): string
@@ -173,19 +179,24 @@ class ProjectEvent extends Model
             ->format('Y-m-d\TH:i:s');
     }
 
-    public function getCalendarEndLocal(): string
+    public function getCalendarEndLocal(): ?string
     {
         if ($this->is_all_day) {
             return Carbon::parse(($this->end_date ?? $this->event_date)->format('Y-m-d'), 'UTC')
                 ->addDay()->format('Y-m-d');
         }
 
+        if ($this->end_time !== null) {
+            return Carbon::parse(($this->end_date ?? $this->event_date)->format('Y-m-d') . ' ' . $this->end_time, 'UTC')
+                ->format('Y-m-d\TH:i:s');
+        }
+
         if ($this->end_date) {
             return $this->end_date->format('Y-m-d') . 'T23:59:59';
         }
 
-        return Carbon::parse($this->getCalendarStartLocal(), 'UTC')
-            ->addMinutes($this->duration_minutes ?? 0)->format('Y-m-d\TH:i:s');
+        return $this->duration_minutes === null ? null : Carbon::parse($this->getCalendarStartLocal(), 'UTC')
+            ->addMinutes($this->duration_minutes)->format('Y-m-d\TH:i:s');
     }
 
     /**
@@ -300,22 +311,8 @@ class ProjectEvent extends Model
      */
     public function hasConflicts(): bool
     {
-        $start = $this->getStartDateTimeAttribute();
-        $end = $this->getEndDateTimeAttribute();
-
-        return static::query()
-            ->where('project_id', $this->project_id)
-            ->where('id', '!=', $this->id)
-            ->where('is_blocking', true)
-            ->where(function ($query) use ($start, $end) {
-                $query->whereBetween('event_date', [$start->toDateString(), $end->toDateString()])
-                    ->orWhere(function ($q) use ($start) {
-                        $q->where('event_date', '<=', $start->toDateString())
-                          ->whereNotNull('end_date')
-                          ->where('end_date', '>=', $start->toDateString());
-                    });
-            })
-            ->exists();
+        return app(\App\BusinessModules\Features\ScheduleManagement\Services\ProjectEventService::class)
+            ->checkEventConflicts($this)['has_conflicts'];
     }
 
     /**
@@ -340,6 +337,7 @@ class ProjectEvent extends Model
 
             $events[] = $this->replicate()->fill([
                 'event_date' => $currentDate,
+                'end_date' => $this->end_date?->copy()->addDays((int) $this->event_date->diffInDays($currentDate, false)),
                 'recurring_parent_id' => $this->id,
                 'is_recurring' => false,
             ]);
@@ -392,7 +390,16 @@ class ProjectEvent extends Model
               ->orWhere(function ($subQuery) use ($startDate) {
                   $subQuery->where('event_date', '<=', $startDate)
                            ->whereNotNull('end_date')
-                           ->where('end_date', '>=', $startDate);
+                           ->where(function ($ends) use ($startDate) {
+                               $ends->where(function ($legacy) use ($startDate) {
+                                   $legacy->where(function ($mode) {
+                                       $mode->where('is_all_day', true)->orWhereNull('end_time');
+                                   })->where('end_date', '>=', $startDate);
+                               })->orWhere(function ($exact) use ($startDate) {
+                                   $exact->where('is_all_day', false)->whereNotNull('end_time')
+                                       ->whereRaw('(end_date + end_time) > CAST(? AS DATE)', [$startDate->toDateString()]);
+                               });
+                           });
               })
               ->orWhere(function ($subQuery) use ($startDate) {
                   $subQuery->where('event_date', '<', $startDate)
