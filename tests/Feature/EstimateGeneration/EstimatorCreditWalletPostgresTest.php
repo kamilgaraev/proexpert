@@ -1065,6 +1065,50 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             ->abort($session->fresh(), $id, 'fixture_finished'));
     }
 
+    public function test_json_transport_known_parts_require_a_new_quote_before_any_wallet_reservation(): void
+    {
+        [$organization, $actor, $base] = $this->fixture();
+        $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput(
+            $base->organizationId, $base->projectId, $base->sessionId, str_repeat('a', 64), [['id' => 'fact:transport', 'status' => 'confirmed']], [], [], [], [],
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::PROMPT_CONTRACT);
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::capture();
+        $measured = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorKnownContextParts::class)
+            ->measure($input, null, null, [], [], $policy);
+        self::assertSame(['composer' => 1, 'audit' => 0, 'synthesis' => 0], $measured['part_limits']);
+        $oldInputFingerprint = hash('sha256', json_encode($input->canonicalPayload(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        $identity = ['contract' => 'estimator-known-context:v1', 'composer' => $input->fingerprint(),
+            'audit' => null, 'synthesis' => null, 'links' => [], 'questions' => [], 'wire_policy' => $policy,
+            'role_limits' => $measured['role_limits'], 'composer_parts' => [$input->fingerprint()], 'audit_parts' => [], 'synthesis_parts' => []];
+        self::assertSame(hash('sha256', CanonicalPipelineJson::encode($identity)), $measured['fingerprint']);
+        $oldIdentity = [...$identity, 'composer' => $oldInputFingerprint, 'composer_parts' => [$oldInputFingerprint]];
+        $oldKnown = [...$measured, 'fingerprint' => hash('sha256', CanonicalPipelineJson::encode($oldIdentity))];
+        self::assertNotSame($oldKnown['fingerprint'], $measured['fingerprint']);
+        $oldPlan = [...$this->plan(), 'known_context' => $oldKnown];
+        $newPlan = [...$this->plan(), 'known_context' => $measured];
+        $oldRequest = new EstimatorCreditRequest($base->organizationId, $base->projectId, $base->sessionId, $base->actorUserId,
+            $base->operationId, $base->kind, $base->stateVersion, $base->inputHash, $base->sourceVersion, $base->manifestHash,
+            hash('sha256', CanonicalPipelineJson::encode($oldPlan)), $base->maximumProviderCostMicroRub, $base->maximumCalls, $base->supplierTariff);
+        $newRequest = new EstimatorCreditRequest($base->organizationId, $base->projectId, $base->sessionId, $base->actorUserId,
+            $base->operationId, $base->kind, $base->stateVersion, $base->inputHash, $base->sourceVersion, $base->manifestHash,
+            hash('sha256', CanonicalPipelineJson::encode($newPlan)), $base->maximumProviderCostMicroRub, $base->maximumCalls, $base->supplierTariff);
+        $credits = app(AICreditService::class);
+        $credits->grant($organization, 10000, 'purchase', null, 'test:json-format-quote');
+        $oldQuote = $credits->quoteEstimator($organization, $actor, $oldRequest);
+        try {
+            $credits->beginEstimator($organization, $actor, $oldQuote['quote_id'], $newRequest);
+            self::fail('A pre-format quote authorized the new JSON transport identity.');
+        } catch (\DomainException $error) {
+            self::assertSame('AI credit quote is invalid or expired.', $error->getMessage());
+        }
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $base->sessionId)->count());
+        $freshRequest = new EstimatorCreditRequest(...[...get_object_vars($newRequest), 'operationId' => (string) Str::uuid()]);
+        $newQuote = $credits->quoteEstimator($organization, $actor, $freshRequest);
+        self::assertSame($newQuote['quote_id'], $credits->quoteEstimator($organization, $actor, $freshRequest)['quote_id']);
+        self::assertGreaterThan(0, $credits->beginEstimator($organization, $actor, $newQuote['quote_id'], $freshRequest)->reserved_minor);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $base->sessionId)->count());
+    }
+
     public function test_changed_known_project_facts_require_a_new_quote_before_any_wallet_reservation(): void
     {
         [$organization, $actor, $scope] = $this->fixture();
@@ -2206,7 +2250,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
     {
         \Illuminate\Support\Facades\Http::fake();
         \Illuminate\Support\Facades\Http::preventStrayRequests();
-        foreach (['role' => [1, 4], 'operation' => [2, 3]] as $limit => [$parts, $maximumCalls]) {
+        foreach (['role' => [1, 4, 1800000], 'operation' => [2, 3, 1800000], 'cost' => [2, 4, 90000]] as $limit => [$parts, $maximumCalls, $maximumCost]) {
             [$organization, $actor, $base] = $this->fixture();
             $fixtureHttpCount = \Illuminate\Support\Facades\Http::recorded()->count();
             $plan = $this->plan();
@@ -2214,7 +2258,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             $plan['roles']['estimate_composition']['max_calls'] = $parts * 3;
             $request = new EstimatorCreditRequest($base->organizationId, $base->projectId, $base->sessionId, (int) $actor->id,
                 $base->operationId, $base->kind, $base->stateVersion, $base->inputHash, $base->sourceVersion, $base->manifestHash,
-                hash('sha256', CanonicalPipelineJson::encode($plan)), $base->maximumProviderCostMicroRub, $maximumCalls, $base->supplierTariff);
+                hash('sha256', CanonicalPipelineJson::encode($plan)), $maximumCost, $maximumCalls, $base->supplierTariff);
             $credits = app(AICreditService::class);
             $credits->grant($organization, 10000, 'purchase', null, 'test:identity-call-limits');
             $quote = $credits->quoteEstimator($organization, $actor, $request);
@@ -2231,9 +2275,17 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             $balance = $credits->balance($organization);
             $admission = app(EstimatorCreditAttemptAdmission::class);
             $attemptIds = $fingerprints = [];
-            foreach (['old-contract', 'new-contract', 'new-contract-retry', 'next-contract'] as $index => $identity) {
+            $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput(
+                $request->organizationId, $request->projectId, $request->sessionId, str_repeat('a', 64), [['id' => 'fact:transport', 'status' => 'confirmed']], [], [], [], [],
+                \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::PROMPT_CONTRACT,
+                wireScope: new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(
+                    $request->stateVersion, creditOperationId: $request->operationId));
+            $oldPayload = [...$input->canonicalPayload(), 'approved_operation_id' => $request->operationId];
+            $oldFingerprint = hash('sha256', json_encode($oldPayload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+            self::assertNotSame($oldFingerprint, $input->fingerprint());
+            foreach ([$oldFingerprint, $input->fingerprint(), hash('sha256', $input->fingerprint().'|retry'), hash('sha256', $input->fingerprint().'|next')] as $index => $identity) {
                 $attemptId = $attemptIds[] = (string) Str::uuid();
-                $fingerprint = $fingerprints[] = hash('sha256', $request->operationId.'|'.$identity);
+                $fingerprint = $fingerprints[] = $identity;
                 DB::table('estimate_generation_vision_physical_attempts')->insert(['attempt_id' => $attemptId,
                     'credit_operation_id' => $request->operationId, 'credit_role' => 'estimate_composition',
                     'request_fingerprint' => $fingerprint, 'logical_request_fingerprint' => $fingerprint,
@@ -2249,12 +2301,12 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                     continue;
                 }
                 self::assertSame($limit === 'role' ? 3 : 6, $plan['roles']['estimate_composition']['max_calls']);
-                self::assertSame($limit === 'role' ? 4 : 3, $request->maximumCalls);
+                self::assertSame($maximumCalls, $request->maximumCalls);
                 try {
                     DB::transaction(fn () => $admission->admit(...$arguments));
                     self::fail('A distinct attempt identity bypassed the frozen '.$limit.' call limit.');
                 } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
-                    self::assertSame('estimator_credit_call_limit_reached', $exception->reason);
+                    self::assertSame($limit === 'cost' ? 'estimator_credit_supplier_limit_reached' : 'estimator_credit_call_limit_reached', $exception->reason);
                 }
                 self::assertFalse(DB::table('estimate_generation_credit_attempts')->where('attempt_id', $attemptId)->exists());
                 self::assertSame('pre_wire', DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $attemptId)->value('state'));
@@ -2268,6 +2320,31 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             self::assertSame($balance, $credits->balance($organization));
             self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $request->sessionId)->count());
             self::assertSame(0, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $reservation->id)->count());
+            self::assertSame($fixtureHttpCount, \Illuminate\Support\Facades\Http::recorded()->count());
+            $terminal = match ($limit) {'role' => 'settled', 'operation' => 'cancelled', default => 'failed'};
+            $session = EstimateGenerationSession::query()->findOrFail($request->sessionId);
+            $settlement = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class);
+            if ($terminal === 'settled') {
+                foreach (array_slice($attemptIds, 0, 3) as $attemptId) {
+                    app(EloquentAiUsageStore::class)->record(new AiUsageData(new AiOperationContext((string) Str::uuid(), $attemptId,
+                        $request->organizationId, $request->projectId, $request->sessionId, 'plan_work_items', 'estimate_composition', 1,
+                        creditOperationId: $request->operationId), 'timeweb', 'openai/gpt-6-luna', 'succeeded', 1,
+                        reportedModel: 'openai/gpt-6-luna', usageStatus: 'measured', inputTokens: 100, outputTokens: 50,
+                        priceSnapshot: AiPriceSnapshot::fromArray($request->supplierTariff)));
+                }
+                DB::transaction(fn () => $settlement->publish($session, $request->operationId, []));
+            } else {
+                DB::transaction(fn () => $settlement->abort($session, $request->operationId, $terminal === 'cancelled' ? 'cancelled' : 'fixture_failed'));
+            }
+            self::assertSame($terminal, DB::table('estimate_generation_credit_operations')->where('operation_id', $request->operationId)->value('status'));
+            try {
+                DB::transaction(fn () => $admission->admit($request->operationId, (string) Str::uuid(), $request->organizationId,
+                    $request->projectId, $request->sessionId, 'estimate_composition', new AiCost('0.030000', 'RUB', 'available')));
+                self::fail('A new transport identity restarted a terminal operation.');
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+                self::assertSame('estimator_credit_operation_not_reserved', $exception->reason);
+            }
+            self::assertSame(3, DB::table('estimate_generation_credit_attempts')->where('operation_id', $request->operationId)->count());
             self::assertSame($fixtureHttpCount, \Illuminate\Support\Facades\Http::recorded()->count());
         }
     }

@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepo
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
@@ -185,12 +186,156 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
         self::assertCount(1, $history);
         $request = json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
         self::assertSame('openai/gpt-6-luna', $request['model']);
+        self::assertSame(['type' => 'json_object'], $request['response_format']);
         self::assertSame(2048, $request['max_completion_tokens']);
         self::assertArrayNotHasKey('estimate_generation_scope', $request);
         self::assertArrayNotHasKey('estimate_generation_attempt', $request);
         self::assertSame('0.00472500', DB::table('estimate_generation_ai_usage')->sole()->cost_amount);
         self::assertSame(20, DB::table('estimate_generation_ai_usage')->sole()->cached_input_tokens);
         self::assertSame(10, DB::table('estimate_generation_ai_usage')->sole()->reasoning_tokens);
+    }
+
+    public function test_historical_and_future_composer_sdk_requests_keep_the_previous_format_default(): void
+    {
+        foreach (['estimate-composer:v5', 'estimate-composer:v999'] as $contract) {
+            $history = [];
+            $composer = $this->composer($this->httpWire($history, [[
+                'index' => 0, 'message' => ['role' => 'assistant', 'content' => '{"work_intents":[]}'],
+                'finish_reason' => 'stop', 'logprobs' => null,
+            ]]));
+            $input = new EstimateComposerInput(...[...get_object_vars($this->input()), 'contractVersion' => $contract]);
+            $result = $composer->run($input);
+            self::assertSame($result, $composer->run($input));
+            self::assertCount(1, $history);
+            self::assertArrayNotHasKey('response_format', json_decode((string) $history[0]['request']->getBody(), true, flags: JSON_THROW_ON_ERROR));
+        }
+        self::assertSame(2, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_json_transport_rejects_plaintext_length_model_and_schema_failures_without_repair_calls(): void
+    {
+        foreach (['plaintext', 'length', 'model', 'schema'] as $failure) {
+            $history = [];
+            $wire = $this->httpWire($history, [[
+                'index' => 0, 'message' => ['role' => 'assistant', 'content' => $failure === 'plaintext' ? 'A plain language answer' : ($failure === 'schema' ? '{"unexpected":true}' : '{"work_intents":[]}')],
+                'finish_reason' => $failure === 'length' ? 'length' : 'stop', 'logprobs' => null,
+            ]], model: $failure === 'model' ? 'openai/gpt-6-sol' : 'openai/gpt-6-luna');
+            $input = new EstimateComposerInput(...[...get_object_vars($this->input()), 'snapshotToken' => hash('sha256', $failure)]);
+            $composer = $this->composer($wire);
+            foreach (range(1, 2) as $replay) {
+                try {
+                    $composer->run($input);
+                    self::fail('Invalid provider output became an estimate: '.$failure);
+                } catch (RerankWireException|\InvalidArgumentException $error) {
+                    self::assertContains($error instanceof RerankWireException ? $error->attemptStatus : $error->getMessage(),
+                        ['malformed_response', 'estimate_composer_result_shape_invalid']);
+                }
+            }
+            self::assertCount(1, $history);
+            self::assertSame(['type' => 'json_object'], json_decode((string) $history[0]['request']->getBody(), true, flags: JSON_THROW_ON_ERROR)['response_format']);
+        }
+        self::assertSame(4, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_unsupported_json_mode_is_one_failed_sdk_request_without_fallback(): void
+    {
+        $history = [];
+        $composer = $this->composer($this->httpWire($history, [], status: 400));
+        try {
+            $composer->run($this->input());
+            self::fail('Unsupported JSON mode was accepted.');
+        } catch (RerankWireException $error) {
+            self::assertSame('connection_failed', $error->attemptStatus);
+            self::assertNull($error->httpCode);
+        }
+        self::assertCount(1, $history);
+        self::assertSame(400, $history[0]['response']->getStatusCode());
+        self::assertSame(['type' => 'json_object'], json_decode((string) $history[0]['request']->getBody(), true, flags: JSON_THROW_ON_ERROR)['response_format']);
+        self::assertSame('ambiguous', DB::table('estimate_generation_ai_role_runs')->sole()->status);
+        try {
+            $composer->run($this->input());
+            self::fail('An unknown failed SDK outcome was resent.');
+        } catch (\RuntimeException $error) {
+            self::assertSame('estimate_composer_role_run_ambiguous', $error->getMessage());
+        }
+        self::assertCount(1, $history);
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_explicit_invalid_json_mode_stops_before_sdk_or_physical_admission(): void
+    {
+        $history = [];
+        $wire = $this->httpWire($history, []);
+        try {
+            $wire->call('openai/gpt-6-luna', [['role' => 'user', 'content' => 'Return JSON']], [
+                'response_format' => ['type' => 'text'],
+                'estimate_generation_scope' => ['organization_id' => 10, 'project_id' => 20, 'session_id' => 30, 'state_version' => 1],
+                'estimate_generation_attempt' => ['attempt_id' => (string) \Illuminate\Support\Str::uuid(),
+                    'request_fingerprint' => str_repeat('f', 64), 'operation' => 'estimate_composition'],
+            ]);
+            self::fail('An invalid explicit response format reached the SDK.');
+        } catch (AiWireNotStarted $error) {
+            self::assertSame('text_ai_wire_preparation_failed', $error->getMessage());
+            self::assertSame('estimate_text_response_format_invalid', $error->getPrevious()?->getMessage());
+        }
+        self::assertCount(0, $history);
+        self::assertSame(0, DB::table('estimate_generation_vision_physical_attempts')->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_old_format_role_raw_and_parsed_receipts_cannot_replay_the_json_format_identity(): void
+    {
+        $input = $this->input();
+        $oldFingerprint = hash('sha256', json_encode($input->canonicalPayload(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        self::assertNotSame($oldFingerprint, $input->fingerprint());
+        $oldAttempt = AiOperationContext::deterministicId('estimate-composer-attempt|'.$oldFingerprint);
+        $oldPrice = AiPriceSnapshot::fromArray(['currency' => 'RUB', 'source' => 'fixture', 'version' => 'wire-test-v1',
+            'effective_at' => '2026-10-10T00:00:00+00:00', 'input_per_million' => '13.5',
+            'cached_input_per_million' => '13.5', 'output_per_million' => '67.5',
+            'reasoning_mode' => 'included_in_output', 'reasoning_per_million' => '67.5']);
+        $response = ['content' => '{"work_intents":[]}', 'model' => 'openai/gpt-6-luna', 'usage_available' => true,
+            'input_tokens' => 100, 'output_tokens' => 50, 'finish_reason' => 'stop'];
+        DB::table('estimate_generation_vision_physical_attempts')->insert([
+            'attempt_id' => $oldAttempt, 'organization_id' => 10, 'project_id' => 20, 'session_id' => 30,
+            'request_fingerprint' => $oldFingerprint, 'logical_request_fingerprint' => $oldFingerprint,
+            'state' => 'completed', 'usage_recorded' => true,
+            'response_payload' => json_encode(['wire_response' => $response, 'provider_response' => $response,
+                'parsed_response' => ['work_intents' => []]], JSON_THROW_ON_ERROR),
+            'price_snapshot' => json_encode($oldPrice->toArray(), JSON_THROW_ON_ERROR),
+            'duration_ms' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        (new EloquentAiUsageStore(new AiCostCalculator, DB::connection()))->record(
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData(
+                new AiOperationContext(AiOperationContext::deterministicId('estimate-composer|'.$oldFingerprint),
+                    $oldAttempt, 10, 20, 30, 'plan_work_items', 'estimate_composition', 1),
+                'timeweb', 'openai/gpt-6-luna', 'succeeded', 1, reportedModel: 'openai/gpt-6-luna',
+                usageStatus: 'measured', inputTokens: 100, outputTokens: 50, priceSnapshot: $oldPrice));
+        $oldRole = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput(10, 20, 30, null, null,
+            'estimate_session', '30', $input->snapshotToken,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole::EstimateComposer,
+            'openai/gpt-6-luna', $input->contractVersion, $oldFingerprint);
+        $runs = new EloquentAiRoleRunRepository(DB::connection(), 180);
+        $owner = (string) \Illuminate\Support\Str::uuid();
+        $claim = $runs->claim($oldRole, $owner);
+        $runs->startPhysicalAttempt($claim->runId, $owner, $oldAttempt);
+        $runs->complete($claim->runId, $owner, new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult(
+            ['schema_version' => 1, 'work_intents' => [], 'quarantined_intents' => []], $oldAttempt));
+        $history = [];
+        $composer = $this->composer($this->httpWire($history, [[
+            'index' => 0, 'message' => ['role' => 'assistant', 'content' => '{"work_intents":[]}'],
+            'finish_reason' => 'stop', 'logprobs' => null,
+        ]]));
+        $result = $composer->run($input);
+        self::assertSame($result, $composer->run($input));
+        self::assertCount(1, $history);
+        self::assertSame(2, DB::table('estimate_generation_vision_physical_attempts')->count());
+        self::assertSame(2, DB::table('estimate_generation_ai_role_runs')->count());
+        self::assertSame(2, DB::table('estimate_generation_ai_usage')->count());
+        $store = new DurableAiPhysicalResponseStore(DB::connection());
+        self::assertNotNull($store->replay($oldAttempt, $oldFingerprint));
+        self::assertNull($store->replay($oldAttempt, $input->fingerprint()));
+        self::assertNotNull($store->replayWire(10, 20, 30, $oldAttempt, $oldFingerprint));
+        self::assertNull($store->replayWire(10, 20, 30, $oldAttempt, $input->fingerprint()));
     }
 
     public function test_empty_sdk_choices_preserve_supplier_usage_and_recovery_does_not_resend(): void
@@ -572,17 +717,18 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
 
     }
 
-    private function httpWire(array &$history, array $choices): TimewebRerankWireClient
+    private function httpWire(array &$history, array $choices, int $status = 200, string $model = 'openai/gpt-6-luna'): TimewebRerankWireClient
     {
         config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key',
             'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
-        $handler = HandlerStack::create(new MockHandler([new Response(200, ['Content-Type' => 'application/json'], json_encode([
+        $body = $status === 200 ? [
             'id' => 'chatcmpl-fixture', 'object' => 'chat.completion', 'created' => 1,
-            'model' => 'openai/gpt-6-luna', 'choices' => $choices,
+            'model' => $model, 'choices' => $choices,
             'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 50, 'total_tokens' => 150,
                 'prompt_tokens_details' => ['cached_tokens' => 20],
                 'completion_tokens_details' => ['reasoning_tokens' => 10]],
-        ], JSON_THROW_ON_ERROR))]));
+        ] : ['error' => ['message' => 'response_format is not supported', 'type' => 'invalid_request_error', 'code' => 'unsupported_parameter']];
+        $handler = HandlerStack::create(new MockHandler([new Response($status, ['Content-Type' => 'application/json'], json_encode($body, JSON_THROW_ON_ERROR))]));
         $handler->push(Middleware::history($history));
         $permissions = $this->createMock(AuthorizationService::class);
         $permissions->method('canCurrent')->willReturn(true);

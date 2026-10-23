@@ -17,6 +17,9 @@ final class TimewebChatCompletionPayloadFactory
     public function make(string $model, array $messages, array $options): array
     {
         $model = LunaModelPolicy::assert($model, 'timeweb');
+        if (array_key_exists('response_format', $options) && $options['response_format'] !== ['type' => 'json_object']) {
+            throw new \DomainException('estimate_text_response_format_invalid');
+        }
         foreach ($messages as $message) {
             if (is_string($message['content'] ?? null)) {
                 EstimatorTextPayloadBudget::guard($message['content']);
@@ -45,6 +48,7 @@ final class TimewebChatCompletionPayloadFactory
             'max_completion_tokens' => min($policy['token_limits']['output_tokens'] ?? $prepared['max_completion_tokens'],
                 max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? 240))),
             'reasoning_effort' => 'none',
+            ...(array_key_exists('response_format', $options) ? ['response_format' => $options['response_format']] : []),
         ];
     }
 }
