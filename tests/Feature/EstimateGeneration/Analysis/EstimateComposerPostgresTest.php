@@ -68,7 +68,7 @@ final class EstimateComposerPostgresTest extends EstimateGenerationCanonicalPost
                 ->where('role', 'estimate_composer')->get();
             self::assertCount(1, $receipts);
             self::assertSame('completed', $receipts[0]->status);
-            self::assertSame('estimate-composer:answers:v2', $receipts[0]->prompt_contract_version);
+            self::assertSame($input->contractVersion, $receipts[0]->prompt_contract_version);
             self::assertSame($input->fingerprint(), $receipts[0]->input_fingerprint);
             $payload = json_decode($receipts[0]->result_payload, true, 512, JSON_THROW_ON_ERROR);
             self::assertSame(2, $payload['schema_version']);

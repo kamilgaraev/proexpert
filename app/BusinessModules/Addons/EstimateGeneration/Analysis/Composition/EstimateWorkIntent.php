@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator;
 use InvalidArgumentException;
 
 final readonly class EstimateWorkIntent
@@ -23,6 +24,7 @@ final readonly class EstimateWorkIntent
         public ?string $unit = null,
         public ?string $workSection = null,
         public ?string $entityId = null,
+        public ?string $requirementKey = null,
     ) {
         if (! in_array($kind, ['existing', 'supplementary'], true)
             || ! self::identifier($candidateId)
@@ -44,6 +46,16 @@ final readonly class EstimateWorkIntent
         }
         if ($kind === 'existing' && ($workKey !== null || $name !== null || $derivedQuantityId !== null || $unit !== null || $workSection !== null || $entityId !== null)) {
             throw new InvalidArgumentException('estimate_work_intent_existing_shape_invalid');
+        }
+        if ($requirementKey !== null && ($kind !== 'supplementary' || $workSection === null
+            || ! in_array($requirementKey, ScopeCompletenessEvaluator::workRequirementsFor($workSection), true))) {
+            throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
+        }
+        if ($requirementKey !== null && $workSection !== null && $workKey !== null
+            && ((new WorkIntentSourceClassifier)->canonicalName($workKey) !== null
+                || in_array(ScopeCompletenessEvaluator::workRequirement($workSection, $workKey), ScopeCompletenessEvaluator::workRequirementsFor($workSection), true))
+            && $requirementKey !== ScopeCompletenessEvaluator::workRequirement($workSection, $workKey)) {
+            throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
         }
         if ($kind === 'supplementary' && (
             ! str_starts_with($candidateId, 'supplementary:')
@@ -88,6 +100,12 @@ final readonly class EstimateWorkIntent
                 throw new InvalidArgumentException('estimate_work_intent_entity_invalid');
             }
         }
+        if (array_key_exists('requirement_key', $payload)) {
+            $expectedKeys[] = 'requirement_key';
+            if ($payload['requirement_key'] !== null && ! is_string($payload['requirement_key'])) {
+                throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
+            }
+        }
         sort($actualKeys, SORT_STRING);
         sort($expectedKeys, SORT_STRING);
         if ($actualKeys !== $expectedKeys) {
@@ -112,6 +130,7 @@ final readonly class EstimateWorkIntent
             unit: $payload['unit'] ?? null,
             workSection: $payload['work_section'] ?? null,
             entityId: $payload['entity_id'] ?? null,
+            requirementKey: $payload['requirement_key'] ?? null,
         );
     }
 
@@ -131,6 +150,7 @@ final readonly class EstimateWorkIntent
             'missing_document_recommendations' => $this->missingDocumentRecommendations,
             ...($this->unit === null ? [] : ['unit' => $this->unit, 'work_section' => $this->workSection]),
             ...($this->entityId === null ? [] : ['entity_id' => $this->entityId]),
+            ...($this->requirementKey === null ? [] : ['requirement_key' => $this->requirementKey]),
         ];
     }
 

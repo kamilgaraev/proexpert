@@ -18,19 +18,23 @@ use Throwable;
 
 final readonly class RunEstimateComposer
 {
-    public const PROMPT_CONTRACT = 'estimate-composer:v4';
+    public const PROMPT_CONTRACT = 'estimate-composer:v5';
 
-    public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v1';
+    public const LEGACY_PROMPT_CONTRACT = 'estimate-composer:legacy:v2';
 
-    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v2';
+    public const ANSWER_PROMPT_CONTRACT = 'estimate-composer:answers:v3';
 
-    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v2';
+    public const LEGACY_ANSWER_PROMPT_CONTRACT = 'estimate-composer:legacy-answers:v3';
 
     public const CELL_PROMPT_CONTRACTS = [
-        self::PROMPT_CONTRACT => 'estimate-composer:cells:v1',
-        self::LEGACY_PROMPT_CONTRACT => 'estimate-composer:legacy-cells:v1',
-        self::ANSWER_PROMPT_CONTRACT => 'estimate-composer:answer-cells:v1',
-        self::LEGACY_ANSWER_PROMPT_CONTRACT => 'estimate-composer:legacy-answer-cells:v1',
+        self::PROMPT_CONTRACT => 'estimate-composer:cells:v2',
+        self::LEGACY_PROMPT_CONTRACT => 'estimate-composer:legacy-cells:v2',
+        self::ANSWER_PROMPT_CONTRACT => 'estimate-composer:answer-cells:v2',
+        self::LEGACY_ANSWER_PROMPT_CONTRACT => 'estimate-composer:legacy-answer-cells:v2',
+        'estimate-composer:v4' => 'estimate-composer:cells:v1',
+        'estimate-composer:legacy:v1' => 'estimate-composer:legacy-cells:v1',
+        'estimate-composer:answers:v2' => 'estimate-composer:answer-cells:v1',
+        'estimate-composer:legacy-answers:v2' => 'estimate-composer:legacy-answer-cells:v1',
     ];
 
     public function __construct(
@@ -157,6 +161,9 @@ final readonly class RunEstimateComposer
             $allowedFactIds = array_fill_keys(array_column($input->facts, 'id'), true);
             foreach ($stored as $index => $intent) {
                 if (! is_array($intent)) {
+                    throw new RuntimeException('estimate_composer_replay_invalid');
+                }
+                if (($intent['requirement_key'] ?? null) !== null && ! $input->acceptsWorkRequirements()) {
                     throw new RuntimeException('estimate_composer_replay_invalid');
                 }
                 $typed = EstimateWorkIntent::fromArray($intent);
@@ -344,6 +351,12 @@ final readonly class RunEstimateComposer
                 }
                 if ($kind === 'supplementary' && array_key_exists('entity_id', $record)) {
                     $projected['entity_id'] = $record['entity_id'];
+                }
+                if (array_key_exists('requirement_key', $record)) {
+                    if ($record['requirement_key'] !== null && ! $input->acceptsWorkRequirements()) {
+                        throw new InvalidArgumentException('estimate_work_intent_requirement_invalid');
+                    }
+                    $projected['requirement_key'] = $record['requirement_key'];
                 }
                 $intent = EstimateWorkIntent::fromArray($projected);
                 if (isset($seenCandidateIds[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {

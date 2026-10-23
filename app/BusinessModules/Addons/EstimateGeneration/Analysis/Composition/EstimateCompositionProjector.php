@@ -143,6 +143,9 @@ final readonly class EstimateCompositionProjector
             $operandIds = $quantity === null ? [] : $binding['operand_fact_ids'];
             $technology = $this->identifier($intent['technology_package_candidate'] ?? null);
             $metadata = ['composition_work_key' => $intent['work_key']];
+            if (is_string($intent['requirement_key'] ?? null)) {
+                $metadata['requirement_key'] = $intent['requirement_key'];
+            }
             if ($technology !== null) {
                 $metadata['technology_package_id'] = $technology;
             }

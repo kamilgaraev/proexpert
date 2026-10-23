@@ -2192,10 +2192,86 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         }
     }
 
+    public function test_distinct_attempt_identities_share_the_frozen_operation_and_role_call_limits(): void
+    {
+        \Illuminate\Support\Facades\Http::fake();
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        foreach (['role' => [1, 4], 'operation' => [2, 3]] as $limit => [$parts, $maximumCalls]) {
+            [$organization, $actor, $base] = $this->fixture();
+            $fixtureHttpCount = \Illuminate\Support\Facades\Http::recorded()->count();
+            $plan = $this->plan();
+            $plan['composer_part_limit'] = $parts;
+            $plan['roles']['estimate_composition']['max_calls'] = $parts * 3;
+            $request = new EstimatorCreditRequest($base->organizationId, $base->projectId, $base->sessionId, (int) $actor->id,
+                $base->operationId, $base->kind, $base->stateVersion, $base->inputHash, $base->sourceVersion, $base->manifestHash,
+                hash('sha256', CanonicalPipelineJson::encode($plan)), $base->maximumProviderCostMicroRub, $maximumCalls, $base->supplierTariff);
+            $credits = app(AICreditService::class);
+            $credits->grant($organization, 10000, 'purchase', null, 'test:identity-call-limits');
+            $quote = $credits->quoteEstimator($organization, $actor, $request);
+            $reservation = $credits->beginEstimator($organization, $actor, $quote['quote_id'], $request);
+            self::assertSame($fixtureHttpCount, \Illuminate\Support\Facades\Http::recorded()->count());
+            DB::table('estimate_generation_credit_operations')->insert(['operation_id' => $request->operationId,
+                'organization_id' => $request->organizationId, 'project_id' => $request->projectId, 'session_id' => $request->sessionId,
+                'actor_user_id' => $actor->id, 'kind' => $request->kind, 'status' => 'reserved', 'approved_state_version' => $request->stateVersion,
+                'input_hash' => $request->inputHash, 'source_version' => $request->sourceVersion, 'manifest_hash' => $request->manifestHash,
+                'plan_hash' => $request->planHash, 'processing_plan' => CanonicalPipelineJson::encode($plan),
+                'credit_request' => CanonicalPipelineJson::encode($request->identity()), 'quote_id' => $reservation->ai_credit_quote_id,
+                'reservation_id' => $reservation->id, 'maximum_provider_cost_micro_rub' => $request->maximumProviderCostMicroRub,
+                'maximum_calls' => $request->maximumCalls, 'created_at' => now(), 'updated_at' => now()]);
+            $balance = $credits->balance($organization);
+            $admission = app(EstimatorCreditAttemptAdmission::class);
+            $attemptIds = $fingerprints = [];
+            foreach (['old-contract', 'new-contract', 'new-contract-retry', 'next-contract'] as $index => $identity) {
+                $attemptId = $attemptIds[] = (string) Str::uuid();
+                $fingerprint = $fingerprints[] = hash('sha256', $request->operationId.'|'.$identity);
+                DB::table('estimate_generation_vision_physical_attempts')->insert(['attempt_id' => $attemptId,
+                    'credit_operation_id' => $request->operationId, 'credit_role' => 'estimate_composition',
+                    'request_fingerprint' => $fingerprint, 'logical_request_fingerprint' => $fingerprint,
+                    'organization_id' => $request->organizationId, 'project_id' => $request->projectId, 'session_id' => $request->sessionId,
+                    'state' => 'pre_wire', 'owner_token' => $attemptId, 'lease_expires_at' => now()->addMinutes(5),
+                    'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now()]);
+                $arguments = [$request->operationId, $attemptId, $request->organizationId, $request->projectId, $request->sessionId,
+                    'estimate_composition', new AiCost('0.030000', 'RUB', 'available')];
+                if ($index < 3) {
+                    self::assertSame((int) $reservation->id, DB::transaction(fn () => $admission->admit(...$arguments)));
+                    self::assertSame($index + 1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $request->operationId)->count());
+
+                    continue;
+                }
+                self::assertSame($limit === 'role' ? 3 : 6, $plan['roles']['estimate_composition']['max_calls']);
+                self::assertSame($limit === 'role' ? 4 : 3, $request->maximumCalls);
+                try {
+                    DB::transaction(fn () => $admission->admit(...$arguments));
+                    self::fail('A distinct attempt identity bypassed the frozen '.$limit.' call limit.');
+                } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+                    self::assertSame('estimator_credit_call_limit_reached', $exception->reason);
+                }
+                self::assertFalse(DB::table('estimate_generation_credit_attempts')->where('attempt_id', $attemptId)->exists());
+                self::assertSame('pre_wire', DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $attemptId)->value('state'));
+            }
+            self::assertCount(4, array_unique($attemptIds));
+            self::assertCount(4, array_unique($fingerprints));
+            self::assertEqualsCanonicalizing(array_slice($attemptIds, 0, 3), DB::table('estimate_generation_credit_attempts')
+                ->where('operation_id', $request->operationId)->pluck('attempt_id')->all());
+            self::assertSame(90000, (int) DB::table('estimate_generation_credit_attempts')->where('operation_id', $request->operationId)->sum('maximum_cost_micro_rub'));
+            self::assertSame('running', DB::table('estimate_generation_credit_operations')->where('operation_id', $request->operationId)->value('status'));
+            self::assertSame($balance, $credits->balance($organization));
+            self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $request->sessionId)->count());
+            self::assertSame(0, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $reservation->id)->count());
+            self::assertSame($fixtureHttpCount, \Illuminate\Support\Facades\Http::recorded()->count());
+        }
+    }
+
     public function test_unknown_actual_model_is_not_billed_and_historical_receipts_are_frozen_on_replay(): void
     {
         foreach ([null, 'openai/gpt-6-sol', 'historical'] as $case) {
-            [$organization, $actor, $request] = $this->fixture();
+            [$organization, $actor, $base] = $this->fixture();
+            $plan = $this->plan();
+            $plan['composer_part_limit'] = 1;
+            $plan['roles']['estimate_composition']['max_calls'] = 3;
+            $request = new EstimatorCreditRequest($base->organizationId, $base->projectId, $base->sessionId, (int) $actor->id,
+                $base->operationId, $base->kind, $base->stateVersion, $base->inputHash, $base->sourceVersion, $base->manifestHash,
+                hash('sha256', CanonicalPipelineJson::encode($plan)), $base->maximumProviderCostMicroRub, 3, $base->supplierTariff);
             $credits = app(AICreditService::class);
             $credits->grant($organization, 10000, 'purchase', null, 'test:physical-wallet');
             $quote = $credits->quoteEstimator($organization, $actor, $request);
@@ -2204,14 +2280,14 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 'organization_id' => $request->organizationId, 'project_id' => $request->projectId, 'session_id' => $request->sessionId,
                 'actor_user_id' => $actor->id, 'kind' => $request->kind, 'status' => 'reserved', 'approved_state_version' => $request->stateVersion,
                 'input_hash' => $request->inputHash, 'source_version' => $request->sourceVersion, 'manifest_hash' => $request->manifestHash,
-                'plan_hash' => $request->planHash, 'processing_plan' => CanonicalPipelineJson::encode($this->plan()),
+                'plan_hash' => $request->planHash, 'processing_plan' => CanonicalPipelineJson::encode($plan),
                 'credit_request' => CanonicalPipelineJson::encode($request->identity()), 'quote_id' => $reservation->ai_credit_quote_id,
                 'reservation_id' => $reservation->id, 'maximum_provider_cost_micro_rub' => $request->maximumProviderCostMicroRub,
                 'maximum_calls' => $request->maximumCalls, 'created_at' => now(), 'updated_at' => now()]);
             $attemptId = (string) Str::uuid();
             $admission = app(EstimatorCreditAttemptAdmission::class);
             $arguments = [$request->operationId, $attemptId, $request->organizationId, $request->projectId, $request->sessionId,
-                'estimate_composition', new AiCost('0.030000', 'RUB', 'available')];
+                'estimate_composition', new AiCost('1.800000', 'RUB', 'available')];
             DB::transaction(fn () => $admission->admit(...$arguments));
             $context = new AiOperationContext((string) Str::uuid(), $attemptId, $request->organizationId,
                 $request->projectId, $request->sessionId, 'plan_work_items', 'estimate_composition', 1,
@@ -2252,6 +2328,24 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 DB::table('estimate_generation_credit_attempts')->where('attempt_id', $attemptId)->value('status'));
             self::assertSame('running', DB::table('estimate_generation_credit_operations')
                 ->where('operation_id', $request->operationId)->value('status'));
+            self::assertSame(1800000, (int) DB::table('estimate_generation_credit_attempts')->where('attempt_id', $attemptId)->value('maximum_cost_micro_rub'));
+            $nextAttempt = (string) Str::uuid();
+            $next = [$request->operationId, $nextAttempt, $request->organizationId, $request->projectId, $request->sessionId,
+                'estimate_composition', new AiCost('0.030000', 'RUB', 'available')];
+            if ($case === 'historical') {
+                self::assertSame((int) $reservation->id, DB::transaction(fn () => $admission->admit(...$next)));
+                self::assertSame(2, DB::table('estimate_generation_credit_attempts')->where('operation_id', $request->operationId)->count());
+            } else {
+                try {
+                    DB::transaction(fn () => $admission->admit(...$next));
+                    self::fail('Unavailable ledger zero released the previous maximum supplier exposure.');
+                } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+                    self::assertSame('estimator_credit_supplier_limit_reached', $exception->reason);
+                }
+                self::assertFalse(DB::table('estimate_generation_credit_attempts')->where('attempt_id', $nextAttempt)->exists());
+                self::assertSame(1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $request->operationId)->count());
+                self::assertSame(0, DB::table('ai_credit_provider_usages')->where('usage_key', $nextAttempt)->count());
+            }
         }
     }
 

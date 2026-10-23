@@ -133,7 +133,17 @@ final readonly class EstimateComposerInput
     public function acceptsSourceClaims(): bool
     {
         return in_array($this->baseContractVersion(), [RunEstimateComposer::ANSWER_PROMPT_CONTRACT,
-            RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT], true);
+            RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT, 'estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2'], true);
+    }
+
+    public function acceptsWorkRequirements(): bool
+    {
+        return in_array($this->contractVersion, [RunEstimateComposer::PROMPT_CONTRACT, RunEstimateComposer::LEGACY_PROMPT_CONTRACT,
+            RunEstimateComposer::ANSWER_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT,
+            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::PROMPT_CONTRACT],
+            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::LEGACY_PROMPT_CONTRACT],
+            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::ANSWER_PROMPT_CONTRACT],
+            RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT]], true);
     }
 
     public function withSourceClaimReferences(array $references): self
