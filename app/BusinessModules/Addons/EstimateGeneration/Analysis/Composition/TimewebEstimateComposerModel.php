@@ -81,6 +81,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 ['role' => 'user', 'content' => $payload],
             ], [
                 'profile' => 'json',
+                ...($input->responseFormat() === null ? [] : ['response_format' => $input->responseFormat()]),
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,

@@ -11,6 +11,15 @@ final readonly class EstimateComposerInput
 {
     public const MAX_SOURCE_CLAIMS = 8;
 
+    private const JSON_OBJECT_TRANSPORT_CONTRACT = 'estimate-composer-json-object:v1';
+
+    private const JSON_OBJECT_CONTRACTS = [RunEstimateComposer::PROMPT_CONTRACT, RunEstimateComposer::LEGACY_PROMPT_CONTRACT,
+        RunEstimateComposer::ANSWER_PROMPT_CONTRACT, RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT,
+        RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::PROMPT_CONTRACT],
+        RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::LEGACY_PROMPT_CONTRACT],
+        RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::ANSWER_PROMPT_CONTRACT],
+        RunEstimateComposer::CELL_PROMPT_CONTRACTS[RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT]];
+
     public const WORK_SOURCE_CLAIM_CONTRACTS = ['estimate-composer:answers:v5', 'estimate-composer:legacy-answers:v5',
         'estimate-composer:answer-cells:v4', 'estimate-composer:legacy-answer-cells:v4'];
 
@@ -327,9 +336,18 @@ final readonly class EstimateComposerInput
             && self::identifier($document['entity_id'] ?? null) && ($document['unit'] ?? null) === null;
     }
 
+    public function responseFormat(): ?array
+    {
+        return in_array($this->contractVersion, self::JSON_OBJECT_CONTRACTS, true) ? ['type' => 'json_object'] : null;
+    }
+
     public function fingerprint(): string
     {
         $payload = $this->canonicalPayload();
+        if (($format = $this->responseFormat()) !== null) {
+            $payload['transport_contract'] = self::JSON_OBJECT_TRANSPORT_CONTRACT;
+            $payload['response_format'] = $format;
+        }
         if ($this->wireScope?->creditOperationId !== null) {
             $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
         }
