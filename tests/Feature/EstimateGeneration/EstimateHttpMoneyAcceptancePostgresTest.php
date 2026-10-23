@@ -786,6 +786,39 @@ final class EstimateHttpMoneyAcceptancePostgresTest extends EstimateGenerationCa
         self::assertSame($ledgerBefore, $this->answerLedgerCounts($session));
         self::assertSame(9, DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
             ->where('generation_attempt_id', $rebuildOperation)->where('status', 'completed')->count());
+        self::assertSame('ai-composer-supplementary:equipment', $session->fresh()->input_payload['rebuild_section_key']);
+        $this->transport($session, descriptionOnly: true, technologyClarification: $clarification, withForeignSection: true);
+        $nextFullOperation = (string) Str::uuid();
+        $nextFullState = $session->fresh()->state_version;
+        $nextFullQuote = $this->postJson($url.'/operations/quote', ['request_id' => $nextFullOperation,
+            'state_version' => $nextFullState, 'operation_kind' => 'generation',
+            'operation_parameters' => ['max_work_items' => 4]], $headers)->assertOk()->json('data');
+        self::assertSame('generation', DB::table('estimate_generation_credit_operations')->where('operation_id', $nextFullOperation)->sole()->kind);
+        $queuedBefore = Queue::pushed(GenerateEstimateDraftJob::class)->count();
+        $this->postJson($url.'/generate', ['request_id' => $nextFullOperation, 'quote_id' => $nextFullQuote['quote_id'],
+            'state_version' => $nextFullState, 'generation_mode' => 'ai_assisted'], $headers)->assertSuccessful();
+        self::assertNull($session->fresh()->input_payload['rebuild_section_key'] ?? null,
+            'A full generation retained the preceding local rebuild target in its server input.');
+        $nextFullJob = Queue::pushed(GenerateEstimateDraftJob::class)->slice($queuedBefore)->sole();
+        foreach (ProcessingStage::cases() as $stage) {
+            try {
+                $nextFullJob->handle(app(RunEstimateGenerationDraft::class));
+            } catch (\Throwable $error) {
+                throw $this->recordingFailure ?? $error;
+            }
+        }
+        self::assertCount(4, $this->composerProjects);
+        self::assertSame(9, DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
+            ->where('generation_attempt_id', $nextFullOperation)->where('status', 'completed')->count());
+        foreach ([$rebuildOperation => 'ai-composer-supplementary:equipment', $nextFullOperation => null] as $attempt => $expectedTarget) {
+            $checkpoint = DB::table('estimate_generation_pipeline_checkpoints')->where('organization_id', $session->organization_id)
+                ->where('project_id', $project->id)->where('session_id', $session->id)->where('generation_attempt_id', $attempt)
+                ->where('stage', ProcessingStage::UnderstandDocuments->value)->where('status', 'completed')->sole();
+            $envelope = json_decode($checkpoint->output_payload, true, 64, JSON_THROW_ON_ERROR);
+            $manifest = json_decode(Storage::disk('s3')->get($envelope['artifact']['object_key']), true, 64, JSON_THROW_ON_ERROR);
+            self::assertSame($expectedTarget, $manifest['rebuild_section_key']);
+        }
+        self::assertNull($session->fresh()->input_payload['rebuild_section_key'] ?? null);
         Http::assertNothingSent();
     }
 
