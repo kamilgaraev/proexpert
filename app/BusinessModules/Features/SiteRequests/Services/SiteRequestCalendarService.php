@@ -208,7 +208,10 @@ class SiteRequestCalendarService
                 static fn ($query) => $query
                     ->where('organization_id', $organizationId)
                     ->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
-                    ->when($requestType !== null, static fn ($query) => $query->where('request_type', $requestType))
+                    ->when($requestType !== null, static fn ($query) => $query->whereIn(
+                        'request_type',
+                        SiteRequestTypeEnum::tryFrom($requestType)?->storedValues() ?? [$requestType],
+                    ))
                     ->when($statuses !== [], static fn ($query) => $query->whereIn('status', $statuses))
             )
             ->with(['siteRequest.project', 'siteRequest.user']);

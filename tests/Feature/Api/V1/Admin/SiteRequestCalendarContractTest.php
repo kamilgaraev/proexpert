@@ -122,6 +122,31 @@ final class SiteRequestCalendarContractTest extends TestCase
         }
     }
 
+    public function test_filters_and_export_include_all_supported_legacy_request_types(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->withHeaders($context->authHeaders());
+        foreach ([
+            'material_request' => 'material', 'personnel_request' => 'personnel',
+            'equipment_request' => 'equipment', 'info_request' => 'info', 'issue_report' => 'issue',
+        ] as $type => $legacy) {
+            $canonical = $this->createEvent($context, $project, $type, 'approved');
+            $old = $this->createEvent($context, $project, $type, 'approved');
+            SiteRequest::query()->whereKey($old->site_request_id)->update(['request_type' => $legacy]);
+            $this->assertSame($type, $old->siteRequest->request_type->value);
+            $filters = ['project_id' => $project->id, 'type' => $type, 'status' => 'approved'];
+
+            $response = $this->getJson($this->url($filters))->assertOk()->assertJsonCount(2, 'data');
+            $this->assertEqualsCanonicalizing([$canonical->id, $old->id], array_column($response->json('data'), 'id'));
+            $this->assertSame([$type], array_values(array_unique(array_column(array_column($response->json('data'), 'request'), 'request_type'))));
+
+            $ical = $this->get($this->url($filters, '/export'))->assertOk()->getContent();
+            $this->assertSame(2, substr_count($ical, 'BEGIN:VEVENT'));
+            $this->assertStringContainsString("UID:site-request-{$old->id}@prohelper.ru", $ical);
+        }
+    }
+
     private function url(array $filters = [], string $suffix = ''): string
     {
         return '/api/v1/admin/site-requests/calendar'.$suffix.'?'.http_build_query([
