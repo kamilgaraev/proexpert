@@ -21,11 +21,14 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentAccessGrant;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
 use App\Domain\Authorization\Http\Middleware\InterfaceRequestProvenance;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
 use App\Models\Project;
+use App\Models\User;
 use App\Http\Middleware\ResetJwtRequestState;
 use App\Services\FileService;
 use App\Services\Modules\PackageCatalogService;
@@ -324,15 +327,53 @@ final class AssistantDocumentCandidateTest extends TestCase
         $this->getJson(self::PATH)->assertForbidden();
     }
 
-    public function test_current_owner_membership_is_required_even_with_a_matching_cohort(): void
+    public function test_current_membership_and_egress_permission_are_required_even_with_a_matching_cohort(): void
     {
         $this->cohort->update(['actor_id' => $this->fixture->member->id]);
         $this->actingAs($this->fixture->member);
         $this->getJson(self::PATH)->assertForbidden();
         $this->actingAs($this->fixture->owner);
         $this->cohort->update(['actor_id' => $this->fixture->owner->id]);
-        $this->fixture->owner->organizations()->updateExistingPivot($this->fixture->organization->id, ['is_owner' => false]);
+        $this->fixture->owner->organizations()->updateExistingPivot($this->fixture->organization->id, ['is_active' => false]);
         $this->getJson(self::PATH)->assertForbidden();
+    }
+
+    public function test_delegated_manager_reads_authorized_document_metadata_without_settings_or_finance(): void
+    {
+        [$actor, , $document] = $this->delegatedDocumentReader();
+        $chunks = $this->chunks($document, 2);
+        $this->assertDelegatedSourceAccess($actor, $document, true);
+
+        $response = $this->getJson(self::PATH)->assertOk();
+        self::assertSame([$document->id], array_column($response->json('data.items'), 'document_id'));
+        $this->assertUncacheable($response);
+        $response = $this->getJson(self::PATH.'?document_id='.$document->id)->assertOk();
+        self::assertSame(array_map(static fn (RagChunk $chunk): int => (int) $chunk->id, $chunks), array_column($response->json('data.items'), 'chunk_id'));
+        self::assertStringNotContainsString(self::PRIVATE_TEXT, $response->getContent());
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
+    public function test_current_source_access_without_egress_permission_does_not_allow_candidates(): void
+    {
+        [$actor, , $document] = $this->delegatedDocumentReader(false);
+        $this->assertDelegatedSourceAccess($actor, $document, false);
+        $this->getJson(self::PATH)->assertForbidden();
+        $this->getJson(self::PATH.'?document_id='.$document->id)->assertForbidden();
+    }
+
+    public function test_delegated_manager_permission_revocation_is_current_despite_unchanged_source_access(): void
+    {
+        [$actor, $role, $document] = $this->delegatedDocumentReader();
+        $this->assertDelegatedSourceAccess($actor, $document, true);
+        $this->getJson(self::PATH)->assertOk()->assertJsonPath('data.items.0.document_id', $document->id);
+        $permissions = $role->module_permissions;
+        $permissions['ai-assistant'] = ['ai_assistant.chat'];
+        $role->update(['module_permissions' => $permissions]);
+
+        $this->assertDelegatedSourceAccess($actor, $document, false);
+        $this->getJson(self::PATH)->assertForbidden();
+        $this->getJson(self::PATH.'?document_id='.$document->id)->assertForbidden();
     }
 
     public function test_chunk_metadata_requires_matching_unit_source_organization_and_project(): void
@@ -436,11 +477,46 @@ final class AssistantDocumentCandidateTest extends TestCase
             AssistantEgressCohort::query()->count(), AssistantEgressEnrollment::query()->count()];
     }
 
-    private function legalGrant(LegalArchiveDocument $document): LegalDocumentAccessGrant
+    private function delegatedDocumentReader(bool $egressPermission = true): array
+    {
+        [$document, $legal] = $this->legalDocument();
+        $assistant = ['ai_assistant.chat'];
+        if ($egressPermission) {
+            $assistant[] = 'ai_assistant.egress.manage';
+        }
+        $actor = Model::withoutEvents(fn () => $this->fixture->addMember([
+            'ai-assistant' => $assistant, 'project-management' => ['projects.view'],
+        ], ['legal_archive.view', 'legal_archive.files.view']));
+        $this->project->users()->attach($actor->id, ['role' => 'member', 'assigned_by_user_id' => $this->fixture->owner->id,
+            'is_active' => true, 'assigned_at' => now()]);
+        $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
+        $role = OrganizationCustomRole::query()->findOrFail($assignment->custom_role_id);
+        $this->legalGrant($legal, $actor);
+        $this->cohort->update(['actor_id' => $actor->id]);
+        $this->actingAs($actor);
+
+        return [$actor, $role, $document];
+    }
+
+    private function assertDelegatedSourceAccess(User $actor, AIAssistantDocument $document, bool $egressPermission): void
+    {
+        $organizationId = (int) $this->fixture->organization->id;
+        $authorization = app(AuthorizationService::class);
+        self::assertSame($egressPermission, $authorization->canCurrent($actor, 'ai_assistant.egress.manage', ['organization_id' => $organizationId]));
+        self::assertFalse($authorization->canCurrent($actor, 'ai_assistant.settings.manage', ['organization_id' => $organizationId]));
+        $policy = app(AssistantDataAccessPolicy::class);
+        self::assertFalse($policy->canReadDomain($actor, $organizationId, 'finance'));
+        self::assertTrue($policy->canReadEntity($actor, $organizationId, 'project', $this->project->id));
+        self::assertTrue($authorization->canCurrent($actor, 'legal_archive.view', ['organization_id' => $organizationId]));
+        self::assertTrue($authorization->canCurrent($actor, 'legal_archive.files.view', ['organization_id' => $organizationId]));
+        self::assertTrue($policy->canReadEntityContent($actor, $organizationId, $document->parent_entity_type, $document->parent_entity_id));
+    }
+
+    private function legalGrant(LegalArchiveDocument $document, ?User $subject = null): LegalDocumentAccessGrant
     {
         return LegalDocumentAccessGrant::query()->create(['organization_id' => $this->fixture->organization->id, 'document_id' => $document->id,
             'subject_kind' => 'internal_user', 'subject_organization_id' => $this->fixture->organization->id,
-            'subject_user_id' => $this->fixture->owner->id, 'abilities' => ['view'], 'granted_by_user_id' => $this->fixture->owner->id]);
+            'subject_user_id' => ($subject ?? $this->fixture->owner)->id, 'abilities' => ['view'], 'granted_by_user_id' => $this->fixture->owner->id]);
     }
 
     private function assertUncacheable(TestResponse $response): void

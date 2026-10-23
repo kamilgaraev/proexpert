@@ -30,7 +30,7 @@ final readonly class AssistantDocumentCandidateService
         }
 
         return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $documentId, $afterId): array {
-            $this->enrollments->assertOwner($actor, $organizationId);
+            $this->enrollments->assertOrganizationManager((int) $actor->id, $organizationId);
             $cohortId = AssistantEgressCohort::query()->where('organization_id', $organizationId)->where('actor_id', $actor->id)
                 ->where('status', 'active')->where('expires_at', '>', now())->value('id');
             if (! is_string($cohortId)) {
