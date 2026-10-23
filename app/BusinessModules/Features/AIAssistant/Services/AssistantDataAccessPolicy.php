@@ -1321,6 +1321,13 @@ final class AssistantDataAccessPolicy
         return $query;
     }
 
+    public function schemaColumnTypes(string $table): array
+    {
+        $this->currentCheckpoint?->__invoke();
+
+        return $this->schemaMetadata->columnTypes($table);
+    }
+
     private function schemaColumns(string $table): array
     {
         $this->currentCheckpoint?->__invoke();

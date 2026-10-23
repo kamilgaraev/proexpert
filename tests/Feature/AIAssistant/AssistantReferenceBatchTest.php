@@ -416,6 +416,8 @@ final class AssistantReferenceBatchTest extends TestCase
             DB::statement('SET LOCAL search_path TO assistant_reference_schema_test, public');
             $expected = \Illuminate\Support\Facades\Schema::getColumnListing('projects');
             $public = \Illuminate\Support\Facades\Schema::getColumnListing('public.projects');
+            $expectedTypes = array_column(\Illuminate\Support\Facades\Schema::getColumns('projects'), 'type_name', 'name');
+            $publicTypes = array_column(\Illuminate\Support\Facades\Schema::getColumns('public.projects'), 'type_name', 'name');
             self::assertContains('runtime_schema_marker', $expected);
             self::assertNotContains('runtime_schema_marker', $public);
             $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
@@ -424,6 +426,7 @@ final class AssistantReferenceBatchTest extends TestCase
             try {
                 $metadata->prefetchForEntity('project', 'projects');
                 self::assertSame($expected, $metadata->columns('projects'));
+                self::assertSame($expectedTypes, $metadata->columnTypes('projects'));
                 self::assertCount(1, DB::getQueryLog());
                 DB::flushQueryLog();
                 $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
@@ -434,6 +437,8 @@ final class AssistantReferenceBatchTest extends TestCase
                 ], cacheMissing: false);
                 self::assertSame($expected, $metadata->columns('projects'));
                 self::assertSame($public, $metadata->columns('public.projects'));
+                self::assertSame($expectedTypes, $metadata->columnTypes('projects'));
+                self::assertSame($publicTypes, $metadata->columnTypes('public.projects'));
                 self::assertCount(1, DB::getQueryLog());
             } finally {
                 DB::disableQueryLog();
@@ -450,14 +455,20 @@ final class AssistantReferenceBatchTest extends TestCase
     {
         $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
         $types = ['project', 'estimate', 'estimate_item', 'schedule', 'schedule_task', 'payment_document', 'not_a_declared_type'];
+        $definitions = \App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions();
+        $expectedTypes = [];
+        foreach (['project', 'estimate', 'estimate_item', 'schedule', 'schedule_task', 'payment_document', 'contract', 'performance_act', 'completed_work'] as $type) {
+            $model = (new \ReflectionClass($definitions[$type][1]))->newInstanceWithoutConstructor();
+            $expectedTypes[$type] = array_column(\Illuminate\Support\Facades\Schema::getColumns($model->getTable()), 'type_name', 'name');
+        }
         DB::enableQueryLog();
         DB::flushQueryLog();
         try {
             $metadata->prefetchForEntities($types);
-            $definitions = \App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions();
             foreach (['project', 'estimate', 'estimate_item', 'schedule', 'schedule_task', 'payment_document', 'contract', 'performance_act', 'completed_work'] as $type) {
                 $model = (new \ReflectionClass($definitions[$type][1]))->newInstanceWithoutConstructor();
                 self::assertContains('id', $metadata->columns($model->getTable()), $type.' schema');
+                self::assertSame($expectedTypes[$type], $metadata->columnTypes($model->getTable()), $type.' column types');
             }
             self::assertCount(1, DB::getQueryLog());
         } finally {
@@ -472,14 +483,37 @@ final class AssistantReferenceBatchTest extends TestCase
         $table = 'assistant_reference_schema_late_test';
         $metadata->prefetch(['probe' => ['probe', AssistantReferenceLateSchemaModel::class, 'probe']], cacheMissing: false);
         self::assertSame([], $metadata->columns($table));
+        self::assertSame([], $metadata->columnTypes($table));
         try {
             \Illuminate\Support\Facades\Schema::create($table, static function (\Illuminate\Database\Schema\Blueprint $blueprint): void {
                 $blueprint->id();
                 $blueprint->unsignedBigInteger('organization_id');
             });
             self::assertContains('organization_id', $metadata->columns($table));
+            self::assertSame(array_column(\Illuminate\Support\Facades\Schema::getColumns($table), 'type_name', 'name'), $metadata->columnTypes($table));
         } finally {
             \Illuminate\Support\Facades\Schema::dropIfExists($table);
+        }
+    }
+
+    public function test_column_types_are_cached_only_in_the_current_metadata_instance(): void
+    {
+        $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+        $expected = array_column(\Illuminate\Support\Facades\Schema::getColumns('projects'), 'type_name', 'name');
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            self::assertSame($expected, $metadata->columnTypes('projects'));
+            self::assertCount(1, DB::getQueryLog());
+            DB::flushQueryLog();
+            self::assertSame($expected, $metadata->columnTypes('projects'));
+            self::assertCount(0, DB::getQueryLog());
+            $nextRequest = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+            self::assertSame($expected, $nextRequest->columnTypes('projects'));
+            self::assertCount(1, DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
         }
     }
 
