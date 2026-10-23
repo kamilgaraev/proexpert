@@ -147,8 +147,13 @@ final class TimewebProvider implements LLMProviderInterface
         $maxTokens = min(max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? $this->maxTokens)), $prepared['max_completion_tokens']);
         $payload = OpenAIProvider::nativePayload($model, $prepared['messages'], $tools, $maxTokens, $options['tool_choice'] ?? null);
         $timeout = $this->positiveFloat($options['timeout'] ?? $this->timeout, $this->timeout);
+        $captureInterruptedUsage = app()->bound(AssistantRequestExecutionContext::class);
+        $interruptedUsage = null;
         try {
             $response = $this->makeClient($timeout)->responses()->create($payload);
+            if ($captureInterruptedUsage) {
+                $interruptedUsage = AssistantInterruptedProviderUsage::fromResponse($response, $model);
+            }
             if (app()->bound(AssistantRequestExecutionContext::class)) {
                 app(AssistantRequestExecutionContext::class)->assertCanContinue();
             }
@@ -158,11 +163,18 @@ final class TimewebProvider implements LLMProviderInterface
                 : ['actual_input_tokens' => null, 'provider_usage_available' => false, 'persisted' => false, 'profile_input_exceeded' => false];
             return $result;
         } catch (\Throwable $exception) {
-            if (app()->bound(AssistantRequestExecutionContext::class)) {
-                app(AssistantRequestExecutionContext::class)->assertCanContinue();
+            try {
+                if (app()->bound(AssistantRequestExecutionContext::class)) {
+                    app(AssistantRequestExecutionContext::class)->assertCanContinue();
+                }
+                $this->logging->technical('ai.timeweb.native_failed', ['exception_class' => $exception::class], 'warning');
+                throw $exception;
+            } catch (\Throwable $escaping) {
+                if ($captureInterruptedUsage) {
+                    AssistantInterruptedProviderUsage::attach($escaping, $interruptedUsage);
+                }
+                throw $escaping;
             }
-            $this->logging->technical('ai.timeweb.native_failed', ['exception_class' => $exception::class], 'warning');
-            throw $exception;
         }
     }
 
