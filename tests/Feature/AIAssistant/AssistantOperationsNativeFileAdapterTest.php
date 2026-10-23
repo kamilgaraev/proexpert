@@ -64,6 +64,7 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         self::assertSame($this->body, trim($processed->extracted_text));
         self::assertGreaterThan(0, AIAssistantDocumentUnit::query()->where('document_id', $document->id)->count());
         self::assertSame($document->id, $adapter->mapForIndexing($fixture->organization->id, $exam->id, 'safety_medical_exam')?->id);
+        $this->assertPartitionedFiles($fixture, $actor, [$file->id]);
         $before = $this->reads;
         $this->role($actor)->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']]]);
         $this->denied(fn () => $adapter->content($actor, $fixture->organization->id, $processed), 'ai_assistant_document_access_denied');
@@ -72,6 +73,7 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         $query = File::query()->whereKey($file->id);
         $adapter->applyFileScope($query, $actor, $fixture->organization->id, app(AssistantDataAccessPolicy::class));
         self::assertSame(0, $query->count());
+        $this->assertPartitionedFiles($fixture, $actor, []);
     }
 
     public function test_native_document_sql_timeout_is_not_converted_to_missing_access(): void
@@ -104,6 +106,7 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         $query = File::query()->where('organization_id', $fixture->organization->id);
         $adapter->applyFileScope($query, $actor, $fixture->organization->id, app(AssistantDataAccessPolicy::class));
         self::assertSame([$file->id], $query->orderBy('id')->limit(1)->pluck('id')->all());
+        $this->assertPartitionedFiles($fixture, $actor, [$file->id]);
         self::assertSame(0, $this->reads);
         $this->denied(fn () => $adapter->map($actor, $fixture->organization->id, 'safety_medical_exam', SafetyMedicalExam::query()->where('file_id', $hiddenFiles[0]->id)->value('id')), 'ai_assistant_document_access_denied');
         $document = $adapter->map($actor, $fixture->organization->id, 'safety_medical_exam', $exam->id);
@@ -114,6 +117,7 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         DB::table('safety_medical_exams')->where('id', $exam->id)->update(['employee_id' => $foreignEmployee->id]);
         $this->denied(fn () => $adapter->content($actor, $fixture->organization->id, $document), 'ai_assistant_document_access_denied');
         self::assertSame(0, $adapter->sourceQueryForActor($actor, $fixture->organization->id, 'safety_medical_exam')->where('native_source.id', $exam->id)->limit(1)->count());
+        $this->assertPartitionedFiles($fixture, $actor, []);
         self::assertSame($before, $this->reads);
         DB::table('safety_medical_exams')->where('id', $exam->id)->update(['employee_id' => $exam->employee_id]);
         DB::table('safety_medical_exams')->where('id', $exam->id)->update(['file_id' => null]);
@@ -123,6 +127,7 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         $adapter->constrainDocuments($query);
         self::assertSame(0, $query->count());
         self::assertSame($before, $this->reads);
+        $this->assertPartitionedFiles($fixture, $actor, []);
     }
 
     public function test_quality_photo_uses_actual_photo_identity_verified_private_path_and_sha_and_denies_unverified_url_before_storage(): void
@@ -263,6 +268,7 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
     {
         [$fixture, $actor, $project] = $this->fixture('basic-warehouse', 'warehouse.view');
         [$gallery, $files] = $this->gallery($fixture, $actor, $project, 63);
+        $this->assertPartitionedFiles($fixture, $actor, array_map(static fn (File $file): int => $file->id, $files));
         $adapter = $this->adapter();
         $indexer = new AssistantOperationsNativeFileIndexer($adapter);
         DB::beginTransaction();
@@ -286,6 +292,7 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         $indexer->prepare($fixture->organization->id, null, 'warehouse_item_gallery', $gallery->id);
         self::assertSame(63, AIAssistantDocument::query()->where('parent_entity_type', 'warehouse_item_gallery')->count());
         File::withoutEvents(fn () => $files[0]->delete());
+        $this->assertPartitionedFiles($fixture, $actor, array_map(static fn (File $file): int => $file->id, array_slice($files, 1)));
         $before = $this->reads;
         $indexer->prepare($fixture->organization->id, null, 'file', $files[0]->id);
         self::assertSame($before, $this->reads);
@@ -300,13 +307,16 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         DB::table('warehouse_item_galleries')->where('id', $gallery->id)->update(['warehouse_id' => $hiddenWarehouse->id]);
         $before = $this->reads;
         self::assertSame(0, $adapter->sourceQueryForActor($actor, $fixture->organization->id, 'warehouse_item_gallery')->limit(1)->count());
+        $this->assertPartitionedFiles($fixture, $actor, []);
         $this->denied(fn () => $adapter->assertFileReadable($actor, $fixture->organization->id, $files[1]), 'ai_assistant_document_access_denied');
         self::assertSame($before, $this->reads);
         DB::table('warehouse_item_galleries')->where('id', $gallery->id)->update(['warehouse_id' => $gallery->warehouse_id]);
         self::assertSame(62, $adapter->sourceQueryForActor($actor, $fixture->organization->id, 'warehouse_item_gallery')->count());
+        $this->assertPartitionedFiles($fixture, $actor, array_map(static fn (File $file): int => $file->id, array_slice($files, 1)));
         $this->role($actor)->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']]]);
         $this->denied(fn () => $adapter->assertFileReadable($actor, $fixture->organization->id, $files[1]), 'ai_assistant_document_access_denied');
         self::assertSame($before, $this->reads);
+        $this->assertPartitionedFiles($fixture, $actor, []);
     }
 
     public function test_initial_index_actor_is_fresh_uploader_or_explicit_approver_and_same_path_body_change_invalidates_previous_document(): void
@@ -335,6 +345,24 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         self::assertSame($next->id, $approved->id);
         self::assertSame($fixture->owner->id, $approved->metadata['native_actor_user_id']);
         self::assertSame('pending', $approved->coverage_status);
+    }
+
+    private function assertPartitionedFiles(AssistantRealAuthorizationFixture $fixture, User $actor, array $expectedIds): void
+    {
+        $read = static function (bool $partitionTypes) use ($fixture, $actor): array {
+            $policy = app(AssistantDataAccessPolicy::class);
+            return $policy->withCurrentChecks($actor, (int) $fixture->organization->id,
+                static function () use ($policy, $fixture, $actor, $partitionTypes): array {
+                    $result = $policy->accessibleFilesWithTypes($actor, (int) $fixture->organization->id, false, $partitionTypes);
+                    $types = $result['types'];
+                    sort($types, SORT_REGULAR);
+                    return ['types' => $types, 'rows' => $result['query']->orderBy('files.id')->get()
+                        ->map(static fn (File $file): array => $file->getRawOriginal())->all()];
+                }, fresh: true);
+        };
+        $baseline = $read(false);
+        self::assertSame($expectedIds, array_column($baseline['rows'], 'id'));
+        self::assertSame($baseline, $read(true));
     }
 
     private function fixture(string $module, string $permission): array

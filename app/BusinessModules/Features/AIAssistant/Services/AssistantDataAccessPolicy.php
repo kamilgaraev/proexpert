@@ -984,19 +984,19 @@ final class AssistantDataAccessPolicy
         return $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes);
     }
 
-    public function accessibleFilesWithTypes(User $user, int $organizationId, bool $supportedStorageOnly = true): array
+    public function accessibleFilesWithTypes(User $user, int $organizationId, bool $supportedStorageOnly = true, bool|callable $partitionTypes = false): array
     {
         $fileTypes = [];
-        $query = $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes);
+        $query = $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes, $partitionTypes);
 
         return ['query' => $query, 'types' => $fileTypes];
     }
 
-    private function accessibleFilesQuery(User $user, int $organizationId, bool $supportedStorageOnly, array &$fileTypes): Builder
+    private function accessibleFilesQuery(User $user, int $organizationId, bool $supportedStorageOnly, array &$fileTypes, bool|callable $partitionTypes = false): Builder
     {
         if ($this->aclCompiler === null) {
-            return $this->compileAcl($user, $organizationId, function () use ($user, $organizationId, $supportedStorageOnly, &$fileTypes): Builder {
-                return $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes);
+            return $this->compileAcl($user, $organizationId, function () use ($user, $organizationId, $supportedStorageOnly, &$fileTypes, $partitionTypes): Builder {
+                return $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes, $partitionTypes);
             }) ?? File::query()->whereRaw('1 = 0');
         }
         $query = File::query()->where('files.organization_id', $organizationId);
@@ -1004,41 +1004,56 @@ final class AssistantDataAccessPolicy
         if (! $this->belongsToOrganization($user, $organizationId)) { return $query->whereRaw('1 = 0'); }
         $fileTypeQuery = (clone $query)->select('files.fileable_type')->distinct()->toBase();
         $fileTypes = $this->finishAclDiscovery($query, $fileTypeQuery)->pluck('fileable_type')->all();
+        if (is_callable($partitionTypes)) { $partitionTypes = $partitionTypes($query, $fileTypes); }
         $fileClasses = array_map(static fn ($type): string => \Illuminate\Database\Eloquent\Relations\Relation::getMorphedModel((string) $type) ?? (string) $type, $fileTypes);
-        app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class)->applyFileScope($query, $user, $organizationId, $this);
-        return $query->where(function (Builder $files) use ($user, $organizationId, $fileClasses): void {
-            $files->whereRaw('1 = 0');
-            $operations = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class);
-            foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeType) {
-                $nativeFiles = $operations->sourceQueryForActor($user, $organizationId, $nativeType)
-                    ->select($nativeType === 'safety_medical_exam' ? 'native_file.id' : 'native_source.id');
-                $files->orWhereIn('files.id', $nativeFiles);
-            }
-            foreach ($this->entities() as $type => $definition) {
-                if (! in_array($definition[1], $fileClasses, true)) { continue; }
-                $entities = $this->entityContentQuery($user, $organizationId, $type);
-                if ($entities === null) { continue; }
-                $parent = $entities->getModel();
-                $files->orWhere(static function (Builder $branch) use ($entities, $parent, $definition, $type): void {
-                    $branch->whereIn('files.fileable_type', [$definition[1], $parent->getMorphClass()])
-                        ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(files.fileable_id AS TEXT)'), $entities->select([])->selectRaw('CAST('.$parent->getQualifiedKeyName().' AS TEXT)'));
-                    if ($type === 'design_artifact_version') {
-                        $branch->whereExists(static function (QueryBuilder $version): void {
-                            $version->selectRaw('1')->from('design_artifact_versions')->whereColumn('design_artifact_versions.id', 'files.fileable_id')
-                                ->whereColumn('design_artifact_versions.organization_id', 'files.organization_id')
-                                ->whereColumn('design_artifact_versions.source_file_path', 'files.path')
-                                ->whereColumn('design_artifact_versions.source_original_name', 'files.original_name')
-                                ->whereColumn('design_artifact_versions.source_mime_type', 'files.mime_type')
-                                ->whereColumn('design_artifact_versions.source_size_bytes', 'files.size')
-                                ->whereRaw("COALESCE(files.additional_info->>'design_source_sha256', '') = COALESCE(design_artifact_versions.source_sha256, '')")
-                                ->whereRaw("files.additional_info->>'assistant_native_source' = 'design'");
-                        });
-                    }
-                    if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeFileRegistry::supports($type)) {
-                        \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeFileRegistry::adapter($type)?->constrainMappings($branch);
-                    }
+        $operations = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class);
+        $operations->applyFileScope($query, $user, $organizationId, $this);
+        $branches = [];
+        foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeType) {
+            $nativeFiles = $operations->sourceQueryForActor($user, $organizationId, $nativeType)
+                ->select($nativeType === 'safety_medical_exam' ? 'native_file.id' : 'native_source.id');
+            $branches[] = $query->getModel()->newQueryWithoutScopes()->whereIn('files.id', $nativeFiles);
+        }
+        foreach ($this->entities() as $type => $definition) {
+            if (! in_array($definition[1], $fileClasses, true)) { continue; }
+            $entities = $this->entityContentQuery($user, $organizationId, $type);
+            if ($entities === null) { continue; }
+            $parent = $entities->getModel();
+            $branch = $query->getModel()->newQueryWithoutScopes()
+                ->whereIn('files.fileable_type', [$definition[1], $parent->getMorphClass()])
+                ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(files.fileable_id AS TEXT)'), $entities->select([])->selectRaw('CAST('.$parent->getQualifiedKeyName().' AS TEXT)'));
+            if ($type === 'design_artifact_version') {
+                $branch->whereExists(static function (QueryBuilder $version): void {
+                    $version->selectRaw('1')->from('design_artifact_versions')->whereColumn('design_artifact_versions.id', 'files.fileable_id')
+                        ->whereColumn('design_artifact_versions.organization_id', 'files.organization_id')
+                        ->whereColumn('design_artifact_versions.source_file_path', 'files.path')
+                        ->whereColumn('design_artifact_versions.source_original_name', 'files.original_name')
+                        ->whereColumn('design_artifact_versions.source_mime_type', 'files.mime_type')
+                        ->whereColumn('design_artifact_versions.source_size_bytes', 'files.size')
+                        ->whereRaw("COALESCE(files.additional_info->>'design_source_sha256', '') = COALESCE(design_artifact_versions.source_sha256, '')")
+                        ->whereRaw("files.additional_info->>'assistant_native_source' = 'design'");
                 });
             }
+            if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeFileRegistry::supports($type)) {
+                \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeFileRegistry::adapter($type)?->constrainMappings($branch);
+            }
+            $branches[] = $branch;
+        }
+        if ($partitionTypes && $branches !== []) {
+            $union = null;
+            foreach ($branches as $branch) {
+                $ids = (clone $query)->select('files.id');
+                $ids->getQuery()->addNestedWhereQuery(clone $branch->getQuery());
+                if ($union === null) { $union = $ids->toBase(); }
+                else { $union->unionAll($ids->toBase()); }
+            }
+            $partitioned = (clone $query)->whereIn('files.id', $union);
+            $compiled = $this->aclCompiler->finish($partitioned)->toBase();
+            if (count($compiled->getBindings()) <= 60_000 && strlen($compiled->toSql()) <= 1_048_576) { return $partitioned; }
+        }
+        return $query->where(static function (Builder $files) use ($branches): void {
+            $files->whereRaw('1 = 0');
+            foreach ($branches as $branch) { $files->getQuery()->addNestedWhereQuery(clone $branch->getQuery(), 'or'); }
         });
     }
 
