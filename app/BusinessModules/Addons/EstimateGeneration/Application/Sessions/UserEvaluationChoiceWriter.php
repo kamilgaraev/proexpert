@@ -122,18 +122,22 @@ final readonly class UserEvaluationChoiceWriter
                 throw new InvalidArgumentException('estimate_generation.question_stale');
             }
             $cache = [];
-            $descriptor = $this->sourceClaims->parameterOperands($scope, $capture['snapshot'], $current->composerContext['work_context'], $documents, $cache)[$parameter['source_operand_ref']] ?? null;
+            $requirementOnly = ($parameter['schema_version'] ?? null) === 2;
+            $sources = $requirementOnly
+                ? $this->sourceClaims->requirementSources($scope, $capture['snapshot'], $current->composerContext['work_context'], $documents, $cache)
+                : $this->sourceClaims->parameterOperands($scope, $capture['snapshot'], $current->composerContext['work_context'], $documents, $cache);
+            $descriptor = $sources[$parameter[$requirementOnly ? 'source_requirement_ref' : 'source_operand_ref']] ?? null;
             $target = array_column($capture['snapshot']->entities, null, 'id')[$current->composerContext['work_context']['binding']['entity_id']] ?? null;
             if ($descriptor === null || $target === null) {
                 throw new InvalidArgumentException('estimate_generation.question_stale');
             }
-            $parameterSnapshot = $capture['snapshot'];
+            $parameterSnapshot = $requirementOnly ? null : $capture['snapshot'];
             $parameterValue = ['input' => $parameter, 'association' => $descriptor,
                 'binding' => ['entity_id' => $target->id, 'entity_source_version' => $target->sourceVersion,
                     'work_key' => $current->composerContext['work_context']['binding']['work_key'],
                     'work_binding_hash' => $current->composerContext['work_context']['binding_hash']],
-                'observed_fact_id' => 'fact:'.hash('sha256', $factId.'|observed_value'),
-                'requirement_fact_id' => 'fact:'.hash('sha256', $factId.'|minimum_length_requirement')];
+                ...($requirementOnly ? [] : ['observed_fact_id' => 'fact:'.hash('sha256', $factId.'|observed_value'),
+                    'requirement_fact_id' => 'fact:'.hash('sha256', $factId.'|minimum_length_requirement')])];
         }
         $value = ['kind' => 'composer_answer', 'numeric_parameters_confirmed' => false,
             'question_key' => $current->question->code, 'response' => $response, 'choice_value' => $response,

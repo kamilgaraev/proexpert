@@ -15,6 +15,40 @@ final class ResolveCurrentEstimateClarificationTest extends TestCase
 {
     private const SOURCE_VERSION = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
+    public function test_requirement_only_input_needs_no_observed_and_rejects_source_authority_or_future_shapes(): void
+    {
+        $input = ['schema_version' => 2, 'condition' => 'minimum_length', 'source_requirement_ref' => str_repeat('b', 64)];
+        self::assertSame($input, ResolveCurrentEstimateClarification::workParameterInput($input));
+        foreach ([[...$input, 'value' => '102'], [...$input, 'passed' => true], [...$input, 'schema_version' => 3],
+            [...$input, 'schema_version' => '2'], [...$input, 'source_requirement_ref' => 'document:17']] as $invalid) {
+            try {
+                ResolveCurrentEstimateClarification::workParameterInput($invalid);
+                self::fail('Untrusted requirement input must be rejected.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_generation.question_response_invalid', $exception->getMessage());
+            }
+        }
+    }
+
+    public function test_existing_answer_request_accepts_exact_v2_and_keeps_legacy_six_fields(): void
+    {
+        $factory = new \Illuminate\Validation\Factory(new \Illuminate\Translation\Translator(new \Illuminate\Translation\ArrayLoader, 'en'));
+        $base = ['response' => 'other', 'other' => 'Подтверждаю выбранный фрагмент.', 'idempotency_key' => 'request-v2-1',
+            'expected_source_version' => self::SOURCE_VERSION, 'answer_fingerprint' => str_repeat('a', 64), 'document_ids' => [17]];
+        $v2 = ['schema_version' => 2, 'condition' => 'minimum_length', 'source_requirement_ref' => str_repeat('b', 64)];
+        $v1 = ['name' => 'Зазор', 'value' => '102', 'unit' => 'mm', 'basis' => 'assumption',
+            'source_operand_ref' => str_repeat('c', 64), 'condition' => 'minimum_length'];
+        foreach ([$v1, $v2] as $parameter) {
+            $request = \App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnswerEstimateClarificationRequest::create('/', 'POST', [...$base, 'parameter' => $parameter]);
+            self::assertTrue($factory->make($request->all(), $request->rules())->passes());
+        }
+        foreach ([[...$v2, 'value' => '102'], [...$v2, 'schema_version' => '2'], [...$v2, 'schema_version' => 3],
+            [...$v2, 'source_pins' => []], [...$v2, 'verified' => true]] as $parameter) {
+            $request = \App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnswerEstimateClarificationRequest::create('/', 'POST', [...$base, 'parameter' => $parameter]);
+            self::assertTrue($factory->make($request->all(), $request->rules())->fails());
+        }
+    }
+
     public function test_work_parameter_input_is_closed_exact_decimal_and_has_no_source_authority_fields(): void
     {
         $parameter = ['name' => 'Свободный зазор B', 'value' => '102', 'unit' => 'mm', 'basis' => 'measurement',

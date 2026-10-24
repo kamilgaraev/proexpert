@@ -33,6 +33,8 @@ final readonly class ComposerSourceClaimValidationService
 
     public const PARAMETER_ORIGIN = 'work_parameter_component:v1';
 
+    public const REQUIREMENT_ORIGIN = 'work_parameter_component:v2';
+
     public const MAX_CLAIMS = 8;
 
     public const MAX_RECEIPTS = EstimateComposerBatchPlanner::MAX_PARTS;
@@ -74,6 +76,205 @@ final readonly class ComposerSourceClaimValidationService
         }
 
         return $result;
+    }
+
+    public static function requirementProposal(Entity $entity, Fact $fact): ?array
+    {
+        $descriptor = $entity->attributes['properties']['document_semantic_proposal'] ?? null;
+        if (! is_array($descriptor) || ! self::keys($descriptor, ['schema_version', 'payload', 'field_locators', 'source_pins', 'status', 'proposal_hash'])
+            || $descriptor['schema_version'] !== 1 || $descriptor['status'] !== 'proposed'
+            || $fact->entityId !== $entity->id || $fact->sourceVersion !== $entity->sourceVersion
+            || [$fact->organizationId, $fact->projectId, $fact->sessionId] !== [$entity->organizationId, $entity->projectId, $entity->sessionId]
+            || $fact->origin !== 'document' || $fact->status !== 'confirmed' || $fact->unit !== null
+            || ! is_string($fact->value) || $fact->evidenceIds === [] || ! is_array($descriptor['payload'])
+            || ! is_array($descriptor['field_locators']) || ! is_array($descriptor['source_pins'])
+            || ! self::keys($descriptor['source_pins'], ['organization_id', 'project_id', 'session_id', 'document_id', 'page_number', 'processing_unit_id', 'source_version'])
+            || [$descriptor['source_pins']['organization_id'], $descriptor['source_pins']['project_id'], $descriptor['source_pins']['session_id']]
+                !== [$fact->organizationId, $fact->projectId, $fact->sessionId]
+            || count(array_filter(array_intersect_key($descriptor['source_pins'], array_flip(['document_id', 'page_number', 'processing_unit_id'])),
+                static fn (mixed $id): bool => is_int($id) && $id > 0)) !== 3
+            || $descriptor['source_pins']['source_version'] !== $fact->sourceVersion) {
+            return null;
+        }
+        try {
+            $sourceKey = $entity->attributes['properties']['source_entity_key'] ?? $entity->attributes['identity']['source_entity_key'] ?? null;
+            if (! is_string($sourceKey)) {
+                return null;
+            }
+            $proposal = FactVocabulary::semanticProposal($descriptor['payload'], $fact->type, $sourceKey,
+                ['type' => 'string', 'data' => $fact->value], null);
+            if (($proposal['kind'] ?? null) !== 'source_requirement' || $proposal['dimension'] !== 'length'
+                || $proposal['parameter']['data'] === null || $proposal['comparator']['data'] !== 'gte'
+                || $proposal['threshold']['data'] === null || $proposal['unit']['data'] === null) {
+                return null;
+            }
+            FactVocabulary::meetsMinimumLength($proposal['threshold']['data'], $proposal['unit']['data'], $proposal['threshold']['data'], $proposal['unit']['data']);
+            $identity = array_intersect_key($descriptor, array_flip(['schema_version', 'payload', 'field_locators', 'source_pins']));
+            if (CanonicalPipelineJson::encode($proposal) !== CanonicalPipelineJson::encode($descriptor['payload'])
+                || ! is_string($descriptor['proposal_hash']) || ! hash_equals($descriptor['proposal_hash'], hash('sha256',
+                    \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity::canonicalJson($identity)))) {
+                return null;
+            }
+            $fields = FactVocabulary::semanticSourceFields($proposal);
+            $expected = array_keys(array_filter($fields, static fn (array $field): bool => $field['evidenceRef'] !== null));
+            $actual = array_keys($descriptor['field_locators']);
+            sort($expected, SORT_STRING);
+            sort($actual, SORT_STRING);
+            if ($expected !== $actual || array_filter(['parameter', 'comparator', 'threshold', 'unit'],
+                static fn (string $field): bool => ! isset($descriptor['field_locators'][$field])) !== []) {
+                return null;
+            }
+        } catch (\InvalidArgumentException|\JsonException) {
+            return null;
+        }
+
+        return $descriptor;
+    }
+
+    public function requirementSources(array $scope, ProjectModelSnapshot $snapshot, array $workContext, array $documents, array &$cache = []): array
+    {
+        if (! array_is_list($scope) || count($scope) !== 3 || count(array_filter($scope, static fn (mixed $id): bool => is_int($id) && $id > 0)) !== 3
+            || $this->contentReader === null || count($snapshot->facts) > 10000 || count($documents) > 8
+            || ! is_array($workContext['binding'] ?? null) || ! is_string($workContext['binding_hash'] ?? null)
+            || ! hash_equals($workContext['binding_hash'], hash('sha256', CanonicalPipelineJson::encode($workContext['binding'])))) {
+            return [];
+        }
+        foreach ($documents as $document) {
+            if (! is_array($document) || ! self::keys($document, ['document_id', 'source_version', 'checksum_sha256', 'status'])
+                || ! is_int($document['document_id']) || $document['document_id'] < 1 || ! is_string($document['source_version'])
+                || ! is_string($document['checksum_sha256']) || preg_match('/\A[a-f0-9]{64}\z/D', $document['checksum_sha256']) !== 1
+                || ! in_array($document['status'], ['ready', 'needs_review'], true)) {
+                return [];
+            }
+        }
+        $entities = array_column($snapshot->entities, null, 'id');
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $pins = array_column($documents, null, 'document_id');
+        $target = $entities[$workContext['binding']['entity_id'] ?? ''] ?? null;
+        if (count($pins) !== count($documents) || ! $target instanceof Entity
+            || [$target->organizationId, $target->projectId, $target->sessionId] !== $scope) {
+            return [];
+        }
+        $result = [];
+        $seen = [];
+        $examined = 0;
+        foreach ($snapshot->facts as $fact) {
+            $entity = $entities[$fact->entityId] ?? null;
+            if (! $entity instanceof Entity || [$entity->organizationId, $entity->projectId, $entity->sessionId] !== $scope
+                || ($descriptor = self::requirementProposal($entity, $fact)) === null) {
+                continue;
+            }
+            $source = $descriptor['source_pins'];
+            $pin = $pins[$source['document_id'] ?? 0] ?? null;
+            if ($pin === null || [$source['organization_id'] ?? null, $source['project_id'] ?? null, $source['session_id'] ?? null] !== $scope
+                || ($source['source_version'] ?? null) !== $entity->sourceVersion || $pin['source_version'] !== $entity->sourceVersion
+                || ! is_int($source['processing_unit_id'] ?? null) || ! is_int($source['page_number'] ?? null)) {
+                continue;
+            }
+            if (++$examined > self::MAX_CLAIMS * self::MAX_CLAIMS) {
+                return [];
+            }
+            $unit = EstimateGenerationProcessingUnit::query()->with('document', 'page')->where('organization_id', $scope[0])
+                ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('document_id', $pin['document_id'])
+                ->where('source_version', $pin['source_version'])->where('status', 'completed')->find($source['processing_unit_id']);
+            if (! $unit instanceof EstimateGenerationProcessingUnit) {
+                continue;
+            }
+            $document = $unit->getRelation('document');
+            $page = $unit->getRelation('page');
+            $unitLocator = $unit->getAttribute('locator');
+            $unitType = $unit->getAttribute('unit_type');
+            if (! $document instanceof \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument
+                || ! $page instanceof \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage
+                || ! is_array($unitLocator) || ! $unitType instanceof DocumentUnitType
+                || [(int) $document->getAttribute('organization_id'), (int) $document->getAttribute('project_id'), (int) $document->getAttribute('session_id')] !== $scope
+                || [(int) $page->getAttribute('organization_id'), (int) $page->getAttribute('project_id'), (int) $page->getAttribute('session_id')] !== $scope
+                || (int) $page->getAttribute('document_id') !== $pin['document_id']
+                || (int) $page->getAttribute('processing_unit_id') !== (int) $unit->getKey() || $page->getAttribute('excluded_at') !== null
+                || $document->getAttribute('ignored_at') !== null || ! in_array($document->getAttribute('status'), ['ready', 'needs_review'], true)
+                || $document->getAttribute('source_version') !== $pin['source_version'] || $document->getAttribute('checksum_sha256') !== $pin['checksum_sha256']
+                || ! hash_equals('sha256:'.$pin['checksum_sha256'], $pin['source_version'])
+                || $unit->getAttribute('output_version') !== $pin['source_version'] || (int) $unit->getAttribute('output_count') < 1
+                || $page->getAttribute('source_version') !== $pin['source_version']
+                || (int) $page->getAttribute('page_number') !== $source['page_number'] || $page->getAttribute('status') !== 'ready') {
+                continue;
+            }
+            $locatorsValid = true;
+            foreach ($descriptor['field_locators'] as $locator) {
+                if (! is_array($locator) || [$locator['organization_id'] ?? null, $locator['project_id'] ?? null, $locator['session_id'] ?? null] !== $scope
+                    || ($locator['document_id'] ?? null) !== $pin['document_id'] || ($locator['source_version'] ?? null) !== $pin['source_version']
+                    || ($locator['processing_unit_id'] ?? null) !== (int) $unit->getKey() || ($locator['page_id'] ?? null) !== (int) $page->getKey()
+                    || \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator::fromLocator($locator) === null) {
+                    $locatorsValid = false;
+                    break;
+                }
+            }
+            if (! $locatorsValid) {
+                continue;
+            }
+            $witnesses = [];
+            foreach ($fact->evidenceIds as $id) {
+                $proof = $proofs[$id] ?? null;
+                if ($proof === null || preg_match('/\Aevidence:([1-9][0-9]*)\z/D', $id, $match) !== 1) {
+                    continue;
+                }
+                $node = $this->evidence->node(...[...$scope, (int) $match[1]]);
+                if ($node !== null && $node->invalidatedAt === null && $node->type === EvidenceType::SourceFact
+                    && $node->sourceType === EvidenceSourceType::Document && $node->producerName === 'drawing_analyzer'
+                    && [$proof->organizationId, $proof->projectId, $proof->sessionId] === $scope
+                    && $proof->sourceType === 'document' && $proof->sourceVersion === $pin['source_version']
+                    && $proof->sourceArtifactId === 'document:'.$pin['document_id'] && $proof->sourceReference === $proof->sourceArtifactId
+                    && $node->sourceRef === 'document:'.$pin['document_id'] && $node->sourceVersion === $pin['source_version']
+                    && $proof->fingerprint === $node->fingerprint && $node->fingerprint === $node->data->fingerprint()
+                    && ($node->locator['document_id'] ?? null) === $pin['document_id'] && ($node->locator['page'] ?? null) === $source['page_number']) {
+                    $witnesses[$id] = ['evidence_id' => $id, 'evidence_fingerprint' => $node->fingerprint,
+                        'invalidation_version' => $node->invalidationVersion];
+                }
+            }
+            if ($witnesses === []) {
+                continue;
+            }
+            ksort($witnesses, SORT_STRING);
+            $artifactKey = 'requirement-artifact:'.hash('sha256', CanonicalPipelineJson::encode([$scope, $unit->getKey(), $pin['source_version'], $unitLocator]));
+            if (! array_key_exists($artifactKey, $cache)) {
+                try {
+                    $context = new DocumentUnitExecutionContext((int) $unit->getKey(), ...[...$scope, $pin['document_id'], $unitType,
+                        (int) $unit->getAttribute('unit_index'), $pin['source_version'], $unitLocator, (string) $document->getAttribute('storage_path'),
+                        (string) $document->getAttribute('mime_type'), (string) $document->getAttribute('filename'), '', (int) $unit->getAttribute('attempt_count'), 0, '', (int) $page->getKey()]);
+                    $body = $this->contentReader->read($context);
+                    $cache[$artifactKey] = ($unitLocator['artifact_bytes'] ?? null) === strlen($body)
+                        && ($unitLocator['artifact_sha256'] ?? null) === 'sha256:'.hash('sha256', $body)
+                        ? ['sha256' => 'sha256:'.hash('sha256', $body), 'bytes' => strlen($body)] : null;
+                } catch (\RuntimeException|\InvalidArgumentException) {
+                    $cache[$artifactKey] = null;
+                }
+            }
+            if ($cache[$artifactKey] === null) {
+                continue;
+            }
+            $association = ['source_fact_id' => $fact->id, 'source_fact_version' => $fact->version,
+                'source_value_hash' => hash('sha256', CanonicalPipelineJson::encode($fact->value)), 'source_entity_id' => $entity->id,
+                'descriptor' => $descriptor, 'document_pin' => $pin, 'evidence' => array_values($witnesses), 'artifact' => $cache[$artifactKey]];
+            $ref = self::requirementReference($scope, $workContext, $association);
+            if (isset($seen[$ref])) {
+                return [];
+            }
+            $seen[$ref] = true;
+            $result[$ref] = $association;
+            if (count($result) > self::MAX_CLAIMS) {
+                return [];
+            }
+        }
+        ksort($result, SORT_STRING);
+
+        return $result;
+    }
+
+    public static function requirementReference(array $scope, array $workContext, array $association): string
+    {
+        return hash('sha256', CanonicalPipelineJson::encode(['origin' => self::REQUIREMENT_ORIGIN, 'scope' => $scope,
+            'work_context' => array_intersect_key($workContext, array_flip(['schema_version', 'binding', 'binding_hash', 'policy', 'dependencies', 'question'])),
+            'source' => $association]));
     }
 
     private function nativeParameterOperands(array $scope, ProjectModelSnapshot $snapshot, array $documents,
@@ -279,7 +480,8 @@ final readonly class ComposerSourceClaimValidationService
         $entries = $duplicates = [];
         foreach ($catalog->currentWorkContexts(...[...$scope, $snapshot, $decisions, $localEstimateKey]) as $entry) {
             $answer = $entry['answer'] ?? null;
-            if (($entry['status'] ?? null) !== 'answered' || ! is_array($answer) || ! is_array($answer['parameter'] ?? null)
+            if (($entry['status'] ?? null) !== 'answered' || ! is_array($answer)
+                || (! is_array($answer['parameter'] ?? null) && ! is_array($answer['requirement'] ?? null))
                 || ($answer['response'] ?? null) !== 'other' || ($answer['trust'] ?? null) !== 'user_assumption'
                 || ($answer['engineering_applicability'] ?? null) !== 'unresolved' || ($answer['numeric_parameters_confirmed'] ?? null) !== false
                 || ! is_string($answer['fact_id'] ?? null) || ! is_array($answer['document_ids'] ?? null)
@@ -313,6 +515,31 @@ final readonly class ComposerSourceClaimValidationService
                 continue;
             }
             $pins = array_values(array_filter($entry['documents'], static fn (array $pin): bool => in_array($pin['document_id'], $entry['answer']['document_ids'], true)));
+            if (($typed['schema_version'] ?? null) === 2) {
+                if (! is_int($answer->value['composer_context']['state_version'] ?? null) || $answer->value['composer_context']['state_version'] < 0) {
+                    continue;
+                }
+                $fresh = $this->requirementSources($scope, $snapshot, $entry['context'], $pins, $cache)[$typed['source_requirement_ref']] ?? null;
+                $entity = array_column($snapshot->entities, null, 'id')[$entry['context']['binding']['entity_id']] ?? null;
+                if ($fresh === null || $entity === null || CanonicalPipelineJson::encode($fresh) !== CanonicalPipelineJson::encode($parameter['association'])
+                    || CanonicalPipelineJson::encode($parameter['binding']) !== CanonicalPipelineJson::encode([
+                        'entity_id' => $entity->id, 'entity_source_version' => $entity->sourceVersion,
+                        'work_key' => $entry['context']['binding']['work_key'], 'work_binding_hash' => $entry['context']['binding_hash']])) {
+                    continue;
+                }
+                $identity = ['origin' => self::REQUIREMENT_ORIGIN, 'scope' => $scope, 'work_context' => $entry['context'],
+                    'answer' => ['fact_id' => $answer->id, 'version' => $answer->version, 'decision_id' => $entry['answer']['decision_id'],
+                        'value_hash' => hash('sha256', CanonicalPipelineJson::encode($answer->value))],
+                    'parameter' => $typed, 'source' => $fresh, 'document_pins' => $pins];
+                $details = self::requirementDetails($fresh);
+                unset($details['source'], $details['status']);
+                $result[$answerId] = ['source_claim_key' => hash('sha256', CanonicalPipelineJson::encode($identity)), 'identity' => $identity,
+                    'answer_state_version' => $answer->value['composer_context']['state_version'],
+                    'component' => ['schema_version' => 2, 'condition' => 'minimum_length', 'selected_ref' => $typed['source_requirement_ref'],
+                        ...$details, 'confirmation_level' => 'user_confirmed', 'interpretation_status' => 'user_assumption',
+                        'observed' => null, 'comparison' => null]];
+                continue;
+            }
             $fresh = $this->parameterOperands($scope, $snapshot, $entry['context'], $pins, $cache)[$typed['source_operand_ref']] ?? null;
             $entity = array_column($snapshot->entities, null, 'id')[$entry['context']['binding']['entity_id']] ?? null;
             if ($fresh === null || $entity === null || CanonicalPipelineJson::encode($fresh) !== CanonicalPipelineJson::encode($parameter['association'])
@@ -357,6 +584,28 @@ final readonly class ComposerSourceClaimValidationService
         }
 
         return $result;
+    }
+
+    public static function requirementDetails(array $source): array
+    {
+        $descriptor = $source['descriptor'];
+        $proposal = $descriptor['payload'];
+        $locator = $descriptor['field_locators']['threshold'];
+        $factSource = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator::fromLocator($locator);
+
+        return ['status' => 'current', 'parameter' => $proposal['parameter']['data'], 'comparator' => 'gte',
+            'threshold' => $proposal['threshold']['data'], 'unit' => $proposal['unit']['data'],
+            'subject' => $proposal['appliesTo']['subject']['data'],
+            'document_edition' => $proposal['documentEdition']['data'], 'clause' => $proposal['clause']['data'],
+            'conditions' => $proposal['conditions'] === null ? null : array_column($proposal['conditions'], 'data'),
+            'equipment_identity' => $proposal['appliesTo']['equipmentIdentity'] === null ? null
+                : array_map(static fn (array $value): ?string => $value['data'], $proposal['appliesTo']['equipmentIdentity']),
+            'source_correspondence' => 'unresolved', 'source_authority' => 'unresolved', 'edition_confirmation' => 'unresolved',
+            'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false, 'numeric_inputs_verified' => false,
+            'source' => ['reference' => $source['evidence'][0]['evidence_id'], 'document_id' => $descriptor['source_pins']['document_id'],
+                'source_version' => $descriptor['source_pins']['source_version'], 'page_number' => $descriptor['source_pins']['page_number'],
+                'region' => $factSource?->region(), 'native_reference' => $factSource?->value['kind'] === 'native' ? $factSource->value['value'] : null,
+                'coordinate_space' => $factSource?->region() !== null ? 'normalized_source_v1' : null]];
     }
 
     public function captureCellReview(array $scope, ProjectModelSnapshot $snapshot, array $decisions, Fact $source): ?array

@@ -29,6 +29,16 @@ final readonly class ResolveCurrentEstimateClarification
         if ($parameter === null) {
             return null;
         }
+        if (array_key_exists('schema_version', $parameter)) {
+            if (count($parameter) !== 3 || array_diff(array_keys($parameter), ['schema_version', 'condition', 'source_requirement_ref']) !== []
+                || $parameter['schema_version'] !== 2 || ($parameter['condition'] ?? null) !== 'minimum_length'
+                || ! is_string($parameter['source_requirement_ref'] ?? null)
+                || preg_match('/\A[a-f0-9]{64}\z/D', $parameter['source_requirement_ref']) !== 1) {
+                throw new InvalidArgumentException('estimate_generation.question_response_invalid');
+            }
+
+            return ['schema_version' => 2, 'condition' => 'minimum_length', 'source_requirement_ref' => $parameter['source_requirement_ref']];
+        }
         $keys = ['name', 'value', 'unit', 'basis', 'source_operand_ref', 'condition'];
         if (count($parameter) !== count($keys) || array_diff(array_keys($parameter), $keys) !== []
             || count(array_filter($parameter, is_string(...))) !== count($keys)
@@ -257,13 +267,16 @@ final readonly class ResolveCurrentEstimateClarification
             }
         }
 
-        $parameter = null;
+        $parameter = $requirementSelection = null;
         if ($value['response'] === 'other' && is_array($value['parameter'] ?? null)) {
             try {
                 $input = self::workParameterInput($value['parameter']['input'] ?? []);
                 $observed = $value['parameter']['observed_fact_id'] ?? null;
                 $requirement = $value['parameter']['requirement_fact_id'] ?? null;
-                if ($input !== null && is_string($observed) && is_string($requirement)) {
+                if (($input['schema_version'] ?? null) === 2) {
+                    $requirementSelection = ['schema_version' => 2, 'selected_ref' => $input['source_requirement_ref'],
+                        'confirmation_level' => 'user_confirmed', 'source_details' => ['status' => 'unavailable']];
+                } elseif ($input !== null && is_string($observed) && is_string($requirement)) {
                     $parameter = ['input' => $input, 'observed_fact_id' => $observed, 'requirement_fact_id' => $requirement,
                         'interpretation_status' => 'user_assumption', 'engineering_applicability' => 'unresolved',
                         'numeric_parameters_confirmed' => false];
@@ -277,7 +290,8 @@ final readonly class ResolveCurrentEstimateClarification
             'fact_id' => $fact->id, 'document_ids' => array_column($value['documents'], 'document_id'),
             'trust' => $value['response'] === 'other' ? 'user_assumption' : 'no_active_claim',
             'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false,
-            ...($parameter === null ? [] : ['parameter' => $parameter])];
+            ...($parameter === null ? [] : ['parameter' => $parameter]),
+            ...($requirementSelection === null ? [] : ['requirement' => $requirementSelection])];
     }
 
     public function workTechnologyQuestions(array $entries, string $token, int $stateVersion): array
