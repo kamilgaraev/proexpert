@@ -2987,8 +2987,13 @@ class AIAssistantService
     protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
     {
         $this->executionCheckpoint();
-        if ($this->scopedContext?->isGuarded() ?? false) { $options['tool_choice'] = 'auto'; }
+        $finalSynthesis = ($this->scopedContext?->isGuarded() ?? false) && $this->activeRequest !== null
+            && $this->activeRequest->calls_used === $this->activeRequest->max_calls - 1;
+        if ($this->scopedContext?->isGuarded() ?? false) { $options['tool_choice'] = $finalSynthesis ? 'none' : 'auto'; }
         [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->measurePhase('provider_prepare', fn (): array => $this->prepareProviderPayload($messages, $options, $organizationId, $user));
+        if ($finalSynthesis) {
+            $this->scopedContext->beginFinalSynthesis($this->activeRequest, $preparedMessages, (array) ($preparedOptions['tools'] ?? []));
+        }
         $legacy = $this->scopedContext?->isLegacy() ?? false;
         $selectedProvider = $legacy && $this->ordinaryEgress->transport()->isBound($this->llmProvider)
             ? app(LLMProviderInterface::class) : $this->llmProvider;
@@ -3077,6 +3082,9 @@ class AIAssistantService
                 }
                 if (($response['response_status'] ?? null) === 'incomplete' || ($response['finish_reason'] ?? null) === 'length') {
                     throw new AssistantResponseIncomplete($response);
+                }
+                if ($finalSynthesis && ! empty($response['function_calls'])) {
+                    throw new AssistantEgressDenied('unsupported_purpose');
                 }
                 if (! $legacy) { $this->scopedContext?->rememberResponse($response); }
                 $this->recordProviderUsageDuringCleanup($response, $organizationId, $user, $preparedOptions, $budgetDegraded, true, (int) $attempt);
