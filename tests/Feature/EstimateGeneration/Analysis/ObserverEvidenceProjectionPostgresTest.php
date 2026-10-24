@@ -391,6 +391,13 @@ final class ObserverEvidenceProjectionPostgresTest extends EstimateGenerationCan
         self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
         self::assertCount(4, $calls);
         Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+        $recordedRequests = Http::recorded()->map(static function (array $record): string {
+            $request = $record[0];
+            $url = parse_url($request->url());
+
+            return $request->method().' '.($url['scheme'] ?? 'unknown').'://'.($url['host'] ?? 'unknown').($url['path'] ?? '/');
+        })->all();
+        self::assertSame([], $recordedRequests, 'Intercepted HTTP requests: '.json_encode($recordedRequests, JSON_THROW_ON_ERROR));
         Http::assertNothingSent();
     }
 
