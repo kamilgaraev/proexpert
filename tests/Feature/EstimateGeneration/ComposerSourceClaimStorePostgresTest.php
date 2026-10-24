@@ -431,7 +431,12 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $this->requirementOnlySourceScenario(true);
     }
 
-    private function requirementOnlySourceScenario(bool $explicitSourceReview): void
+    public function test_source_review_can_be_recovered_by_another_reviewer_after_actor_invalidation(): void
+    {
+        $this->requirementOnlySourceScenario(true, recoverSourceReview: true);
+    }
+
+    private function requirementOnlySourceScenario(bool $explicitSourceReview, bool $recoverSourceReview = false): void
     {
         Queue::fake();
         config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
@@ -906,6 +911,169 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 }
                 self::assertContains('do_not_index', $row->quality_flags);
                 self::assertFalse(EstimateGenerationLearningSourceTrustPolicy::isIndexable($row));
+                if ($recoverSourceReview) {
+                    self::assertInstanceOf(Fact::class, $candidateFact);
+                    self::assertInstanceOf(Fact::class, $reviewFact);
+                    self::assertIsArray($sourceReviewInput);
+                    self::assertIsString($reviewUrl);
+                    $replacementReviewer = $rights->addMember(['ai-estimates' => ['estimate_generation.view', 'estimate_generation.review']], ['admin.access']);
+                    $replacementReviewer->organizations()->updateExistingPivot($scope[0], ['project_access_mode' => 'all_projects']);
+                    $replacementHeaders = $this->sourceHeaders($replacementReviewer);
+                    $baselineReview = $this->getJson($reviewUrl, $replacementHeaders)->assertOk()->json('data.source_requirement_reviews');
+                    self::assertCount(1, $baselineReview);
+                    self::assertSame('accept', $baselineReview[0]['status']);
+                    self::assertSame($sourceReviewInput['review_ref'], $baselineReview[0]['review_ref']);
+                    $baselineSnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    self::assertContains($sourceFact->id, array_column($baselineSnapshot->facts, 'id'));
+                    $baselineCard = $workCard($this->getJson($url.'/questions', $replacementHeaders)->assertOk()->json('data.items'));
+                    self::assertCount(1, $baselineCard['requirement_options']);
+                    self::assertSame($selectedRef, $baselineCard['requirement_options'][0]['source_requirement_ref']);
+                    $baselineFactory = $factory();
+                    self::assertContains($sourceFact->id, array_column($baselineFactory->facts, 'id'));
+                    $baselineComponent = $baselineFactory->workTechnologyContext[0]['answer']['requirement']['component'];
+                    self::assertSame((int) $row->id, $baselineComponent['learning_example_id']);
+                    self::assertSame($answerId, $baselineComponent['source_answer_fact_id']);
+                    self::assertSame($selectedRef, $baselineComponent['selected_ref']);
+                    self::assertFalse($baselineComponent['numeric_inputs_verified']);
+                    self::assertSame('unresolved', $baselineComponent['engineering_applicability']);
+                    self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('status'));
+                    $historyIds = [];
+                    foreach (['estimate_generation_project_model_assertions', 'estimate_generation_project_model_corrections',
+                        'estimate_generation_evidence', 'estimate_generation_learning_examples'] as $table) {
+                        $historyIds[$table] = DB::table($table)->where('organization_id', $scope[0])->where('project_id', $scope[1])
+                            ->where($table === 'estimate_generation_learning_examples' ? 'generation_session_id' : 'session_id', $scope[2])->pluck('id')->all();
+                    }
+                    $immutableHistory = function () use ($historyIds): array {
+                        $history = [];
+                        foreach ($historyIds as $table => $ids) {
+                            $history[$table] = DB::table($table)->whereIn('id', $ids)->orderBy('id')->get()->toJson();
+                        }
+                        return $history;
+                    };
+                    $originalHistory = $immutableHistory();
+                    $originalReview = get_object_vars($reviewFact);
+                    $beforeRecoveryCounts = $counts();
+                    $beforeRecoveryOperations = DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count();
+                    fwrite(STDERR, "\nSource-review actor recovery: current planning/public option/actual Factory component from settled Learning proved before deactivation.\n");
+                    $actor->update(['is_active' => false]);
+                    $this->useRealQuestionAuthorization();
+                    $beforeInvalidatedRead = $session->fresh()->getAttributes();
+                    $invalidatedList = $this->getJson($reviewUrl, $replacementHeaders)->assertOk()->json('data');
+                    self::assertCount(1, $invalidatedList['source_requirement_reviews'], 'An inactive original reviewer must leave a discoverable explicit recovery row.');
+                    $invalidated = $invalidatedList['source_requirement_reviews'][0];
+                    self::assertSame($sourceReviewInput['review_ref'], $invalidated['review_ref']);
+                    self::assertSame('invalidated', $invalidated['status']);
+                    self::assertSame(['revoke'], $invalidated['actions']);
+                    self::assertSame($baselineReview[0]['proposal'], $invalidated['proposal']);
+                    self::assertSame($baselineReview[0]['source'], $invalidated['source']);
+                    foreach (['human_interpretation', 'source_correspondence', 'source_authority', 'engineering_applicability'] as $axis) {
+                        self::assertSame('unresolved', $invalidated[$axis]);
+                    }
+                    self::assertSame('accept', $session->fresh()->input_payload['document_source_review_rows'][$sourceReviewInput['review_ref']]['decision']);
+                    $invalidatedSnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    self::assertNotContains($sourceFact->id, array_column($invalidatedSnapshot->facts, 'id'));
+                    $invalidatedCard = $workCard($this->getJson($url.'/questions', $replacementHeaders)->assertOk()->json('data.items'));
+                    self::assertSame([], $invalidatedCard['requirement_options']);
+                    $invalidatedFactory = $factory();
+                    self::assertNotContains($sourceFact->id, array_column($invalidatedFactory->facts, 'id'));
+                    self::assertArrayNotHasKey('component', $invalidatedFactory->workTechnologyContext[0]['answer']['requirement'] ?? []);
+                    self::assertSame($beforeInvalidatedRead, $session->fresh()->getAttributes());
+                    self::assertSame($originalHistory, $immutableHistory());
+                    $revokeReceipt = $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid(),
+                        'state_version' => $invalidatedList['state_version'], 'decision' => 'revoke',
+                        'reason' => 'Отзываю извлечение после отключения прежнего проверяющего; применимость не подтверждена.'], $replacementHeaders)->assertOk()->json('data');
+                    self::assertSame('revoke', $revokeReceipt['decision']);
+                    self::assertNotSame($sourceReviewReceipt['decision_id'], $revokeReceipt['decision_id']);
+                    $actor->update(['is_active' => true]);
+                    $this->useRealQuestionAuthorization();
+                    $afterRestore = $session->fresh()->getAttributes();
+                    $revokedList = $this->getJson($reviewUrl, $replacementHeaders)->assertOk()->json('data');
+                    self::assertCount(1, $revokedList['source_requirement_reviews']);
+                    self::assertSame('revoke', $revokedList['source_requirement_reviews'][0]['status']);
+                    self::assertSame(['accept'], $revokedList['source_requirement_reviews'][0]['actions']);
+                    self::assertNotContains($sourceFact->id, array_column($models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts, 'id'));
+                    self::assertSame([], $workCard($this->getJson($url.'/questions', $replacementHeaders)->assertOk()->json('data.items'))['requirement_options']);
+                    self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['requirement'] ?? []);
+                    self::assertSame($afterRestore, $session->fresh()->getAttributes());
+                    self::assertSame($originalHistory, $immutableHistory());
+                    $recoveryReceipt = $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid(),
+                        'state_version' => $revokedList['state_version'],
+                        'reason' => 'Заново проверяю содержание извлечения отдельным решением; инженерная применимость не подтверждена.'], $replacementHeaders)->assertOk()->json('data');
+                    self::assertNotSame($sourceReviewReceipt['decision_id'], $recoveryReceipt['decision_id']);
+                    self::assertNotSame($revokeReceipt['decision_id'], $recoveryReceipt['decision_id']);
+                    $recoverySnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    $recoveryReviews = array_values(array_filter($recoverySnapshot->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_answer'
+                        && is_array($fact->value) && ($fact->value['decision_id'] ?? null) === $recoveryReceipt['decision_id']));
+                    self::assertCount(1, $recoveryReviews);
+                    $recoveryReview = $recoveryReviews[0];
+                    self::assertNotSame($reviewFact->id, $recoveryReview->id);
+                    self::assertSame(CanonicalPipelineJson::encode($expectedSourceAssociation), CanonicalPipelineJson::encode($recoveryReview->value['source']));
+                    $recoveryDecisions = $models->decisionsForSelectedFacts(...[...$scope, [$recoveryReview->id]]);
+                    self::assertCount(1, $recoveryDecisions);
+                    self::assertSame($recoveryReceipt['decision_id'], array_values($recoveryDecisions)[0]->id);
+                    self::assertSame('user', array_values($recoveryDecisions)[0]->actorType);
+                    self::assertSame((string) $replacementReviewer->id, array_values($recoveryDecisions)[0]->actorId);
+                    self::assertNotEmpty($recoveryReview->evidenceIds);
+                    self::assertSame([], array_values(array_intersect($reviewFact->evidenceIds, $recoveryReview->evidenceIds)));
+                    foreach ($recoveryReview->evidenceIds as $proofId) {
+                        $proof = app(EvidenceRepository::class)->node(...[...$scope, (int) substr($proofId, 9)]);
+                        self::assertNotNull($proof);
+                        self::assertNull($proof->invalidatedAt);
+                        self::assertSame('user_input', $proof->sourceType->value);
+                    }
+                    $recoverySource = $models->fact(...[...$scope, $recoveryReview->value['publication']['fact_id']]);
+                    self::assertNotNull($recoverySource);
+                    self::assertNotSame($sourceFact->id, $recoverySource->id);
+                    self::assertSame($candidateFact->value, $recoverySource->value);
+                    self::assertSame($candidateFact->evidenceIds, $recoverySource->evidenceIds);
+                    self::assertSame($candidateFact->semanticAttributes, $recoverySource->semanticAttributes);
+                    self::assertSame([], $recoverySource->nativeNumericProofs);
+                    self::assertContains($recoverySource->id, array_column($recoverySnapshot->facts, 'id'));
+                    self::assertNotContains($sourceFact->id, array_column($recoverySnapshot->facts, 'id'));
+                    $recoveryCard = $workCard($this->getJson($url.'/questions', $replacementHeaders)->assertOk()->json('data.items'));
+                    self::assertCount(1, $recoveryCard['requirement_options']);
+                    $recoveryRef = $recoveryCard['requirement_options'][0]['source_requirement_ref'];
+                    self::assertNotSame($selectedRef, $recoveryRef);
+                    $this->postJson($url.'/questions/'.$recoveryCard['code'].'/answer', [...$answerInput,
+                        'idempotency_key' => (string) Str::uuid(), 'expected_source_version' => $recoveryCard['source_version'],
+                        'answer_fingerprint' => $recoveryCard['answer_fingerprint']], $replacementHeaders)->assertStatus(409);
+                    $recoveryCard = $workCard($this->getJson($url.'/questions', $replacementHeaders)->assertOk()->json('data.items'));
+                    $this->postJson($url.'/questions/'.$recoveryCard['code'].'/answer', [...$answerInput,
+                        'idempotency_key' => (string) Str::uuid(), 'expected_source_version' => $recoveryCard['source_version'],
+                        'answer_fingerprint' => $recoveryCard['answer_fingerprint'],
+                        'parameter' => ['schema_version' => 2, 'condition' => 'minimum_length', 'source_requirement_ref' => $recoveryRef]], $replacementHeaders)->assertOk();
+                    $recoveredCard = $workCard($this->getJson($url.'/questions', $replacementHeaders)->assertOk()->json('data.items'));
+                    self::assertSame('answered', $recoveredCard['status']);
+                    self::assertSame($recoveryRef, $recoveredCard['answer']['requirement']['selected_ref']);
+                    self::assertSame('current', $recoveredCard['answer']['requirement']['source_details']['status']);
+                    self::assertFalse($recoveredCard['answer']['requirement']['source_details']['numeric_inputs_verified']);
+                    self::assertFalse($recoveredCard['answer']['requirement']['source_details']['numeric_parameters_confirmed']);
+                    $recoveredAnswer = $models->fact(...[...$scope, $recoveredCard['answer']['fact_id']]);
+                    self::assertNotNull($recoveredAnswer);
+                    self::assertNotSame($answerId, $recoveredAnswer->id);
+                    self::assertSame($recoverySource->id, $recoveredAnswer->value['parameter']['association']['source_fact_id']);
+                    $recoveredDecisions = $models->decisionsForSelectedFacts(...[...$scope, [$recoveredAnswer->id]]);
+                    self::assertCount(1, $recoveredDecisions);
+                    self::assertSame($recoveredAnswer->value['decision_id'], array_values($recoveredDecisions)[0]->id);
+                    self::assertSame((string) $replacementReviewer->id, array_values($recoveredDecisions)[0]->actorId);
+                    $recoveredFactory = $factory();
+                    self::assertContains($recoverySource->id, array_column($recoveredFactory->facts, 'id'));
+                    self::assertNotContains($sourceFact->id, array_column($recoveredFactory->facts, 'id'));
+                    $recoveredRequirement = $recoveredFactory->workTechnologyContext[0]['answer']['requirement'];
+                    self::assertSame($recoveredAnswer->id, $recoveredFactory->workTechnologyContext[0]['answer']['fact_id']);
+                    self::assertSame($recoveryRef, $recoveredRequirement['selected_ref']);
+                    self::assertArrayNotHasKey('component', $recoveredRequirement);
+                    self::assertSame(0, DB::transaction(fn () => app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId])));
+                    self::assertSame($originalHistory, $immutableHistory());
+                    self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
+                    self::assertSame($originalFact, get_object_vars($models->fact(...[...$scope, $sourceFact->id])));
+                    self::assertSame($originalReview, get_object_vars($models->fact(...[...$scope, $reviewFact->id])));
+                    self::assertSame(1, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
+                    self::assertSame($beforeRecoveryCounts, $counts());
+                    self::assertSame($beforeRecoveryOperations, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
+                    fwrite(STDERR, "\nSource-review actor recovery: explicit revoke, restored old actor, fresh reviewer association/selection proved; old settled terminal admits no component.\n");
+                    return;
+                }
                 $constraint = fn (): string => DB::selectOne("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid = 'estimate_generation_learning_examples'::regclass AND conname = 'estimate_learning_source_claim_shape'")->definition;
                 $beforeConstraint = $constraint();
                 foreach ([['is_positive' => true], ['context_payload' => json_encode([...$row->context_payload, 'training_allowed' => true], JSON_THROW_ON_ERROR)]] as $change) {
