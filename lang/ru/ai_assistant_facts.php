@@ -241,6 +241,12 @@ return [
         'commercial_proposal' => 'Коммерческое предложение',
         'knowledge_article' => 'Статья базы знаний',
     ],
+    'crm_deal_statuses' => [
+        'open' => 'Открыта',
+        'won' => 'Выиграна',
+        'lost' => 'Проиграна',
+        'archived' => 'В архиве',
+    ],
     'warehouse_movement_types' => [
         'receipt' => 'Поступление',
         'write_off' => 'Списание',

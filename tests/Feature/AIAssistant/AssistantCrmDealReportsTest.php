@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\DescribeCustomReportSourceTool;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportBuilder;
@@ -14,6 +15,7 @@ use App\BusinessModules\Features\Crm\Models\CrmDeal;
 use App\BusinessModules\Features\Crm\Models\CrmPipeline;
 use App\BusinessModules\Features\Crm\Models\CrmPipelineStage;
 use App\BusinessModules\Features\Crm\Services\CrmDealReportReadService;
+use App\BusinessModules\Features\Crm\Services\CrmRegistryService;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Credits\AICreditService;
@@ -25,6 +27,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
@@ -95,6 +98,116 @@ final class AssistantCrmDealReportsTest extends TestCase
             ['title' => 'A — Сделка проекта', 'company_name' => 'Компания заказчика', 'owner_name' => $this->assignee->name, 'stage_label' => 'Новая сделка'],
             ['title' => 'B — Сделка без проекта', 'company_name' => 'Компания заказчика', 'owner_name' => null, 'stage_label' => 'Новая сделка'],
         ], $rows);
+    }
+
+    public function test_crm_status_choices_describe_the_active_report_vocabulary(): void
+    {
+        $description = app(DescribeCustomReportSourceTool::class)->execute(
+            ['domain' => 'crm', 'entity_type' => 'crm_deal', 'project_id' => null],
+            $this->fixture->owner,
+            $this->fixture->organization,
+        );
+        self::assertIsArray($description);
+        self::assertSame('success', $description['status']);
+        self::assertSame([
+            ['value' => 'open', 'label' => 'Открыта'],
+            ['value' => 'won', 'label' => 'Выиграна'],
+            ['value' => 'lost', 'label' => 'Проиграна'],
+            ['value' => 'archived', 'label' => 'В архиве'],
+        ], $description['fields']['status']['choices'] ?? []);
+        self::assertSame(trans_message('ai_custom_reports.crm_deal_status_scope'), $description['fields']['status']['description'] ?? null);
+    }
+
+    public function test_crm_status_filters_reject_unknown_values_before_reading_report_rows(): void
+    {
+        foreach ([['neq', 'closed'], ['eq', 'closed'], ['in', ['open', 'closed']], ['contains', 'open']] as [$operator, $value]) {
+            $specification = $this->specification();
+            $specification['sections'][0]['filters'] = [['field' => 'status', 'operator' => $operator, 'value' => $value]];
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            try {
+                app(AssistantCustomReportBuilder::class)->build($specification, $this->fixture->owner, $this->fixture->organization->id);
+                self::fail('CRM status filters must use the published vocabulary and supported choice operators');
+            } catch (ValidationException $exception) {
+                self::assertArrayHasKey('filters', $exception->errors());
+                self::assertSame([], array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'crm_deals')
+                    && in_array('closed', $query['bindings'], true))));
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+        }
+    }
+
+    public function test_crm_status_filters_select_open_only_and_preserve_valid_inequality(): void
+    {
+        Model::withoutEvents(function (): void {
+            CrmDeal::query()->create(['organization_id' => $this->fixture->organization->id,
+                'company_id' => $this->company->id, 'title' => 'Проигранная сделка', 'status' => 'lost']);
+        });
+        foreach ([['eq', 'open', ['open']], ['neq', 'open', ['won', 'lost']], ['in', ['won', 'lost'], ['won', 'lost']]] as [$operator, $value, $statuses]) {
+            $specification = $this->specification();
+            $specification['sections'][0]['filters'] = [['field' => 'status', 'operator' => $operator, 'value' => $value]];
+            $report = app(AssistantCustomReportBuilder::class)->build($specification, $this->fixture->owner, $this->fixture->organization->id);
+            $expected = CrmDeal::query()->where('organization_id', $this->fixture->organization->id)->whereIn('status', $statuses)->pluck('id')->all();
+            $actual = $report['source_refs'][0]['_report_ids'];
+            sort($expected, SORT_STRING);
+            sort($actual, SORT_STRING);
+            self::assertSame($expected, $actual);
+            self::assertSame(count($expected), $report['sections'][0]['source_row_count']);
+        }
+    }
+
+    public function test_crm_status_scope_excludes_deleted_archive_and_reads_restored_deals(): void
+    {
+        $deal = Model::withoutEvents(fn () => CrmDeal::query()->create([
+            'organization_id' => $this->fixture->organization->id,
+            'company_id' => $this->company->id, 'title' => 'Обычная сделка для архивирования', 'status' => 'open',
+        ]));
+        app(CrmRegistryService::class)->archive($deal, $this->fixture->owner->id);
+        $archived = CrmDeal::withTrashed()->findOrFail($deal->id);
+        self::assertTrue($archived->trashed());
+        self::assertSame('archived', $archived->status);
+        $source = app(AssistantCustomReportSource::class)->resolve($this->fixture->owner, $this->fixture->organization->id, 'crm', 'crm_deal', null);
+        self::assertSame(0, (clone $source['query'])->whereKey($deal->id)->count());
+        self::assertContains('archived', array_column($source['fields']['status']['choices'], 'value'));
+        self::assertSame(trans_message('ai_custom_reports.crm_deal_status_scope'), $source['fields']['status']['description']);
+        app(CrmRegistryService::class)->restore($archived, $this->fixture->owner->id);
+        $restored = CrmDeal::query()->findOrFail($deal->id);
+        self::assertFalse($restored->trashed());
+        self::assertSame('open', $restored->status);
+        $restoredSource = app(AssistantCustomReportSource::class)->resolve($this->fixture->owner, $this->fixture->organization->id, 'crm', 'crm_deal', null);
+        self::assertSame(1, (clone $restoredSource['query'])->whereKey($deal->id)->count());
+    }
+
+    public function test_crm_status_filters_accept_archived_saved_by_native_create_and_update(): void
+    {
+        $registry = app(CrmRegistryService::class);
+        $actor = $this->fixture->owner;
+        $organizationId = $this->fixture->organization->id;
+        $created = $registry->createDeal($organizationId, [
+            'title' => 'Архивный статус через создание', 'company_id' => $this->company->id,
+            'pipeline_id' => $this->pipeline->id, 'stage_id' => $this->stage->id, 'status' => 'archived',
+        ], $actor->id, $actor);
+        $updated = $registry->updateDeal($organizationId, $this->dealIds[1], ['status' => 'archived'], $actor->id, $actor);
+        foreach ([$created, $updated] as $deal) {
+            self::assertFalse($deal->trashed());
+            self::assertSame('archived', $deal->status);
+        }
+        $source = app(AssistantCustomReportSource::class)->resolve($actor, $organizationId, 'crm', 'crm_deal', null);
+        self::assertSame(2, (clone $source['query'])->whereKey([$created->id, $updated->id])->count());
+        $specification = $this->specification();
+        $specification['sections'][0]['filters'] = [['field' => 'status', 'operator' => 'eq', 'value' => 'archived']];
+        $report = app(AssistantCustomReportBuilder::class)->build($specification, $actor, $organizationId);
+        $expected = [$created->id, $updated->id];
+        $actual = $report['source_refs'][0]['_report_ids'];
+        sort($expected, SORT_STRING);
+        sort($actual, SORT_STRING);
+        self::assertSame($expected, $actual);
+        self::assertSame(2, $report['sections'][0]['source_row_count']);
+        $specification['sections'][0]['filters'] = [['field' => 'status', 'operator' => 'in', 'value' => ['open', 'archived']]];
+        $mixed = app(AssistantCustomReportBuilder::class)->build($specification, $actor, $organizationId);
+        self::assertSame(3, $mixed['sections'][0]['source_row_count']);
     }
 
     public function test_crm_labels_follow_deal_permission_without_requiring_independent_user_or_company_access(): void

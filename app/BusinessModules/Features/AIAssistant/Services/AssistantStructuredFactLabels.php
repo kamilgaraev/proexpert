@@ -72,6 +72,7 @@ final class AssistantStructuredFactLabels
             'design_package.project_stage' => 'design_management.project_stages',
             'estimate.status' => 'budget_estimates.mobile.statuses',
             'project.status' => 'ai_assistant_facts.project_statuses',
+            'crm_deal.status' => 'ai_assistant_facts.crm_deal_statuses',
             'completed_work.status' => 'workflow_management.statuses',
             'machinery_asset.status' => 'machinery_operations.asset_statuses',
             'machinery_assignment.status' => 'machinery_operations.assignment_statuses',
