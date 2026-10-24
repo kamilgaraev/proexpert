@@ -549,7 +549,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertNull($descriptor['payload']['appliesTo']['equipmentIdentity']);
         $originalFact = get_object_vars($sourceFact);
         $originalEntity = get_object_vars($entity);
-        $originalEvidence = array_map('get_object_vars', array_values(array_filter($captured->evidence,
+        $proofFields = static fn ($proof): array => [...get_object_vars($proof), 'factSource' => $proof->factSource?->value];
+        $originalEvidence = array_map($proofFields, array_values(array_filter($captured->evidence,
             static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true))));
         self::assertNotEmpty($originalEvidence);
         $nativeReader = app(Documents\DocumentUnitContentReader::class);
@@ -801,7 +802,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame([], array_values(array_filter($final->facts, static fn (Fact $fact): bool => str_starts_with($fact->type, 'engineering_parameter_'))));
         self::assertSame($originalFact, get_object_vars($models->fact(...[...$scope, $sourceFact->id])));
         self::assertSame($originalEntity, get_object_vars(array_column($final->entities, null, 'id')[$sourceFact->entityId]));
-        self::assertSame($originalEvidence, array_map('get_object_vars', array_values(array_filter($final->evidence,
+        self::assertSame($originalEvidence, array_map($proofFields, array_values(array_filter($final->evidence,
             static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true)))));
         Http::assertNothingSent();
     }
