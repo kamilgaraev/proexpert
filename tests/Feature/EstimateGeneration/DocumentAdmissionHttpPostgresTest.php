@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PreparedDocumentAdmission;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -27,8 +28,13 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use Illuminate\Routing\Route;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger as MonologLogger;
+use Monolog\LogRecord;
 use Mockery;
 use Psr\Http\Message\RequestInterface;
 use Tests\Support\AssistantRealAuthorizationFixture;
@@ -37,6 +43,172 @@ use Tests\Support\EstimateGeneration\InMemoryS3HttpStorage;
 
 final class DocumentAdmissionHttpPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_snapshot_upload_permission_observation_preserves_authorization_privacy_and_memo_semantics(): void
+    {
+        [$actor, $session] = $this->snapshotObservationFixture();
+        $channel = Log::channel('technical');
+        $logger = $channel->getLogger();
+        self::assertInstanceOf(MonologLogger::class, $logger);
+        $originalHandlers = $logger->getHandlers();
+        $originalExceptionHandler = $logger->getExceptionHandler();
+        $handler = new TestHandler;
+        $logger->setHandlers([$handler]);
+        Log::shareContext(['forbidden_shared_context' => 'controlled_shared_marker']);
+        $initial = $session->fresh()->getRawOriginal();
+        try {
+            foreach (['denied', 'named_exception', 'anonymous_exception', 'memo_missing', 'memo_present', 'allowed', 'list', 'post', 'other_status'] as $case) {
+                $handler->clear();
+                $session->status = $case === 'other_status' ? 'generating' : 'estimate_review_required';
+                $request = $this->snapshotObservationRequest($actor, $case === 'post' ? 'POST' : 'GET', $case === 'list' ? 'index' : 'snapshot');
+                $authorization = Mockery::mock(AuthorizationService::class);
+                $context = ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id];
+                $memo = in_array($case, ['memo_missing', 'memo_present'], true);
+                $exception = $case === 'anonymous_exception'
+                    ? new class('controlled_exception_marker') extends \RuntimeException {}
+                    : new \RuntimeException('controlled_exception_marker');
+                if ($memo) {
+                    $authorization->shouldNotReceive('can');
+                    $request->attributes->set('estimate_generation_permissions_'.$session->organization_id.'_'.$session->project_id,
+                        ['estimate_generation.view', 42, ...($case === 'memo_present' ? ['estimate_generation.upload_documents'] : [])]);
+                } else {
+                    $expectation = $authorization->shouldReceive('can')->once()->with($actor, 'estimate_generation.upload_documents', $context);
+                    if (in_array($case, ['named_exception', 'anonymous_exception'], true)) $expectation->andThrow($exception);
+                    else $expectation->andReturn($case === 'allowed');
+                    foreach (['generate', 'review', 'view', 'apply', 'export'] as $action) {
+                        $authorization->shouldReceive('can')->once()->with($actor, 'estimate_generation.'.$action, $context)->andReturnTrue();
+                    }
+                }
+                $authorization->shouldNotReceive('canCurrent');
+                $this->app->instance(AuthorizationService::class, $authorization);
+                $permissions = EstimateGenerationSessionListResource::permissions($request, $session);
+                self::assertSame($permissions, EstimateGenerationSessionListResource::permissions($request, $session));
+                self::assertContains('estimate_generation.view', $permissions);
+                self::assertNotContains(42, $permissions);
+                self::assertSame(in_array($case, ['allowed', 'memo_present'], true), in_array('estimate_generation.upload_documents', $permissions, true));
+                $shouldObserve = in_array($case, ['denied', 'named_exception', 'anonymous_exception', 'memo_missing'], true);
+                self::assertCount($shouldObserve ? 1 : 0, $handler->getRecords(), $case);
+                if ($shouldObserve) {
+                    $record = $handler->getRecords()[0];
+                    self::assertSame('estimate_generation.snapshot_upload_permission_missing', $record->message);
+                    self::assertSame('WARNING', $record->level->getName());
+                    self::assertSame([
+                        'schema_version' => 1, 'actor_id' => (int) $actor->id,
+                        'actor_current_organization_id' => (int) $actor->current_organization_id,
+                        'organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id,
+                        'session_id' => (int) $session->id, 'state_version' => 8, 'status' => 'estimate_review_required',
+                        'permission' => 'estimate_generation.upload_documents',
+                        'outcome' => $memo ? 'not_checked' : (str_contains($case, 'exception') ? 'exception' : 'denied'),
+                        'memo_hit' => $memo, 'permission_present' => false,
+                        'exception_class' => match ($case) {
+                            'named_exception' => \RuntimeException::class,
+                            'anonymous_exception' => 'unclassified_exception',
+                            default => null,
+                        },
+                    ], $record->context, $case);
+                    $encoded = json_encode($record->context, JSON_THROW_ON_ERROR);
+                    foreach (['controlled_exception_marker', 'controlled_shared_marker', 'controlled_body_marker', 'controlled_header_marker', 'controlled_query_marker', __FILE__] as $marker) {
+                        self::assertStringNotContainsString($marker, $encoded);
+                    }
+                }
+                self::assertSame([$handler], $logger->getHandlers());
+                self::assertSame($originalExceptionHandler, $logger->getExceptionHandler());
+                self::assertSame('controlled_shared_marker', Log::sharedContext()['forbidden_shared_context']);
+            }
+            self::assertSame($initial, $session->fresh()->getRawOriginal());
+            foreach (['estimate_generation_ai_role_runs', 'estimate_generation_ai_usage', 'estimate_generation_credit_operations', DocumentAdmissionOperation::TABLE] as $table) {
+                self::assertSame(0, DB::table($table)->where('session_id', $session->id)->count());
+            }
+            Queue::assertNothingPushed();
+            Http::assertNothingSent();
+        } finally {
+            $logger->setHandlers($originalHandlers);
+            Log::flushSharedContext();
+        }
+    }
+
+    public function test_snapshot_upload_permission_observation_logging_failures_never_change_permissions_or_use_fallback(): void
+    {
+        [$actor, $session] = $this->snapshotObservationFixture();
+        $manager = Log::getFacadeRoot();
+        $logger = Log::channel('technical')->getLogger();
+        self::assertInstanceOf(MonologLogger::class, $logger);
+        $originalHandlers = $logger->getHandlers();
+        $originalExceptionHandler = $logger->getExceptionHandler();
+        $handler = new class extends TestHandler {
+            public function handle(LogRecord $record): bool
+            {
+                throw new \RuntimeException('controlled_logger_failure_marker');
+            }
+        };
+        $logger->setHandlers([$handler]);
+        $errorPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-upload-observation-'.Str::uuid().'.log';
+        $previousErrorLog = ini_set('error_log', $errorPath);
+        try {
+            $request = $this->snapshotObservationRequest($actor);
+            $authorization = Mockery::mock(AuthorizationService::class);
+            $authorization->shouldReceive('can')->times(6)->andReturnFalse();
+            $authorization->shouldNotReceive('canCurrent');
+            $this->app->instance(AuthorizationService::class, $authorization);
+            self::assertSame([], EstimateGenerationSessionListResource::permissions($request, $session));
+            self::assertSame([], EstimateGenerationSessionListResource::permissions($request, $session));
+            self::assertSame([$handler], $logger->getHandlers());
+            self::assertSame($originalExceptionHandler, $logger->getExceptionHandler());
+            self::assertFalse(is_file($errorPath) && filesize($errorPath) > 0);
+            Log::shouldReceive('channel')->once()->with('technical')->andThrow(new \RuntimeException('controlled_channel_failure_marker'));
+            $fresh = $this->snapshotObservationRequest($actor);
+            $fresh->attributes->set('estimate_generation_permissions_'.$session->organization_id.'_'.$session->project_id, []);
+            self::assertSame([], EstimateGenerationSessionListResource::permissions($fresh, $session));
+            Log::shouldReceive('channel')->once()->with('technical')->andReturn(new \Illuminate\Log\Logger(new \Psr\Log\NullLogger));
+            $unsupported = $this->snapshotObservationRequest($actor);
+            $unsupported->attributes->set('estimate_generation_permissions_'.$session->organization_id.'_'.$session->project_id, []);
+            self::assertSame([], EstimateGenerationSessionListResource::permissions($unsupported, $session));
+            $scopeFailure = $this->snapshotObservationRequest($actor);
+            $scopeFailure->attributes->set('estimate_generation_permissions_'.$session->organization_id.'_'.$session->project_id, []);
+            $scopeFailure->setRouteResolver(static function (): Route {
+                throw new \RuntimeException('controlled_scope_failure_marker');
+            });
+            self::assertSame([], EstimateGenerationSessionListResource::permissions($scopeFailure, $session));
+            self::assertFalse(is_file($errorPath) && filesize($errorPath) > 0);
+            Queue::assertNothingPushed();
+            Http::assertNothingSent();
+        } finally {
+            Log::swap($manager);
+            $logger->setHandlers($originalHandlers);
+            ini_set('error_log', $previousErrorLog === false ? '' : $previousErrorLog);
+            if (is_file($errorPath)) unlink($errorPath);
+        }
+    }
+
+    private function snapshotObservationFixture(): array
+    {
+        config(['cache.default' => 'array']);
+        Http::fake();
+        Http::preventStrayRequests();
+        Queue::fake();
+        $this->seedGlobalSettings();
+        $rights = AssistantRealAuthorizationFixture::create(['working-entry']);
+        $project = Project::factory()->for($rights->organization)->create(['is_archived' => false, 'address' => null]);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $rights->organization->id, 'project_id' => $project->id,
+            'user_id' => $rights->owner->id, 'status' => 'estimate_review_required', 'state_version' => 8,
+            'input_payload' => ['object_name' => 'Controlled observation fixture'], 'draft_payload' => ['local_estimates' => []]]);
+
+        return [$rights->owner, $session];
+    }
+
+    private function snapshotObservationRequest(User $actor, string $method = 'GET', string $action = 'snapshot'): Request
+    {
+        $request = Request::create('/api/v1/admin/projects/1/estimate-generation/sessions/1/snapshot?private=controlled_query_marker', $method,
+            ['private' => 'controlled_body_marker']);
+        $request->headers->set('X-Controlled-Private', 'controlled_header_marker');
+        $request->setUserResolver(static fn (): User => $actor);
+        $route = $this->app['router']->getRoutes()->getByAction(EstimateGenerationSessionController::class.'@'.$action);
+        self::assertInstanceOf(Route::class, $route);
+        self::assertSame(EstimateGenerationSessionController::class.'@'.$action, $route->getActionName());
+        $request->setRouteResolver(static fn (): Route => $route);
+
+        return $request;
+    }
+
     public function test_owner_snapshot_offers_review_document_upload_through_real_authorization_without_explicit_grants(): void
     {
         config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
