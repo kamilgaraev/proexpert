@@ -677,7 +677,7 @@ class AIAssistantService
             $options = [];
             $options['profile'] = 'assistant';
             $options['budget_profile'] = $this->activeProfile;
-            if (! $imageDiscussion) {
+            if (! $restricted && ! $imageDiscussion) {
                 $this->recordUnavailableBusinessTools($taskPlan, $tools);
             }
             if (! empty($tools)) {
@@ -3593,7 +3593,8 @@ class AIAssistantService
 
     protected function guardUnconfirmedReportCompletion(string $content, array $taskPlan, array $trustedUrls = []): string
     {
-        if (! $this->isReportTaskPlan($taskPlan) || $trustedUrls !== []) {
+        $guarded = $this->scopedContext?->isGuarded() ?? false;
+        if ((! $guarded && ! $this->isReportTaskPlan($taskPlan)) || $trustedUrls !== []) {
             return $content;
         }
 
@@ -3603,6 +3604,10 @@ class AIAssistantService
 
         if (! $mentionsReport || ! $claimsCompletion) {
             return $content;
+        }
+
+        if ($guarded && $this->requestOutcome === null) {
+            $this->recordRequestOutcome('insufficient_data');
         }
 
         return $this->assistantMessage(
