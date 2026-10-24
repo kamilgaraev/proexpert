@@ -186,7 +186,8 @@ class EstimateGenerationDocumentController extends Controller
             $this->guardDocument($request, $project, $session, $document);
 
             return AdminResponse::success(['state_version' => (int) $session->state_version,
-                'items' => $reviews->rows($request->user(), $session, (int) $document->id)]);
+                'items' => $reviews->rows($request->user(), $session, (int) $document->id),
+                'source_requirement_reviews' => $reviews->sourceRows($request->user(), $session, (int) $document->getKey())]);
         }, 'list cell interpretations', ['session_id' => $session->id, 'document_id' => $document->id]);
     }
 

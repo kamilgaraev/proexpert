@@ -63,6 +63,16 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         );
     }
 
+    public function writeReviewedSourceRequirement(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity $entity,
+        \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $original, array $proofs,
+        \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $review): void
+    {
+        if ($this->database->transactionLevel() < 1) {
+            throw new LogicException('document_unit_publication_transaction_required');
+        }
+        $this->evidence->writeReviewedSourceRequirement($entity, $original, $proofs, $review);
+    }
+
     public function writeReviewedLiteral(DocumentUnitPublication $publication, DocumentUnitExecutionContext $context,
         \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact $review): void
     {

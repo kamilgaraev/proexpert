@@ -9,6 +9,100 @@ use PHPUnit\Framework\TestCase;
 
 final class ComposerSourceClaimValidationTest extends TestCase
 {
+    public function test_old_snapshot_cannot_restore_a_missing_or_replaced_human_source_review(): void
+    {
+        [$entity, $original] = $this->requirementSource();
+        $publicationId = Claims::sourceReviewPublicationId([10, 20, 40], str_repeat('a', 64), 'f0c59e29-76cd-4d4f-9f66-1e40afac9d65');
+        $source = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact($publicationId, 10, 20, 40,
+            $original->sourceVersion, $entity->id, $original->type, $original->value, null, 0.0, 'document', 'confirmed', ['evidence:1'], 2, $original->id);
+        $review = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:old-review', 10, 20, 40,
+            'sha256:'.str_repeat('b', 64), 'entity:review', 'evaluation_answer', ['kind' => 'document_source_review',
+                'publication' => ['fact_id' => $publicationId]], null, 0.0, 'user_input', 'confirmed', ['evidence:2']);
+        $replacement = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:new-review', 10, 20, 40,
+            $review->sourceVersion, $review->entityId, $review->type, $review->value, null, 0.0, 'user_input', 'confirmed', ['evidence:3'], 2, $review->id);
+        foreach ([[], [$replacement]] as $current) {
+            $models = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
+            $models->expects(self::once())->method('currentFacts')->with(10, 20, 40, $review->entityId)->willReturn($current);
+            $evidence = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class);
+            $evidence->expects(self::never())->method('node');
+            $units = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore::class);
+            $authorization = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
+            $authorization->expects(self::never())->method('authorize');
+            $claims = new Claims($evidence, $units, reviewAuthorization: $authorization, models: static fn () => $models);
+            $snapshot = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([$entity], [$source, $review], [], []);
+            self::assertNull($claims->captureSourceReview([10, 20, 40], $snapshot, [], $source));
+        }
+        self::assertNotSame($publicationId, Claims::sourceReviewPublicationId([10, 20, 40], str_repeat('a', 64), 'f0c59e29-76cd-4d4f-9f66-1e40afac9d66'));
+    }
+
+    public function test_source_review_captures_a_candidate_without_relaxing_requirement_admission(): void
+    {
+        $fixture = $this->requirementCapture();
+        try {
+            $source = $fixture->snapshot->facts[0];
+            $candidate = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact($source->id, 10, 20, 40,
+                $source->sourceVersion, $source->entityId, $source->type, $source->value, null, 0.0, 'document', 'candidate', $source->evidenceIds);
+            $snapshot = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot(
+                $fixture->snapshot->entities, [$candidate], $fixture->snapshot->evidence, []);
+            self::assertNull(Claims::requirementProposal($snapshot->entities[0], $candidate));
+            $reviews = $fixture->claims->sourceReviewSources([10, 20, 40], $snapshot, $fixture->documents);
+            self::assertCount(1, $reviews);
+            $ref = array_key_first($reviews);
+            self::assertMatchesRegularExpression('/\A[a-f0-9]{64}\z/D', $ref);
+            self::assertSame($source->id, $reviews[$ref]['source_fact_id']);
+            self::assertSame($fixture->outputVersion, $reviews[$ref]['output_identity']['version']);
+            self::assertSame($reviews, $fixture->claims->sourceReviewSources([10, 20, 40], $snapshot, $fixture->documents));
+            self::assertSame([], $fixture->claims->sourceReviewSources([10, 20, 41], $snapshot, $fixture->documents));
+            self::assertSame([], $fixture->claims->sourceReviewSources([10, 20, 40], $snapshot, []));
+            $fixture->state->rows['estimate_generation_document_pages'][0]['output_version'] = str_repeat('b', 64);
+            self::assertSame([], $fixture->claims->sourceReviewSources([10, 20, 40], $snapshot, $fixture->documents));
+        } finally {
+            ($fixture->restore)();
+        }
+    }
+
+    public function test_source_review_publication_preserves_raw_analyzer_and_requires_a_distinct_human_association(): void
+    {
+        [$entity, $source, $descriptor] = $this->requirementSource();
+        $original = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact($source->id, 10, 20, 40,
+            $source->sourceVersion, $source->entityId, $source->type, $source->value, null, 0.0, 'document', 'candidate', $source->evidenceIds);
+        $publicationId = Claims::sourceReviewPublicationId([10, 20, 40], str_repeat('a', 64), 'f0c59e29-76cd-4d4f-9f66-1e40afac9d65');
+        self::assertLessThanOrEqual(191, strlen($publicationId));
+        self::assertMatchesRegularExpression('/\Afact:source-review:[a-f0-9]{64}\z/D', $publicationId);
+        $models = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
+        $models->expects(self::once())->method('saveSourceModel')->willReturnCallback(static function (array $entities, array $facts) use ($entity, $original, $publicationId): void {
+            self::assertSame([$entity], $entities);
+            self::assertCount(1, $facts);
+            $published = $facts[0];
+            self::assertSame($publicationId, $published->id);
+            self::assertSame($original->id, $published->supersedesFactId);
+            self::assertSame('document', $published->origin);
+            self::assertSame('confirmed', $published->status);
+            self::assertSame($original->value, $published->value);
+            self::assertSame($original->evidenceIds, $published->evidenceIds);
+            self::assertSame([], $published->nativeNumericProofs);
+            self::assertSame('candidate', $original->status);
+        });
+        $evidence = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class);
+        $review = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:human-review', 10, 20, 40,
+            'sha256:'.str_repeat('b', 64), 'entity:review', 'evaluation_answer', ['kind' => 'document_source_review',
+                'review_kind' => 'source_requirement', 'decision' => 'accept', 'source' => ['source_fact_id' => $source->id,
+                    'source_fact_version' => $source->version, 'source_entity_id' => $entity->id, 'descriptor' => $descriptor,
+                    'source_value_hash' => hash('sha256', json_encode($source->value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE
+                        | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION))], 'publication' => ['fact_id' => $publicationId, 'version' => 2]],
+            null, 0.0, 'user_input', 'confirmed', ['evidence:2']);
+        (new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter($models, $evidence))
+            ->writeReviewedSourceRequirement($entity, $original, [], $review);
+        $units = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore::class);
+        $claims = new Claims($evidence, $units);
+        $published = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact($publicationId, 10, 20, 40,
+            $original->sourceVersion, $original->entityId, $original->type, $original->value, null, 0.0, 'document', 'confirmed', $original->evidenceIds,
+            2, $original->id);
+        $snapshot = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([$entity], [$published], [], []);
+        self::assertNull($claims->captureSourceReview([10, 20, 40], $snapshot, [], $published));
+        self::assertSame($descriptor, Claims::requirementProposal($entity, $source));
+    }
+
     public function test_requirement_sources_accept_distinct_processing_output_and_pin_its_identity(): void
     {
         $fixture = $this->requirementCapture();

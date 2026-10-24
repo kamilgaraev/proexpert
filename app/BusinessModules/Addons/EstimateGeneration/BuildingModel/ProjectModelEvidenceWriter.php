@@ -53,6 +53,38 @@ final readonly class ProjectModelEvidenceWriter
         return $this->evidence->transaction($organizationId, $sessionId, $callback);
     }
 
+    public function writeReviewedSourceRequirement(Entity $entity, Fact $original, array $proofs, Fact $review): void
+    {
+        $scope = [$original->organizationId, $original->projectId, $original->sessionId];
+        $value = $review->value;
+        $publication = $value['publication'] ?? null;
+        if ([$entity->organizationId, $entity->projectId, $entity->sessionId] !== $scope
+            || [$review->organizationId, $review->projectId, $review->sessionId] !== $scope
+            || $entity->id !== $original->entityId || $entity->sourceVersion !== $original->sourceVersion
+            || \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::sourceReviewProposal($entity, $original) === null
+            || $original->origin !== 'document' || $original->status !== 'candidate' || ! is_string($original->value)
+            || $original->unit !== null || $original->nativeNumericProofs !== [] || $review->type !== 'evaluation_answer'
+            || $review->origin !== 'user_input' || $review->status !== 'confirmed'
+            || ($value['kind'] ?? null) !== 'document_source_review' || ($value['review_kind'] ?? null) !== 'source_requirement'
+            || ($value['decision'] ?? null) !== 'accept' || ! is_array($publication)
+            || ! is_string($publication['fact_id'] ?? null) || preg_match('/\Afact:source-review:[a-f0-9]{64}\z/D', $publication['fact_id']) !== 1
+            || ! is_int($publication['version'] ?? null) || $publication['version'] <= $original->version
+            || ($value['source']['source_fact_id'] ?? null) !== $original->id
+            || ($value['source']['source_fact_version'] ?? null) !== $original->version
+            || ($value['source']['source_entity_id'] ?? null) !== $entity->id
+            || ($value['source']['source_value_hash'] ?? null) !== hash('sha256', json_encode($original->value,
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION))
+            || DerivedQuantityIdentity::canonicalJson($value['source']['descriptor'] ?? [])
+                !== DerivedQuantityIdentity::canonicalJson($entity->attributes['properties']['document_semantic_proposal'] ?? [])
+            || $review->evidenceIds === [] || array_intersect($original->evidenceIds, $review->evidenceIds) !== []) {
+            throw new InvalidArgumentException('document_source_review_publication_invalid');
+        }
+        $fact = new Fact($publication['fact_id'], ...[...$scope, $original->sourceVersion, $original->entityId,
+            $original->type, $original->value, null, $original->confidence, 'document', 'confirmed', $original->evidenceIds,
+            $publication['version'], $original->id]);
+        $this->models->saveSourceModel([$entity], [$fact], $proofs);
+    }
+
     /** @param list<ObservationClaim> $claims @param list<ArbitrationDecision> $decisions */
     public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber, ?VerifiedNativeNumericSources $numericSources = null, ?NativeSpreadsheetLiteralSources $literalSources = null, ?Fact $cellReview = null): void
     {

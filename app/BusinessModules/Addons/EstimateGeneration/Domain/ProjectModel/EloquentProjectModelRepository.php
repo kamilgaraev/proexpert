@@ -291,7 +291,8 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 $reviewFacts[$fact->id] = null;
             }
         }
-        if ($reviewFacts === []) {
+        $sourceReviews = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => str_starts_with($fact->id, 'fact:source-review:')));
+        if ($reviewFacts === [] && $sourceReviews === []) {
             return ['snapshot' => $snapshot, 'reviews' => []];
         }
         $scope = [$organizationId, $projectId, $sessionId];
@@ -299,6 +300,12 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             : $this->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
         $facts = [];
         foreach ($snapshot->facts as $fact) {
+            if (str_starts_with($fact->id, 'fact:source-review:')) {
+                $current = $this->cellReviews?->captureSourceReview($scope, $snapshot, $decisions, $fact);
+                $reviewFacts[$fact->id] = $current;
+                if ($current !== null) $facts[] = $fact;
+                continue;
+            }
             if (! array_key_exists($fact->id, $reviewFacts)) {
                 $facts[] = $fact;
                 continue;
