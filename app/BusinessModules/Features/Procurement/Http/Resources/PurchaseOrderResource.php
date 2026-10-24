@@ -3,7 +3,9 @@
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainSummary;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseOrderPaymentReadContext;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
@@ -18,7 +20,8 @@ class PurchaseOrderResource extends JsonResource
 
     public function __construct(
         mixed $resource,
-        mixed $procurementChain = null
+        mixed $procurementChain = null,
+        private readonly ?PurchaseOrderPaymentReadContext $paymentReadContext = null,
     ) {
         parent::__construct($resource);
 
@@ -32,7 +35,7 @@ class PurchaseOrderResource extends JsonResource
         $renderStartedAt = hrtime(true);
         $phaseStartedAt = hrtime(true);
         $paymentSummary = app(PurchaseOrderPaymentGateService::class)
-            ->summary($this->resource);
+            ->summary($this->resource, $this->paymentReadContext);
         ApiQueryMetrics::recordProcessingPhase($request, 'order_payment', $phaseStartedAt);
         $phaseStartedAt = hrtime(true);
         $workflowSummary = app(ProcurementLifecycleService::class)
@@ -40,7 +43,7 @@ class PurchaseOrderResource extends JsonResource
         ApiQueryMetrics::recordProcessingPhase($request, 'order_workflow', $phaseStartedAt);
         $phaseStartedAt = hrtime(true);
         $chainSummary = $this->procurementChain ?? app(ProcurementChainService::class)
-            ->forPurchaseOrder($this->resource, $request->user(), includePermissions: false);
+            ->forPurchaseOrder($this->resource, $request->user(), includePermissions: false, paymentReadContext: $this->paymentReadContext);
         ApiQueryMetrics::recordProcessingPhase($request, 'order_chain', $phaseStartedAt);
 
         $data = [
@@ -104,7 +107,12 @@ class PurchaseOrderResource extends JsonResource
                 'created_at' => $this->acceptedSupplierProposalVersion->created_at?->toIso8601String(),
             ] : null),
             'items' => $this->whenLoaded('items', fn () => PurchaseOrderItemResource::collection($this->items)),
-            'receipts' => $this->whenLoaded('receipts', fn () => PurchaseReceiptResource::collection($this->receipts)),
+            'receipts' => $this->whenLoaded('receipts', fn () => PurchaseReceiptResource::collection(
+                $this->receipts->map(fn (PurchaseReceipt $receipt) => PurchaseReceiptResource::forListSerialization(
+                    $receipt,
+                    paymentReadContext: $this->paymentReadContext,
+                ))
+            )),
             'audit_events' => $this->whenLoaded(
                 'auditEvents',
                 fn () => ProcurementAuditEventResource::collection($this->auditEvents)

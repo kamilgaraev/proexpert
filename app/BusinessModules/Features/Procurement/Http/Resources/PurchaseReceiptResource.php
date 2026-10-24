@@ -5,11 +5,22 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseOrderPaymentReadContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class PurchaseReceiptResource extends JsonResource
 {
+    private ?PurchaseOrderPaymentReadContext $paymentReadContext = null;
+
+    public static function forListSerialization(mixed $resource, ?PurchaseOrderPaymentReadContext $paymentReadContext): self
+    {
+        $result = new self($resource);
+        $result->paymentReadContext = $paymentReadContext;
+
+        return $result;
+    }
+
     public function toArray(Request $request): array
     {
         return [
@@ -26,7 +37,7 @@ class PurchaseReceiptResource extends JsonResource
             'notes' => $this->notes,
             'metadata' => $this->metadata,
             'procurement_chain_summary' => app(ProcurementChainService::class)
-                ->forPurchaseReceipt($this->resource, $request->user(), includePermissions: false)
+                ->forPurchaseReceipt($this->resource, $request->user(), includePermissions: false, paymentReadContext: $this->paymentReadContext)
                 ->compact()
                 ->toArray(),
             'warehouse' => $this->whenLoaded('warehouse', fn () => $this->warehouse ? [

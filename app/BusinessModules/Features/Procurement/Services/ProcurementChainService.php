@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainBlocker;
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainDocumentLink;
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainStage;
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainSummary;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseOrderPaymentReadContext;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
@@ -84,14 +85,14 @@ final class ProcurementChainService
         return $this->build($this->resolver->fromSiteRequest($siteRequest), 'site-requests', $siteRequest->id, $actor, $includePermissions);
     }
 
-    public function forPurchaseRequest(PurchaseRequest $purchaseRequest, ?User $actor = null, bool $includePermissions = true): ProcurementChainSummary
+    public function forPurchaseRequest(PurchaseRequest $purchaseRequest, ?User $actor = null, bool $includePermissions = true, ?PurchaseOrderPaymentReadContext $paymentReadContext = null): ProcurementChainSummary
     {
-        return $this->build($this->resolver->fromPurchaseRequest($purchaseRequest), 'purchase-requests', $purchaseRequest->id, $actor, $includePermissions);
+        return $this->build($this->resolver->fromPurchaseRequest($purchaseRequest, $paymentReadContext), 'purchase-requests', $purchaseRequest->id, $actor, $includePermissions);
     }
 
-    public function forPurchaseOrder(PurchaseOrder $purchaseOrder, ?User $actor = null, bool $includePermissions = true): ProcurementChainSummary
+    public function forPurchaseOrder(PurchaseOrder $purchaseOrder, ?User $actor = null, bool $includePermissions = true, ?PurchaseOrderPaymentReadContext $paymentReadContext = null): ProcurementChainSummary
     {
-        return $this->build($this->resolver->fromPurchaseOrder($purchaseOrder), 'purchase-orders', $purchaseOrder->id, $actor, $includePermissions);
+        return $this->build($this->resolver->fromPurchaseOrder($purchaseOrder, $paymentReadContext), 'purchase-orders', $purchaseOrder->id, $actor, $includePermissions);
     }
 
     public function forPaymentDocument(PaymentDocument $paymentDocument, ?User $actor = null): ProcurementChainSummary
@@ -99,9 +100,9 @@ final class ProcurementChainService
         return $this->build($this->resolver->fromPaymentDocument($paymentDocument), 'payment-documents', $paymentDocument->id, $actor);
     }
 
-    public function forPurchaseReceipt(PurchaseReceipt $purchaseReceipt, ?User $actor = null, bool $includePermissions = true): ProcurementChainSummary
+    public function forPurchaseReceipt(PurchaseReceipt $purchaseReceipt, ?User $actor = null, bool $includePermissions = true, ?PurchaseOrderPaymentReadContext $paymentReadContext = null): ProcurementChainSummary
     {
-        return $this->build($this->resolver->fromPurchaseReceipt($purchaseReceipt), 'purchase-receipts', $purchaseReceipt->id, $actor, $includePermissions);
+        return $this->build($this->resolver->fromPurchaseReceipt($purchaseReceipt, $paymentReadContext), 'purchase-receipts', $purchaseReceipt->id, $actor, $includePermissions);
     }
 
     /**

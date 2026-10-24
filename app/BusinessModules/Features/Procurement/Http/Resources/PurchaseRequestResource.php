@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\Procurement\Http\Resources;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\DTOs\PurchaseRequestListItem;
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementLifecycleSummary;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseOrderPaymentReadContext;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
@@ -19,11 +20,27 @@ class PurchaseRequestResource extends JsonResource
 
     private readonly ?ProcurementLifecycleSummary $workflowSummary;
 
-    public function __construct(mixed $resource, mixed $useLoadedSupplierState = false)
-    {
+    private readonly ?PurchaseRequestListItem $listItem;
+
+    public function __construct(
+        mixed $resource,
+        mixed $useLoadedSupplierState = false,
+        private readonly ?PurchaseOrderPaymentReadContext $paymentReadContext = null,
+    ) {
+        $this->listItem = $resource instanceof PurchaseRequestListItem ? $resource : null;
         $this->workflowSummary = $resource instanceof PurchaseRequestListItem ? $resource->workflowSummary : null;
         $this->useLoadedSupplierState = $resource instanceof PurchaseRequestListItem || $useLoadedSupplierState === true;
         parent::__construct($resource instanceof PurchaseRequestListItem ? $resource->purchaseRequest : $resource);
+    }
+
+    protected static function newCollection($resource)
+    {
+        return new PurchaseRequestListResourceCollection($resource, static::class);
+    }
+
+    public function preparedListItem(): ?PurchaseRequestListItem
+    {
+        return $this->listItem;
     }
 
     public function toArray(Request $request): array
@@ -33,7 +50,7 @@ class PurchaseRequestResource extends JsonResource
             ->forPurchaseRequest($this->resource);
         $phaseStartedAt = hrtime(true);
         $chainSummary = app(ProcurementChainService::class)
-            ->forPurchaseRequest($this->resource, $request->user(), includePermissions: false);
+            ->forPurchaseRequest($this->resource, $request->user(), includePermissions: false, paymentReadContext: $this->paymentReadContext);
         ApiQueryMetrics::recordProcessingPhase($request, 'request_chain', $phaseStartedAt);
 
         $data = [
@@ -91,7 +108,12 @@ class PurchaseRequestResource extends JsonResource
                         : null,
                 ))
             )),
-            'purchase_orders' => $this->whenLoaded('purchaseOrders', fn() => PurchaseOrderResource::collection($this->purchaseOrders)),
+            'purchase_orders' => $this->whenLoaded('purchaseOrders', fn() => PurchaseOrderResource::collection(
+                $this->purchaseOrders->map(fn (\App\BusinessModules\Features\Procurement\Models\PurchaseOrder $order) => new PurchaseOrderResource(
+                    $order,
+                    paymentReadContext: $this->paymentReadContext,
+                ))
+            )),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];

@@ -88,13 +88,14 @@ class PurchaseRequestService
     public function paginateForListView(int $organizationId, int $perPage = 15, array $filters = []): LengthAwarePaginator
     {
         $page = $this->paginate($organizationId, $perPage, $filters);
+        $orders = new \Illuminate\Database\Eloquent\Collection($page->getCollection()->flatMap(
+            fn (PurchaseRequest $purchaseRequest) => $purchaseRequest->purchaseOrders
+        )->all());
+        $paymentReadContext = app(PurchaseOrderPaymentGateService::class)->batchForListSerialization($orders);
         $items = $page->getCollection()->map(fn (PurchaseRequest $purchaseRequest) => new PurchaseRequestListItem(
             $purchaseRequest,
-            $this->lifecycleService->forPurchaseRequest($purchaseRequest),
+            $this->lifecycleService->forPurchaseRequest($purchaseRequest, $paymentReadContext),
         ));
-        $orders = new \Illuminate\Database\Eloquent\Collection($items->flatMap(
-            fn (PurchaseRequestListItem $item) => $item->purchaseRequest->purchaseOrders
-        )->all());
         $orders->loadMissing(ProcurementChainResolver::PURCHASE_ORDER_RELATIONS);
         foreach ($orders as $order) {
             foreach ($order->receipts as $receipt) {
