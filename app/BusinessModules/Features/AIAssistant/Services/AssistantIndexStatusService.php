@@ -55,11 +55,11 @@ final class AssistantIndexStatusService
         }
 
         $checkCurrentAccess = $this->checksAssistantAccess();
-        if ($checkCurrentAccess && $section === 'all') {
+        if ($checkCurrentAccess && $section !== 'documents') {
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
-        $sectionRecoveryKey = $checkCurrentAccess && in_array($section, ['sources', 'documents'], true)
+        $sectionRecoveryKey = $checkCurrentAccess
             ? $this->snapshotKey($organizationId, (int) $actor->id, $this->currentSurface()).':'.$section.':background-recovery'
             : null;
         if ($sectionRecoveryKey !== null && Cache::has($sectionRecoveryKey)) {
