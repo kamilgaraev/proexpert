@@ -729,11 +729,11 @@ final class AssistantRequestLifecycle
     {
         $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($refs, $actor, $organizationId, $requestId, $storedResponse): void {
             foreach ($refs as $index => $ref) {
-                if (!is_array($ref) || !$this->dataAccess->canReadReference($actor, $organizationId, $ref)
-                    || (($ref['egress_projection_version'] ?? null) === \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection::VERSION
-                        && !($storedResponse
+                if (!is_array($ref) || (($ref['egress_projection_version'] ?? null) === \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection::VERSION
+                        ? !($storedResponse
                             ? app(AssistantSourceReferenceGuard::class)->storedDocumentCurrent($actor, $organizationId, [$ref])
-                            : app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, [$ref])))) {
+                            : app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, [$ref]))
+                        : !$this->dataAccess->canReadReference($actor, $organizationId, $ref))) {
                     $type = is_array($ref) ? ($ref['entity_type'] ?? null) : null;
                     Log::notice('ai.assistant.response_source_access_denied', [
                         'request_id' => $requestId, 'reason' => 'source_ref_denied', 'reference_index' => is_int($index) ? $index : null,
