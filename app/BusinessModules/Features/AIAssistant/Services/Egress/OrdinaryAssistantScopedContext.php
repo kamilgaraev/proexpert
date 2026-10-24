@@ -251,6 +251,19 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     public function validateResults(array $results): array
     {
         $this->assertSourcesFresh();
+
+        return $this->canonicalResultReferences($results);
+    }
+
+    public function canonicalReferencesForPublication(array $results): array
+    {
+        $this->assertFresh();
+
+        return $this->canonicalResultReferences($results);
+    }
+
+    private function canonicalResultReferences(array $results): array
+    {
         $references = [];
         foreach ($results as $result) {
             if (! is_array($result) || ! in_array($result['_tool_name'] ?? null, $this->allowedToolNames(), true)) {
