@@ -24,7 +24,7 @@ final readonly class CurrentWorkEntityBindingProof
     public function evidenceIds(EstimateGenerationSession $session, array $items, ?ProjectModelSnapshot $snapshot = null,
         bool $requireBindings = false): array
     {
-        $bound = $types = [];
+        $bound = $boundTypes = $types = [];
         foreach ($items as $item) {
             if (in_array($item['item_type'] ?? 'priced_work', ['operation', 'review_note', 'resource_note', 'quantity_review'], true)) {
                 continue;
@@ -37,11 +37,16 @@ final readonly class CurrentWorkEntityBindingProof
 
                 continue;
             }
-            if (! is_array($binding) || ! is_string($item['key'] ?? null) || WorkEntityScopePolicy::types($item) === []) {
+            if (! is_array($binding) || ! is_string($item['key'] ?? null)) {
+                $this->reject();
+            }
+            $itemTypes = $this->bindingTypes($session, $item, $binding);
+            if ($itemTypes === []) {
                 $this->reject();
             }
             $bound[] = $item;
-            array_push($types, ...WorkEntityScopePolicy::types($item));
+            $boundTypes[] = $itemTypes;
+            array_push($types, ...$itemTypes);
         }
         if ($bound === []) {
             return [];
@@ -61,7 +66,7 @@ final readonly class CurrentWorkEntityBindingProof
         $proofs = new EvaluationChoiceProof;
         $evidence = [];
         $bindingFacts = [];
-        foreach ($bound as $item) {
+        foreach ($bound as $index => $item) {
             $binding = $item['metadata']['scope_entity_binding'];
             $stored = $session->input_payload['work_entity_selections'][$item['key']] ?? null;
             $fact = $facts[$binding['fact_id'] ?? ''] ?? null;
@@ -77,7 +82,7 @@ final readonly class CurrentWorkEntityBindingProof
                 $this->reject();
             }
             if (! is_array($stored) || CanonicalPipelineJson::encode($stored) !== CanonicalPipelineJson::encode($binding)
-                || $source === null || ! in_array($source['entity_type'], WorkEntityScopePolicy::types($item), true)
+                || $source === null || ! in_array($source['entity_type'], $boundTypes[$index], true)
                 || ($binding['answer_kind'] ?? null) !== 'work_entity_binding' || ($binding['work_item_key'] ?? null) !== $item['key']
                 || ($binding['entity_id'] ?? null) !== ($item['metadata']['scope_entity_id'] ?? null)
                 || ($binding['entity_id'] ?? null) !== $source['entity_id']
@@ -143,6 +148,25 @@ final readonly class CurrentWorkEntityBindingProof
         }
 
         return array_values($evidence);
+    }
+
+    private function bindingTypes(EstimateGenerationSession $session, array $item, array $binding): array
+    {
+        $types = WorkEntityScopePolicy::types($item);
+        if ($types !== [] || ($item['metadata']['generation_source'] ?? null) === 'accepted_supplementary_work') {
+            return $types;
+        }
+        $stored = $session->input_payload['work_entity_selections'][$item['key']] ?? null;
+        if (! is_array($stored) || CanonicalPipelineJson::encode($stored) !== CanonicalPipelineJson::encode($binding)) {
+            return [];
+        }
+        $contract = $binding['binding_contract'] ?? null;
+        if (($contract === WorkEntityScopePolicy::BINDING_CONTRACT && ($binding['source_entity_type'] ?? null) === 'room')
+            || ($contract === null && ! array_key_exists('source_entity_type', $binding))) {
+            return ['room'];
+        }
+
+        return [];
     }
 
     private function reject(): never
