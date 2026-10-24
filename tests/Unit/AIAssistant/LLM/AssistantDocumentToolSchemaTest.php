@@ -56,6 +56,17 @@ final class AssistantDocumentToolSchemaTest extends TestCase
         self::assertSame(['reasoning.encrypted_content'], $wire['include']);
         self::assertSame('openai/gpt-6-luna', $wire['model']);
         self::assertSame('auto', $wire['tool_choice']);
+        $legacyWire = $this->wire($this->definitions($policy, guarded: false));
+        $tool = (new ReflectionClass(SearchAssistantDocumentsTool::class))->newInstanceWithoutConstructor();
+        self::assertSame($tool->getDescription(), $legacyWire['tools'][0]['description']);
+        self::assertNotSame($legacyWire['tools'][0]['description'], $wire['tools'][0]['description']);
+        self::assertSame($tools[0]['description'], $wire['tools'][0]['description']);
+        $genericDescriptionTools = $tools;
+        $genericDescriptionTools[0]['description'] = $legacyWire['tools'][0]['description'];
+        $genericDescriptionWire = $this->wire($genericDescriptionTools);
+        $withoutDescription = $wire;
+        unset($genericDescriptionWire['tools'][0]['description'], $withoutDescription['tools'][0]['description']);
+        self::assertSame($genericDescriptionWire, $withoutDescription);
         $priorTools = $tools;
         $priorTools[0]['parameters']['properties']['source_types']['enum'] = [['file_document']];
         $priorWire = $this->wire($priorTools);
@@ -134,7 +145,7 @@ final class AssistantDocumentToolSchemaTest extends TestCase
         return json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
     }
 
-    private function definitions(string $policy = OrdinaryAssistantDocumentProjection::VERSION): array
+    private function definitions(string $policy = OrdinaryAssistantDocumentProjection::VERSION, bool $guarded = true): array
     {
         $sources = [['tool' => OrdinaryAssistantDocumentProjection::TOOL, 'projection_version' => OrdinaryAssistantDocumentProjection::VERSION,
             'arguments' => ['project_id' => 52, 'document_id' => 159, 'chunk_ids' => [10]]]];
@@ -166,7 +177,7 @@ final class AssistantDocumentToolSchemaTest extends TestCase
                 'pendingEntityReads' => ['actor_id' => 39, 'organization_id' => 38, 'entities' => []]] as $key => $value) {
                 (new ReflectionProperty(AssistantDataAccessPolicy::class, $key))->setValue($access, $value);
             }
-            foreach (['guarded' => true, 'cohort' => (new AssistantEgressCohort)->setRawAttributes($cohort),
+            foreach (['guarded' => $guarded, 'cohort' => (new AssistantEgressCohort)->setRawAttributes($cohort),
                 'enrollment' => (new AssistantEgressEnrollment)->setRawAttributes($manifest),
                 'actor' => (new User)->forceFill(['id' => 39, 'is_active' => true, 'current_organization_id' => 38]),
                 'inputHash' => $manifest['input_hash'], 'access' => $access,
