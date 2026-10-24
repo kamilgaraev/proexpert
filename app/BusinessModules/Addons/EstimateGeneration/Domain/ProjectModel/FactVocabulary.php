@@ -12,6 +12,115 @@ final class FactVocabulary
 {
     public const VERSION = 'project-facts:v1';
 
+    public static function isWorkScopeFactType(string $type): bool
+    {
+        return in_array($type, ['technology_candidate', 'roof_geometry'], true);
+    }
+
+    public static function semanticProposal(?array $proposal, string $type, string $entityKey, array $value, ?string $unit): ?array
+    {
+        if ($proposal === null) return null;
+        $kind = $proposal['kind'] ?? null;
+        $keys = $kind === 'equipment_identity' ? ['schemaVersion', 'kind', 'identity']
+            : ['schemaVersion', 'kind', 'parameter', 'dimension', 'comparator', 'threshold', 'unit', 'appliesTo', 'documentEdition', 'clause', 'conditions'];
+        if (! self::exactKeys($proposal, $keys) || ($proposal['schemaVersion'] ?? null) !== 1
+            || ! in_array($kind, ['equipment_identity', 'source_requirement'], true)
+            || ($value['type'] ?? null) !== 'string' || ! is_string($value['data'] ?? null) || $unit !== null
+            || ($kind === 'equipment_identity' ? $type !== 'equipment_specification'
+                : self::documentObservation($type, $entityKey, $value, $unit) === null && ! self::isWorkScopeFactType($type))
+            || strlen(json_encode($proposal, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)) > 8192) {
+            throw new InvalidArgumentException('document_semantic_proposal_invalid');
+        }
+        if ($kind === 'equipment_identity') {
+            return ['schemaVersion' => 1, 'kind' => $kind, 'identity' => self::semanticIdentity($proposal['identity'])];
+        }
+        $target = $proposal['appliesTo'];
+        $conditions = $proposal['conditions'];
+        if (! is_array($target) || ! self::exactKeys($target, ['subject', 'equipmentIdentity'])
+            || ! in_array($proposal['dimension'], [null, 'length'], true)
+            || ($conditions !== null && (! is_array($conditions) || ! array_is_list($conditions) || count($conditions) > 8))) {
+            throw new InvalidArgumentException('document_semantic_proposal_invalid');
+        }
+
+        return ['schemaVersion' => 1, 'kind' => $kind,
+            'parameter' => self::semanticSourceValue($proposal['parameter'], 160), 'dimension' => $proposal['dimension'],
+            'comparator' => self::semanticSourceValue($proposal['comparator'], 3, 'comparator'),
+            'threshold' => self::semanticSourceValue($proposal['threshold'], 64, 'decimal'),
+            'unit' => self::semanticSourceValue($proposal['unit'], 40, 'length'),
+            'appliesTo' => ['subject' => self::semanticSourceValue($target['subject'], 160),
+                'equipmentIdentity' => $target['equipmentIdentity'] === null ? null : self::semanticIdentity($target['equipmentIdentity'])],
+            'documentEdition' => self::semanticSourceValue($proposal['documentEdition'], 160),
+            'clause' => self::semanticSourceValue($proposal['clause'], 500),
+            'conditions' => $conditions === null ? null : array_map(static fn ($condition): array => self::semanticSourceValue($condition, 300), $conditions)];
+    }
+
+    public static function semanticSourceFields(array $proposal): array
+    {
+        $fields = [];
+        $walk = function (array $node, string $path) use (&$walk, &$fields): void {
+            if (self::exactKeys($node, ['data', 'evidenceRef', 'sourcePolygonOrNativeRef'])) {
+                $fields[$path] = $node;
+                return;
+            }
+            foreach ($node as $key => $value) {
+                if (is_array($value)) $walk($value, $path === '' ? (string) $key : $path.'.'.$key);
+            }
+        };
+        $walk($proposal, '');
+        ksort($fields, SORT_STRING);
+
+        return $fields;
+    }
+
+    public static function mapSemanticSources(?array $proposal, callable $map): ?array
+    {
+        if ($proposal === null) return null;
+        if (self::exactKeys($proposal, ['data', 'evidenceRef', 'sourcePolygonOrNativeRef'])) return $map($proposal);
+        foreach ($proposal as $key => $value) {
+            if (is_array($value)) $proposal[$key] = self::mapSemanticSources($value, $map);
+        }
+
+        return $proposal;
+    }
+
+    private static function semanticIdentity(mixed $identity): array
+    {
+        if (! is_array($identity) || ! self::exactKeys($identity, ['manufacturer', 'model', 'variant', 'configuration'])) {
+            throw new InvalidArgumentException('document_semantic_identity_invalid');
+        }
+        $result = [];
+        foreach (['manufacturer', 'model', 'variant', 'configuration'] as $key) $result[$key] = self::semanticSourceValue($identity[$key], 160);
+
+        return $result;
+    }
+
+    private static function semanticSourceValue(mixed $field, int $limit, string $domain = 'text'): array
+    {
+        if (! is_array($field) || ! self::exactKeys($field, ['data', 'evidenceRef', 'sourcePolygonOrNativeRef'])) {
+            throw new InvalidArgumentException('document_semantic_field_invalid');
+        }
+        $data = $field['data'];
+        $reference = $field['evidenceRef'];
+        $source = $field['sourcePolygonOrNativeRef'];
+        if (($data !== null && (! is_string($data) || trim($data) === '' || mb_strlen($data) > $limit
+                || preg_match('/[\x00-\x1F\x7F]/u', $data) !== 0))
+            || ($data === null && ($reference !== null || $source !== null))
+            || (($reference === null) !== ($source === null))
+            || ($reference !== null && (! is_string($reference) || preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $reference) !== 1))
+            || ($source !== null && ! FactSourceLocator::valid(['kind' => is_array($source) ? 'polygon' : 'native',
+                'coordinate_space' => is_array($source) ? 'normalized_source_v1' : 'native', 'value' => $source]))
+            || ($data !== null && match ($domain) {
+                'decimal' => ! CanonicalSourceDecimal::isValid($data),
+                'length' => self::factor('length', $data) === null,
+                'comparator' => $data !== 'gte',
+                default => false,
+            })) {
+            throw new InvalidArgumentException('document_semantic_field_invalid');
+        }
+
+        return ['data' => $data, 'evidenceRef' => $reference, 'sourcePolygonOrNativeRef' => $source];
+    }
+
     public static function engineeringParameterAttributes(int $organizationId, int $projectId, int $sessionId,
         array $binding, string $name, string $role, array $definitionSource): array
     {

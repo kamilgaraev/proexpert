@@ -39,6 +39,86 @@ use Tests\Support\DatabaseLessTestCase;
 
 final class TimewebVisionProviderTest extends DatabaseLessTestCase
 {
+    public function test_construction_semantic_v4_uses_the_existing_wire_and_replays_the_parsed_proposal(): void
+    {
+        $proposal = $this->sourceRequirementProposal('102');
+        $fact = [...$this->semanticFact('wall.source', 'technology_requirements', ['type' => 'string', 'data' => 'Зазор не менее 102 мм']),
+            'contractVersion' => 'sheet-analysis:v4', 'semanticProposal' => $proposal];
+        Http::fake(fn () => Http::response($this->response(['project_sheet_analysis' => [
+            'contractVersion' => 'sheet-analysis:v4', 'role' => 'specification', 'facts' => [$fact],
+        ]])));
+        $input = (new ObserverInputBuilder)->build($this->input(claim: 6401), ObserverProfile::Construction, static function (): void {});
+        $first = $this->provider()->analyze($input);
+        $second = $this->provider()->analyze($input);
+        self::assertSame('sheet-analysis:v4', $first->projectSheetAnalysis->toArray()['contractVersion']);
+        $normalized = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::mapSemanticSources($proposal,
+            static fn (array $field): array => [...$field, 'evidenceRef' => $field['evidenceRef'] === null ? null : $first->evidence[0]->key]);
+        self::assertSame($normalized, $first->projectSheetAnalysis->facts[0]['semanticProposal']);
+        self::assertSame($first->projectSheetAnalysis->toArray(), $second->projectSheetAnalysis->toArray());
+        Http::assertSentCount(1);
+        Http::assertSent(static function ($request): bool {
+            $payload = $request->data();
+            $system = $payload['messages'][0]['content'];
+            return str_contains($system, 'observer-construction:v4') && str_contains($system, 'semanticProposal')
+                && str_contains($system, 'equipmentIdentity') && $payload['response_format'] === ['type' => 'json_object'];
+        });
+        self::assertCount(1, $this->attempts);
+    }
+
+    public function test_semantic_arbiter_wire_contains_changed_threshold_and_field_sources_without_private_scope(): void
+    {
+        Http::fake(fn () => Http::response($this->fixtureResponse('arbiter-v2-envelope-response.json')));
+        $wires = [];
+        foreach (['102', '103'] as $index => $threshold) {
+            $proposal = $this->sourceRequirementProposal($threshold);
+            $proposal['threshold']['sourcePolygonOrNativeRef'] = $index === 0 ? [[0.1, 0.1], [0.2, 0.2]] : [[0.3, 0.3], [0.4, 0.4]];
+            $locators = [];
+            foreach (\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::semanticSourceFields($proposal) as $path => $field) {
+                if ($field['evidenceRef'] === null) continue;
+                $locators[$path] = ['organization_id' => 7, 'project_id' => 9, 'session_id' => 11, 'document_id' => 13,
+                    'storage_path' => 'private-secret', 'page_number' => 2, 'processing_unit_id' => 19,
+                    'source_version' => 'sha256:'.str_repeat('a', 64), 'fact_source' => ['kind' => 'polygon',
+                        'coordinate_space' => 'normalized_source_v1', 'value' => $field['sourcePolygonOrNativeRef']]];
+            }
+            $metadata = ['arbitration' => ['contract' => 'document-arbitration:v4', 'source_version' => 'sha256:'.str_repeat('a', 64),
+                'minority_evidence_required' => true, 'claims' => [[
+                    'id' => 'construction:1', 'role' => 'observer_construction', 'entity_key' => 'wall.source', 'fact_type' => 'technology_requirements',
+                    'value' => ['type' => 'string', 'data' => 'Условие источника'], 'unit' => null, 'evidence_ref' => 'page-1',
+                    'explicit_evidence' => true, 'locator' => ['page_number' => 2], 'semantic_proposal' => $proposal,
+                    'semantic_field_locators' => $locators,
+                ]]]];
+            $input = $this->input(claim: 6410 + $index, auxiliaryMetadata: $metadata);
+            $first = $this->provider()->analyze($input);
+            self::assertSame($first->rawObserverFacts, $this->provider()->analyze($input)->rawObserverFacts);
+        }
+        foreach (Http::recorded() as [$request]) {
+            $payload = $request->data();
+            $wire = json_decode($payload['messages'][1]['content'][0]['text'], true, 64, JSON_THROW_ON_ERROR);
+            self::assertSame('document-arbitration:v4', $wire['contract_version']);
+            $claim = $wire['auxiliary_metadata']['arbitration']['claims'][0];
+            $encoded = json_encode($claim, JSON_THROW_ON_ERROR);
+            foreach (['organization_id', 'project_id', 'session_id', 'document_id', 'storage_path', 'private-secret'] as $private) {
+                self::assertStringNotContainsString($private, $encoded);
+            }
+            $wires[] = $claim;
+        }
+        self::assertSame(['102', '103'], array_map(static fn (array $claim): string => $claim['semantic_proposal']['threshold']['data'], $wires));
+        self::assertNotSame($wires[0]['semantic_field_locators']['threshold'], $wires[1]['semantic_field_locators']['threshold']);
+        Http::assertSentCount(2);
+        self::assertCount(2, $this->attempts);
+    }
+
+    private function sourceRequirementProposal(string $threshold): array
+    {
+        $field = fn (?string $data): array => ['data' => $data, 'evidenceRef' => $data === null ? null : 'page-1',
+            'sourcePolygonOrNativeRef' => $data === null ? null : $this->responsePolygon()];
+
+        return ['schemaVersion' => 1, 'kind' => 'source_requirement', 'parameter' => $field('Зазор'), 'dimension' => 'length',
+            'comparator' => $field('gte'), 'threshold' => $field($threshold), 'unit' => $field('mm'),
+            'appliesTo' => ['subject' => $field('Стена источника'), 'equipmentIdentity' => null],
+            'documentEdition' => $field(null), 'clause' => $field('Пункт 1'), 'conditions' => null];
+    }
+
     /** @var list<AiUsageData> */
     private array $attempts = [];
 

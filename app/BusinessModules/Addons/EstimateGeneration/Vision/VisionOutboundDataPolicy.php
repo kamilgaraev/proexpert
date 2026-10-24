@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 
 /** Projects only extraction context; tenant, storage, payment and diagnostics stay on the server. */
@@ -47,7 +50,8 @@ final class VisionOutboundDataPolicy
         }
         if ($arbitration) {
             $block = self::scalars($metadata['arbitration'] ?? null, ['contract', 'source_version', 'minority_evidence_required']);
-            $block['claims'] = self::items($metadata['arbitration']['claims'] ?? null, self::claim(...));
+            $semantic = ($block['contract'] ?? null) === ArbitrationInputBuilder::SEMANTIC_PROMPT_CONTRACT;
+            $block['claims'] = self::items($metadata['arbitration']['claims'] ?? null, static fn (array $claim): array => self::claim($claim, $semantic));
             $result['arbitration'] = $block;
         } elseif ($geometryExpert) {
             $block = self::scalars($metadata['geometry_expert'] ?? null, ['contract', 'source_version']);
@@ -72,7 +76,7 @@ final class VisionOutboundDataPolicy
     }
 
     /** @return array<string,mixed> */
-    private static function claim(array $claim): array
+    private static function claim(array $claim, bool $semantic = false): array
     {
         $result = self::scalars($claim, ['id', 'role', 'entity_key', 'fact_type', 'unit', 'evidence_ref', 'explicit_evidence']);
         if (array_key_exists('value', $claim)) {
@@ -81,6 +85,29 @@ final class VisionOutboundDataPolicy
         if (array_key_exists('locator', $claim)) {
             $result['locator'] = self::scalars($claim['locator'], ['page_id', 'page_number', 'processing_unit_id',
                 'source_version', 'coordinate_space', 'document_role', 'explicit']);
+        }
+        if (isset($claim['semantic_proposal'])) {
+            if (! $semantic || ! is_array($claim['semantic_proposal']) || ! is_array($claim['value'] ?? null)) {
+                throw new VisionProviderException('vision_outbound_context_invalid');
+            }
+            try {
+                $proposal = FactVocabulary::semanticProposal($claim['semantic_proposal'], (string) ($claim['fact_type'] ?? ''),
+                    (string) ($claim['entity_key'] ?? ''), $claim['value'], $claim['unit'] ?? null);
+            } catch (\InvalidArgumentException) {
+                throw new VisionProviderException('vision_outbound_context_invalid');
+            }
+            $locators = [];
+            foreach (FactVocabulary::semanticSourceFields($proposal) as $path => $field) {
+                if ($field['evidenceRef'] === null) continue;
+                $locator = $claim['semantic_field_locators'][$path] ?? null;
+                if (! is_array($locator) || ! FactSourceLocator::valid($locator['fact_source'] ?? null)) {
+                    throw new VisionProviderException('vision_outbound_context_invalid');
+                }
+                $locators[$path] = [...self::scalars($locator, ['page_id', 'page', 'page_number', 'processing_unit_id', 'source_version', 'coordinate_space']),
+                    'fact_source' => $locator['fact_source']];
+            }
+            $result['semantic_proposal'] = $proposal;
+            $result['semantic_field_locators'] = $locators;
         }
 
         return $result;
