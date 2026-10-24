@@ -147,21 +147,52 @@ final readonly class ComposerSourceClaimValidationService
                 return [];
             }
         }
-        $entities = array_column($snapshot->entities, null, 'id');
-        $proofs = array_column($snapshot->evidence, null, 'id');
         $pins = array_column($documents, null, 'document_id');
-        $target = $entities[$workContext['binding']['entity_id'] ?? ''] ?? null;
-        if (count($pins) !== count($documents) || ! $target instanceof Entity
+        if (count($pins) !== count($documents)) {
+            return [];
+        }
+        $snapshotKey = 'requirement-snapshot:'.spl_object_id($snapshot);
+        if (! isset($cache[$snapshotKey]) || ($cache[$snapshotKey]['snapshot'] ?? null) !== $snapshot) {
+            $entities = array_column($snapshot->entities, null, 'id');
+            $candidates = [];
+            foreach ($snapshot->facts as $fact) {
+                $entity = $entities[$fact->entityId] ?? null;
+                if ($entity instanceof Entity && ($descriptor = self::requirementProposal($entity, $fact)) !== null) {
+                    $candidates[] = ['fact' => $fact, 'entity' => $entity, 'descriptor' => $descriptor];
+                }
+            }
+            $cache[$snapshotKey] = ['snapshot' => $snapshot, 'entities' => $entities,
+                'proofs' => array_column($snapshot->evidence, null, 'id'), 'candidates' => $candidates, 'captures' => []];
+        }
+        $index = &$cache[$snapshotKey];
+        $target = $index['entities'][$workContext['binding']['entity_id'] ?? ''] ?? null;
+        if (! $target instanceof Entity
             || [$target->organizationId, $target->projectId, $target->sessionId] !== $scope) {
             return [];
         }
+        ksort($pins, SORT_NUMERIC);
+        $captureKey = hash('sha256', CanonicalPipelineJson::encode([$scope, $pins]));
+        if (! array_key_exists($captureKey, $index['captures'])) {
+            $index['captures'][$captureKey] = $this->captureRequirementSources($scope, $index, $pins);
+        }
         $result = [];
-        $seen = [];
+        foreach ($index['captures'][$captureKey] as $association) {
+            $result[self::requirementReference($scope, $workContext, $association)] = $association;
+        }
+        ksort($result, SORT_STRING);
+
+        return $result;
+    }
+
+    private function captureRequirementSources(array $scope, array $index, array $pins): array
+    {
+        $proofs = $index['proofs'];
+        $cache = [];
+        $result = [];
         $examined = 0;
-        foreach ($snapshot->facts as $fact) {
-            $entity = $entities[$fact->entityId] ?? null;
-            if (! $entity instanceof Entity || [$entity->organizationId, $entity->projectId, $entity->sessionId] !== $scope
-                || ($descriptor = self::requirementProposal($entity, $fact)) === null) {
+        foreach ($index['candidates'] as $candidate) {
+            ['fact' => $fact, 'entity' => $entity, 'descriptor' => $descriptor] = $candidate;
+            if ([$entity->organizationId, $entity->projectId, $entity->sessionId] !== $scope) {
                 continue;
             }
             $source = $descriptor['source_pins'];
@@ -174,9 +205,13 @@ final readonly class ComposerSourceClaimValidationService
             if (++$examined > self::MAX_CLAIMS * self::MAX_CLAIMS) {
                 return [];
             }
-            $unit = EstimateGenerationProcessingUnit::query()->with('document', 'page')->where('organization_id', $scope[0])
-                ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('document_id', $pin['document_id'])
-                ->where('source_version', $pin['source_version'])->where('status', 'completed')->find($source['processing_unit_id']);
+            $unitKey = 'unit:'.hash('sha256', CanonicalPipelineJson::encode([$scope, $pin, $source['processing_unit_id']]));
+            if (! array_key_exists($unitKey, $cache)) {
+                $cache[$unitKey] = EstimateGenerationProcessingUnit::query()->with('document', 'page')->where('organization_id', $scope[0])
+                    ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('document_id', $pin['document_id'])
+                    ->where('source_version', $pin['source_version'])->where('status', 'completed')->find($source['processing_unit_id']);
+            }
+            $unit = $cache[$unitKey];
             if (! $unit instanceof EstimateGenerationProcessingUnit) {
                 continue;
             }
@@ -184,6 +219,7 @@ final readonly class ComposerSourceClaimValidationService
             $page = $unit->getRelation('page');
             $unitLocator = $unit->getAttribute('locator');
             $unitType = $unit->getAttribute('unit_type');
+            $outputVersion = $unit->getAttribute('output_version');
             if (! $document instanceof \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument
                 || ! $page instanceof \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage
                 || ! is_array($unitLocator) || ! $unitType instanceof DocumentUnitType
@@ -194,7 +230,8 @@ final readonly class ComposerSourceClaimValidationService
                 || $document->getAttribute('ignored_at') !== null || ! in_array($document->getAttribute('status'), ['ready', 'needs_review'], true)
                 || $document->getAttribute('source_version') !== $pin['source_version'] || $document->getAttribute('checksum_sha256') !== $pin['checksum_sha256']
                 || ! hash_equals('sha256:'.$pin['checksum_sha256'], $pin['source_version'])
-                || $unit->getAttribute('output_version') !== $pin['source_version'] || (int) $unit->getAttribute('output_count') < 1
+                || ! is_string($outputVersion) || $outputVersion === '' || strlen($outputVersion) > 80
+                || $page->getAttribute('output_version') !== $outputVersion || (int) $unit->getAttribute('output_count') < 1
                 || $page->getAttribute('source_version') !== $pin['source_version']
                 || (int) $page->getAttribute('page_number') !== $source['page_number'] || $page->getAttribute('status') !== 'ready') {
                 continue;
@@ -218,7 +255,11 @@ final readonly class ComposerSourceClaimValidationService
                 if ($proof === null || preg_match('/\Aevidence:([1-9][0-9]*)\z/D', $id, $match) !== 1) {
                     continue;
                 }
-                $node = $this->evidence->node(...[...$scope, (int) $match[1]]);
+                $nodeKey = 'evidence:'.$id;
+                if (! array_key_exists($nodeKey, $cache)) {
+                    $cache[$nodeKey] = $this->evidence->node(...[...$scope, (int) $match[1]]);
+                }
+                $node = $cache[$nodeKey];
                 if ($node !== null && $node->invalidatedAt === null && $node->type === EvidenceType::SourceFact
                     && $node->sourceType === EvidenceSourceType::Document && $node->producerName === 'drawing_analyzer'
                     && [$proof->organizationId, $proof->projectId, $proof->sessionId] === $scope
@@ -235,7 +276,8 @@ final readonly class ComposerSourceClaimValidationService
                 continue;
             }
             ksort($witnesses, SORT_STRING);
-            $artifactKey = 'requirement-artifact:'.hash('sha256', CanonicalPipelineJson::encode([$scope, $unit->getKey(), $pin['source_version'], $unitLocator]));
+            $outputIdentity = ['processing_unit_id' => (int) $unit->getKey(), 'page_id' => (int) $page->getKey(), 'version' => $outputVersion];
+            $artifactKey = 'requirement-artifact:'.hash('sha256', CanonicalPipelineJson::encode([$scope, $outputIdentity, $pin, $unitLocator]));
             if (! array_key_exists($artifactKey, $cache)) {
                 try {
                     $context = new DocumentUnitExecutionContext((int) $unit->getKey(), ...[...$scope, $pin['document_id'], $unitType,
@@ -253,14 +295,15 @@ final readonly class ComposerSourceClaimValidationService
                 continue;
             }
             $association = ['source_fact_id' => $fact->id, 'source_fact_version' => $fact->version,
-                'source_value_hash' => hash('sha256', CanonicalPipelineJson::encode($fact->value)), 'source_entity_id' => $entity->id,
-                'descriptor' => $descriptor, 'document_pin' => $pin, 'evidence' => array_values($witnesses), 'artifact' => $cache[$artifactKey]];
-            $ref = self::requirementReference($scope, $workContext, $association);
-            if (isset($seen[$ref])) {
+                'source_value_hash' => hash('sha256', json_encode($fact->value,
+                    JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)), 'source_entity_id' => $entity->id,
+                'descriptor' => $descriptor, 'document_pin' => $pin, 'output_identity' => $outputIdentity,
+                'evidence' => array_values($witnesses), 'artifact' => $cache[$artifactKey]];
+            $sourceKey = hash('sha256', CanonicalPipelineJson::encode($association));
+            if (isset($result[$sourceKey])) {
                 return [];
             }
-            $seen[$ref] = true;
-            $result[$ref] = $association;
+            $result[$sourceKey] = $association;
             if (count($result) > self::MAX_CLAIMS) {
                 return [];
             }
