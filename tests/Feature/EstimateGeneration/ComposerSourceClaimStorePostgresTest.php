@@ -628,6 +628,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $savedAnswer = $answerInput = [];
         $answerId = $selectedRef = null;
         $candidateFact = $candidateSnapshot = $sourceReviewInput = $reviewUrl = null;
+        $sourceReviewReceipt = $expectedSourceAssociation = [];
+        $reviewFact = $reacceptedFact = null;
         foreach ([0, 1, 2, 3] as $phase) {
             [$session, $operationId] = $this->paidReceipt(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, [], true,
                 [$organization, $project, $actor, $session->fresh()], false,
@@ -730,9 +732,25 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     self::assertCount(1, $reviewFacts);
                     $reviewFact = $reviewFacts[0];
                     self::assertSame('source_requirement', $reviewFact->value['review_kind']);
-                    self::assertSame($candidateFact->id, $reviewFact->value['source']['original_fact_id']);
-                    self::assertSame($candidateFact->version, $reviewFact->value['source']['version']);
-                    self::assertSame($descriptor['proposal_hash'], $reviewFact->value['source']['proposal_hash']);
+                    $expectedSourceEvidence = [];
+                    foreach ($candidateFact->evidenceIds as $proofId) {
+                        $sourceProof = app(EvidenceRepository::class)->node(...[...$scope, (int) substr($proofId, 9)]);
+                        self::assertNotNull($sourceProof);
+                        self::assertNull($sourceProof->invalidatedAt);
+                        self::assertSame($sourceProof->data->fingerprint(), $sourceProof->fingerprint);
+                        $expectedSourceEvidence[$proofId] = ['evidence_id' => $proofId, 'evidence_fingerprint' => $sourceProof->fingerprint,
+                            'invalidation_version' => $sourceProof->invalidationVersion];
+                    }
+                    ksort($expectedSourceEvidence, SORT_STRING);
+                    $expectedSourceAssociation = ['source_fact_id' => $candidateFact->id, 'source_fact_version' => $candidateFact->version,
+                        'source_value_hash' => hash('sha256', json_encode($candidateFact->value,
+                            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)),
+                        'source_entity_id' => $candidateFact->entityId, 'descriptor' => $descriptor,
+                        'document_pin' => ['document_id' => (int) $document->id, 'source_version' => $version, 'checksum_sha256' => $digest, 'status' => 'ready'],
+                        'output_identity' => ['processing_unit_id' => (int) $unit->id, 'page_id' => (int) $page->id, 'version' => $output->version],
+                        'evidence' => array_values($expectedSourceEvidence), 'artifact' => ['sha256' => $version, 'bytes' => strlen($content)]];
+                    self::assertSame(CanonicalPipelineJson::encode($expectedSourceAssociation), CanonicalPipelineJson::encode($reviewFact->value['source']));
+                    self::assertSame($descriptor['proposal_hash'], $reviewFact->value['source']['descriptor']['proposal_hash']);
                     self::assertSame($receipt['decision_id'], $reviewFact->value['decision_id']);
                     $humanDecisions = $models->decisionsForSelectedFacts(...[...$scope, [$reviewFact->id]]);
                     self::assertCount(1, $humanDecisions);
@@ -957,6 +975,9 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     DB::rollBack();
                 }
                 if ($explicitSourceReview) {
+                    self::assertInstanceOf(Fact::class, $reviewFact);
+                    self::assertNotEmpty($sourceReviewReceipt);
+                    self::assertNotEmpty($expectedSourceAssociation);
                     $activeReview = $this->getJson($reviewUrl, $headers)->assertOk()->json('data');
                     $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid(),
                         'state_version' => $activeReview['state_version'], 'decision' => 'revoke',
@@ -1027,7 +1048,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     self::assertCount(1, $reacceptedReviewFacts);
                     $reacceptedReviewFact = $reacceptedReviewFacts[0];
                     self::assertNotSame($reviewFact->id, $reacceptedReviewFact->id);
-                    self::assertSame($candidateFact->id, $reacceptedReviewFact->value['source']['original_fact_id']);
+                    self::assertSame(CanonicalPipelineJson::encode($expectedSourceAssociation), CanonicalPipelineJson::encode($reacceptedReviewFact->value['source']));
                     self::assertNotEmpty($reacceptedReviewFact->evidenceIds);
                     self::assertSame([], array_values(array_intersect($reviewFact->evidenceIds, $reacceptedReviewFact->evidenceIds)));
                     $reacceptedDecisions = $models->decisionsForSelectedFacts(...[...$scope, [$reacceptedReviewFact->id]]);
@@ -1112,6 +1133,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame($originalEvidence, $explicitSourceReview ? $readSourceEvidence() : array_map($proofFields,
             array_values(array_filter($final->evidence, static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true)))));
         if ($explicitSourceReview) {
+            self::assertInstanceOf(Fact::class, $reacceptedFact);
             self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
             self::assertNotContains($sourceFact->id, array_column($final->facts, 'id'));
             self::assertContains($reacceptedFact->id, array_column($final->facts, 'id'), 'Replacing a work must not delete an independently reviewed source extraction.');
