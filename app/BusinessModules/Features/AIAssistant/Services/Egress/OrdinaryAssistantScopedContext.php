@@ -48,6 +48,8 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
 
     private ?array $finalSynthesis = null;
 
+    private ?OrdinaryAssistantLowerEnvironmentProfiler $profiler = null;
+
     public function __construct(private readonly OrdinaryAssistantEnrollmentService $enrollments,
         private readonly OrdinaryAssistantSourceCatalog $catalog, private readonly OrdinaryAssistantSourceProjection $projection,
         private readonly AssistantDataAccessPolicy $access, private readonly AICreditService $credits) {}
@@ -277,6 +279,11 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
 
     private function canonicalResultReferences(array $results): array
     {
+        return $this->profile('projection/reference_guard', fn (): array => $this->collectCanonicalResultReferences($results));
+    }
+
+    private function collectCanonicalResultReferences(array $results): array
+    {
         $references = [];
         foreach ($results as $result) {
             if (! is_array($result) || ! in_array($result['_tool_name'] ?? null, $this->allowedToolNames(), true)) {
@@ -294,6 +301,11 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     }
 
     public function assertPublication(array $references): void
+    {
+        $this->profile('projection/reference_guard', fn () => $this->assertPublicationReferences($references));
+    }
+
+    private function assertPublicationReferences(array $references): void
     {
         $this->assertSourcesFresh();
         $documents = array_values(array_filter($this->enrollment->sources,
@@ -415,6 +427,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
 
     public function clear(): void
     {
+        $this->profiler = null;
         $this->guarded = null;
         $this->cohort = $this->enrollment = $this->actor = null;
         $this->inputHash = null;
@@ -439,6 +452,11 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
 
     public function documentCorpus(User $actor, int $organizationId, array $arguments): AssistantDocumentCorpus
     {
+        return $this->profile('document_corpus', fn (): AssistantDocumentCorpus => $this->captureDocumentCorpus($actor, $organizationId, $arguments));
+    }
+
+    private function captureDocumentCorpus(User $actor, int $organizationId, array $arguments): AssistantDocumentCorpus
+    {
         $this->assertTool(OrdinaryAssistantDocumentProjection::TOOL, $arguments, $actor, $organizationId);
         if (! $this->allowsExpansion('document_rag')) {
             throw new AssistantEgressDenied('unsupported_purpose');
@@ -453,6 +471,11 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
 
     private function assertSourcesFresh(): void
     {
+        $this->profile('freshness_scope', fn () => $this->refreshApprovedSources());
+    }
+
+    private function refreshApprovedSources(): void
+    {
         $this->assertFresh();
         $this->enrollments->assertOrganizationManager($this->enrollment->reviewed_by, (int) $this->cohort->organization_id);
         foreach ($this->enrollment->sources as $source) {
@@ -462,6 +485,22 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
                 throw new AssistantEgressDenied('source_stale');
             }
         }
+    }
+
+    public function profile(string $category, callable $operation): mixed
+    {
+        if ($this->guarded !== true) {
+            return $operation();
+        }
+        $this->profiler ??= new OrdinaryAssistantLowerEnvironmentProfiler(
+            config('ordinary-assistant-profiler.enabled', false) === true, app()->environment());
+
+        return $this->profiler->run($category, $operation);
+    }
+
+    public function profileSnapshot(): array
+    {
+        return $this->profiler?->snapshot() ?? [];
     }
 
     private function assertFresh(): void

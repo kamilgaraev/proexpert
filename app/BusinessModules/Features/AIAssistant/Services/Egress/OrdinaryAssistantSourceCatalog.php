@@ -19,6 +19,12 @@ final readonly class OrdinaryAssistantSourceCatalog
 
     public function freshReviewer(?int $reviewerId, int $organizationId): User
     {
+        return $this->profile('reviewer_user_membership',
+            fn (): User => $this->readFreshReviewer($reviewerId, $organizationId));
+    }
+
+    private function readFreshReviewer(?int $reviewerId, int $organizationId): User
+    {
         try {
             $reviewer = $reviewerId === null || $reviewerId < 1 ? null : User::query()->whereKey($reviewerId)
                 ->where('is_active', true)->where('current_organization_id', $organizationId)->first();
@@ -57,6 +63,22 @@ final readonly class OrdinaryAssistantSourceCatalog
     }
 
     public function capture(User $actor, int $organizationId, int $projectId, string $name, array $arguments): array
+    {
+        return $this->profile(
+            $name === OrdinaryAssistantDocumentProjection::TOOL ? 'approved_document_source_capture' : 'approved_sql_source_capture',
+            fn (): array => $this->captureCurrentSource($actor, $organizationId, $projectId, $name, $arguments));
+    }
+
+    private function profile(string $category, callable $operation): mixed
+    {
+        if (config('ordinary-assistant-profiler.enabled', false) !== true || ! app()->resolved(OrdinaryAssistantScopedContext::class)) {
+            return $operation();
+        }
+
+        return app(OrdinaryAssistantScopedContext::class)->profile($category, $operation);
+    }
+
+    private function captureCurrentSource(User $actor, int $organizationId, int $projectId, string $name, array $arguments): array
     {
         $documentSource = $name === OrdinaryAssistantDocumentProjection::TOOL;
         $arguments = $documentSource ? app(OrdinaryAssistantDocumentProjection::class)->selection($arguments, $projectId)

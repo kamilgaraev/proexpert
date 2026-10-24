@@ -88,10 +88,10 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
             $read = function () use ($scoped, $arguments, $user, $organization, $execution): array {
                 $readGuard = $execution?->requestControlCheckpoint();
                 $corpus = $scoped->documentCorpus($user, (int) $organization->id, $arguments);
-                $search = $this->retriever->searchWithDiagnostics($arguments['query'], (int) $organization->id, $user, $arguments,
-                    $execution === null ? null : $execution->assertCanContinue(...), readGuard: $readGuard, corpus: $corpus);
+                $search = $scoped->profile('retrieval', fn (): array => $this->retriever->searchWithDiagnostics($arguments['query'], (int) $organization->id, $user, $arguments,
+                    $execution === null ? null : $execution->assertCanContinue(...), readGuard: $readGuard, corpus: $corpus));
                 $execution?->assertCanContinue();
-                return app(OrdinaryAssistantDocumentProjection::class)->project($corpus, $search['results'], $user, (int) $organization->id);
+                return $scoped->profile('projection/reference_guard', fn (): array => app(OrdinaryAssistantDocumentProjection::class)->project($corpus, $search['results'], $user, (int) $organization->id));
             };
             return $execution === null ? $read() : $execution->withDatabaseStatementTimeout(
                 fn (): array => $execution->withOperationBudget($read, 30_000, 'pgsql'));
