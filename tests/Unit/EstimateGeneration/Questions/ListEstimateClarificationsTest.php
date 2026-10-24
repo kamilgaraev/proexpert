@@ -14,6 +14,53 @@ use PHPUnit\Framework\TestCase;
 
 final class ListEstimateClarificationsTest extends TestCase
 {
+    public function test_requirement_readback_is_opaque_without_actor_or_a_safe_postgres_snapshot(): void
+    {
+        $base = $this->current('work_question', 'Способ монтажа', 'sha256:'.str_repeat('a', 64), 'fact:answer', 'b');
+        $ref = str_repeat('e', 64);
+        $answer = ['response' => 'other', 'other' => 'Выбранный фрагмент.', 'fact_id' => 'fact:answer',
+            'decision_id' => 'decision:answer', 'document_ids' => [17], 'trust' => 'user_assumption',
+            'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false,
+            'requirement' => ['schema_version' => 2, 'selected_ref' => $ref, 'confirmation_level' => 'user_confirmed',
+                'source_details' => ['status' => 'current', 'threshold' => '123456.789', 'unit' => 'mm',
+                    'source' => ['reference' => 'evidence:private-source']]]];
+        $question = new EstimateClarificationQuestion($base->question->code, $base->question->subject,
+            $base->question->reason, $base->question->impact, $base->question->recommendation, $base->question->choices,
+            ['kind' => 'composer_work_technology', 'entity_id' => 'entity:equipment']);
+        $current = new CurrentEstimateClarification($question, $base->sourceVersion, $base->snapshotToken,
+            $base->answerFingerprint, $base->targetFactId, workAnswer: $answer);
+        $catalog = new FixedClarificationCatalog([$current]);
+        $registry = new FixedListAnswerRegistry([]);
+        $services = [[new ListEstimateClarifications($catalog, $registry), null]];
+        foreach ([['sqlite', 0], ['pgsql', 1]] as [$driver, $level]) {
+            $connection = $this->createMock(\Illuminate\Database\Connection::class);
+            $connection->method('getDriverName')->willReturn($driver);
+            $connection->method('transactionLevel')->willReturn($level);
+            $connection->expects(self::never())->method('statement');
+            $connection->expects(self::never())->method('transaction');
+            $database = $this->createMock(\Illuminate\Database\DatabaseManager::class);
+            $database->method('connection')->willReturn($connection);
+            $evidence = (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService::class))->newInstanceWithoutConstructor();
+            $models = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
+            $models->expects(self::never())->method('snapshotForPlanning');
+            $authorization = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
+            $authorization->expects(self::never())->method('authorize');
+            $actor = new \App\Models\User;
+            $services[] = [new ListEstimateClarifications($catalog, $registry, $models, $evidence, $authorization, $database), $actor];
+        }
+        foreach ($services as [$service, $actor]) {
+            $items = $service->handle(10, 20, 40, $actor);
+            self::assertSame('answered', $items[0]['status']);
+            self::assertSame('Выбранный фрагмент.', $items[0]['answer']['other']);
+            self::assertSame(['schema_version' => 2, 'selected_ref' => $ref, 'confirmation_level' => 'user_confirmed',
+                'source_details' => ['status' => 'unavailable']], $items[0]['answer']['requirement']);
+            self::assertSame([], $items[0]['requirement_options']);
+            self::assertSame([], $items[0]['requirement_checks']);
+            self::assertStringNotContainsString('123456.789', json_encode($items, JSON_THROW_ON_ERROR));
+            self::assertStringNotContainsString('evidence:private-source', json_encode($items, JSON_THROW_ON_ERROR));
+        }
+    }
+
     public function test_returns_only_unanswered_safe_questions_with_exact_answer_fences(): void
     {
         $sourceVersion = 'sha256:'.str_repeat('a', 64);

@@ -208,6 +208,8 @@ final readonly class EstimateComposerInputFactory
                 $reference = $references[$entry['answer']['fact_id'] ?? ''] ?? null;
                 if ($reference !== null && isset($entry['answer']['parameter'])) {
                     $entry['answer']['parameter']['component'] = $reference;
+                } elseif (($reference['schema_version'] ?? null) === 2 && isset($entry['answer']['requirement'])) {
+                    $entry['answer']['requirement']['component'] = $reference;
                 }
             }
             unset($entry);

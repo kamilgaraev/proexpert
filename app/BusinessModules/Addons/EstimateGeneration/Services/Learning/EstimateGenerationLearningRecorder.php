@@ -507,7 +507,9 @@ final class EstimateGenerationLearningRecorder
             if ($validation['answer_state_version'] > (int) $operation->approved_state_version) {
                 continue;
             }
-            $context = ['schema_version' => 1, 'origin' => ComposerSourceClaimValidationService::PARAMETER_ORIGIN,
+            $requirementOnly = ($validation['identity']['origin'] ?? null) === ComposerSourceClaimValidationService::REQUIREMENT_ORIGIN;
+            $context = ['schema_version' => $requirementOnly ? 2 : 1,
+                'origin' => $requirementOnly ? ComposerSourceClaimValidationService::REQUIREMENT_ORIGIN : ComposerSourceClaimValidationService::PARAMETER_ORIGIN,
                 'source_claim_validation' => $validation, 'training_allowed' => false];
             $created += DB::affectingStatement(<<<'SQL'
                 INSERT INTO estimate_generation_learning_examples (
@@ -517,11 +519,13 @@ final class EstimateGenerationLearningRecorder
                 ) VALUES (?, ?, ?, 'composer_source_claim', 'estimate_session', ?, ?, ?, NULL, 'proposed', false, NULL,
                     ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)
                 ON CONFLICT (organization_id, project_id, generation_session_id, source_claim_key) DO NOTHING
-                SQL, [...$scope, $scope[2], $validation['source_claim_key'], $validation['identity']['parameter']['name'],
+                SQL, [...$scope, $scope[2], $validation['source_claim_key'], $requirementOnly
+                    ? $validation['component']['parameter'] : $validation['identity']['parameter']['name'],
                 CanonicalPipelineJson::encode($context),
                 CanonicalPipelineJson::encode(['credit_operation_id' => $operationId, 'source_answer_fact_id' => $answerId,
-                    'document_fact_ids' => [$validation['identity']['source']['raw_fact_id']]]),
-                json_encode(['source_correspondence_only', 'user_interpretation', 'conditional_comparison', 'do_not_index'], JSON_THROW_ON_ERROR), now(), now()]);
+                    'document_fact_ids' => [$validation['identity']['source'][$requirementOnly ? 'source_fact_id' : 'raw_fact_id']]]),
+                json_encode($requirementOnly ? ['user_interpretation', 'requirement_without_observed', 'do_not_index']
+                    : ['source_correspondence_only', 'user_interpretation', 'conditional_comparison', 'do_not_index'], JSON_THROW_ON_ERROR), now(), now()]);
             $stored = DB::table('estimate_generation_learning_examples')->where('organization_id', $scope[0])->where('project_id', $scope[1])
                 ->where('generation_session_id', $scope[2])->where('source_claim_key', $validation['source_claim_key'])->value('context_payload');
             $stored = is_string($stored) ? json_decode($stored, true, 64, JSON_THROW_ON_ERROR) : null;
