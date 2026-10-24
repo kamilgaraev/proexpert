@@ -186,6 +186,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $this->postJson($url.'/questions/'.$card['code'].'/answer', $answerInput, $headers)->assertOk();
         $answered = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
             static fn (array $question): bool => $question['code'] === $card['code']))[0];
+        self::assertSame('answered', $answered['status']);
         self::assertSame($answerInput['other'], $answered['answer']['other']);
         self::assertFalse($answered['answer']['numeric_parameters_confirmed']);
         self::assertSame('unresolved', $answered['answer']['engineering_applicability']);
@@ -290,6 +291,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $fresh = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
             static fn (array $question): bool => $question['code'] === $card['code']));
         self::assertCount(1, $fresh);
+        self::assertSame('answered', $fresh[0]['status']);
+        self::assertSame($answered['answer'], $fresh[0]['answer']);
         self::assertCount(1, $fresh[0]['parameter_options']);
         self::assertSame([], $fresh[0]['parameter_checks']);
         $option = $fresh[0]['parameter_options'][0];
@@ -311,6 +314,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $afterIgnore = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
             static fn (array $question): bool => $question['code'] === $card['code']));
         self::assertCount(1, $afterIgnore);
+        self::assertSame('answered', $afterIgnore[0]['status']);
+        self::assertSame($answered['answer'], $afterIgnore[0]['answer']);
         self::assertSame([], $afterIgnore[0]['parameter_options']);
         self::assertSame($initialAnswer->id, $models->fact(...[...$scope, $initialAnswer->id])->id);
         foreach ($originals as $id => $original) {
