@@ -48,6 +48,11 @@ class PurchaseReceiptDocumentPdfLayoutTest extends TestCase
         self::assertStringNotContainsString('2043', strip_tags($html));
         self::assertStringContainsString('Десять тысяч пятьсот', $html);
         self::assertStringContainsString('Один', $html);
+        $dom = new DOMDocument();
+        @$dom->loadHTML('<?xml encoding="UTF-8">'.$html);
+        $references = (new DOMXPath($dom))->query('//table[@class="closing"]//td[@class="closing-reference"]');
+        self::assertSame(1, $references->length);
+        self::assertSame('ТОРГ-12 № УЧ-Т12-2021 от 17.10.2021', trim($references->item(0)->textContent));
     }
 
     public function test_amount_in_words_keeps_exact_decimal_kopecks_and_does_not_invent_unknown_totals(): void
@@ -65,7 +70,7 @@ class PurchaseReceiptDocumentPdfLayoutTest extends TestCase
         self::assertStringNotContainsString('Ноль руб. 00 коп.', $html);
     }
 
-    public function test_real_pdf_renders_short_long_and_large_value_documents(): void
+    public function test_real_pdf_renders_short_long_large_and_long_requisites_documents(): void
     {
         $rendered = null;
         $this->app->resolving('dompdf.wrapper', static function (PdfRenderer $pdf) use (&$rendered): void {
@@ -84,8 +89,22 @@ class PurchaseReceiptDocumentPdfLayoutTest extends TestCase
         $large['totals']['quantity'] = '1';
         $large['totals']['amount_without_vat'] = '9999999999999.99';
         $large['totals']['amount_with_vat'] = '9999999999999.99';
+        $requisites = $this->document();
+        $requisites['operation_type'] = 'Приемка материалов от поставщика';
+        $requisites['document_number'] = 'PR-202610-0002';
+        $requisites['supplier']['name'] = 'Учебный поставщик отделочных материалов ПТО-102';
+        $requisites['consignee'] = [
+            'name' => 'Учебная организация получателя',
+            'inn' => '0000000000',
+            'address' => '000000, УЧЕБНАЯ ОБЛАСТЬ, Г. УСЛОВНЫЙ ГОРОД, УЛ. УЧЕБНАЯ, СТР. 59А, ОФИС 206',
+            'phone' => '+70000000000',
+            'email' => 'recipient-torg12@example.invalid',
+        ];
+        $requisites['basis']['number'] = 'ЗП-202610-0003';
+        $requisites['rows'][0]['name'] = 'Учебная краска водно-дисперсионная — учебная ведомость';
+        $requisites['rows'][0]['code'] = 'PTO-102-KRASKA';
 
-        foreach (['short' => $short, 'long' => $long, 'large' => $large] as $name => $document) {
+        foreach (['short' => $short, 'long' => $long, 'large' => $large, 'requisites' => $requisites] as $name => $document) {
             $order = new PurchaseOrder();
             $order->id = 12;
             $order->order_number = 'УЧ-12';

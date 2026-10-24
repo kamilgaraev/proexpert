@@ -72,7 +72,7 @@
         }
 
         .top-codes {
-            width: 250px;
+            width: 380px;
             margin-left: auto;
             margin-bottom: 4px;
             font-size: 6.5pt;
@@ -81,10 +81,11 @@
         .top-codes td {
             border: 1px solid #000;
             padding: 1px 4px;
+            width: 50%;
         }
         .form-header { margin-bottom: 5px; }
         .form-header .document-heading { vertical-align: middle; }
-        .form-header .document-codes { width: 250px; }
+        .form-header .document-codes { width: 380px; }
 
         .approved {
             text-align: right;
@@ -168,7 +169,8 @@
         .closing { margin-top: 4px; page-break-inside: avoid; table-layout: fixed; }
         .closing-side { width: 50%; padding: 2px 8px 0 0; }
         .closing-side + .closing-side { padding-left: 8px; padding-right: 0; }
-        .closing p { margin: 3px 0; }
+        .closing-reference { font-size: 6pt; padding-bottom: 1px; }
+        .closing p { margin: 2px 0; }
         .field {
             display: inline-block;
             border-bottom: 1px solid #000;
@@ -355,10 +357,7 @@
 
     <table class="form-summary">
         <tr>
-            <td colspan="2">Товарная накладная имеет приложение на <span class="field"></span> листах</td>
-        </tr>
-        <tr>
-            <td colspan="2">и содержит <strong>{{ $rowsCountWords }}</strong> порядковых номеров записей <span class="hint">(прописью)</span></td>
+            <td colspan="2">Товарная накладная имеет приложение на <span class="field"></span> листах и содержит <strong>{{ $rowsCountWords }}</strong> порядковых номеров записей <span class="hint">(прописью)</span></td>
         </tr>
         <tr>
             <td>Масса груза (нетто) <span class="field" style="min-width: 180px;"></span> <span class="hint">(прописью)</span></td>
@@ -368,6 +367,7 @@
     </table>
 
     <table class="closing">
+        <tr><td colspan="2" class="closing-reference">ТОРГ-12 № {{ data_get($document, 'document_number') }} от {{ $formatDate(data_get($document, 'document_date')) }}</td></tr>
         <tr>
             <td class="closing-side">
                 <p>Приложение (паспорта, сертификаты и т.п.) на <span class="field"></span> листах</p>
@@ -375,15 +375,12 @@
                 <div class="words-field">{{ $amountRublesWords }} руб. {{ $amountKopecks }} коп.</div>
                 <div class="hint">прописью</div>
                 <table class="signature-block">
-                    <tr><td colspan="3">Отпуск груза разрешил</td></tr>
-                    <tr><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
-                    <tr class="hint"><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
-                    <tr><td colspan="3">Главный (старший) бухгалтер</td></tr>
-                    <tr><td>&nbsp;</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
-                    <tr class="hint"><td></td><td>подпись</td><td>расшифровка подписи</td></tr>
-                    <tr><td colspan="3">Отпуск груза произвел</td></tr>
-                    <tr><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
-                    <tr class="hint"><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
+                    <tr><td style="width: 34%;">Отпуск груза разрешил</td><td class="sign-line" style="width: 20%;">&nbsp;</td><td class="sign-line" style="width: 16%;">&nbsp;</td><td class="sign-line" style="width: 30%;">&nbsp;</td></tr>
+                    <tr class="hint"><td></td><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
+                    <tr><td colspan="2">Главный (старший) бухгалтер</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
+                    <tr class="hint"><td colspan="2"></td><td>подпись</td><td>расшифровка подписи</td></tr>
+                    <tr><td>Отпуск груза произвел</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
+                    <tr class="hint"><td></td><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
                 </table>
                 <p>М.П. «____» __________________ ______ г.</p>
             </td>
@@ -393,12 +390,10 @@
                 <div class="hint">кем, кому (организация, должность, фамилия, инициалы)</div>
                 <div class="words-field">&nbsp;</div>
                 <table class="signature-block">
-                    <tr><td colspan="3">Груз принял</td></tr>
-                    <tr><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
-                    <tr class="hint"><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
-                    <tr><td colspan="3">Груз получил грузополучатель</td></tr>
-                    <tr><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
-                    <tr class="hint"><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
+                    <tr><td style="width: 34%;">Груз принял</td><td class="sign-line" style="width: 20%;">&nbsp;</td><td class="sign-line" style="width: 16%;">&nbsp;</td><td class="sign-line" style="width: 30%;">&nbsp;</td></tr>
+                    <tr class="hint"><td></td><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
+                    <tr><td>Груз получил грузополучатель</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td><td class="sign-line">&nbsp;</td></tr>
+                    <tr class="hint"><td></td><td>должность</td><td>подпись</td><td>расшифровка подписи</td></tr>
                 </table>
                 <p>М.П. «____» __________________ ______ г.</p>
             </td>
