@@ -67,7 +67,7 @@ class OfficialFormsExportService
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
     }
 
-    protected function saveSpreadsheetToS3(Spreadsheet $spreadsheet, string $path, $organization): string
+    protected function saveSpreadsheetToS3(Spreadsheet $spreadsheet, string $path, $organization, bool $uniquePreparation = true): string
     {
         $writer = new Xlsx($spreadsheet);
 
@@ -75,8 +75,7 @@ class OfficialFormsExportService
         $writer->save('php://output');
         $content = ob_get_clean();
 
-        $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
-        $s3Path = "org-{$orgId}/{$path}";
+        $s3Path = $this->preparedExportPath($path, $organization, $uniquePreparation);
 
         $this->fileService->disk($organization)->put($s3Path, $content);
 
@@ -98,7 +97,7 @@ class OfficialFormsExportService
             ? 'exports/acts/previews/ks2/'.\Illuminate\Support\Str::uuid().'_'.$filename
             : "exports/acts/ks2/{$filename}";
 
-        return $this->savePdfToS3($pdf, $path, $contract->organization);
+        return $this->savePdfToS3($pdf, $path, $contract->organization, ! $preview);
     }
 
     public function exportKS3ToPdf(ContractPerformanceAct $act, Contract $contract, bool $preview = false): string
@@ -115,7 +114,7 @@ class OfficialFormsExportService
             ? 'exports/acts/previews/ks3/'.\Illuminate\Support\Str::uuid().'_'.$filename
             : "exports/acts/ks3/{$filename}";
 
-        return $this->savePdfToS3($pdf, $path, $contract->organization);
+        return $this->savePdfToS3($pdf, $path, $contract->organization, ! $preview);
     }
 
     public function exportCertificateKS3ToExcel(\App\Models\ContractPeriodCertificate $certificate): string
@@ -194,16 +193,25 @@ class OfficialFormsExportService
         return app(\App\Services\Acting\ContractPeriodCertificateService::class)->checksum($data);
     }
 
-    protected function savePdfToS3($pdf, string $path, $organization): string
+    protected function savePdfToS3($pdf, string $path, $organization, bool $uniquePreparation = true): string
     {
         $content = $pdf->output();
 
-        $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
-        $s3Path = "org-{$orgId}/{$path}";
+        $s3Path = $this->preparedExportPath($path, $organization, $uniquePreparation);
 
         $this->fileService->disk($organization)->put($s3Path, $content);
 
         return $s3Path;
+    }
+
+    private function preparedExportPath(string $path, $organization, bool $uniquePreparation): string
+    {
+        $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
+        if ($uniquePreparation) {
+            $path = dirname($path).'/'.\Illuminate\Support\Str::uuid().'/'.basename($path);
+        }
+
+        return "org-{$orgId}/{$path}";
     }
 
     /**
@@ -1091,7 +1099,7 @@ class OfficialFormsExportService
         );
         $path = "exports/journal/ks6/{$filename}";
 
-        return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization, $exportId === null);
     }
 
     public function exportKS6ToPdf(
@@ -1113,7 +1121,7 @@ class OfficialFormsExportService
         );
         $path = "exports/journal/ks6/{$filename}";
 
-        return $this->savePdfToS3($pdf, $path, $journal->project->organization);
+        return $this->savePdfToS3($pdf, $path, $journal->project->organization, $exportId === null);
     }
 
     public function exportDailyReportToPdf(
@@ -1144,7 +1152,7 @@ class OfficialFormsExportService
         );
         $path = "exports/journal/daily/{$filename}";
 
-        return $this->savePdfToS3($pdf, $path, $entry->journal->project->organization);
+        return $this->savePdfToS3($pdf, $path, $entry->journal->project->organization, $exportId === null);
     }
 
     public function exportExtendedReportToExcel(
@@ -1168,7 +1176,7 @@ class OfficialFormsExportService
         );
         $path = "exports/journal/extended/{$filename}";
 
-        return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
+        return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization, $exportId === null);
     }
 
     public function exportExtendedReportToPdf(
@@ -1223,7 +1231,7 @@ class OfficialFormsExportService
         );
         $path = "exports/journal/extended/{$filename}";
 
-        return $this->savePdfToS3($pdf, $path, $journal->project->organization);
+        return $this->savePdfToS3($pdf, $path, $journal->project->organization, $exportId === null);
     }
 
     private function uniqueExportFilename(string $filename, ?string $exportId): string

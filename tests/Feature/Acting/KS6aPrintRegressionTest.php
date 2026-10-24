@@ -76,7 +76,15 @@ final class KS6aPrintRegressionTest extends TestCase
             self::assertStringStartsWith('org-'.$contract->organization_id.'/exports/acts/ks6a/', $path);
             self::assertStringStartsWith('KS-6a_УЧ-ПТО-102-2026', basename($path));
             self::assertStringEndsWith('.'.$format, $path);
-            self::assertSame(4, substr_count($path, '/'));
+            self::assertSame(5, substr_count($path, '/'));
+            $preparedHash = hash('sha256', Storage::disk('s3')->get($path));
+            $secondPath = $format === 'pdf'
+                ? $service->exportKS6aToPdf($contract)
+                : $service->exportKS6aToExcel($contract);
+            self::assertNotSame($path, $secondPath);
+            self::assertSame(basename($path), basename($secondPath));
+            self::assertSame($preparedHash, hash('sha256', Storage::disk('s3')->get($path)));
+            Storage::disk('s3')->assertExists($secondPath);
         }
     }
 
