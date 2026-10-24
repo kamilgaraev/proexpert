@@ -261,6 +261,71 @@ final class AssistantDocumentAdmissionTest extends TestCase
         }
     }
 
+    public function test_scoped_ranking_prefers_direct_query_terms_and_keeps_expansion_fallback(): void
+    {
+        $this->replaceFragment(0, 'оплата '.self::SENTINEL);
+        $this->replaceFragment(1, 'сумма договор контракт бюджет остаток счет акт');
+        $this->replaceFragment(2, 'платеж');
+        [$cohort, $payload, $manifest] = $this->enroll();
+        $context = app(OrdinaryAssistantScopedContext::class);
+        $context->enter($this->fixture->owner, $cohort->organization_id, $payload['message'], $payload, null);
+        $tool = app(SearchAssistantDocumentsTool::class);
+        $first = $tool->execute($this->args('оплата', 1), $this->fixture->owner, $this->fixture->organization);
+        self::assertSame([$manifest['sources'][0]['projection']['data']['fragments'][0]], $first['data']['fragments']);
+        $both = $tool->execute($this->args('оплата', 2), $this->fixture->owner, $this->fixture->organization);
+        self::assertSame([$this->chunks[0]->id, $this->chunks[1]->id], array_column($both['data']['fragments'], 'chunk_id'));
+        $fallback = $tool->execute($this->args('финансы', 1), $this->fixture->owner, $this->fixture->organization);
+        self::assertSame([$this->chunks[1]->id], array_column($fallback['data']['fragments'], 'chunk_id'));
+        self::assertSame('approved_fragment_universe', $first['data']['coverage_scope']);
+        self::assertFalse($first['data']['search_complete']);
+        self::assertSame(3, $first['data']['approved_fragments']);
+    }
+
+    public function test_direct_query_rank_reaches_actual_wire_as_an_unchanged_approved_subset(): void
+    {
+        $this->replaceFragment(0, 'оплата '.str_repeat('сведения ', 45).self::SENTINEL);
+        $this->replaceFragment(1, 'сумма договор контракт бюджет остаток счет акт');
+        $this->replaceFragment(2, 'платеж');
+        [$cohort, $payload, $manifest] = $this->enroll();
+        $approved = $manifest['sources'][0]['projection'];
+        $approved['data']['fragments'] = [$approved['data']['fragments'][0]];
+        $approved['source_refs'] = [$approved['source_refs'][0]];
+        self::assertGreaterThan(340, mb_strpos($approved['data']['fragments'][0]['content'], self::SENTINEL));
+        $response = static fn (array $output): \GuzzleHttp\Psr7\Response => new \GuzzleHttp\Psr7\Response(200,
+            ['Content-Type' => 'application/json'], json_encode([
+                'id' => 'resp_ranked_'.$output[0]['type'], 'object' => 'response', 'created_at' => 1791540000, 'status' => 'completed',
+                'model' => 'openai/gpt-6-luna', 'incomplete_details' => null, 'output' => $output,
+                'max_output_tokens' => 2048, 'parallel_tool_calls' => false, 'previous_response_id' => null,
+                'temperature' => null, 'top_p' => null, 'tool_choice' => 'auto', 'tools' => [],
+                'usage' => ['input_tokens' => 100, 'output_tokens' => 20, 'total_tokens' => 120,
+                    'input_tokens_details' => ['cached_tokens' => 0], 'output_tokens_details' => ['reasoning_tokens' => 0]],
+            ], JSON_THROW_ON_ERROR));
+        $history = [];
+        $logging = $this->createMock(\App\Services\Logging\LoggingService::class);
+        $context = app(OrdinaryAssistantScopedContext::class);
+        $egress = new \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantEgress($context);
+        $provider = (new \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantProviderFactory($egress, $logging))
+            ->make(\GuzzleHttp\Middleware::history($history)(new \GuzzleHttp\Handler\MockHandler([
+                $response($this->nativeCall($this->args('оплата', 1))['output']),
+                $response([['id' => 'msg_ranked', 'type' => 'message', 'status' => 'completed', 'role' => 'assistant',
+                    'content' => [['type' => 'output_text', 'text' => 'В учебном фрагменте указана оплата.', 'annotations' => [], 'logprobs' => []]]]]),
+            ])));
+        $service = app()->makeWith(\App\BusinessModules\Features\AIAssistant\Services\AIAssistantService::class,
+            ['llmProvider' => $provider, 'ordinaryEgress' => $egress, 'scopedContext' => $context, 'logging' => $logging]);
+        $result = $service->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        self::assertCount(2, $history);
+        $wire = json_decode((string) $history[1]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        $outputs = array_values(array_filter($wire['input'], static fn (array $item): bool => ($item['type'] ?? null) === 'function_call_output'));
+        self::assertCount(1, $outputs);
+        self::assertSame($approved, json_decode($outputs[0]['output'], true, 512, JSON_THROW_ON_ERROR));
+        $request = AssistantRequest::query()->where('request_id', $result['request_id'])->sole();
+        $conversation = \App\BusinessModules\Features\AIAssistant\Models\Conversation::query()->findOrFail($result['conversation_id']);
+        $copies = [$request->getAttributes(), $conversation->getAttributes(), $conversation->summary()->first()?->getAttributes(),
+            Message::query()->findOrFail($result['message']['id'])->getAttributes(),
+            \App\Models\Credits\AICreditProviderUsage::query()->where('ai_credit_reservation_id', $request->reservation_id)->get()->toArray()];
+        self::assertStringNotContainsString(self::SENTINEL, json_encode($copies, JSON_THROW_ON_ERROR));
+    }
+
     public function test_unapproved_content_tail_is_not_a_scoped_sql_hit(): void
     {
         $this->replaceFragment(1, str_repeat('X', 2500).' hiddentail');

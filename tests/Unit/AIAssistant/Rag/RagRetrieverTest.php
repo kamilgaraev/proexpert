@@ -384,6 +384,20 @@ class RagRetrieverTest extends TestCase
         $this->assertSame('site_request', $results[0]->sourceType);
     }
 
+    public function test_global_lexical_ranking_keeps_expansion_scores_without_an_approved_corpus(): void
+    {
+        [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(UserProjectAccessMode::ALL_PROJECTS->value);
+        $this->indexChunk($organization->id, $project->id, 'Direct source', 'оплата', [0.0, 1.0, 0.0]);
+        $this->indexChunk($organization->id, $project->id, 'Expansion source', 'сумма договор контракт бюджет остаток счет акт', [0.0, 1.0, 0.0]);
+        $provider = new RetrieverEmbeddingProvider([1.0, 0.0, 0.0]);
+
+        $results = $this->retriever($provider)->search('оплата', $organization->id, $user,
+            ['project_id' => $project->id, 'source_types' => ['project'], 'retrieval_mode' => 'lexical', 'limit' => 2]);
+
+        self::assertSame(['Expansion source', 'Direct source'], array_column($results, 'title'));
+        self::assertSame(0, $provider->queryCalls);
+    }
+
     public function test_finance_query_expands_lexical_terms_to_payment_sources(): void
     {
         [$organization, $user, $project] = $this->createOrganizationUserWithOneProject(
