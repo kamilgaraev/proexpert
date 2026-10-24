@@ -1056,7 +1056,35 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     $this->postJson($url.'/questions/'.$reacceptedCard['code'].'/answer', [...$answerInput,
                         'idempotency_key' => 'reaccepted-old-source-ref', 'expected_source_version' => $reacceptedCard['source_version'],
                         'answer_fingerprint' => $reacceptedCard['answer_fingerprint']], $headers)->assertStatus(409);
-                    self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['requirement'] ?? []);
+                    $reacceptedCard = $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'));
+                    $reacceptedSelectedRef = $reacceptedCard['requirement_options'][0]['source_requirement_ref'];
+                    $beforeReacceptedSelection = $counts();
+                    $beforeReacceptedOperations = DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count();
+                    $this->postJson($url.'/questions/'.$reacceptedCard['code'].'/answer', [...$answerInput,
+                        'idempotency_key' => (string) Str::uuid(), 'expected_source_version' => $reacceptedCard['source_version'],
+                        'answer_fingerprint' => $reacceptedCard['answer_fingerprint'],
+                        'parameter' => ['schema_version' => 2, 'condition' => 'minimum_length', 'source_requirement_ref' => $reacceptedSelectedRef]], $headers)->assertOk();
+                    $reselectedCard = $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'));
+                    self::assertSame('answered', $reselectedCard['status']);
+                    self::assertSame($reacceptedSelectedRef, $reselectedCard['answer']['requirement']['selected_ref']);
+                    self::assertSame('current', $reselectedCard['answer']['requirement']['source_details']['status']);
+                    $reselectedAnswer = $models->fact(...[...$scope, $reselectedCard['answer']['fact_id']]);
+                    self::assertNotNull($reselectedAnswer);
+                    self::assertNotSame($answerId, $reselectedAnswer->id);
+                    self::assertSame($reacceptedFact->id, $reselectedAnswer->value['parameter']['association']['source_fact_id']);
+                    $reselectedDecisions = $models->decisionsForSelectedFacts(...[...$scope, [$reselectedAnswer->id]]);
+                    self::assertCount(1, $reselectedDecisions);
+                    self::assertSame($reselectedAnswer->value['decision_id'], array_values($reselectedDecisions)[0]->id);
+                    self::assertSame('user', array_values($reselectedDecisions)[0]->actorType);
+                    self::assertSame((string) $actor->id, array_values($reselectedDecisions)[0]->actorId);
+                    $reselectedFactory = $factory()->workTechnologyContext[0]['answer'];
+                    self::assertSame($reselectedAnswer->id, $reselectedFactory['fact_id']);
+                    self::assertArrayHasKey('requirement', $reselectedFactory);
+                    self::assertSame($reacceptedSelectedRef, $reselectedFactory['requirement']['selected_ref']);
+                    self::assertArrayNotHasKey('component', $reselectedFactory['requirement']);
+                    self::assertSame(0, DB::transaction(fn () => app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId])));
+                    self::assertSame($beforeReacceptedSelection, $counts());
+                    self::assertSame($beforeReacceptedOperations, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
                     self::assertSame($beforeHistory, $historyRows());
                     self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
                     self::assertSame($originalFact, get_object_vars($models->fact(...[...$scope, $sourceFact->id])));
@@ -1087,6 +1115,56 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
             self::assertNotContains($sourceFact->id, array_column($final->facts, 'id'));
             self::assertContains($reacceptedFact->id, array_column($final->facts, 'id'), 'Replacing a work must not delete an independently reviewed source extraction.');
+            $beforeIgnoreReview = $this->getJson($reviewUrl, $headers)->assertOk()->json('data');
+            self::assertCount(1, $beforeIgnoreReview['source_requirement_reviews']);
+            $currentDocumentReview = $beforeIgnoreReview['source_requirement_reviews'][0];
+            self::assertSame($sourceReviewInput['review_ref'], $currentDocumentReview['review_ref']);
+            self::assertSame('accept', $currentDocumentReview['status']);
+            self::assertSame(['revoke'], $currentDocumentReview['actions']);
+            self::assertSame('0.90', $currentDocumentReview['proposal']['threshold']);
+            self::assertSame((int) $document->id, $currentDocumentReview['source']['document_id']);
+            self::assertSame($version, $currentDocumentReview['source']['source_version']);
+            $documentHistory = function () use ($scope): array {
+                $history = [];
+                foreach (['estimate_generation_project_model_assertions', 'estimate_generation_project_model_corrections',
+                    'estimate_generation_evidence', 'estimate_generation_learning_examples'] as $table) {
+                    $history[$table] = DB::table($table)->where('organization_id', $scope[0])->where('project_id', $scope[1])
+                        ->where($table === 'estimate_generation_learning_examples' ? 'generation_session_id' : 'session_id', $scope[2])
+                        ->orderBy('id')->get()->toJson();
+                }
+                return $history;
+            };
+            $beforeDocumentHistory = $documentHistory();
+            $beforeDocumentIgnoreCounts = $counts();
+            $beforeDocumentIgnoreOperations = DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count();
+            $reacceptedFactBeforeIgnore = get_object_vars($reacceptedFact);
+            $this->postJson($url.'/documents/'.$document->id.'/ignore', ['state_version' => $session->fresh()->state_version], $headers)->assertOk();
+            self::assertSame('ignored', $document->fresh()->status);
+            $ignoredDocumentReview = $this->getJson($reviewUrl, $headers)->assertOk();
+            self::assertSame([], $ignoredDocumentReview->json('data.source_requirement_reviews'));
+            self::assertStringNotContainsString($currentDocumentReview['review_ref'], $ignoredDocumentReview->getContent());
+            $ignoredSessionBeforePost = $session->fresh()->getAttributes();
+            $ignoredDocumentBeforePost = $document->fresh()->getAttributes();
+            $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid(),
+                'state_version' => $session->fresh()->state_version, 'review_ref' => $currentDocumentReview['review_ref'],
+                'decision' => 'revoke', 'reason' => 'Проверяю отказ прежнего источника после штатного исключения документа.'], $headers)
+                ->assertStatus(409)->assertJsonPath('code', 'http_409')
+                ->assertJsonPath('message', trans_message('estimate_generation.state_conflict'));
+            self::assertSame($ignoredSessionBeforePost, $session->fresh()->getAttributes());
+            self::assertSame($ignoredDocumentBeforePost, $document->fresh()->getAttributes());
+            $ignoredSnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+            self::assertNotContains($reacceptedFact->id, array_column($ignoredSnapshot->facts, 'id'));
+            $ignoredFactory = $factory();
+            self::assertNotContains($reacceptedFact->id, array_column($ignoredFactory->facts, 'id'));
+            foreach ($ignoredFactory->workTechnologyContext as $entry) {
+                self::assertArrayNotHasKey('component', $entry['answer']['requirement'] ?? []);
+            }
+            self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
+            self::assertSame($originalFact, get_object_vars($models->fact(...[...$scope, $sourceFact->id])));
+            self::assertSame($reacceptedFactBeforeIgnore, get_object_vars($models->fact(...[...$scope, $reacceptedFact->id])));
+            self::assertSame($beforeDocumentHistory, $documentHistory());
+            self::assertSame($beforeDocumentIgnoreCounts, $counts());
+            self::assertSame($beforeDocumentIgnoreOperations, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
         }
         Http::assertNothingSent();
     }
