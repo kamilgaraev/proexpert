@@ -764,13 +764,16 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 self::assertArrayHasKey('component', $factory()->workTechnologyContext[0]['answer']['requirement']);
                 $historyRows = fn (): string => DB::table('estimate_generation_learning_examples')->where('generation_session_id', $scope[2])->orderBy('id')->get()->toJson();
                 $beforeHistory = $historyRows();
+                $storedAnswer = get_object_vars($models->fact(...[...$scope, $answerId]));
                 DB::beginTransaction();
                 try {
                     $this->postJson($url.'/documents/'.$document->id.'/ignore', ['state_version' => $session->fresh()->state_version], $headers)->assertOk();
                     $ignored = $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'));
                     self::assertSame([], $ignored['requirement_options']);
                     self::assertSame([], $ignored['requirement_checks']);
-                    self::assertSame($opaque, $ignored['answer']['requirement']);
+                    self::assertNull($ignored['answer']);
+                    self::assertSame('unanswered', $ignored['status']);
+                    self::assertSame($storedAnswer, get_object_vars($models->fact(...[...$scope, $answerId])));
                     $this->postJson($url.'/questions/'.$ignored['code'].'/answer', [...$answerInput, 'idempotency_key' => 'ignored-requirement',
                         'expected_source_version' => $ignored['source_version'], 'answer_fingerprint' => $ignored['answer_fingerprint']], $headers)->assertStatus(409);
                     self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['requirement'] ?? []);
