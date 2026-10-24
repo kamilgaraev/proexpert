@@ -81,7 +81,7 @@ return new class extends Migration
                     AND semantic->'dimension' IN ('null'::jsonb, '"length"'::jsonb)
                     AND jsonb_typeof(semantic->'appliesTo') = 'object'
                     AND semantic->'appliesTo' ?& ARRAY['subject','equipmentIdentity']
-                    AND semantic->'appliesTo' - ARRAY['subject','equipmentIdentity'] = '{}'::jsonb, false) THEN
+                    AND (semantic->'appliesTo') - ARRAY['subject','equipmentIdentity'] = '{}'::jsonb, false) THEN
                     RAISE EXCEPTION 'estimate_generation.project_model_document_semantic_proposal_invalid';
                 END IF;
                 fields := jsonb_build_object('parameter',semantic->'parameter','comparator',semantic->'comparator',
@@ -219,7 +219,7 @@ return new class extends Migration
             END IF;
             IF NEW.entity_kind = 'equipment' THEN
                 IF NOT COALESCE(NEW.payload->'properties' ?& ARRAY['semantic_type','document_context','source_entity_key','document_semantic_proposal']
-                    AND NEW.payload->'properties' - ARRAY['semantic_type','document_context','source_entity_key','document_semantic_proposal'] = '{}'::jsonb
+                    AND (NEW.payload->'properties') - ARRAY['semantic_type','document_context','source_entity_key','document_semantic_proposal'] = '{}'::jsonb
                     AND NEW.payload->'properties'->'document_context' = 'true'::jsonb
                     AND jsonb_typeof(NEW.payload->'properties'->'semantic_type') = 'string'
                     AND char_length(NEW.payload->'properties'->>'semantic_type') BETWEEN 1 AND 120
@@ -231,12 +231,12 @@ return new class extends Migration
             ELSE
                 IF NOT COALESCE(semantic->>'kind' = 'source_requirement'
                     AND NEW.payload - ARRAY['kind','key','semantic_type','identity','document_role','floor_id','zone_id','room_id','wall_id','roof_id','geometry_identity','properties'] = '{}'::jsonb
-                    AND NEW.payload->'properties' - ARRAY['document_semantic_proposal'] = '{}'::jsonb
+                    AND (NEW.payload->'properties') - ARRAY['document_semantic_proposal'] = '{}'::jsonb
                     AND CASE NEW.payload->>'semantic_type' WHEN 'room' THEN NEW.entity_kind = 'room'
                         WHEN 'wall' THEN NEW.entity_kind = 'wall' WHEN 'opening' THEN NEW.entity_kind = 'opening'
                         ELSE NEW.entity_kind = 'quantity' AND NEW.payload->>'semantic_type' IN ('site','roof','roof_facet','roof_opening','quantity','foundation_beam','foundation_slab','work_scope') END
                     AND jsonb_typeof(NEW.payload->'identity') = 'object' AND NEW.payload->'identity' ? 'source_entity_key'
-                    AND NEW.payload->'identity' - ARRAY['source_entity_key','label'] = '{}'::jsonb
+                    AND (NEW.payload->'identity') - ARRAY['source_entity_key','label'] = '{}'::jsonb
                     AND jsonb_typeof(NEW.payload->'identity'->'source_entity_key') = 'string'
                     AND char_length(NEW.payload->'identity'->>'source_entity_key') BETWEEN 1 AND 120
                     AND (NOT (NEW.payload->'identity' ? 'label') OR (jsonb_typeof(NEW.payload->'identity'->'label') = 'string'

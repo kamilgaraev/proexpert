@@ -17,7 +17,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'pricing' => 'e4a4258475b71eb4fe383e6888c1217c89807aa29aef7b1826f3e3f3e33ecd97',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'b37c6b55d9a1e6476be58d1aa741a104b0e8545892755451c20829b120ea7390';
+    private const FRESH_INVENTORY_DIGEST = 'ea03cca0f3dab375ce51ebd3420e447f8cb8a17ae57628640610a5e97cd30c3a';
 
     private const SUBJECT = [
         'geometry' => [
