@@ -90,6 +90,22 @@ final class WarehouseINV3CompletenessExportTest extends TestCase
         $this->assertSame("=1+1\nINV3-SNAPSHOT", $cell->getValue());
     }
 
+    public function test_missing_fact_explanations_use_the_application_translation_catalog(): void
+    {
+        app()->setLocale('ru');
+        app('translator')->get('warehouse_basic.inv3.cover_requisites_note', [], 'ru');
+        app('translator')->addLines([
+            'warehouse_basic.inv3.page_units_and_fact_note' => 'Перевод пояснения табличного листа',
+            'warehouse_basic.inv3.actual_total_fact_or_price_missing' => 'Перевод отсутствующего итога',
+            'warehouse_basic.inv3.quantity_words_missing_facts' => 'Перевод отсутствующего пересчёта',
+        ], 'ru');
+        $text = $this->documentText($this->exportWorkbook(actual: null));
+        $this->assertStringContainsString('Перевод пояснения табличного листа', $text);
+        $this->assertStringContainsString('Перевод отсутствующего итога', $text);
+        $this->assertStringContainsString('Перевод отсутствующего пересчёта', $text);
+        $this->assertStringNotContainsString('warehouse_basic.inv3.', $text);
+    }
+
     public function test_amount_beyond_excel_numeric_precision_is_preserved_as_exact_text(): void
     {
         $workbook = $this->exportWorkbook(price: '9999999999999.99');

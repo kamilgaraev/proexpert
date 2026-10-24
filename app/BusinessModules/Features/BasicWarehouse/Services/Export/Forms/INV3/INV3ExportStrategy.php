@@ -110,10 +110,10 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
         $this->text($sheet, 'A19:L19', 'Примечание к описи:');
         $row = 20;
         $notes = (string) ($act->notes ?? '');
-        $this->text($sheet, "A{$row}:L{$row}", $this->hasExtendedNotes($notes) ? 'Полное примечание приведено на листах «Примечания» этой описи.' : $notes, 38);
+        $this->text($sheet, "A{$row}:L{$row}", $this->hasExtendedNotes($notes) ? trans_message('warehouse_basic.inv3.extended_notes_reference') : $notes, 38);
         $row++;
         $row++;
-        $this->text($sheet, "A{$row}:L{$row}", 'Реквизиты, наименования и единицы измерения следует сверить с первичными документами перед подписанием. Цены взяты из строк акта, стоимость рассчитана с округлением каждой строки до копеек. Незаданные данные не заменяются нулями.', 38);
+        $this->text($sheet, "A{$row}:L{$row}", trans_message('warehouse_basic.inv3.cover_requisites_note'), 38);
     }
 
     private function hasExtendedNotes(string $notes): bool
@@ -159,7 +159,7 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
         $this->setBold($sheet, 'A1');
         $this->text($sheet, 'A2:L2', 'Организация: '.($act->organization->legal_name ?? $act->organization->name));
         $this->text($sheet, 'A3:L3', 'Местонахождение: '.($act->warehouse->name ?? ''));
-        $this->text($sheet, 'A5:L5', 'Цена, суммы — руб.; количество — в единицах соответствующей строки. Незаполненный факт означает, что пересчёт не внесён.');
+        $this->text($sheet, 'A5:L5', trans_message('warehouse_basic.inv3.page_units_and_fact_note'));
         foreach (['A8' => '№', 'B8:D8' => 'ТМЦ: наименование и номенклатурный номер', 'E8' => 'Единица измерения', 'F8' => 'Цена за единицу', 'G8' => 'Факт: количество', 'H8' => 'Факт: сумма', 'I8' => 'По учёту: количество', 'J8' => 'По учёту: сумма', 'K8:L8' => 'Место хранения, партия, примечание'] as $range => $label) {
             $this->text($sheet, $range, $label, 38);
         }
@@ -213,8 +213,8 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
         $this->setBold($sheet, 'A1');
         $this->text($sheet, 'A3:L3', 'Всего порядковых номеров прописью: '.NumberToWordsHelper::integerToWords($act->items->count()));
         $this->text($sheet, 'A4:L4', 'Общее фактическое количество (независимо от единиц измерения) прописью: '.$this->quantityWords($quantity));
-        $this->text($sheet, 'A5:L5', 'Всего по учёту, руб.: '.($expectedValue === null ? 'не определено: цена не задана' : str_replace('.', ',', (string) $expectedValue)));
-        $this->text($sheet, 'A6:L6', 'Всего по факту, руб.: '.($actualValue === null ? 'не определено: факт или цена не заданы' : str_replace('.', ',', (string) $actualValue)));
+        $this->text($sheet, 'A5:L5', 'Всего по учёту, руб.: '.($expectedValue === null ? trans_message('warehouse_basic.inv3.expected_total_price_missing') : str_replace('.', ',', (string) $expectedValue)));
+        $this->text($sheet, 'A6:L6', 'Всего по факту, руб.: '.($actualValue === null ? trans_message('warehouse_basic.inv3.actual_total_fact_or_price_missing') : str_replace('.', ',', (string) $actualValue)));
         $this->text($sheet, 'A8:L8', 'Председатель комиссии: должность ________________    Подпись ________________    ФИО ________________________', 26);
         $this->text($sheet, 'A9:L9', 'Члены комиссии:');
         $row = 10;
@@ -227,7 +227,7 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
             $row++;
         }
         if ($memberCount > count($members)) {
-            $this->text($sheet, "A{$row}:L{$row}", 'Продолжение списка членов комиссии и их подписей — на листах «Комиссия» этой описи.');
+            $this->text($sheet, "A{$row}:L{$row}", trans_message('warehouse_basic.inv3.commission_continuation'));
             $row++;
         }
         $row++;
@@ -249,7 +249,7 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
     private function quantityWords(?BigDecimal $quantity): string
     {
         if ($quantity === null) {
-            return 'не определено: пересчёт не внесён для всех строк';
+            return trans_message('warehouse_basic.inv3.quantity_words_missing_facts');
         }
         $parts = explode('.', (string) $quantity->toScale(3, RoundingMode::UNNECESSARY));
         $whole = NumberToWordsHelper::integerToWords((int) $parts[0]);
@@ -275,7 +275,7 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
     {
         $details = $this->itemDetails($item);
 
-        return $this->hasExtendedNotes($details) ? 'Данные строки № '.$number.': см. листы «ТМЦ '.$number.' прим.».' : $details;
+        return $this->hasExtendedNotes($details) ? trans_message('warehouse_basic.inv3.extended_item_reference', ['number' => $number]) : $details;
     }
 
     private function itemHeight(InventoryActItem $item, int $number): float
