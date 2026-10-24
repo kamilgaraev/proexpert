@@ -109,6 +109,7 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         self::assertSame(2, (int) $counts['design_additional']->expected_count);
         self::assertSame(1, (int) $counts['design_additional']->indexed_count);
         self::assertCount(1, $queries);
+        self::assertStringNotContainsString('matched_status_cache.indexed_chunk_count > 0', $queries[0]['query']);
         foreach (['organization_id', 'source_type', 'entity_type'] as $constantColumn) {
             self::assertStringContainsString('"matched_sources"."'.$constantColumn.'" = "expected"."'.$constantColumn.'"', $queries[0]['query']);
         }
@@ -156,6 +157,7 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             ['', '', 'same', 'same'], ['stale', 'stale', 'new', 'old'], ['Wall', 'wall', 'same', 'same'],
             ["\u{00E9}", "e\u{0301}", 'same', 'same'], ['checksum-space', 'checksum-space', 'sum', 'sum '],
             ['part-space', 'part-space ', 'same', 'same'],
+            ['unindexed', 'unindexed', 'same', 'same'], ['missing-status', 'missing-status', 'same', 'same'],
         ];
         $sourceIds = [];
         foreach ($cases as [$expectedPart, $storedPart, $expectedChecksum, $storedChecksum]) {
@@ -172,7 +174,7 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             'entity_id' => '0'.$element->id, 'identity_part_key' => '', 'checksum' => 'same', 'title' => 'IFC',
         ])));
         $sourceIds[] = $decoy->id;
-        foreach ($sourceIds as $sourceId) {
+        foreach (array_diff($sourceIds, [$sourceIds[6], $sourceIds[7]]) as $sourceId) {
             DB::table('ai_rag_chunks')->insert([
                 'organization_id' => $organizationId, 'project_id' => $project->id, 'source_id' => $sourceId,
                 'chunk_index' => 0, 'content' => 'Indexed IFC', 'content_hash' => hash('sha256', 'Indexed IFC'),
@@ -183,6 +185,9 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         $projection = new RagExpectedSourceProjection(Mockery::mock(RagIndexer::class));
         $read = fn (bool $collectProof): array => $policy->withCurrentChecks($fixture->owner, $organizationId,
             fn (): array => $projection->actorCounts($organizationId, $fixture->owner, $policy, ['design_additional'], $generation, collectProof: $collectProof), fresh: true);
+        $missingStatus = (array) DB::table('ai_rag_status_sources')->where('id', $sourceIds[7])->first();
+        self::assertNotEmpty($missingStatus);
+        DB::table('ai_rag_status_sources')->where('id', $sourceIds[7])->delete();
         DB::enableQueryLog();
         try {
             $counts = $read(false);
@@ -192,7 +197,7 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             DB::disableQueryLog();
             DB::flushQueryLog();
         }
-        self::assertSame(6, (int) $counts['design_additional']->expected_count);
+        self::assertSame(8, (int) $counts['design_additional']->expected_count);
         self::assertSame(1, (int) $counts['design_additional']->indexed_count);
         self::assertSame($pendingSince->getTimestamp(), \Illuminate\Support\Carbon::parse($counts['design_additional']->pending_since)->getTimestamp());
         foreach (['expected_count', 'indexed_count', 'pending_since'] as $field) {
@@ -202,6 +207,10 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         $proofQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS identity_proof')));
         self::assertCount(1, $countsQueries);
         self::assertNotEmpty($proofQueries);
+        self::assertStringContainsString('matched_status_cache.indexed_chunk_count > 0', $countsQueries[0]['query']);
+        foreach ($proofQueries as $query) {
+            self::assertStringNotContainsString('matched_status_cache.indexed_chunk_count > 0', $query['query']);
+        }
         foreach (['entity_id', 'identity_part_key', 'checksum'] as $column) {
             self::assertStringContainsString('("matched_sources"."'.$column.'" COLLATE "C") = ("expected"."'.$column.'" COLLATE "C")', $countsQueries[0]['query']);
             foreach ($proofQueries as $query) {
@@ -211,9 +220,30 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         self::assertStringContainsString('"matched_sources"."identity_project_id" = "expected"."identity_project_id"', $countsQueries[0]['query']);
         self::assertStringContainsString('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id', $countsQueries[0]['query']);
         self::assertStringContainsString('pg_input_is_valid(', $countsQueries[0]['query']);
+        DB::table('ai_rag_status_sources')->insert($missingStatus);
+        foreach ($cases as $index => [$expectedPart, , $expectedChecksum]) {
+            RagSource::query()->whereKey($sourceIds[$index])->update(['identity_part_key' => $expectedPart, 'checksum' => $expectedChecksum]);
+        }
+        foreach ([$sourceIds[6], $sourceIds[7]] as $sourceId) {
+            DB::table('ai_rag_chunks')->insert([
+                'organization_id' => $organizationId, 'project_id' => $project->id, 'source_id' => $sourceId,
+                'chunk_index' => 0, 'content' => 'Indexed IFC', 'content_hash' => hash('sha256', 'Indexed IFC'),
+                'embedding' => json_encode(RagTestEmbedding::fromLeadingValues([1.0]), JSON_THROW_ON_ERROR),
+            ]);
+        }
+        foreach ([false, true] as $collectProof) {
+            $fullyIndexed = $read($collectProof)['design_additional'];
+            self::assertSame(8, (int) $fullyIndexed->expected_count);
+            self::assertSame(8, (int) $fullyIndexed->indexed_count);
+            self::assertNull($fullyIndexed->pending_since);
+        }
         DB::table('ai_rag_chunks')->whereIn('source_id', $sourceIds)->update(['embedding' => null]);
-        self::assertSame(0, (int) $read(false)['design_additional']->indexed_count);
-        self::assertSame(0, (int) $read(true)['design_additional']->indexed_count);
+        foreach ([false, true] as $collectProof) {
+            $unindexed = $read($collectProof)['design_additional'];
+            self::assertSame(8, (int) $unindexed->expected_count);
+            self::assertSame(0, (int) $unindexed->indexed_count);
+            self::assertSame($pendingSince->getTimestamp(), \Illuminate\Support\Carbon::parse($unindexed->pending_since)->getTimestamp());
+        }
         $derivative->updateQuietly(['project_id' => $otherProject->id]);
         self::assertSame([], $read(false));
         self::assertSame([], $read(true));
@@ -483,9 +513,9 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             }
         };
         $collect($plan['Plan']);
-        self::assertSame([20014], $materialized, 'The complete matched-source materialization must be preserved.');
+        self::assertSame([1], $materialized, 'Only indexed matched sources must be materialized.');
         self::assertGreaterThan(0, $matchedScanWork);
-        self::assertLessThanOrEqual(40028, $matchedScanWork, 'Expected counters must not rescan the complete matched-source cache for each identity.');
+        self::assertLessThanOrEqual(2, $matchedScanWork, 'Expected counters must not rescan the indexed matched-source cache for each identity.');
         if (getenv('MOST_RAG_STORED_QUERY_PROFILE') === '1') {
             fwrite(STDERR, 'IFC_EXPECTED_COUNTS_PROFILE '.json_encode([
                 'expected_count' => 20005, 'indexed_count' => 1, 'pipeline_ms' => round($pipelineMs, 3),
@@ -505,6 +535,13 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         self::assertSame(20005, (int) $fullyIndexed->expected_count);
         self::assertSame(20005, (int) $fullyIndexed->indexed_count);
         self::assertNull($fullyIndexed->pending_since);
+        $fullyIndexedPlan = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$queries[0]['query'], $queries[0]['bindings']);
+        $materialized = [];
+        $matchedScanWork = 0;
+        $collect(json_decode($fullyIndexedPlan->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+        self::assertSame([20014], $materialized, 'The fully indexed matched-source cache must remain materialized.');
+        self::assertGreaterThan(0, $matchedScanWork);
+        self::assertLessThanOrEqual(40028, $matchedScanWork, 'Fully indexed counters must not rescan the complete matched-source cache for each identity.');
         $derivative->updateQuietly(['project_id' => $otherProject->id]);
         self::assertSame(2, (int) $read(false)['design_additional']->expected_count);
         $derivative->updateQuietly(['project_id' => $project->id]);
