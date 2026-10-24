@@ -423,6 +423,16 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
 
     public function test_requirement_only_source_is_published_selected_settled_and_reused_in_the_next_actual_composer(): void
     {
+        $this->requirementOnlySourceScenario(false);
+    }
+
+    public function test_uncontested_requirement_candidate_is_explicitly_reviewed_and_reused_without_engineering_promotion(): void
+    {
+        $this->requirementOnlySourceScenario(true);
+    }
+
+    private function requirementOnlySourceScenario(bool $explicitSourceReview): void
+    {
         Queue::fake();
         config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
         $rights = AssistantRealAuthorizationFixture::create(['working-entry']);
@@ -463,13 +473,14 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'appliesTo' => ['subject' => $value('Синтетический узел в исходном документе'), 'equipmentIdentity' => null],
             'documentEdition' => $value(null), 'clause' => $value('Синтетический пункт 1'), 'conditions' => null];
         $provider = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider::class);
-        $provider->method('analyze')->willReturnCallback(function (\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput $input) use ($proposal, $polygon): \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData {
+        $provider->method('analyze')->willReturnCallback(function (\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput $input) use ($proposal, $polygon, $explicitSourceReview): \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData {
             ($input->onPhysicalAttemptReserved)((string) Str::uuid());
             $evidence = ['key' => 'source', 'locator' => ['page_id' => $input->pageId, 'page_number' => $input->pageNumber,
                 'processing_unit_id' => $input->processingUnitId, 'source_version' => $input->sourceVersion,
                 'coordinate_space' => 'normalized_derivative_v1', 'explicit' => true]];
             $arbitration = $input->auxiliaryMetadata['arbitration'] ?? null;
             if ($arbitration !== null) {
+                self::assertFalse($explicitSourceReview, 'An ordinary source-review fixture must not invoke an arbiter.');
                 $decisions = array_map(static fn (array $claim): array => ['claim_id' => $claim['id'],
                     'status' => $claim['role'] === 'observer_construction' ? 'accepted' : 'candidate',
                     'supporting_claim_ids' => [$claim['id']], 'evidence_refs' => [$claim['evidence_ref']],
@@ -485,7 +496,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 'schema_version' => 3, 'sheet_type' => 'detail', 'evidence' => [$evidence], 'elements' => [], 'scale_candidates' => [],
                 'warnings' => ['scale_missing'], 'visual_attributes' => [], 'project_sheet_analysis' => ['contractVersion' => $contract,
                     'role' => 'unknown', 'facts' => ($construction || $literal) ? [['entityKey' => 'wall:source-rule', 'factType' => 'technology_requirements',
-                        'value' => ['type' => 'string', 'data' => $construction
+                        'value' => ['type' => 'string', 'data' => ($construction || $explicitSourceReview)
                             ? 'Синтетический пункт: зазор не менее 0.90 м; применимость к проекту не установлена.'
                             : 'Второе контролируемое наблюдение: текст исходного пункта не установлен.'],
                         'unit' => null, 'evidenceRef' => 'source', 'sourcePolygonOrNativeRef' => $polygon, 'confidence' => 0.9,
@@ -520,18 +531,51 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $output = $processor->process($context);
         self::assertNotNull($output->publication);
         self::assertCount(2, $output->publication->claims);
-        self::assertCount(1, array_filter($output->publication->decisions, static fn ($decision): bool => $decision->status === 'accepted'));
-        self::assertSame('arbiter', $output->normalizedPayload['document_arbitration']['role']);
+        if ($explicitSourceReview) {
+            self::assertFalse($output->normalizedPayload['analysis_routing']['arbiter_required']);
+            self::assertNull($output->normalizedPayload['document_arbitration']);
+            self::assertSame([], array_values(array_filter($output->publication->decisions, static fn ($decision): bool => $decision->status === 'accepted')));
+            self::assertCount(count($output->publication->claims), array_filter($output->publication->decisions, static fn ($decision): bool => $decision->status === 'candidate'));
+        } else {
+            self::assertCount(1, array_filter($output->publication->decisions, static fn ($decision): bool => $decision->status === 'accepted'));
+            self::assertSame('arbiter', $output->normalizedPayload['document_arbitration']['role']);
+        }
         self::assertMatchesRegularExpression('/\A[a-f0-9]{64}\z/D', $output->version);
         self::assertNotSame($version, $output->version);
         self::assertTrue($store->publish($claim, $output, now()->toDateTimeImmutable()));
         self::assertSame($output->version, $unit->fresh()->output_version);
         self::assertSame($output->version, $page->fresh()->output_version);
-        self::assertCount(1, array_filter($page->fresh()->normalized_payload['document_arbitration']['decisions'],
-            static fn (array $decision): bool => $decision['status'] === 'candidate'));
+        if ($explicitSourceReview) {
+            self::assertNull($page->fresh()->normalized_payload['document_arbitration']);
+            self::assertSame(0, DB::table('estimate_generation_ai_role_runs')->where('organization_id', $scope[0])
+                ->where('session_id', $scope[2])->where('role', 'arbiter')->count());
+        } else {
+            self::assertCount(1, array_filter($page->fresh()->normalized_payload['document_arbitration']['decisions'],
+                static fn (array $decision): bool => $decision['status'] === 'candidate'));
+        }
         $winner = array_values(array_filter($output->publication->claims, static fn ($claim): bool => $claim->observerRole === 'observer_construction'))[0];
         $captured = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
-        $sourceFacts = array_values(array_filter($captured->facts, static fn (Fact $fact): bool => $fact->type === 'technology_requirements' && $fact->status === 'confirmed'));
+        $capturedEntities = array_column($captured->entities, null, 'id');
+        if ($explicitSourceReview) {
+            $historyRows = DB::table('estimate_generation_project_model_assertions as fact')
+                ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
+                ->where('fact.organization_id', $scope[0])->where('fact.project_id', $scope[1])->where('fact.session_id', $scope[2])
+                ->where('fact.source_version', $version)->where('fact.assertion_type', 'technology_requirements')
+                ->where('fact.fact_status', 'candidate')->limit(9)
+                ->get(['fact.stable_key', 'entity.stable_key as entity_stable_key', 'entity.entity_kind', 'entity.payload'])->all();
+            self::assertLessThanOrEqual(8, count($historyRows));
+            $historyRows = array_values(array_filter($historyRows, static fn ($row): bool =>
+                isset(json_decode($row->payload, true, flags: JSON_THROW_ON_ERROR)['properties']['document_semantic_proposal'])));
+            self::assertCount(1, $historyRows, 'The actual publication must persist one semantic candidate in immutable history.');
+            $historyRow = $historyRows[0];
+            $attributes = json_decode($historyRow->payload, true, flags: JSON_THROW_ON_ERROR);
+            unset($attributes['kind'], $attributes['key']);
+            $capturedEntities[$historyRow->entity_stable_key] = new Entity($historyRow->entity_stable_key, ...[...$scope, $version,
+                $historyRow->entity_kind, $historyRow->entity_stable_key, $attributes]);
+        }
+        $sourceFacts = $explicitSourceReview ? [$models->fact(...[...$scope, $historyRow->stable_key])] : array_values(array_filter($captured->facts, static fn (Fact $fact): bool => $fact->type === 'technology_requirements'
+            && $fact->status === ($explicitSourceReview ? 'candidate' : 'confirmed')
+            && (! $explicitSourceReview || isset($capturedEntities[$fact->entityId]->attributes['properties']['document_semantic_proposal']))));
         self::assertCount(1, $sourceFacts);
         $sourceFact = $sourceFacts[0];
         self::assertSame($winner->value['data'], $sourceFact->value);
@@ -543,15 +587,20 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         }
         self::assertSame([], $sourceFact->nativeNumericProofs);
         self::assertNull($sourceFact->unit);
-        $entity = array_column($captured->entities, null, 'id')[$sourceFact->entityId];
+        $entity = $capturedEntities[$sourceFact->entityId];
         $descriptor = $entity->attributes['properties']['document_semantic_proposal'];
         self::assertSame('proposed', $descriptor['status']);
         self::assertNull($descriptor['payload']['appliesTo']['equipmentIdentity']);
         $originalFact = get_object_vars($sourceFact);
         $originalEntity = get_object_vars($entity);
         $proofFields = static fn ($proof): array => [...get_object_vars($proof), 'factSource' => $proof->factSource?->value];
-        $originalEvidence = array_map($proofFields, array_values(array_filter($captured->evidence,
-            static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true))));
+        $readSourceEvidence = fn (): array => array_map(function (string $id) use ($scope): array {
+            $proof = app(EvidenceRepository::class)->node(...[...$scope, (int) substr($id, 9)]);
+            self::assertNotNull($proof);
+            return [...get_object_vars($proof), 'data' => get_object_vars($proof->data), 'invalidatedAt' => $proof->invalidatedAt?->format(DATE_ATOM)];
+        }, $sourceFact->evidenceIds);
+        $originalEvidence = $explicitSourceReview ? $readSourceEvidence() : array_map($proofFields,
+            array_values(array_filter($captured->evidence, static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true))));
         self::assertNotEmpty($originalEvidence);
         $nativeReader = app(Documents\DocumentUnitContentReader::class);
         $this->app->instance(Documents\DocumentUnitContentReader::class, new class($nativeReader, (int) $document->id, $content) implements Documents\DocumentUnitContentReader
@@ -578,6 +627,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $inputs = [];
         $savedAnswer = $answerInput = [];
         $answerId = $selectedRef = null;
+        $candidateFact = $candidateSnapshot = $sourceReviewInput = $reviewUrl = null;
         foreach ([0, 1, 2, 3] as $phase) {
             [$session, $operationId] = $this->paidReceipt(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, [], true,
                 [$organization, $project, $actor, $session->fresh()], false,
@@ -609,6 +659,126 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             if ($phase === 0) {
                 $beforeRead = $counts();
                 $card = $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'));
+                if ($explicitSourceReview) {
+                    self::assertSame([], $card['requirement_options']);
+                    $candidateFact = $sourceFact;
+                    $candidateSnapshot = get_object_vars($candidateFact);
+                    $reviewUrl = $url.'/documents/'.$document->id.'/cell-reviews';
+                    $beforeReview = $counts();
+                    $reviewList = $this->getJson($reviewUrl, $headers)->assertOk()->json('data');
+                    self::assertCount(1, $reviewList['source_requirement_reviews'] ?? [], 'A real no-arbitration candidate must offer explicit source extraction review.');
+                    $review = $reviewList['source_requirement_reviews'][0];
+                    self::assertSame('source_requirement', $review['kind']);
+                    self::assertSame(1, $review['schema_version']);
+                    self::assertSame('pending', $review['status']);
+                    self::assertSame(['accept', 'reject'], $review['actions']);
+                    self::assertMatchesRegularExpression('/\A[a-f0-9]{64}\z/D', $review['review_ref']);
+                    self::assertSame('0.90', $review['proposal']['threshold']);
+                    self::assertSame('gte', $review['proposal']['comparator']);
+                    self::assertSame('m', $review['proposal']['unit']);
+                    self::assertNull($review['proposal']['equipment_identity']);
+                    self::assertSame((int) $document->id, $review['source']['document_id']);
+                    self::assertSame($version, $review['source']['source_version']);
+                    foreach (['human_interpretation', 'source_correspondence', 'source_authority', 'engineering_applicability'] as $axis) {
+                        self::assertSame('unresolved', $review[$axis]);
+                    }
+                    $sourceReviewInput = ['kind' => 'source_requirement', 'request_id' => (string) Str::uuid(),
+                        'state_version' => $reviewList['state_version'], 'review_ref' => $review['review_ref'], 'decision' => 'accept',
+                        'reason' => 'Подтверждаю только содержание синтетического фрагмента; источник и применимость не проверены.'];
+                    self::assertSame(401, $this->getJson($reviewUrl)->status());
+                    self::assertSame(401, $this->postJson($reviewUrl, $sourceReviewInput)->status());
+                    self::assertContains($this->getJson($reviewUrl, $this->sourceHeaders($rights->foreignOwner))->status(), [403, 404]);
+                    self::assertContains($this->postJson($reviewUrl, $sourceReviewInput, $this->sourceHeaders($rights->foreignOwner))->status(), [403, 404]);
+                    $withoutView = $rights->addMember(['ai-estimates' => ['estimate_generation.review']], ['admin.access']);
+                    $withoutView->organizations()->updateExistingPivot($scope[0], ['project_access_mode' => 'all_projects']);
+                    $limited = $this->getJson($reviewUrl, $this->sourceHeaders($withoutView));
+                    $limited->assertForbidden();
+                    $this->postJson($reviewUrl, $sourceReviewInput, $this->sourceHeaders($withoutView))->assertForbidden();
+                    $withoutReview = $rights->addMember(['ai-estimates' => ['estimate_generation.view']], ['admin.access']);
+                    $withoutReview->organizations()->updateExistingPivot($scope[0], ['project_access_mode' => 'all_projects']);
+                    $this->postJson($reviewUrl, $sourceReviewInput, $this->sourceHeaders($withoutReview))->assertForbidden();
+                    DB::beginTransaction();
+                    try {
+                        self::assertSame([], $this->getJson($reviewUrl, $headers)->assertOk()->json('data.source_requirement_reviews') ?? []);
+                    } finally {
+                        DB::rollBack();
+                    }
+                    $beforeReviewAssertions = DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count();
+                    $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid(), 'review_ref' => str_repeat('0', 64)], $headers)->assertStatus(422);
+                    self::assertSame($beforeReviewAssertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count());
+                    $receipt = $this->postJson($reviewUrl, $sourceReviewInput, $headers)->assertOk()->json('data');
+                    $sourceReviewReceipt = $receipt;
+                    $receiptKeys = array_keys($receipt);
+                    sort($receiptKeys);
+                    self::assertSame(['cost_units', 'decision', 'decision_id', 'engineering_applicability', 'human_interpretation', 'kind',
+                        'request_id', 'review_ref', 'source_authority', 'source_correspondence', 'state_version'], $receiptKeys);
+                    self::assertSame('0', $receipt['cost_units']);
+                    self::assertSame('accept', $receipt['decision']);
+                    self::assertSame('confirmed_by_user', $receipt['human_interpretation']);
+                    foreach (['source_correspondence', 'source_authority', 'engineering_applicability'] as $axis) {
+                        self::assertSame('unresolved', $receipt[$axis]);
+                    }
+                    $reviewed = $this->getJson($reviewUrl, $headers)->assertOk()->json('data.source_requirement_reviews.0');
+                    self::assertSame($review['review_ref'], $reviewed['review_ref']);
+                    self::assertSame('accept', $reviewed['status']);
+                    self::assertSame(['revoke'], $reviewed['actions']);
+                    self::assertSame('confirmed_by_user', $reviewed['human_interpretation']);
+                    $afterReview = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    $reviewFacts = array_values(array_filter($afterReview->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_answer'
+                        && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'document_source_review'
+                        && ($fact->value['review_ref'] ?? null) === $review['review_ref']));
+                    self::assertCount(1, $reviewFacts);
+                    $reviewFact = $reviewFacts[0];
+                    self::assertSame('source_requirement', $reviewFact->value['review_kind']);
+                    self::assertSame($candidateFact->id, $reviewFact->value['source']['original_fact_id']);
+                    self::assertSame($candidateFact->version, $reviewFact->value['source']['version']);
+                    self::assertSame($descriptor['proposal_hash'], $reviewFact->value['source']['proposal_hash']);
+                    self::assertSame($receipt['decision_id'], $reviewFact->value['decision_id']);
+                    $humanDecisions = $models->decisionsForSelectedFacts(...[...$scope, [$reviewFact->id]]);
+                    self::assertCount(1, $humanDecisions);
+                    $humanDecision = array_values($humanDecisions)[0];
+                    self::assertSame('user', $humanDecision->actorType);
+                    self::assertSame((string) $actor->id, $humanDecision->actorId);
+                    self::assertSame($sourceReviewInput['reason'], $humanDecision->reason);
+                    self::assertSame($reviewFact->id, $humanDecision->selectedFactId);
+                    self::assertNotEmpty($reviewFact->evidenceIds);
+                    self::assertSame([], array_values(array_intersect($candidateFact->evidenceIds, $reviewFact->evidenceIds)));
+                    foreach ($reviewFact->evidenceIds as $proofId) {
+                        $humanProof = app(EvidenceRepository::class)->node(...[...$scope, (int) substr($proofId, 9)]);
+                        self::assertNotNull($humanProof);
+                        self::assertNull($humanProof->invalidatedAt);
+                        self::assertSame('user_input', $humanProof->sourceType->value);
+                        self::assertSame('user_input_normalizer', $humanProof->producerName);
+                        self::assertSame('input:'.$scope[2], $humanProof->sourceRef);
+                    }
+                    $sourceFact = $models->fact(...[...$scope, $reviewFact->value['publication']['fact_id']]);
+                    self::assertNotNull($sourceFact);
+                    self::assertNotSame($candidateFact->id, $sourceFact->id);
+                    self::assertSame('confirmed', $sourceFact->status);
+                    self::assertSame($candidateFact->origin, $sourceFact->origin);
+                    self::assertSame($candidateFact->value, $sourceFact->value);
+                    self::assertSame($candidateFact->type, $sourceFact->type);
+                    self::assertSame($candidateFact->entityId, $sourceFact->entityId);
+                    self::assertSame($candidateFact->evidenceIds, $sourceFact->evidenceIds);
+                    self::assertSame($candidateFact->semanticAttributes, $sourceFact->semanticAttributes);
+                    self::assertSame($candidateFact->sourceVersion, $sourceFact->sourceVersion);
+                    self::assertStringStartsWith('fact:source-review:', $sourceFact->id);
+                    self::assertSame([], $sourceFact->nativeNumericProofs);
+                    self::assertNull($sourceFact->unit);
+                    self::assertGreaterThan($candidateFact->version, $sourceFact->version);
+                    self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
+                    $originalFact = get_object_vars($sourceFact);
+                    $afterReviewAssertions = DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count();
+                    self::assertSame(CanonicalPipelineJson::encode($receipt), CanonicalPipelineJson::encode($this->postJson($reviewUrl, $sourceReviewInput, $headers)->assertOk()->json('data')));
+                    self::assertSame($afterReviewAssertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count());
+                    $this->postJson($reviewUrl, [...$sourceReviewInput, 'reason' => 'Другое тело с тем же идентификатором запроса.'], $headers)->assertStatus(422);
+                    $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid()], $headers)->assertStatus(409);
+                    self::assertSame($afterReviewAssertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])->count());
+                    self::assertSame($beforeReview, $counts());
+                    Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+                    self::assertSame(0, EstimateGenerationLearningExample::query()->where('generation_session_id', $scope[2])->count());
+                    $card = $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'));
+                }
                 self::assertCount(1, $card['requirement_options'] ?? [], 'Actual published generic source must be offered without an observed numeric operand.');
                 self::assertSame([], $card['parameter_options']);
                 $option = $card['requirement_options'][0];
@@ -683,6 +853,10 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 self::assertSame('estimate_session', $row->source_entity_type);
                 self::assertSame('work_parameter_component:v2', $row->context_payload['origin']);
                 self::assertSame(2, $row->context_payload['schema_version']);
+                self::assertSame($answerId, $row->source_refs['source_answer_fact_id']);
+                self::assertSame([$sourceFact->id], $row->source_refs['document_fact_ids']);
+                self::assertSame($operationId, $row->source_refs['credit_operation_id']);
+                self::assertSame($sourceFact->id, $row->context_payload['source_claim_validation']['identity']['source']['source_fact_id']);
                 self::assertFalse($row->context_payload['training_allowed']);
                 self::assertSame('proposed', $row->decision_status);
                 self::assertFalse($row->is_positive);
@@ -782,6 +956,111 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 } finally {
                     DB::rollBack();
                 }
+                if ($explicitSourceReview) {
+                    $activeReview = $this->getJson($reviewUrl, $headers)->assertOk()->json('data');
+                    $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid(),
+                        'state_version' => $activeReview['state_version'], 'decision' => 'revoke',
+                        'reason' => 'Отзываю принятие извлечения, сохраняя исходный документ и историю.'], $headers)->assertOk();
+                    $revokedReview = $this->getJson($reviewUrl, $headers)->assertOk()->json('data.source_requirement_reviews.0');
+                    self::assertSame('revoke', $revokedReview['status']);
+                    self::assertSame(['accept'], $revokedReview['actions']);
+                    $afterRevoke = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    self::assertNotContains($sourceFact->id, array_column($afterRevoke->facts, 'id'));
+                    self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
+                    self::assertSame($originalFact, get_object_vars($models->fact(...[...$scope, $sourceFact->id])));
+                    self::assertSame([], $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'))['requirement_options']);
+                    self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['requirement'] ?? []);
+                    self::assertSame($beforeHistory, $historyRows());
+                    self::assertSame(0, app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId]));
+                    $beforeRevokedAdmission = $counts();
+                    $beforeRevokedOperationIds = DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->pluck('operation_id')->all();
+                    $revokedOperationId = null;
+                    $revokedProviderHistory = [];
+                    $admittedAfterRevoke = false;
+                    try {
+                        $this->paidReceipt(RunEstimateComposer::ANSWER_PROMPT_CONTRACT, [], true,
+                            [$organization, $project, $actor, $session->fresh()], false,
+                            function (EstimateGenerationSession $current, string $freshOperationId) use ($actor, $scope, $initialAnswer, $sources, &$revokedOperationId, &$revokedProviderHistory): int {
+                                $revokedOperationId = $freshOperationId;
+                                $work = ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.installation',
+                                    'name' => 'Монтаж неизвестной установки', 'work_section' => 'equipment', 'unit' => 'count',
+                                    'derived_quantity_id' => null, 'source_fact_ids' => [$initialAnswer->id, $sources[0]->id],
+                                    'entity_id' => $sources[0]->entityId, 'technology_package_candidate' => null,
+                                    'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+                                $composer = new RunEstimateComposer(app(AiRoleRunRepository::class), new TimewebEstimateComposerModel(
+                                    $this->parameterSdkWire($work, $revokedProviderHistory), app(EloquentAiUsageStore::class), app(AiPriceSnapshotResolver::class),
+                                    'openai/gpt-6-luna', 524288, 8192, 60), 'openai/gpt-6-luna', allowance: app(EstimateComposerAllowance::class));
+                                [$freshClaim, $freshResult] = $this->naturalQuestionStages($actor, $current, $freshOperationId, $composer, true);
+                                self::assertCount(1, $revokedProviderHistory);
+                                $freshBody = json_decode((string) $revokedProviderHistory[0]['request']->getBody(), true, flags: JSON_THROW_ON_ERROR);
+                                $freshInput = json_decode($freshBody['messages'][1]['content'], true, flags: JSON_THROW_ON_ERROR)['project'];
+                                foreach ($freshInput['work_technology_context'] ?? [] as $entry) {
+                                    self::assertArrayNotHasKey('component', $entry['answer']['requirement'] ?? []);
+                                }
+                                DB::transaction(fn () => app(Pipeline\PublishValidatedDraft::class)->beforeComplete($freshClaim, $freshResult, new \DateTimeImmutable));
+                                self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $freshOperationId)->value('status'));
+                                self::assertSame(0, app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $freshOperationId]));
+                                return 0;
+                            });
+                        $admittedAfterRevoke = true;
+                        fwrite(STDERR, "\nSource-review revoke: fresh controlled generation settled; SDK calls=1; Learning delta=0.\n");
+                    } catch (\DomainException $exception) {
+                        self::assertSame('estimator_known_context_changed', $exception->getMessage());
+                        self::assertNull($revokedOperationId);
+                        self::assertSame([], $revokedProviderHistory);
+                        self::assertSame($beforeRevokedAdmission, $counts());
+                        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])
+                            ->whereNotIn('operation_id', $beforeRevokedOperationIds)->whereIn('status', ['reserved', 'running', 'settled'])->count());
+                        fwrite(STDERR, "\nSource-review revoke: quote/Begin refused estimator_known_context_changed; provider calls=0; no admission.\n");
+                    }
+                    self::assertSame($admittedAfterRevoke ? 1 : 0, count($revokedProviderHistory));
+                    self::assertSame($beforeHistory, $historyRows());
+                    $this->useRealQuestionAuthorization();
+                    $reacceptList = $this->getJson($reviewUrl, $headers)->assertOk()->json('data');
+                    $reacceptReceipt = $this->postJson($reviewUrl, [...$sourceReviewInput, 'request_id' => (string) Str::uuid(),
+                        'state_version' => $reacceptList['state_version'],
+                        'reason' => 'Повторно принимаю извлечение отдельным решением; инженерная применимость не подтверждена.'], $headers)->assertOk()->json('data');
+                    self::assertNotSame($sourceReviewReceipt['decision_id'], $reacceptReceipt['decision_id']);
+                    $reacceptedSnapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                    $reacceptedReviewFacts = array_values(array_filter($reacceptedSnapshot->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_answer'
+                        && is_array($fact->value) && ($fact->value['decision_id'] ?? null) === $reacceptReceipt['decision_id']));
+                    self::assertCount(1, $reacceptedReviewFacts);
+                    $reacceptedReviewFact = $reacceptedReviewFacts[0];
+                    self::assertNotSame($reviewFact->id, $reacceptedReviewFact->id);
+                    self::assertSame($candidateFact->id, $reacceptedReviewFact->value['source']['original_fact_id']);
+                    self::assertNotEmpty($reacceptedReviewFact->evidenceIds);
+                    self::assertSame([], array_values(array_intersect($reviewFact->evidenceIds, $reacceptedReviewFact->evidenceIds)));
+                    $reacceptedDecisions = $models->decisionsForSelectedFacts(...[...$scope, [$reacceptedReviewFact->id]]);
+                    self::assertCount(1, $reacceptedDecisions);
+                    self::assertSame($reacceptReceipt['decision_id'], array_values($reacceptedDecisions)[0]->id);
+                    self::assertSame('user', array_values($reacceptedDecisions)[0]->actorType);
+                    self::assertSame((string) $actor->id, array_values($reacceptedDecisions)[0]->actorId);
+                    foreach ($reacceptedReviewFact->evidenceIds as $proofId) {
+                        $humanProof = app(EvidenceRepository::class)->node(...[...$scope, (int) substr($proofId, 9)]);
+                        self::assertNotNull($humanProof);
+                        self::assertNull($humanProof->invalidatedAt);
+                        self::assertSame('user_input', $humanProof->sourceType->value);
+                    }
+                    $reacceptedFact = $models->fact(...[...$scope, $reacceptedReviewFact->value['publication']['fact_id']]);
+                    self::assertNotNull($reacceptedFact);
+                    self::assertNotSame($sourceFact->id, $reacceptedFact->id);
+                    self::assertSame($candidateFact->value, $reacceptedFact->value);
+                    self::assertSame($candidateFact->evidenceIds, $reacceptedFact->evidenceIds);
+                    self::assertSame($candidateFact->semanticAttributes, $reacceptedFact->semanticAttributes);
+                    self::assertSame([], $reacceptedFact->nativeNumericProofs);
+                    self::assertContains($reacceptedFact->id, array_column($reacceptedSnapshot->facts, 'id'));
+                    self::assertNotContains($sourceFact->id, array_column($reacceptedSnapshot->facts, 'id'));
+                    $reacceptedCard = $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'));
+                    self::assertCount(1, $reacceptedCard['requirement_options']);
+                    self::assertNotSame($selectedRef, $reacceptedCard['requirement_options'][0]['source_requirement_ref']);
+                    $this->postJson($url.'/questions/'.$reacceptedCard['code'].'/answer', [...$answerInput,
+                        'idempotency_key' => 'reaccepted-old-source-ref', 'expected_source_version' => $reacceptedCard['source_version'],
+                        'answer_fingerprint' => $reacceptedCard['answer_fingerprint']], $headers)->assertStatus(409);
+                    self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['requirement'] ?? []);
+                    self::assertSame($beforeHistory, $historyRows());
+                    self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
+                    self::assertSame($originalFact, get_object_vars($models->fact(...[...$scope, $sourceFact->id])));
+                }
                 $card = $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'));
                 $this->postJson($url.'/questions/'.$card['code'].'/answer', ['response' => 'revoke', 'idempotency_key' => 'requirement-revoke',
                     'expected_source_version' => $card['source_version'], 'answer_fingerprint' => $card['answer_fingerprint']], $headers)->assertOk();
@@ -802,8 +1081,13 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame([], array_values(array_filter($final->facts, static fn (Fact $fact): bool => str_starts_with($fact->type, 'engineering_parameter_'))));
         self::assertSame($originalFact, get_object_vars($models->fact(...[...$scope, $sourceFact->id])));
         self::assertSame($originalEntity, get_object_vars(array_column($final->entities, null, 'id')[$sourceFact->entityId]));
-        self::assertSame($originalEvidence, array_map($proofFields, array_values(array_filter($final->evidence,
-            static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true)))));
+        self::assertSame($originalEvidence, $explicitSourceReview ? $readSourceEvidence() : array_map($proofFields,
+            array_values(array_filter($final->evidence, static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true)))));
+        if ($explicitSourceReview) {
+            self::assertSame($candidateSnapshot, get_object_vars($models->fact(...[...$scope, $candidateFact->id])));
+            self::assertNotContains($sourceFact->id, array_column($final->facts, 'id'));
+            self::assertContains($reacceptedFact->id, array_column($final->facts, 'id'), 'Replacing a work must not delete an independently reviewed source extraction.');
+        }
         Http::assertNothingSent();
     }
 
