@@ -119,6 +119,8 @@ class AIAssistantService
 
     private ?AssistantRequest $activeRequest = null;
 
+    private ?AssistantGuardedLoopDiagnostics $guardedLoopDiagnostics = null;
+
     private bool $runtimeTimingEnabled = false;
 
     private ?User $activeActor = null;
@@ -234,6 +236,7 @@ class AIAssistantService
                     return $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
                 } finally {
                     $this->activeActor = null;
+                    $this->guardedLoopDiagnostics = null;
                     $this->activeToolResults = [];
                     $this->activeCustomReportSources = [];
                     $this->activeSearchScopeAttempts = [];
@@ -259,6 +262,7 @@ class AIAssistantService
             } finally {
                 app(AssistantCurrentRequest::class)->replace($previousRequestScope);
                 $this->activeRequest = null;
+                $this->guardedLoopDiagnostics = null;
                 $this->activeActor = null;
                 $this->activeToolResults = [];
                 $this->activeCustomReportSources = [];
@@ -324,6 +328,7 @@ class AIAssistantService
                 $this->runtimeTimingEnabled = false;
                 app(AssistantCurrentRequest::class)->replace($previousRequestScope);
                 $this->activeRequest = null;
+                $this->guardedLoopDiagnostics = null;
                 $this->activeActor = null;
                 $this->activeToolResults = [];
                 $this->activeCustomReportSources = [];
@@ -759,6 +764,15 @@ class AIAssistantService
                         'call_id' => $toolCall['call_id'],
                         'output' => $toolContent,
                     ];
+                    try {
+                        $diagnostics = $this->guardedLoopDiagnostics();
+                        $observation = $diagnostics?->toolResult($toolName, $toolCall['arguments'] ?? [], $providerResult,
+                            $toolCall['call_id'], $toolContent, array_column($options['tools'] ?? [], 'name'));
+                        if ($observation !== null) {
+                            Log::info('ai.assistant.guarded_tool_result', ['request_id' => $diagnostics->requestId, ...$observation]);
+                        }
+                    } catch (Throwable) {
+                    }
 
                     $serverResult = $this->activeToolResults[0] ?? null;
                     $serverAnswer = is_array($serverResult) ? ($serverResult['server_formatted_answer'] ?? null) : null;
@@ -1889,6 +1903,20 @@ class AIAssistantService
         return AssistantRequestPhaseTimer::run($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, $phase, $operation);
     }
 
+    protected function guardedLoopDiagnostics(): ?AssistantGuardedLoopDiagnostics
+    {
+        if (! ($this->scopedContext?->isGuarded() ?? false) || $this->activeRequest === null
+            || ! is_string($this->activeRequest->request_id)
+            || ! \Illuminate\Support\Str::isUuid($this->activeRequest->request_id)) {
+            return null;
+        }
+        if ($this->guardedLoopDiagnostics?->requestId !== $this->activeRequest->request_id) {
+            $this->guardedLoopDiagnostics = new AssistantGuardedLoopDiagnostics($this->activeRequest->request_id);
+        }
+
+        return $this->guardedLoopDiagnostics;
+    }
+
     private function requestErrorCode(Throwable $exception): string
     {
         return match (true) {
@@ -2993,6 +3021,11 @@ class AIAssistantService
             $providerStarted = true;
             $providerCallStarted = hrtime(true);
             $providerCallFailure = null;
+            $nativeInputDiagnostics = [];
+            try {
+                $nativeInputDiagnostics = $this->guardedLoopDiagnostics()?->sdkEntry($preparedMessages) ?? [];
+            } catch (Throwable) {
+            }
             try {
                 $response = $selectedProvider->responses($preparedMessages, $preparedOptions);
             } catch (Throwable $exception) {
@@ -3014,6 +3047,7 @@ class AIAssistantService
                             'success' => $providerCallFailure === null,
                             'exception_class' => $providerCallFailure === null ? null : $providerCallFailure::class,
                             ...AssistantProviderErrorDiagnostics::fromFailure($providerCallFailure),
+                            ...$nativeInputDiagnostics,
                         ]);
                     }
                 } catch (Throwable) {
