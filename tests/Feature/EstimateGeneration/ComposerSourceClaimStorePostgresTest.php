@@ -440,11 +440,17 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'estimate_generation.view', 'estimate_generation.review', 'estimate_generation.upload_documents']], 'system_permissions' => ['admin.access']]);
         $rights->member->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
         [$actor, $session, $initialAnswer, $sources] = $this->answeredSourceFixture(naturalInitial: true, targetMode: 'selected',
-            realActor: $rights->member, lengthOperand: false);
+            realActor: $rights->member, lengthOperand: false, alignSourceReader: $explicitSourceReview);
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $organization = Organization::query()->findOrFail($scope[0]);
         $project = Project::query()->findOrFail($scope[1]);
         $models = app(ProjectModelRepository::class);
+        if ($explicitSourceReview) {
+            $fixtureReader = app(Documents\DocumentUnitContentReader::class);
+            $repositoryClaims = (new \ReflectionProperty($models, 'cellReviews'))->getValue($models);
+            self::assertSame(app(ComposerSourceClaimValidationService::class), $repositoryClaims);
+            self::assertSame($fixtureReader, (new \ReflectionProperty($repositoryClaims, 'contentReader'))->getValue($repositoryClaims));
+        }
         $image = imagecreatetruecolor(32, 32);
         ob_start();
         imagepng($image);
@@ -455,11 +461,20 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             'session_id' => $scope[2], 'user_id' => $actor->id, 'filename' => 'synthetic-requirement.png', 'mime_type' => 'image/png',
             'storage_path' => 'org-'.$scope[0].'/synthetic-requirement.png', 'source_version' => $version,
             'checksum_sha256' => $digest, 'status' => 'ready']);
+        $artifactPath = $document->storage_path;
+        if ($explicitSourceReview) {
+            $fixtureStorage = app(Documents\DocumentSourceManifestStorage::class);
+            self::assertSame($fixtureReader, $fixtureStorage);
+            $artifact = $fixtureStorage->put($document, $version, Documents\DocumentUnitType::RasterImage, 1, $content, 'image/png');
+            self::assertSame($version, $artifact->sha256);
+            self::assertSame(strlen($content), $artifact->bytes);
+            $artifactPath = $artifact->path;
+        }
         $unit = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit::query()->create([
             'organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2], 'document_id' => $document->id,
             'unit_type' => 'raster_image', 'unit_index' => 1, 'source_version' => $version, 'status' => 'pending',
             'locator' => ['source_kind' => 'image', 'source_version' => $version, 'coordinate_space' => 'image_pixels',
-                'artifact_path' => $document->storage_path, 'artifact_source_version' => $version, 'artifact_sha256' => $version,
+                'artifact_path' => $artifactPath, 'artifact_source_version' => $version, 'artifact_sha256' => $version,
                 'artifact_version_id' => 'synthetic-requirement-v1', 'artifact_bytes' => strlen($content), 'content_type' => 'image/png']]);
         $page = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage::query()->create([
             'organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2], 'document_id' => $document->id,
@@ -503,7 +518,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                         'contractVersion' => $contract, ...($construction ? ['semanticProposal' => $proposal] : [])]] : []]],
                 'recorded', 'openai/gpt-6-luna', 'openai/gpt-6-luna', 'synthetic-requirement:v1', 'measured', 1, 1, 64);
         });
-        $objects = [(string) $document->storage_path => $content];
+        $objects = [(string) $document->storage_path => $content, (string) $artifactPath => $content];
         $files = $this->createMock(\App\Services\Storage\FileService::class);
         $files->method('describeCurrent')->willReturnCallback(static function (string $path) use (&$objects): array {
             $body = $objects[$path];
@@ -528,6 +543,10 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         self::assertSame(Documents\DocumentProcessingUnitClaimStatus::Acquired, $claim->status);
         $context = $store->executionContext($claim);
         self::assertNotNull($context);
+        if ($explicitSourceReview) {
+            self::assertSame($fixtureReader, app(Documents\DocumentUnitContentReader::class));
+            self::assertSame($content, $fixtureReader->read($context));
+        }
         $output = $processor->process($context);
         self::assertNotNull($output->publication);
         self::assertCount(2, $output->publication->claims);
@@ -602,19 +621,21 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $originalEvidence = $explicitSourceReview ? $readSourceEvidence() : array_map($proofFields,
             array_values(array_filter($captured->evidence, static fn ($proof): bool => in_array($proof->id, $sourceFact->evidenceIds, true))));
         self::assertNotEmpty($originalEvidence);
-        $nativeReader = app(Documents\DocumentUnitContentReader::class);
-        $this->app->instance(Documents\DocumentUnitContentReader::class, new class($nativeReader, (int) $document->id, $content) implements Documents\DocumentUnitContentReader
-        {
-            public function __construct(private Documents\DocumentUnitContentReader $native, private int $documentId, private string $content) {}
-
-            public function read(Documents\DocumentUnitExecutionContext $context): string
+        if (! $explicitSourceReview) {
+            $nativeReader = app(Documents\DocumentUnitContentReader::class);
+            $this->app->instance(Documents\DocumentUnitContentReader::class, new class($nativeReader, (int) $document->id, $content) implements Documents\DocumentUnitContentReader
             {
-                return $context->documentId === $this->documentId ? $this->content : $this->native->read($context);
+                public function __construct(private Documents\DocumentUnitContentReader $native, private int $documentId, private string $content) {}
+
+                public function read(Documents\DocumentUnitExecutionContext $context): string
+                {
+                    return $context->documentId === $this->documentId ? $this->content : $this->native->read($context);
+                }
+            });
+            foreach ([ComposerSourceClaimValidationService::class, EstimateGenerationLearningEvidenceService::class,
+                EstimateGenerationLearningRecorder::class, EstimateComposerInputFactory::class] as $service) {
+                $this->app->forgetInstance($service);
             }
-        });
-        foreach ([ComposerSourceClaimValidationService::class, EstimateGenerationLearningEvidenceService::class,
-            EstimateGenerationLearningRecorder::class, EstimateComposerInputFactory::class] as $service) {
-            $this->app->forgetInstance($service);
         }
         $url = '/api/v1/admin/projects/'.$scope[1].'/estimate-generation/sessions/'.$scope[2];
         $headers = $this->sourceHeaders($actor);
@@ -771,6 +792,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     }
                     $sourceFact = $models->fact(...[...$scope, $reviewFact->value['publication']['fact_id']]);
                     self::assertNotNull($sourceFact);
+                    self::assertContains($sourceFact->id, array_column($afterReview->facts, 'id'), 'The accepted publication must remain in the ordinary current planning snapshot.');
                     self::assertNotSame($candidateFact->id, $sourceFact->id);
                     self::assertSame('confirmed', $sourceFact->status);
                     self::assertSame($candidateFact->origin, $sourceFact->origin);
@@ -2639,7 +2661,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         return [$organization, $project, $actor, $session];
     }
 
-    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false, ?string $uploadMoment = null, string $targetMode = 'unique', array $selectedSections = ['equipment'], ?User $realActor = null, bool $lengthOperand = false): array
+    private function answeredSourceFixture(string $description = 'Монтаж неизвестной установки', bool $naturalInitial = false, ?string $uploadMoment = null, string $targetMode = 'unique', array $selectedSections = ['equipment'], ?User $realActor = null, bool $lengthOperand = false, bool $alignSourceReader = false): array
     {
         Http::fake();
         Http::preventStrayRequests();
@@ -2659,6 +2681,12 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         $session = app(CreateEstimateGenerationSession::class)->handle(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'input_payload' => $input], $actor);
         $this->publishBinarySource($session, $targetMode === 'mixed', lengthOperand: $lengthOperand);
+        if ($alignSourceReader) {
+            foreach ([ComposerSourceClaimValidationService::class, ProjectModelRepository::class,
+                Documents\AtomicDocumentUnitPublicationWriter::class, Documents\DocumentProcessingUnitStore::class] as $service) {
+                $this->app->forgetInstance($service);
+            }
+        }
         $models = app(ProjectModelRepository::class);
         $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
         $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
