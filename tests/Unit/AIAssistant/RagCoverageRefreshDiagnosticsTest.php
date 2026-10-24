@@ -92,6 +92,92 @@ final class RagCoverageRefreshDiagnosticsTest extends TestCase
         self::assertFalse($record['entity_type_filters_complete']);
     }
 
+    #[DataProvider('fastIfcProjectionQueries')]
+    public function test_fast_ifc_counts_emit_bounded_execution_evidence(int $ordinal, float $elapsed, bool $completed, float $expectedElapsed): void
+    {
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, $ordinal, $elapsed, $completed,
+            ['design_additional'], ['design_ifc_model_element']);
+        self::assertIsArray($record);
+        self::assertSame([
+            'projection_mode' => 'counts', 'query_ordinal' => $ordinal, 'query_elapsed_ms' => $expectedElapsed,
+            'query_completed' => $completed, 'release_sha' => str_repeat('a', 40),
+            'source_type_filters' => ['design_additional'], 'source_type_filters_complete' => true,
+            'entity_type_filters' => ['design_ifc_model_element'], 'entity_type_filters_complete' => true,
+        ], $record);
+    }
+
+    public static function fastIfcProjectionQueries(): array
+    {
+        return [[1, 0.0, true, 0.0], [32, 499.99, true, 499.99], [1, 12.345, false, 12.35], [32, 499.994, false, 499.99]];
+    }
+
+    public function test_fast_ifc_query_logger_failure_does_not_escape(): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andThrow(new RuntimeException('private_logger_failure_fixture'));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, 1, 100.0, true, ['design_additional'], ['design_ifc_model_element']);
+        self::assertTrue(true);
+    }
+
+    public function test_fast_ifc_query_does_not_export_invalid_release(): void
+    {
+        config(['ai-assistant.status_snapshot_release' => 'private_release_fixture']);
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_expected_projection_query', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, 1, 100.0, true, ['design_additional'], ['design_ifc_model_element']);
+        self::assertIsArray($record);
+        self::assertNull($record['release_sha']);
+        self::assertStringNotContainsString('private_', json_encode($record, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_fast_ifc_evidence_requires_exact_actual_filters_and_counts_mode(): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldNotReceive('channel');
+        Log::swap($logger);
+        $source = ['design_additional'];
+        $entity = ['design_ifc_model_element'];
+        $unprintable = new class implements \Stringable {
+            public function __toString(): string { throw new RuntimeException('private_stringable_fixture'); }
+        };
+        foreach ([
+            [null, null], [[], []], [$source, null], [null, $entity], [$source, []], [[], $entity],
+            [['project'], $entity], [$source, ['project']],
+            [['design_additional', 'project'], $entity], [$source, ['design_ifc_model_element', 'project']],
+            [['design_additional', 'design_additional'], $entity], [$source, ['design_ifc_model_element', 'design_ifc_model_element']],
+            [['design_additional', 'private_source_fixture'], $entity], [$source, ['design_ifc_model_element', 'private_entity_fixture']],
+            [['design_additional', $unprintable], $entity], [$source, ['design_ifc_model_element', $unprintable]],
+            [[5 => 'design_additional'], $entity], [$source, [5 => 'design_ifc_model_element']],
+        ] as [$sources, $entities]) {
+            AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, 1, 100.0, true, $sources, $entities);
+        }
+        AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(true, 1, 100.0, true, $source, $entity);
+        foreach ([-1.0, NAN, INF, -INF] as $elapsed) {
+            AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, 1, $elapsed, true, $source, $entity);
+        }
+        foreach ([0, -1, 33] as $ordinal) {
+            AssistantStatusSnapshotDiagnostics::expectedProjectionQuery(false, $ordinal, 100.0, true, $source, $entity);
+        }
+        self::assertTrue(true);
+    }
+
     #[DataProvider('abortEvents')]
     public function test_abort_events_contain_only_a_fixed_site_scope_and_elapsed_time(string $abortSite, bool $global): void
     {

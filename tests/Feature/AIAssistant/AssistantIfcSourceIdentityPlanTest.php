@@ -112,10 +112,115 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         foreach (['organization_id', 'source_type', 'entity_type'] as $constantColumn) {
             self::assertStringContainsString('"matched_sources"."'.$constantColumn.'" = "expected"."'.$constantColumn.'"', $queries[0]['query']);
         }
+        foreach (['entity_id', 'identity_part_key', 'checksum'] as $column) {
+            self::assertStringNotContainsString('"matched_sources"."'.$column.'" COLLATE "C"', $queries[0]['query']);
+        }
         $full = $read(true);
         foreach (['expected_count', 'indexed_count', 'pending_since'] as $field) {
             self::assertEquals($full['design_additional']->{$field}, $counts['design_additional']->{$field}, $field);
         }
+    }
+
+    public function test_ifc_expected_counts_keep_exact_text_identity_and_current_access(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $organizationId = (int) $fixture->organization->id;
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organizationId, 'is_archived' => false]));
+        $otherProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organizationId, 'is_archived' => false]));
+        $package = DesignPackage::withoutEvents(fn () => DesignPackage::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'title' => 'Комплект', 'status' => 'draft',
+        ]));
+        $artifact = DesignArtifact::withoutEvents(fn () => DesignArtifact::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'package_id' => $package->id,
+            'title' => 'Модель', 'artifact_type' => 'model',
+        ]));
+        $version = DesignArtifactVersion::withoutEvents(fn () => DesignArtifactVersion::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'artifact_id' => $artifact->id,
+            'title' => 'Версия', 'version_number' => '1', 'source_file_path' => 'private.ifc',
+            'source_original_name' => 'model.ifc', 'source_mime_type' => 'application/octet-stream', 'source_size_bytes' => 1,
+        ]));
+        $derivative = DesignModelDerivative::withoutEvents(fn () => DesignModelDerivative::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'version_id' => $version->id,
+        ]));
+        $element = DesignIfcModelElement::withoutEvents(fn () => DesignIfcModelElement::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'version_id' => $version->id,
+            'derivative_id' => $derivative->id, 'express_id' => 1,
+        ]));
+        $generation = (string) Str::uuid();
+        $pendingSince = now()->subHours(2)->startOfSecond();
+        $identity = [
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'identity_project_id' => $project->id,
+            'source_type' => 'design_additional', 'entity_type' => 'design_ifc_model_element', 'entity_id' => (string) $element->id,
+        ];
+        $cases = [
+            ['', '', 'same', 'same'], ['stale', 'stale', 'new', 'old'], ['Wall', 'wall', 'same', 'same'],
+            ["\u{00E9}", "e\u{0301}", 'same', 'same'], ['checksum-space', 'checksum-space', 'sum', 'sum '],
+            ['part-space', 'part-space ', 'same', 'same'],
+        ];
+        $sourceIds = [];
+        foreach ($cases as [$expectedPart, $storedPart, $expectedChecksum, $storedChecksum]) {
+            RagExpectedSource::withoutEvents(fn () => RagExpectedSource::query()->create($identity + [
+                'generation' => $generation, 'identity_part_key' => $expectedPart, 'checksum' => $expectedChecksum,
+                'pending_since' => $expectedPart === 'stale' ? $pendingSince : now(),
+            ]));
+            $source = RagSource::withoutEvents(fn () => RagSource::query()->create($identity + [
+                'identity_part_key' => $storedPart, 'checksum' => $storedChecksum, 'title' => 'IFC',
+            ]));
+            $sourceIds[] = $source->id;
+        }
+        $decoy = RagSource::withoutEvents(fn () => RagSource::query()->create(array_replace($identity, [
+            'entity_id' => '0'.$element->id, 'identity_part_key' => '', 'checksum' => 'same', 'title' => 'IFC',
+        ])));
+        $sourceIds[] = $decoy->id;
+        foreach ($sourceIds as $sourceId) {
+            DB::table('ai_rag_chunks')->insert([
+                'organization_id' => $organizationId, 'project_id' => $project->id, 'source_id' => $sourceId,
+                'chunk_index' => 0, 'content' => 'Indexed IFC', 'content_hash' => hash('sha256', 'Indexed IFC'),
+                'embedding' => json_encode(RagTestEmbedding::fromLeadingValues([1.0]), JSON_THROW_ON_ERROR),
+            ]);
+        }
+        $policy = app(AssistantDataAccessPolicy::class);
+        $projection = new RagExpectedSourceProjection(Mockery::mock(RagIndexer::class));
+        $read = fn (bool $collectProof): array => $policy->withCurrentChecks($fixture->owner, $organizationId,
+            fn (): array => $projection->actorCounts($organizationId, $fixture->owner, $policy, ['design_additional'], $generation, collectProof: $collectProof), fresh: true);
+        DB::enableQueryLog();
+        try {
+            $counts = $read(false);
+            $full = $read(true);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame(6, (int) $counts['design_additional']->expected_count);
+        self::assertSame(1, (int) $counts['design_additional']->indexed_count);
+        self::assertSame($pendingSince->getTimestamp(), \Illuminate\Support\Carbon::parse($counts['design_additional']->pending_since)->getTimestamp());
+        foreach (['expected_count', 'indexed_count', 'pending_since'] as $field) {
+            self::assertEquals($full['design_additional']->{$field}, $counts['design_additional']->{$field}, $field);
+        }
+        $countsQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'matched_source_cache AS MATERIALIZED')));
+        $proofQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS identity_proof')));
+        self::assertCount(1, $countsQueries);
+        self::assertNotEmpty($proofQueries);
+        foreach (['entity_id', 'identity_part_key', 'checksum'] as $column) {
+            self::assertStringContainsString('("matched_sources"."'.$column.'" COLLATE "C") = ("expected"."'.$column.'" COLLATE "C")', $countsQueries[0]['query']);
+            foreach ($proofQueries as $query) {
+                self::assertStringNotContainsString('"matched_sources"."'.$column.'" COLLATE "C"', $query['query']);
+            }
+        }
+        self::assertStringContainsString('"matched_sources"."identity_project_id" = "expected"."identity_project_id"', $countsQueries[0]['query']);
+        self::assertStringContainsString('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id', $countsQueries[0]['query']);
+        self::assertStringContainsString('pg_input_is_valid(', $countsQueries[0]['query']);
+        DB::table('ai_rag_chunks')->whereIn('source_id', $sourceIds)->update(['embedding' => null]);
+        self::assertSame(0, (int) $read(false)['design_additional']->indexed_count);
+        self::assertSame(0, (int) $read(true)['design_additional']->indexed_count);
+        $derivative->updateQuietly(['project_id' => $otherProject->id]);
+        self::assertSame([], $read(false));
+        self::assertSame([], $read(true));
+        $derivative->updateQuietly(['project_id' => $project->id]);
+        $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => false]);
+        self::assertSame([], $read(false));
+        self::assertSame([], $read(true));
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('identityProjectionCases')]
