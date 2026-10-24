@@ -7,8 +7,11 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\Models\User;
+use Closure;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use WeakMap;
 
 final class AssistantRequestExecutionContext
@@ -29,12 +32,25 @@ final class AssistantRequestExecutionContext
 
     private bool $lifecycleCheckpointInProgress = false;
 
+    private readonly int $controlRequestKey;
+
+    private readonly mixed $controlRequestId;
+
+    private readonly int $controlUserId;
+
+    private readonly int $controlOrganizationId;
+
     public function __construct(
         private readonly AssistantRequestLifecycle $lifecycle,
         private readonly AssistantRequest $request,
         private readonly User $actor,
         int $budgetMilliseconds,
     ) {
+        $attributes = $request->getAttributes();
+        $this->controlRequestKey = (int) ($attributes[$request->getKeyName()] ?? 0);
+        $this->controlRequestId = $attributes['request_id'] ?? null;
+        $this->controlUserId = (int) ($attributes['user_id'] ?? 0);
+        $this->controlOrganizationId = (int) ($attributes['organization_id'] ?? 0);
         $createdAtMilliseconds = $request->created_at?->valueOf();
         $elapsedMilliseconds = $createdAtMilliseconds === null ? 0 : (int) max(0, now()->valueOf() - $createdAtMilliseconds);
         $remainingMilliseconds = max(1, $budgetMilliseconds - $elapsedMilliseconds);
@@ -66,6 +82,50 @@ final class AssistantRequestExecutionContext
             $this->assertWithinDeadline();
         } finally {
             $this->lifecycleCheckpointInProgress = false;
+        }
+    }
+
+    public function requestControlCheckpoint(): Closure
+    {
+        $this->assertOriginalControlIdentity();
+        $this->assertControlReadApplicable();
+        $this->assertCanContinue();
+        $this->assertOriginalControlIdentity();
+        $this->assertControlReadApplicable();
+        $conversationId = $this->request->conversation_id;
+        if ($conversationId !== null && $conversationId < 1) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+
+        return function () use ($conversationId): void {
+            $this->assertControlReadApplicable();
+            $this->remainingMilliseconds();
+            $this->lifecycle->checkpointControl($this->controlRequestKey, $this->controlRequestId,
+                $this->controlUserId, $this->controlOrganizationId, $conversationId);
+            $this->assertControlReadApplicable();
+            $this->remainingMilliseconds();
+        };
+    }
+
+    private function assertControlReadApplicable(): void
+    {
+        if ($this->cleanupDeadlineNanoseconds !== null) {
+            throw new AssistantRequestDeadlineExceeded;
+        }
+        if ($this->lifecycleCheckpointInProgress) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+    }
+
+    private function assertOriginalControlIdentity(): void
+    {
+        if ($this->controlRequestKey < 1 || ! is_string($this->controlRequestId) || ! Str::isUuid($this->controlRequestId)
+            || $this->controlUserId < 1 || $this->controlOrganizationId < 1
+            || (int) $this->request->getKey() !== $this->controlRequestKey || $this->request->request_id !== $this->controlRequestId
+            || (int) $this->request->user_id !== $this->controlUserId || (int) $this->request->organization_id !== $this->controlOrganizationId
+            || ($this->request->getConnectionName() !== null && $this->request->getConnectionName() !== config('database.default'))
+            || (int) $this->actor->id !== $this->controlUserId || (int) $this->actor->current_organization_id !== $this->controlOrganizationId) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
         }
     }
 

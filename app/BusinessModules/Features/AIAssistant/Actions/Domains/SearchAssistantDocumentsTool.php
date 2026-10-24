@@ -86,9 +86,10 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         if ($scoped->allowsExpansion('document_rag')) {
             $scoped->assertTool($this->getName(), $arguments, $user, (int) $organization->id);
             $read = function () use ($scoped, $arguments, $user, $organization, $execution): array {
+                $readGuard = $execution?->requestControlCheckpoint();
                 $corpus = $scoped->documentCorpus($user, (int) $organization->id, $arguments);
                 $search = $this->retriever->searchWithDiagnostics($arguments['query'], (int) $organization->id, $user, $arguments,
-                    $execution === null ? null : $execution->assertCanContinue(...), corpus: $corpus);
+                    $execution === null ? null : $execution->assertCanContinue(...), readGuard: $readGuard, corpus: $corpus);
                 $execution?->assertCanContinue();
                 return app(OrdinaryAssistantDocumentProjection::class)->project($corpus, $search['results'], $user, (int) $organization->id);
             };
