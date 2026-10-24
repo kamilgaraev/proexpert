@@ -87,7 +87,7 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         $inventoryPath = app(INV3ExportStrategy::class)->export($act);
         $inventorySheet = $this->sheetFromStorage($inventoryPath);
 
-        $this->assertSame('б/н', $inventorySheet->getCell('D11')->getValue());
+        $this->assertStringContainsString('Номер описи: б/н', (string) $inventorySheet->getCell('A7')->getValue());
         $this->assertStringContainsString('20260830', $inventoryPath);
         $this->assertStringNotContainsString('_'.$act->id.'.xlsx', $inventoryPath);
     }

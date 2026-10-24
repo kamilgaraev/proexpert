@@ -14,8 +14,8 @@ use App\Models\MeasurementUnit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
-use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -28,26 +28,22 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
     // Report: .gstack/qa-reports/qa-report-most-full-2026-08-28.md
     public function test_inv3_export_spans_mandatory_requisites_and_accounting_columns(): void
     {
-        $sheet = $this->exportSheet('Анна Петрова');
-        $mergedRanges = $sheet->getMergeCells();
-
-        $this->assertContains('A6:G6', $mergedRanges);
-        $this->assertSame('организация', $sheet->getCell('A6')->getValue());
-        $this->assertContains('D10:F10', $mergedRanges);
-        $this->assertContains('D11:F11', $mergedRanges);
-        $this->assertContains('G10:I10', $mergedRanges);
-        $this->assertContains('G11:I11', $mergedRanges);
-        $this->assertContains('B15:D15', $mergedRanges);
-        $this->assertContains('F15:G15', $mergedRanges);
-        $this->assertContains('H15:I15', $mergedRanges);
-        $this->assertContains('J15:L15', $mergedRanges);
-        $this->assertContains('B16:D16', $mergedRanges);
-        $this->assertContains('J16:L16', $mergedRanges);
-        $this->assertSame('INV-20260901-0005', $sheet->getCell('D11')->getValue());
+        $workbook = $this->exportWorkbook('Анна Петрова');
+        $cover = $workbook->getSheetByName('Реквизиты');
+        $sheet = $workbook->getSheetByName('Опись 1');
+        $this->assertNotNull($cover);
+        $this->assertNotNull($sheet);
+        $this->assertContains('A4:L4', $cover->getMergeCells());
+        $this->assertStringStartsWith('Организация:', (string) $cover->getCell('A4')->getValue());
+        $this->assertStringContainsString('INV-20260901-0005', (string) $cover->getCell('A7')->getValue());
+        $this->assertContains('B8:D8', $sheet->getMergeCells());
+        $this->assertContains('K8:L8', $sheet->getMergeCells());
+        $this->assertContains('B9:D9', $sheet->getMergeCells());
+        $this->assertContains('K9:L9', $sheet->getMergeCells());
         $this->assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
         $this->assertSame(1, $sheet->getPageSetup()->getFitToWidth());
-        $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
-        $this->assertGreaterThanOrEqual(18.0, $sheet->getColumnDimension('H')->getWidth());
+        $this->assertSame(1, $sheet->getPageSetup()->getFitToHeight());
+        $this->assertGreaterThanOrEqual(16.0, $sheet->getColumnDimension('H')->getWidth());
     }
 
     // Regression: ISSUE-127 — официальный документ показывал технический логин вместо ФИО
@@ -55,7 +51,8 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
     // Report: .gstack/qa-reports/qa-report-most-full-2026-08-28.md
     public function test_inv3_export_replaces_login_like_commission_name_with_clear_missing_name_label(): void
     {
-        $sheet = $this->exportSheet('kamilgaraev');
+        $sheet = $this->exportWorkbook('kamilgaraev')->getSheetByName('Итоги и подписи');
+        $this->assertNotNull($sheet);
         $documentText = implode(' ', array_map(
             static fn (array $row): string => implode(' ', array_map('strval', $row)),
             $sheet->toArray()
@@ -67,7 +64,8 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
 
     public function test_inv3_export_preserves_complete_name_written_in_latin_letters(): void
     {
-        $sheet = $this->exportSheet('John Smith');
+        $sheet = $this->exportWorkbook('John Smith')->getSheetByName('Итоги и подписи');
+        $this->assertNotNull($sheet);
         $documentText = implode(' ', array_map(
             static fn (array $row): string => implode(' ', array_map('strval', $row)),
             $sheet->toArray()
@@ -84,21 +82,23 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
             str_repeat('Ш', 250),
             implode("\n", array_fill(0, 7, 'Учебная строка материала')),
         ] as $name) {
-            $sheet = $this->exportSheet('Анна Петрова', $name);
+            $sheet = $this->exportWorkbook('Анна Петрова', $name)->getSheetByName('Опись 1');
+            $this->assertNotNull($sheet);
 
-            $this->assertSame($name, $sheet->getCell('B16')->getValue());
-            $this->assertTrue($sheet->getStyle('B16')->getAlignment()->getWrapText());
-            $this->assertFalse($sheet->getStyle('B16')->getAlignment()->getShrinkToFit());
-            $this->assertGreaterThanOrEqual(72.0, $sheet->getRowDimension(16)->getRowHeight());
-            $this->assertEquals(600, $sheet->getCell('F16')->getValue());
-            $this->assertEquals(600, $sheet->getCell('H16')->getValue());
-            $this->assertEquals(0, $sheet->getCell('J16')->getValue());
+            $this->assertSame($name."\nINV3-REBAR", $sheet->getCell('B9')->getValue());
+            $this->assertTrue($sheet->getStyle('B9')->getAlignment()->getWrapText());
+            $this->assertFalse($sheet->getStyle('B9')->getAlignment()->getShrinkToFit());
+            $this->assertGreaterThanOrEqual(72.0, $sheet->getRowDimension(9)->getRowHeight());
+            $this->assertEquals(600, $sheet->getCell('I9')->getValue());
+            $this->assertEquals(600, $sheet->getCell('G9')->getValue());
+            $this->assertEquals(60000, $sheet->getCell('H9')->getValue());
+            $this->assertEquals(60000, $sheet->getCell('J9')->getValue());
             $this->assertSame(1, $sheet->getPageSetup()->getFitToWidth());
-            $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+            $this->assertSame(1, $sheet->getPageSetup()->getFitToHeight());
         }
     }
 
-    private function exportSheet(string $commissionMemberName, string $materialName = 'Арматура А500С, диаметр 12 мм'): Worksheet
+    private function exportWorkbook(string $commissionMemberName, string $materialName = 'Арматура А500С, диаметр 12 мм'): Spreadsheet
     {
         Storage::fake('s3');
 
@@ -155,11 +155,11 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
         $path = app(INV3ExportStrategy::class)->export(
             $act->load(['organization', 'warehouse', 'items.material.measurementUnit'])
         );
-        $temporaryPath = tempnam(sys_get_temp_dir(), 'inv3_').'.xlsx';
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'inv3_');
         file_put_contents($temporaryPath, Storage::disk('s3')->get($path));
 
         try {
-            return IOFactory::load($temporaryPath)->getActiveSheet();
+            return IOFactory::load($temporaryPath);
         } finally {
             @unlink($temporaryPath);
         }
