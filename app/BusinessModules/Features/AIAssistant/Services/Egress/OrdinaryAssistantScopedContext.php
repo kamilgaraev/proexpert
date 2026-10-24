@@ -7,6 +7,8 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Egress;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantEgressCohort;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantEgressEnrollment;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantCurrentRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\Models\User;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCorpus;
@@ -43,6 +45,8 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
     private array $toolOutputs = [];
 
     private array $canonicalToolResults = [];
+
+    private ?array $finalSynthesis = null;
 
     public function __construct(private readonly OrdinaryAssistantEnrollmentService $enrollments,
         private readonly OrdinaryAssistantSourceCatalog $catalog, private readonly OrdinaryAssistantSourceProjection $projection,
@@ -320,6 +324,46 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         }
     }
 
+    public function beginFinalSynthesis(AssistantRequest $request, array $input, array $tools): void
+    {
+        $this->assertFresh();
+        if ($this->finalSynthesis !== null || $request->max_calls < 1 || $request->calls_used !== $request->max_calls - 1
+            || (int) $request->user_id !== (int) $this->cohort->actor_id
+            || (int) $request->organization_id !== (int) $this->cohort->organization_id
+            || app(AssistantCurrentRequest::class)->idFor($this->actor, (int) $this->cohort->organization_id) !== $request->request_id) {
+            throw new AssistantEgressDenied('scope_mismatch');
+        }
+        $this->finalSynthesis = ['phase' => 'armed', 'key' => (int) $request->getKey(), 'request_id' => $request->request_id,
+            'actor_id' => (int) $request->user_id, 'organization_id' => (int) $request->organization_id,
+            'conversation_id' => $request->conversation_id, 'max_calls' => $request->max_calls,
+            'input_hash' => OrdinaryAssistantSourceProjection::hash($input), 'tools_hash' => OrdinaryAssistantSourceProjection::hash($tools),
+            'binding' => null, 'attempt_ref' => null];
+    }
+
+    private function assertFinalSynthesisRequest(OrdinaryAssistantEgressRequest $request): void
+    {
+        $final = $this->finalSynthesis;
+        if ($final === null || ! in_array($final['phase'], ['armed', 'prepared'], true)
+            || app(AssistantCurrentRequest::class)->idFor($this->actor, (int) $this->cohort->organization_id) !== $final['request_id']) {
+            throw new AssistantEgressDenied('scope_mismatch');
+        }
+        $current = AssistantRequest::query()->useWritePdo()->whereKey($final['key'])->first([
+            'id', 'request_id', 'user_id', 'organization_id', 'conversation_id', 'max_calls', 'calls_used',
+            'status', 'cancel_requested_at', 'lease_expires_at']);
+        if ($current === null || $current->request_id !== $final['request_id'] || $current->user_id !== $final['actor_id']
+            || $current->organization_id !== $final['organization_id'] || $current->conversation_id !== $final['conversation_id']
+            || $current->max_calls !== $final['max_calls']
+            || $current->calls_used !== $final['max_calls'] - ($final['phase'] === 'armed' ? 1 : 0)
+            || $current->status !== 'running' || $current->cancel_requested_at !== null
+            || $current->lease_expires_at === null || $current->lease_expires_at->isPast()
+            || ! hash_equals($final['input_hash'], OrdinaryAssistantSourceProjection::hash($request->payload()['input']))
+            || ! hash_equals($final['tools_hash'], OrdinaryAssistantSourceProjection::hash($request->payload()['tools']))
+            || ($final['phase'] === 'prepared' && ($final['attempt_ref'] !== $request->attemptRef()
+                || ! hash_equals($final['binding'], $request->binding())))) {
+            throw new AssistantEgressDenied('scope_mismatch');
+        }
+    }
+
     public function authorize(OrdinaryAssistantEgressRequest $request): PrivacyDecision
     {
         try {
@@ -332,9 +376,12 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
                 throw new AssistantEgressDenied('scope_mismatch');
             }
             $payload = $request->payload();
-            if (($payload['tool_choice'] ?? 'auto') !== 'auto' || array_slice($payload['input'], 0, count($this->initial)) !== $this->initial
+            if (($payload['tool_choice'] ?? 'auto') !== ($this->finalSynthesis === null ? 'auto' : 'none') || array_slice($payload['input'], 0, count($this->initial)) !== $this->initial
                 || $this->filterToolDefinitions($payload['tools']) !== $payload['tools']) {
                 throw new AssistantEgressDenied('source_unknown');
+            }
+            if ($this->finalSynthesis !== null) {
+                $this->assertFinalSynthesisRequest($request);
             }
             foreach (array_slice($payload['input'], count($this->initial)) as $item) {
                 if (isset($this->modelItems[OrdinaryAssistantSourceProjection::hash($item)])) {
@@ -348,6 +395,15 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
                 }
             }
             $this->assertSourcesFresh();
+            if ($this->finalSynthesis !== null) {
+                if ($this->finalSynthesis['phase'] === 'armed') {
+                    $this->finalSynthesis['phase'] = 'prepared';
+                    $this->finalSynthesis['binding'] = $request->binding();
+                    $this->finalSynthesis['attempt_ref'] = $request->attemptRef();
+                } else {
+                    $this->finalSynthesis['phase'] = 'consumed';
+                }
+            }
 
             return PrivacyDecision::ready($request->binding());
         } catch (AssistantEgressDenied $denied) {
@@ -364,6 +420,7 @@ final class OrdinaryAssistantScopedContext implements OrdinaryAssistantEgressAut
         $this->inputHash = null;
         $this->queryHash = null;
         $this->requestedContext = $this->continuationPreview = null;
+        $this->finalSynthesis = null;
         $this->initial = $this->modelItems = $this->calls = $this->toolOutputs = $this->canonicalToolResults = [];
     }
 
