@@ -24,12 +24,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\AuthSessionStatus;
 use App\Models\EstimatePositionCatalog;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Services\Auth\WebAuthTokenService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -37,10 +41,128 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_unknown_work_cannot_offer_or_bind_a_guessed_room_through_authenticated_http(): void
+    {
+        [$actor, $session] = $this->fixture('equipment.milking_unit.installation', false, true);
+        $scope = $this->scope($session);
+        $source = DB::transaction(fn () => app(CurrentWorkEntitySources::class)->rowsForTypes($session, ['room']))[0];
+        $this->withHeaders($this->headers($actor));
+        $url = '/api/v1/admin/projects/'.$scope[1].'/estimate-generation/sessions/'.$scope[2].'/evaluation';
+        $before = $session->fresh()->getAttributes();
+        $model = app(ProjectModelRepository::class)->snapshot(...$scope);
+        $calls = count(Http::recorded());
+        $response = $this->getJson($url.'/work-entity-sources?work_item_key=target');
+        self::assertSame(200, $response->status(), $response->getContent());
+        $this->postJson($url.'/work-entity', $this->bindingInput($session, $source))->assertUnprocessable();
+        $response->assertJsonPath('data.available', false)->assertJsonPath('data.entity_types', [])->assertJsonPath('data.sources', []);
+        self::assertSame($before, $session->fresh()->getAttributes());
+        self::assertEquals($model, app(ProjectModelRepository::class)->snapshot(...$scope));
+        self::assertCount($calls, Http::recorded());
+        foreach (['estimate_generation_ai_usage', 'estimate_generation_credit_operations'] as $table) {
+            self::assertSame(0, DB::table($table)->where('session_id', $scope[2])->count());
+        }
+    }
+
+    public function test_authenticated_known_work_binding_preserves_replay_state_and_permission_guards(): void
+    {
+        [$actor, $session, $rights] = $this->fixture('ceiling.hatch', true, true);
+        $scope = $this->scope($session);
+        $this->withHeaders($this->headers($actor));
+        $url = '/api/v1/admin/projects/'.$scope[1].'/estimate-generation/sessions/'.$scope[2].'/evaluation';
+        $source = $this->getJson($url.'/work-entity-sources?work_item_key=target')->assertOk()->json('data.sources.0');
+        $input = $this->bindingInput($session, $source);
+        $receipt = $this->postJson($url.'/work-entity', $input)->assertOk()->json('data');
+        self::assertSame(CanonicalPipelineJson::encode($receipt),
+            CanonicalPipelineJson::encode($this->postJson($url.'/work-entity', $input)->assertOk()->json('data')));
+        $this->postJson($url.'/work-entity', [...$input, 'request_id' => (string) Str::uuid()])->assertConflict();
+        $before = $session->fresh()->getAttributes();
+        $denied = $rights->addMember(['ai-estimates' => ['estimate_generation.view']], ['admin.access']);
+        $denied->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
+        $this->withHeaders($this->headers($denied));
+        $this->postJson($url.'/work-entity', $this->bindingInput($session, $source))->assertForbidden();
+        self::assertSame($before, $session->fresh()->getAttributes());
+    }
+
+    #[DataProvider('historicalRoomContracts')]
+    public function test_saved_unknown_room_binding_keeps_current_quantity_and_requires_its_original_proof(bool $versioned): void
+    {
+        [$actor, $session] = $this->fixture('equipment.milking_unit.installation', false);
+        $scope = $this->scope($session);
+        $source = DB::transaction(fn () => app(CurrentWorkEntitySources::class)->rowsForTypes($session, ['room']))[0];
+        $selection = ['answer_kind' => 'work_entity_binding', 'work_item_key' => 'target', 'entity_id' => $source['entity_id'],
+            'source_fact_id' => $source['source_fact_id'], 'source_fact_version' => $source['source_fact_version'],
+            'source_value_hash' => $source['source_value_hash'], 'source_version' => $source['source_version'],
+            ...($versioned ? ['binding_contract' => 'work-entity-binding:v2', 'source_entity_type' => 'room'] : [])];
+        $proof = app(UserEvaluationChoiceWriter::class)->write($actor, $session, 'work-entity:target', 'evaluation_answer',
+            $selection, 'Existing explicit room selection from the previous admission policy.', (string) Str::uuid());
+        $binding = [...$selection, 'fact_id' => $proof['fact_id'], 'decision_id' => $proof['decision_id'], 'ledger_entity_id' => $proof['entity_id']];
+        $payload = $session->fresh()->input_payload;
+        $payload['work_entity_selections']['target'] = $binding;
+        $session->input_payload = $payload;
+        $draft = $session->draft_payload;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata'] += [
+            'scope_entity_id' => $source['entity_id'], 'scope_entity_binding' => $binding];
+        $draft['source_input_version'] = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session);
+        $session->update(['input_payload' => $payload,
+            'draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft))]);
+        $before = $session->fresh()->getAttributes();
+        self::assertCount(2, DB::transaction(fn () => app(CurrentWorkEntityBindingProof::class)->evidenceIds($session->fresh(), [$this->item($session)], requireBindings: true)));
+        self::assertFalse(app(GetWorkEntitySources::class)->handle($actor, $scope[1], $scope[2], 'target')['available']);
+        self::assertSame($before, $session->fresh()->getAttributes());
+        $quantity = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $this->quantityInput($session));
+        self::assertSame('0', $quantity['cost_units']);
+        self::assertSame('12.5', $this->recalculate($session)['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+        self::assertSame(CanonicalPipelineJson::encode($binding),
+            CanonicalPipelineJson::encode($this->item($session)['metadata']['scope_entity_binding']));
+        self::assertSame($source['entity_id'], $this->item($session)['metadata']['scope_entity_id']);
+        $saved = $session->fresh()->getAttributes();
+        foreach (['missing_selection', 'other_work', 'wrong_type', 'future_contract', 'supplementary', 'source_version', 'source_hash'] as $variant) {
+            $current = $session->fresh();
+            $item = $this->item($session);
+            $input = $current->input_payload;
+            match ($variant) {
+                'missing_selection' => $input['work_entity_selections'] = [],
+                'other_work' => $item['key'] = 'another',
+                'wrong_type' => $item['metadata']['scope_entity_binding']['source_entity_type'] = 'roof',
+                'future_contract' => $item['metadata']['scope_entity_binding']['binding_contract'] = 'work-entity-binding:v3',
+                'supplementary' => $item['metadata']['generation_source'] = 'accepted_supplementary_work',
+                'source_version' => $item['metadata']['scope_entity_binding']['source_fact_version']++,
+                'source_hash' => $item['metadata']['scope_entity_binding']['source_value_hash'] = str_repeat('a', 64),
+            };
+            if ($variant !== 'missing_selection') {
+                $input['work_entity_selections'][$item['key']] = $item['metadata']['scope_entity_binding'];
+            }
+            $current->input_payload = $input;
+            try {
+                DB::transaction(fn () => app(CurrentWorkEntityBindingProof::class)->evidenceIds($current, [$item], requireBindings: true));
+                self::fail('Invalid historical binding accepted: '.$variant);
+            } catch (ValidationException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        self::assertSame($saved, $session->fresh()->getAttributes());
+        if ($versioned) {
+            app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], $session->fresh()->state_version,
+                (string) Str::uuid(), ['entities' => [['key' => 'room-one', 'type' => 'room', 'name' => 'Changed room source']]]);
+        } else {
+            $bindingFact = app(ProjectModelRepository::class)->fact(...[...$scope, $proof['fact_id']]);
+            app(EvidenceRepository::class)->invalidate(...[...$scope, [(int) substr($bindingFact->evidenceIds[0], 9)], 'Existing binding was withdrawn']);
+        }
+        self::assertNotNull(app(ProjectModelRepository::class)->fact(...[...$scope, $quantity['source_fact_id']]));
+        $this->expectException(ValidationException::class);
+        app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $this->quantityInput($session));
+    }
+
+    public static function historicalRoomContracts(): array
+    {
+        return [[false], [true]];
+    }
+
     #[DataProvider('workTypes')]
     public function test_sources_binding_quantity_and_apply_use_the_current_compatible_physical_entity(string $work, string $type): void
     {
@@ -314,18 +436,43 @@ final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPos
         return [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
     }
 
-    private function fixture(string $work): array
+    private function headers(User $actor): array
     {
-        config(['estimate-generation.universal_enabled' => true]);
-        $organization = Organization::factory()->create();
+        config(['jwt.secret' => str_repeat('a', 64), 'jwt.blacklist_enabled' => false]);
+        $this->app['auth']->forgetGuards();
+        $uuid = (string) Str::uuid();
+        $session = UserAuthSession::query()->create(['user_id' => $actor->id, 'organization_id' => $actor->current_organization_id,
+            'session_uuid' => $uuid, 'device_fingerprint' => hash('sha256', $uuid), 'device_name' => 'MOST R06 HTTP acceptance',
+            'ip_address' => '127.0.0.1', 'risk_score' => 0, 'risk_flags' => [], 'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(), 'last_seen_at' => now()]);
+        $tokens = app(WebAuthTokenService::class)->issue($actor, 'admin', $session->session_uuid, (int) $actor->current_organization_id, false);
+
+        return ['Accept' => 'application/json', 'Origin' => 'https://admin.fixture.test', 'Authorization' => 'Bearer '.$tokens->accessToken];
+    }
+
+    private function fixture(string $work, bool $supplementary = true, bool $http = false): array
+    {
+        config(['estimate-generation.universal_enabled' => true, 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
+        $rights = $http ? AssistantRealAuthorizationFixture::create(['working-entry']) : null;
+        if ($rights !== null) {
+            $organization = $rights->organization;
+            $rights->memberRole->update(['module_permissions' => ['ai-estimates' => ['estimate_generation.view', 'estimate_generation.review']], 'system_permissions' => ['admin.access']]);
+            $actor = $rights->member;
+            $actor->organizations()->updateExistingPivot($organization->id, ['project_access_mode' => 'all_projects']);
+        } else {
+            $organization = Organization::factory()->create();
+            $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+            $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+            $permissions = Mockery::mock(AuthorizationService::class);
+            $permissions->allows('canCurrent')->andReturn(true);
+            $this->app->instance(AuthorizationService::class, $permissions);
+        }
         $project = Project::factory()->for($organization)->create();
-        $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
-        $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
-        $permissions = Mockery::mock(AuthorizationService::class);
-        $permissions->allows('canCurrent')->andReturn(true);
-        $this->app->instance(AuthorizationService::class, $permissions);
+        if ($rights !== null) {
+            AuthorizationContext::getProjectContext((int) $project->id, (int) $organization->id);
+        }
         $items = [['key' => 'target', 'name' => 'Work requiring a physical object', 'unit' => 'm2', 'quantity' => null,
-            'metadata' => ['generation_source' => 'accepted_supplementary_work', 'composition_work_key' => $work]],
+            'metadata' => ['composition_work_key' => $work, ...($supplementary ? ['generation_source' => 'accepted_supplementary_work'] : [])]],
             ['key' => 'neighbor', 'name' => 'Existing work', 'quantity' => null, 'unit' => 'm2']];
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'state_version' => 0, 'status' => 'draft', 'input_payload' => ['evaluation_mode' => 'universal',
@@ -340,6 +487,6 @@ final class WorkEntitySourcesPostgresTest extends EstimateGenerationCanonicalPos
         $draft['source_input_version'] = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session);
         $session->update(['draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft))]);
 
-        return [$actor, $session];
+        return [$actor, $session, $rights];
     }
 }
