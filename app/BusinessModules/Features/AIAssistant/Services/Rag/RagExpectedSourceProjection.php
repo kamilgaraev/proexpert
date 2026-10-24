@@ -76,10 +76,10 @@ final class RagExpectedSourceProjection
             $joinColumns = ! $collectProof && count($batchTypes ?? []) === 1 && count($entityTypes ?? []) === 1
                 ? ['identity_project_id', 'identity_part_key', 'entity_id', 'checksum']
                 : ['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'];
-            $bytewiseIdentity = ! $collectProof && $batchTypes === ['design_additional'] && $entityTypes === ['design_ifc_model_element'];
-            $joinIdentity = static function (JoinClause $join) use ($joinColumns, $bytewiseIdentity): void {
+            $ifcCounts = ! $collectProof && $batchTypes === ['design_additional'] && $entityTypes === ['design_ifc_model_element'];
+            $joinIdentity = static function (JoinClause $join) use ($joinColumns, $ifcCounts): void {
                 foreach ($joinColumns as $column) {
-                    if ($bytewiseIdentity && in_array($column, ['identity_part_key', 'entity_id', 'checksum'], true)) {
+                    if ($ifcCounts && in_array($column, ['identity_part_key', 'entity_id', 'checksum'], true)) {
                         $join->whereRaw('("matched_sources"."'.$column.'" COLLATE "C") = ("expected"."'.$column.'" COLLATE "C")');
                     } else {
                         $join->on('matched_sources.'.$column, '=', 'expected.'.$column);
@@ -98,6 +98,7 @@ final class RagExpectedSourceProjection
                     ->where('ai_rag_sources.organization_id', $organizationId)->whereIn('ai_rag_sources.source_type', $batchTypes ?? $types)
                     ->select(['ai_rag_sources.id', 'ai_rag_sources.organization_id', 'ai_rag_sources.project_id', 'ai_rag_sources.identity_project_id', 'ai_rag_sources.identity_part_key',
                         'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id', 'ai_rag_sources.checksum', 'matched_status_cache.indexed_chunk_count']);
+                if ($ifcCounts) { $matchedSources->whereRaw('matched_status_cache.indexed_chunk_count > 0'); }
                 if ($entityTypes !== null) { $matchedSources->whereIn('ai_rag_sources.entity_type', $entityTypes); }
                 $materialized = DB::query()->fromRaw('(WITH matched_source_cache AS MATERIALIZED ('.$matchedSources->toSql().') SELECT * FROM matched_source_cache) AS matched_source_cache', $matchedSources->getBindings())
                     ->select('matched_source_cache.*');
