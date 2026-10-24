@@ -188,26 +188,11 @@ final readonly class ComposerSourceClaimValidationService
         if (! $document instanceof \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument) {
             return null;
         }
-        $rows = $document->getConnection()->table('estimate_generation_project_model_assertions as fact')
-            ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
-            ->where('fact.organization_id', $scope[0])->where('fact.project_id', $scope[1])->where('fact.session_id', $scope[2])
-            ->where('entity.organization_id', $scope[0])->where('entity.project_id', $scope[1])->where('entity.session_id', $scope[2])
-            ->where('fact.source_version', $document->getAttribute('source_version'))->where('entity.source_version', $document->getAttribute('source_version'))
-            ->where('fact.fact_origin', 'document')->where('fact.fact_status', 'candidate')
-            ->where('entity.payload->properties->document_semantic_proposal->payload->kind', 'source_requirement')
-            ->where('entity.payload->properties->document_semantic_proposal->source_pins->document_id', $documentId)
-            ->orderBy('fact.stable_key')->limit(self::MAX_CLAIMS + 1)->get(['entity.*', 'fact.stable_key as fact_key']);
-        if ($rows->count() > self::MAX_CLAIMS) {
+        $candidates = $models->sourceRequirementCandidates(...[...$scope, $documentId, (string) $document->getAttribute('source_version'), self::MAX_CLAIMS]);
+        if ($candidates === null) {
             return null;
         }
-        $entities = [];
-        foreach ($rows as $row) {
-            $attributes = json_decode((string) $row->payload, true, 64, JSON_THROW_ON_ERROR);
-            unset($attributes['kind'], $attributes['key']);
-            $entities[$row->stable_key] = new Entity($row->stable_key, ...[...$scope, $row->source_version,
-                $row->entity_kind, $row->stable_key, $attributes]);
-        }
-        $facts = $models->factsByIds(...[...$scope, $rows->pluck('fact_key')->all()]);
+        $facts = $candidates->facts;
         $proofs = [];
         foreach ($facts as $fact) {
             foreach ($fact->evidenceIds as $id) {
@@ -221,7 +206,7 @@ final readonly class ComposerSourceClaimValidationService
                     producerName: $node->producerName, sourceReference: $node->sourceRef, fingerprint: $node->fingerprint);
             }
         }
-        $snapshot = new ProjectModelSnapshot(array_values($entities), $facts, array_values($proofs), []);
+        $snapshot = new ProjectModelSnapshot($candidates->entities, $facts, array_values($proofs), []);
         $documents = [['document_id' => $documentId, 'source_version' => $document->getAttribute('source_version'),
             'checksum_sha256' => $document->getAttribute('checksum_sha256'), 'status' => $document->getAttribute('status')]];
 

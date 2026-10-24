@@ -9,6 +9,68 @@ use PHPUnit\Framework\TestCase;
 
 final class ComposerSourceClaimValidationTest extends TestCase
 {
+    public function test_inactive_source_confirmation_stays_visible_for_explicit_recovery_without_get_writes(): void
+    {
+        foreach (['inactive', 'review_denied'] as $failure) {
+            foreach ([[true, 'estimate_review_required'], [false, 'estimate_review_required'], [true, 'generating']] as [$canReview, $status]) {
+                $fixture = $this->repositoryReviewCapture();
+                try {
+                    ($fixture->phase)(1, 'accept');
+                    $authorization = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
+                    $authorization->method('authorize')->willReturnCallback(static function ($actor, $session, string $permission) use ($canReview): void {
+                        if (! $canReview && $permission === 'estimate_generation.review') {
+                            throw new \Illuminate\Auth\Access\AuthorizationException;
+                        }
+                    });
+                    $handler = new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReviewSpreadsheetCellInterpretation(
+                        $fixture->connection, $authorization,
+                        (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetCellReviewSource::class))->newInstanceWithoutConstructor(),
+                        (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter::class))->newInstanceWithoutConstructor(),
+                        $fixture->models,
+                        (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\AtomicDocumentUnitPublicationWriter::class))->newInstanceWithoutConstructor(),
+                        (new \ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder::class))->newInstanceWithoutConstructor(),
+                        $fixture->claims,
+                    );
+                    $fixture->sourceState->rows['estimate_generation_sessions'][0]['status'] = $status;
+                    $session = new \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+                    $session->setRawAttributes($fixture->sourceState->rows['estimate_generation_sessions'][0]);
+                    $actor = new \App\Models\User;
+                    $actor->setRawAttributes(['id' => 77, 'current_organization_id' => 10, 'is_active' => true]);
+                    $active = $handler->sourceRows($actor, $session, 17);
+                    self::assertCount(1, $active);
+                    self::assertSame('accept', $active[0]['status']);
+                    self::assertSame('confirmed_by_user', $active[0]['human_interpretation']);
+                    $oldReviewId = $fixture->state->review->id;
+                    $users = $fixture->sourceState->rows['users'];
+                    if ($failure === 'inactive') {
+                        $fixture->sourceState->rows['users'] = [];
+                    } else {
+                        $fixture->state->reviewerAuthorized = false;
+                    }
+                    $before = serialize($fixture->sourceState->rows);
+                    $rows = $handler->sourceRows($actor, $session, 17);
+                    self::assertCount(1, $rows);
+                    self::assertSame('invalidated', $rows[0]['status']);
+                    self::assertSame($canReview && $status === 'estimate_review_required' ? ['revoke'] : [], $rows[0]['actions']);
+                    foreach (['human_interpretation', 'source_correspondence', 'source_authority', 'engineering_applicability'] as $axis) {
+                        self::assertSame('unresolved', $rows[0][$axis]);
+                    }
+                    self::assertSame($before, serialize($fixture->sourceState->rows));
+                    self::assertSame('accept', $fixture->state->review->value['decision']);
+                    ($fixture->phase)(2, 'revoke');
+                    $fixture->sourceState->rows['users'] = $users;
+                    $fixture->state->reviewerAuthorized = true;
+                    $revoked = $handler->sourceRows($actor, $session, 17);
+                    self::assertSame('revoke', $revoked[0]['status']);
+                    self::assertSame($canReview && $status === 'estimate_review_required' ? ['accept'] : [], $revoked[0]['actions']);
+                    self::assertNull($fixture->claims->currentSourceReview([10, 20, 40], $fixture->firstPublicationId, $oldReviewId));
+                } finally {
+                    ($fixture->restore)();
+                }
+            }
+        }
+    }
+
     public function test_repository_source_review_state_and_planning_share_accept_revoke_reaccept_maps(): void
     {
         $fixture = $this->repositoryReviewCapture();
@@ -104,23 +166,37 @@ final class ComposerSourceClaimValidationTest extends TestCase
         $state = $this->repositoryReviewState($firstId);
         $models = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
         $models->method('currentFacts')->willReturnCallback(static fn (): array => [$state->review]);
-        $models->method('factsByIds')->willReturn([$candidate]);
+        $models->method('sourceRequirementCandidates')->with(10, 20, 40, 17, $candidate->sourceVersion, Claims::MAX_CLAIMS)
+            ->willReturn($candidateSnapshot);
+        $models->method('factsByIds')->willReturnCallback(static function (int $org, int $project, int $session, array $ids) use ($candidate, $state): array {
+            return array_values(array_filter([$candidate, $state->published, $state->review],
+                static fn ($fact): bool => $fact !== null && in_array($fact->id, $ids, true)));
+        });
+        $models->method('decisionsForSelectedFacts')->willReturnCallback(static fn (): array => $state->decision === null ? [] : [$state->decision]);
         $evidence = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class);
         $evidence->method('node')->willReturnCallback(static fn (int $org, int $project, int $session, int $id) => $id === 1 ? $fixture->node : $state->humanNode);
         $units = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore::class);
         $authorization = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
+        $authorization->method('authorize')->willReturnCallback(static function ($actor, $session, string $permission) use ($state): void {
+            if (! $state->reviewerAuthorized && $permission === 'estimate_generation.review') {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+        });
         $claims = new Claims($evidence, $units, reviewAuthorization: $authorization, contentReader: $fixture->reader, models: static fn () => $models);
         $scope = ['organization_id' => 10, 'project_id' => 20, 'session_id' => 40];
         $fixture->state->rows += ['users' => [[...$scope, 'id' => 55, 'is_active' => true, 'current_organization_id' => 10]],
-            'estimate_generation_sessions' => [[...$scope, 'id' => 40, 'state_version' => 8, 'status' => 'estimate_review_required']],
-            'estimate_generation_project_model_assertions' => [[...$scope, 'id' => 7, 'stable_key' => $entity->id,
-                'entity_kind' => $entity->type, 'source_version' => $entity->sourceVersion, 'payload' => json_encode($entity->attributes, JSON_THROW_ON_ERROR), 'fact_key' => $candidate->id]]];
+            'estimate_generation_sessions' => [[...$scope, 'id' => 40, 'state_version' => 8, 'status' => 'estimate_review_required']]];
         foreach (array_keys($fixture->state->rows) as $table) $fixture->state->reads[$table] ??= 0;
         $connection = $this->getMockBuilder(\Illuminate\Database\Connection::class)->disableOriginalConstructor()
-            ->onlyMethods(['transaction', 'getDriverName', 'selectOne'])->getMock();
+            ->onlyMethods(['transaction', 'getDriverName', 'selectOne', 'statement'])->getMock();
         $connection->method('transaction')->willReturnCallback(static fn (callable $callback) => $callback());
         $connection->method('getDriverName')->willReturn('pgsql');
         $connection->method('selectOne')->willReturn((object) []);
+        $connection->method('statement')->willReturnCallback(static function (string $query): bool {
+            self::assertSame('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', $query);
+
+            return true;
+        });
         $database = $this->getMockBuilder(\Illuminate\Database\DatabaseManager::class)->disableOriginalConstructor()->onlyMethods(['connection', '__call'])->getMock();
         $database->method('connection')->willReturn($connection);
         $database->method('__call')->willReturnCallback(function (string $method, array $arguments) use ($state): \Illuminate\Database\Query\Builder {
@@ -164,6 +240,11 @@ final class ComposerSourceClaimValidationTest extends TestCase
                 $version === 1 ? null : 'fact:human-review:'.($version - 1));
             $published = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact($state->publicationId, 10, 20, 40,
                 $source->sourceVersion, $source->entityId, $source->type, $source->value, null, 0.0, 'document', 'confirmed', ['evidence:1'], $version < 3 ? 2 : 3, $source->id);
+            $state->published = $published;
+            $state->decision = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision($decisionId, 10, 20, 40,
+                $reviewVersion, 'fact', $state->review->supersedesFactId ?? $reviewId, $reviewId, 'user', '55', $reason, $version, $state->review->evidenceIds);
+            $fixture->state->rows['estimate_generation_sessions'][0]['input_payload'] = json_encode(['document_source_review_rows' =>
+                [$ref => ['decision' => $decision, 'fact_id' => $reviewId, 'publication' => $value['publication']]]], JSON_THROW_ON_ERROR);
             $native = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:native-review', 10, 20, 40,
                 $source->sourceVersion, 'entity:native', 'equipment_specification', 'Описание', null, 0.0, 'document', 'confirmed', ['evidence:1']);
             $unrelated = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:unrelated', 10, 20, 40,
@@ -201,12 +282,14 @@ final class ComposerSourceClaimValidationTest extends TestCase
             ];
         };
 
-        return (object) ['repository' => $repository, 'state' => $state, 'phase' => $phase, 'firstPublicationId' => $firstId, 'restore' => $fixture->restore];
+        return (object) ['repository' => $repository, 'state' => $state, 'phase' => $phase, 'firstPublicationId' => $firstId,
+            'claims' => $claims, 'models' => $models, 'sourceState' => $fixture->state, 'connection' => $connection, 'restore' => $fixture->restore];
     }
 
     private function repositoryReviewState(string $publicationId): object
     {
-        return (object) ['tables' => [], 'review' => null, 'humanNode' => null, 'publicationId' => $publicationId, 'reads' => 0, 'drift' => false];
+        return (object) ['tables' => [], 'review' => null, 'published' => null, 'decision' => null, 'reviewerAuthorized' => true,
+            'humanNode' => null, 'publicationId' => $publicationId, 'reads' => 0, 'drift' => false];
     }
 
     public function test_old_snapshot_cannot_restore_a_missing_or_replaced_human_source_review(): void

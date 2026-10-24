@@ -219,7 +219,7 @@ final readonly class ReviewSpreadsheetCellInterpretation
                 $stored = $fresh->input_payload['document_source_review_rows'][$ref] ?? null;
                 $status = $stored['decision'] ?? 'pending';
                 if ($status === 'accept' && $this->sourceReviews->currentSourceReview($scope,
-                    $stored['publication']['fact_id'] ?? '', $stored['fact_id'] ?? '') === null) continue;
+                    $stored['publication']['fact_id'] ?? '', $stored['fact_id'] ?? '') === null) $status = 'invalidated';
                 $details = \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::requirementDetails($association);
                 $source = $details['source'];
                 $rows[] = ['kind' => 'source_requirement', 'schema_version' => 1, 'review_ref' => $ref, 'status' => $status,
@@ -228,7 +228,7 @@ final readonly class ReviewSpreadsheetCellInterpretation
                     'source' => ['document_id' => $documentId, 'source_version' => $source['source_version'], 'page' => $source['page_number'],
                         'region' => $source['region'], 'native_reference' => $source['native_reference']],
                     ...self::sourceOutcome($status), 'actions' => $canReview
-                        ? ($status === 'pending' ? ['accept', 'reject'] : ($status === 'accept' ? ['revoke'] : ['accept'])) : []];
+                        ? ($status === 'pending' ? ['accept', 'reject'] : (in_array($status, ['accept', 'invalidated'], true) ? ['revoke'] : ['accept'])) : []];
             }
 
             return $rows;

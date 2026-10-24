@@ -135,6 +135,15 @@ interface ProjectModelRepository
     /** @param list<string> $factIds @return list<Fact> */
     public function factsByIds(int $organizationId, int $projectId, int $sessionId, array $factIds): array;
 
+    public function sourceRequirementCandidates(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        int $documentId,
+        string $sourceVersion,
+        int $limit,
+    ): ?ProjectModelSnapshot;
+
     /** @return list<Decision> */
     public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array;
 
