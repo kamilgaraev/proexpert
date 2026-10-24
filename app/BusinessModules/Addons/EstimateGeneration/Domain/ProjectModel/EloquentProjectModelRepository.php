@@ -2098,8 +2098,9 @@ SQL, [
             $latestEntities[(string) $entity->stable_key] ??= $this->decode($entity->payload);
         }
         foreach ($facts as $fact) {
-            if ($fact->fact_origin === 'document' && $fact->assertion_type === 'equipment_specification'
-                && isset($latestEntities[(string) $fact->entity_stable_key]['properties']['document_cell_review_anchor'])) {
+            if (str_starts_with((string) $fact->stable_key, 'fact:source-review:')
+                || ($fact->fact_origin === 'document' && $fact->assertion_type === 'equipment_specification'
+                    && isset($latestEntities[(string) $fact->entity_stable_key]['properties']['document_cell_review_anchor']))) {
                 $reviewProjection[(string) $fact->stable_key] = null;
             }
         }
