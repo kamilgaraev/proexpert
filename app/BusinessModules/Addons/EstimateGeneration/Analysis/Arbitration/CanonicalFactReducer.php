@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use InvalidArgumentException;
 
 final class CanonicalFactReducer
@@ -39,10 +40,11 @@ final class CanonicalFactReducer
             $key = $visualKey ?? (is_array($canonical)
                 ? 'canonical|'.$this->matcher->keyForCanonical($canonical)
                 : 'claim|'.$decision->claimId);
+            $key .= $this->semanticScope($byId[$decision->claimId]);
             $key .= $this->matcher->entityScope($byId[$decision->claimId]);
             $groups[$key][] = $decision;
         }
-        $groups = $this->coalesceCanonicalGroups($groups);
+        $groups = $this->coalesceCanonicalGroups($groups, $byId);
         ksort($groups, SORT_STRING);
 
         $reduced = [];
@@ -120,7 +122,13 @@ final class CanonicalFactReducer
         );
     }
 
-    private function coalesceCanonicalGroups(array $groups): array
+    private function semanticScope(ObservationClaim $claim): string
+    {
+        return $claim->semanticProposal === null ? ''
+            : '|semantic:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($claim->semanticIdentity()));
+    }
+
+    private function coalesceCanonicalGroups(array $groups, array $claims): array
     {
         $coalesced = [];
         $metadata = [];
@@ -137,6 +145,7 @@ final class CanonicalFactReducer
                 continue;
             }
             $signature = $this->matcher->factSignatureForCanonical($canonical);
+            $signature .= $this->semanticScope($claims[$group[0]->claimId]);
             $scopeOffset = strpos($key, '|scope:');
             $signature .= $scopeOffset === false ? '' : substr($key, $scopeOffset);
             $support = $this->supportSet($group);

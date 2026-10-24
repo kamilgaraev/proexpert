@@ -111,6 +111,79 @@ final class DocumentArbitrationTest extends TestCase
         self::assertCount(2, (new ArbitrationInputBuilder)->claimBatch($this->sourceInput(), $runs)->claims);
     }
 
+    public function test_actual_arbiter_preserves_distinct_requirements_with_one_source_excerpt(): void
+    {
+        $first = $this->semanticRuns('0.90')['observer_construction']->payload['claims'][0];
+        $threshold = $conditions = $locator = $first;
+        $threshold['semanticProposal']['threshold']['data'] = '0.95';
+        $conditions['semanticProposal']['conditions'] = [$first['semanticProposal']['appliesTo']['subject']];
+        $locator['semanticProposal']['threshold']['sourcePolygonOrNativeRef'] = [[0.3, 0.3], [0.4, 0.4]];
+        foreach ([$threshold, $conditions, $locator] as $second) {
+            [$claims, $decisions] = $this->arbitrateConstructionClaims([$first, $second]);
+            self::assertCount(2, $decisions);
+            self::assertSame(['accepted', 'accepted'], array_column($decisions, 'status'));
+            $lineage = array_column($decisions, 'supportingClaimIds');
+            sort($lineage);
+            self::assertSame([['construction:1'], ['construction:2']], $lineage);
+            $models = new InMemoryProjectModelRepository;
+            (new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository))->writeArbitration($claims, $decisions, 13, 4);
+            self::assertCount(2, $models->facts);
+            self::assertCount(2, $models->entities);
+            $aliases = [];
+            foreach ($decisions as $index => $decision) {
+                $aliases[] = new ArbitrationDecision($decision->claimId, $decision->status,
+                    array_column($claims, 'id'), $decision->evidenceRefs, $decision->reasonCode,
+                    [...$decision->canonicalClaim, 'entity_key' => 'wall.alias-'.($index + 1)], $decision->reason);
+            }
+            self::assertCount(2, (new CanonicalFactReducer)->reduce($claims, $aliases));
+            self::assertEquals($decisions, (new CanonicalFactReducer)->reduce($claims, array_reverse($decisions)));
+        }
+    }
+
+    public function test_identical_source_requirements_keep_existing_duplicate_consensus(): void
+    {
+        $claim = $this->semanticRuns('0.90')['observer_construction']->payload['claims'][0];
+        [$claims, $decisions] = $this->arbitrateConstructionClaims([$claim, $claim]);
+        self::assertCount(1, $decisions);
+        self::assertSame(['construction:1', 'construction:2'], $decisions[0]->supportingClaimIds);
+        self::assertSame('accepted', $decisions[0]->status);
+        (new CanonicalFactReducer)->assertReduced($claims, $decisions);
+        self::assertEquals($decisions, (new CanonicalFactReducer)->reduce($claims, [...$decisions, ...$decisions]));
+        $aliases = array_map(static fn (string $key): ArbitrationDecision => new ArbitrationDecision(
+            $decisions[0]->claimId, $decisions[0]->status, $decisions[0]->supportingClaimIds, $decisions[0]->evidenceRefs,
+            $decisions[0]->reasonCode, [...$decisions[0]->canonicalClaim, 'entity_key' => $key], $decisions[0]->reason), ['wall.first', 'wall.second']);
+        self::assertCount(1, (new CanonicalFactReducer)->reduce($claims, $aliases));
+    }
+
+    public function test_absent_and_null_proposals_preserve_legacy_canonical_bytes(): void
+    {
+        $claim = $this->semanticRuns('0.90')['observer_construction']->payload['claims'][0];
+        unset($claim['semanticProposal']);
+        [, $absent] = $this->arbitrateConstructionClaims([$claim, $claim]);
+        $claim['semanticProposal'] = null;
+        [, $null] = $this->arbitrateConstructionClaims([$claim, $claim]);
+        self::assertCount(1, $absent);
+        self::assertSame(json_encode($absent, JSON_THROW_ON_ERROR), json_encode($null, JSON_THROW_ON_ERROR));
+        self::assertSame(['construction:1', 'construction:2'], $absent[0]->supportingClaimIds);
+        self::assertSame(['entity_key', 'fact_type', 'value', 'unit', 'source_claim_id'], array_keys($absent[0]->canonicalClaim));
+    }
+
+    private function arbitrateConstructionClaims(array $claimPayloads): array
+    {
+        $runs = $this->semanticRuns('0.90');
+        $payload = $runs['observer_construction']->payload;
+        $payload['claims'] = $claimPayloads;
+        $runs['observer_construction'] = new AiRoleRunResult($payload, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002');
+        $claims = array_values(array_filter((new ArbitrationInputBuilder)->claims($this->sourceInput(), $runs),
+            static fn (ObservationClaim $claim): bool => $claim->observerRole === 'observer_construction'));
+        $intents = array_map(static fn (ObservationClaim $claim): array => ['claim_ref' => $claim->id, 'status' => 'accepted',
+            'supporting_claim_refs' => [$claim->id], 'evidence_refs' => [$claim->evidenceRef], 'reason' => 'Виден текст условия'], $claims);
+        $result = (new ArbitrationIntentIngestor)->ingest($intents, $claims);
+        self::assertSame([], $result->quarantined);
+
+        return [$claims, $result->accepted];
+    }
+
     private function semanticRuns(string $threshold): array
     {
         $runs = $this->observerRuns();
