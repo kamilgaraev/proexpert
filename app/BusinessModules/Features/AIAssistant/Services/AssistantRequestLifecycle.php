@@ -71,6 +71,31 @@ final class AssistantRequestLifecycle
         $this->assertActive($request, $actor);
     }
 
+    public function checkpointControl(int $requestKey, string $requestId, int $userId, int $organizationId, ?int $conversationId): void
+    {
+        $connection = DB::connection();
+        if ($connection->getName() !== config('database.default') || $connection->getDriverName() !== 'pgsql'
+            || $connection->transactionLevel() !== 0 || $connection->getPdo()->inTransaction()) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+
+        $current = AssistantRequest::query()->useWritePdo()->select([
+            'id', 'request_id', 'user_id', 'organization_id', 'conversation_id',
+            'status', 'cancel_requested_at', 'lease_expires_at',
+        ])->find($requestKey);
+        if ($current === null) {
+            throw new AssistantRequestCancelled;
+        }
+        if ($current->request_id !== $requestId || $current->user_id !== $userId
+            || $current->organization_id !== $organizationId || $current->conversation_id !== $conversationId) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+        if ($current->status !== 'running' || $current->cancel_requested_at !== null
+            || $current->lease_expires_at === null || $current->lease_expires_at->lessThanOrEqualTo(now())) {
+            throw new AssistantRequestCancelled;
+        }
+    }
+
     public function start(Organization $organization, User $actor, ?int $conversationId, array $payload, ?string $surface = null, bool $queued = false): array
     {
         $authorizationStartedAt = $queued ? hrtime(true) : null;
