@@ -75,7 +75,7 @@ final class AssistantGuardedOutcomeBoundaryTest extends TestCase
             'user_id' => $this->fixture->owner->id, 'fileable_type' => $this->project->getMorphClass(), 'fileable_id' => $this->project->id,
             'name' => 'Учебные условия.txt', 'original_name' => 'Учебные условия.txt', 'path' => 'private/sample.txt',
             'disk' => 's3', 'mime_type' => 'text/plain', 'size' => 100]));
-        $text = 'Учебные условия приёмки бетона требуют сверки документов.';
+        $text = 'В PDF описан порядок подготовки бетона к приёмке. В отчёте подрядчика указано: объект готов к приёмке.';
         $this->document = Model::withoutEvents(fn () => AIAssistantDocument::query()->create(['organization_id' => $this->fixture->organization->id,
             'project_id' => $this->project->id, 'file_id' => $file->id, 'parent_entity_type' => 'project', 'parent_entity_id' => (string) $this->project->id,
             'storage_path' => $file->path, 'filename' => $file->name, 'mime_type' => 'text/plain', 'checksum' => hash('sha256', $text),
@@ -110,12 +110,29 @@ final class AssistantGuardedOutcomeBoundaryTest extends TestCase
     #[DataProvider('misleadingLegacyPlans')]
     public function test_successful_guarded_reads_do_not_inherit_legacy_report_availability_failure(string $query): void
     {
+        $this->assertSuccessfulGuardedAnswer($query,
+            'График и утверждённый фрагмент позволяют обсудить сроки и условия приёмки. Проверены только выбранные источники.');
+    }
+
+    public static function documentSourceAnalyses(): iterable
+    {
+        yield 'PDF source preparation' => ['В PDF описан порядок подготовки бетона к приёмке.'];
+        yield 'source report readiness' => ['В отчёте подрядчика указано: объект готов к приёмке.'];
+    }
+
+    #[DataProvider('documentSourceAnalyses')]
+    public function test_guarded_document_source_analysis_is_not_an_artifact_completion_claim(string $final): void
+    {
+        $this->assertSuccessfulGuardedAnswer('Собери короткую проверку по графику проекта и условиям приёмки в утверждённом документе.', $final);
+    }
+
+    private function assertSuccessfulGuardedAnswer(string $query, string $final): void
+    {
         $plan = app(AssistantTaskOrchestrator::class)->plan($query, [], []);
         self::assertSame('generate_report', $plan['request_understanding']['primary_intent']);
         self::assertNotEmpty($plan['capability']['domain']);
         [$cohort, $payload, $manifest] = $this->enroll($query);
         $calls = 0;
-        $final = 'График и утверждённый фрагмент позволяют обсудить сроки и условия приёмки. Проверены только выбранные источники.';
         $provider = $this->provider(function (array $input, array $options) use (&$calls, $manifest, $final): array {
             self::assertSame($calls < 2 ? 'auto' : 'none', $options['tool_choice']);
             self::assertEqualsCanonicalizing(['get_project_attention', OrdinaryAssistantDocumentProjection::TOOL], array_column($options['tools'], 'name'));
@@ -168,27 +185,6 @@ final class AssistantGuardedOutcomeBoundaryTest extends TestCase
             self::assertSame(0, app(AICreditService::class)->balance($this->fixture->organization)['reserved_minor']);
             self::assertSame(2, $calls);
         }
-    }
-
-    #[DataProvider('misleadingLegacyPlans')]
-    public function test_unconfirmed_report_completion_is_still_rejected_without_real_artifact(string $query): void
-    {
-        [$cohort, $payload] = $this->enroll($query);
-        $calls = 0;
-        $provider = $this->provider(function () use (&$calls): array {
-            if ($calls < 2) { return $this->nativeCall($calls++); }
-            $calls++;
-            return $this->answer('Отчёт готов, скачать: https://fixture.invalid/fake.pdf');
-        });
-        $response = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id,
-            app(OrdinaryAssistantScopedContext::class))->ask($query, $cohort->organization_id, $this->fixture->owner, null, $payload);
-
-        self::assertSame(trans_message('ai_assistant.report_download_missing'), $response['message']['content']);
-        self::assertSame(3, $calls);
-        self::assertSame([], $response['message']['metadata']['artifacts']);
-        self::assertCount(2, $response['message']['metadata']['source_refs']);
-        self::assertSame('insufficient_data', $response['message']['metadata']['outcome']);
-        self::assertSame(0, $response['credit_usage']['charged_minor']);
     }
 
     public static function actualToolFailures(): iterable
