@@ -46,6 +46,31 @@ use Tests\TestCase;
 
 final class AssistantMixedSourceAdmissionTest extends TestCase
 {
+    public function test_lower_environment_profiler_measures_both_sources_on_every_freshness_pass(): void
+    {
+        config(['ordinary-assistant-profiler.enabled' => true]);
+        [$cohort, $payload] = $this->enroll();
+        $context = app(OrdinaryAssistantScopedContext::class);
+        $context->enter($this->fixture->owner, (int) $cohort->organization_id, $payload['message'], $payload, null);
+        self::assertSame([], $context->validateResults([]));
+        self::assertSame([], $context->canonicalReferencesForPublication([]));
+        $context->assertPublication([]);
+        $snapshot = $context->profileSnapshot();
+        self::assertSame(2, $snapshot['freshness_scope']['count']);
+        self::assertSame(6, $snapshot['reviewer_user_membership']['count']);
+        self::assertSame(2, $snapshot['approved_sql_source_capture']['count']);
+        self::assertSame(2, $snapshot['approved_document_source_capture']['count']);
+        self::assertGreaterThan(0, $snapshot['approved_sql_source_capture']['query_count']);
+        self::assertGreaterThan(0, $snapshot['approved_document_source_capture']['query_count']);
+        self::assertSame(3, $snapshot['projection/reference_guard']['count']);
+        $serialized = json_encode($snapshot, JSON_THROW_ON_ERROR);
+        self::assertStringNotContainsString(self::SENTINEL, $serialized);
+        self::assertStringNotContainsString(self::ACCOUNT, $serialized);
+        self::assertStringNotContainsString('source_version', $serialized);
+        $context->clear();
+        self::assertSame([], $context->profileSnapshot());
+    }
+
     private AssistantRealAuthorizationFixture $fixture;
     private Project $project;
     private ScheduleTask $task;
