@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Egress;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantEgressDenied;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\Models\Organization;
 use App\Models\User;
 use Throwable;
@@ -61,7 +62,9 @@ final readonly class OrdinaryAssistantSourceCatalog
         $arguments = $documentSource ? app(OrdinaryAssistantDocumentProjection::class)->selection($arguments, $projectId)
             : $this->projection->arguments($name, $arguments, $projectId);
         if ((int) $actor->current_organization_id !== $organizationId || ! $actor->is_active
-            || ! $this->permissions->canExposeTool($actor, $name) || ! $this->permissions->canExecuteTool($actor, $name, $arguments)) {
+            || ! app(AssistantDataAccessPolicy::class)->withCurrentChecks($actor, $organizationId,
+                fn (): bool => $this->permissions->canExposeTool($actor, $name, fresh: false)
+                    && $this->permissions->canExecuteTool($actor, $name, $arguments, fresh: false), fresh: true)) {
             throw new AssistantEgressDenied('access_denied');
         }
         $tool = $this->tools->getTool($name);
