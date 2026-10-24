@@ -1014,7 +1014,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     self::assertSame([], $workCard($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'))['requirement_options']);
                     self::assertArrayNotHasKey('component', $factory()->workTechnologyContext[0]['answer']['requirement'] ?? []);
                     self::assertSame($beforeHistory, $historyRows());
-                    self::assertSame(0, app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId]));
+                    self::assertSame(0, DB::transaction(fn () => app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $operationId])));
                     $beforeRevokedAdmission = $counts();
                     $beforeRevokedOperationIds = DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->pluck('operation_id')->all();
                     $revokedOperationId = null;
@@ -1042,7 +1042,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                                 }
                                 DB::transaction(fn () => app(Pipeline\PublishValidatedDraft::class)->beforeComplete($freshClaim, $freshResult, new \DateTimeImmutable));
                                 self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $freshOperationId)->value('status'));
-                                self::assertSame(0, app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $freshOperationId]));
+                                self::assertSame(0, DB::transaction(fn () => app(EstimateGenerationLearningRecorder::class)->recordComposerSourceClaims(...[...$scope, $freshOperationId])));
                                 return 0;
                             });
                         $admittedAfterRevoke = true;
