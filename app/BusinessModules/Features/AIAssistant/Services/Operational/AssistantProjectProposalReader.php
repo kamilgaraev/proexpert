@@ -28,7 +28,7 @@ final readonly class AssistantProjectProposalReader extends AssistantProjectOper
         $pending = ['draft', 'internal_review', 'approved', 'sent', 'customer_review'];
         $examples = (clone $query)->whereIn('status', $pending)->orderBy('valid_until')->orderBy('id')->limit(20)
             ->select(['id', 'number', 'title', 'status', 'valid_until', 'sent_at', 'customer_decision_at'])->get()
-            ->map(static fn ($row): array => ['id' => (int) $row->id, 'number' => $row->number, 'title' => $row->title,
+            ->map(static fn ($row): array => ['id' => (string) $row->id, 'number' => $row->number, 'title' => $row->title,
                 'status' => $row->getRawOriginal('status'), 'valid_until' => $row->valid_until?->toDateString(),
                 'sent_at' => $row->sent_at?->toIso8601String(), 'customer_decision_at' => $row->customer_decision_at?->toIso8601String()])->all();
         return ['counts' => $counts, 'total' => array_sum($counts), 'pending' => array_sum(array_intersect_key($counts, array_flip($pending))),
