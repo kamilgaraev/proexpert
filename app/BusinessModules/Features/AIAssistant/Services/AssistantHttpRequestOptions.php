@@ -8,18 +8,18 @@ use Throwable;
 
 final class AssistantHttpRequestOptions
 {
-    public static function forContext(float $timeoutSeconds, AssistantRequestExecutionContext $context): array
+    public static function forContext(float $timeoutSeconds, AssistantRequestExecutionContext $context, ?callable $checkpointObserver = null): array
     {
         $timeout = $context->remainingSeconds(max(0.1, $timeoutSeconds));
 
-        return self::forCheckpoint($timeout, $context->assertCanContinue(...));
+        return self::forCheckpoint($timeout, $context->assertCanContinue(...), $checkpointObserver);
     }
 
-    public static function forCheckpoint(float $timeoutSeconds, callable $checkpoint): array
+    public static function forCheckpoint(float $timeoutSeconds, callable $checkpoint, ?callable $checkpointObserver = null): array
     {
         $lastCheckpoint = 0;
         $abortException = null;
-        $progress = static function (...$transfer) use ($checkpoint, &$lastCheckpoint, &$abortException): int {
+        $progress = static function (...$transfer) use ($checkpoint, $checkpointObserver, &$lastCheckpoint, &$abortException): int {
             if ($abortException !== null) {
                 return 1;
             }
@@ -30,12 +30,20 @@ final class AssistantHttpRequestOptions
             }
 
             $lastCheckpoint = $now;
+            $checkpointStarted = $checkpointObserver === null ? null : hrtime(true);
             try {
                 $checkpoint();
             } catch (Throwable $exception) {
                 $abortException = $exception;
 
                 return 1;
+            } finally {
+                if ($checkpointStarted !== null) {
+                    try {
+                        $checkpointObserver((hrtime(true) - $checkpointStarted) / 1_000_000);
+                    } catch (Throwable) {
+                    }
+                }
             }
 
             return 0;

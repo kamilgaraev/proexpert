@@ -16,6 +16,10 @@ final class AssistantRequestPhaseTimer
         'request_context', 'access_context', 'task_plan', 'preparation', 'messages', 'catalog',
         'tool_definitions', 'provider_prepare', 'tool', 'stock_read', 'final_verification', 'request_complete', 'summary_publish', 'greeting',
         'read_permit_wait', 'read_permit_hold',
+        'egress_prepare', 'provider_reservation', 'provider_post_sdk', 'provider_failure_cleanup', 'response_staging',
+        'native_prewire_guard', 'native_transport_options', 'native_http_handler',
+        'complete_lock', 'complete_authorization', 'complete_reference_first', 'complete_reference_second',
+        'complete_actor_recheck', 'complete_charge', 'complete_persist', 'complete_publication',
     ];
 
     private readonly int $started;
@@ -80,7 +84,8 @@ final class AssistantRequestPhaseTimer
         }
     }
 
-    public function finish(?Throwable $failure = null, mixed $result = null): void
+    public function finish(?Throwable $failure = null, mixed $result = null, ?bool $successful = null,
+        ?int $progressGuardCount = null, ?float $progressGuardMilliseconds = null): void
     {
         if ($this->finished || $this->requestId === null) {
             return;
@@ -96,9 +101,16 @@ final class AssistantRequestPhaseTimer
                 'request_id' => $this->requestId,
                 'phase' => $this->phase,
                 'duration_ms' => $duration,
-                'success' => $failure === null,
+                'success' => $successful ?? $failure === null,
                 'exception_class' => $failure === null ? null : $failure::class,
             ];
+            if ($this->phase === 'native_http_handler') {
+                $valid = $progressGuardCount !== null && $progressGuardCount >= 0 && $progressGuardCount <= 65536
+                    && $progressGuardMilliseconds !== null && is_finite($progressGuardMilliseconds)
+                    && $progressGuardMilliseconds >= 0 && $progressGuardMilliseconds <= 3_600_000;
+                $metadata['progress_guard_count'] = $valid ? $progressGuardCount : null;
+                $metadata['progress_guard_ms'] = $valid ? round($progressGuardMilliseconds, 2) : null;
+            }
             if (in_array($this->phase, ['tool', 'stock_read'], true)) {
                 $status = is_array($result) ? ($result['status'] ?? null) : null;
                 $metadata['outcome'] = in_array($status, ['success', 'empty', 'partial', 'unavailable', 'error', 'failed', 'access_denied', 'forbidden', 'resolved', 'needs_selection'], true) ? $status : null;
