@@ -223,6 +223,30 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertNotContains('upload_documents', array_column($withoutPermission->availableActions, 'action'));
     }
 
+    public function test_review_document_upload_requires_permission_and_explicit_confirmation_without_expanding_other_states(): void
+    {
+        foreach (EstimateGenerationStatus::cases() as $status) {
+            $snapshot = app(BuildSessionSnapshot::class)->handle(
+                session: $this->makeSession($status), permissions: ['estimate_generation.upload_documents'],
+                readinessSummary: ['blockers' => [], 'warnings' => []],
+            );
+            $upload = array_column($snapshot->availableActions, null, 'action')['upload_documents'] ?? null;
+            if (in_array($status, [EstimateGenerationStatus::Draft, EstimateGenerationStatus::InputReviewRequired, EstimateGenerationStatus::EstimateReviewRequired], true)) {
+                self::assertNotNull($upload, $status->value);
+                self::assertSame($status === EstimateGenerationStatus::EstimateReviewRequired, $upload['requires_confirmation']);
+                self::assertSame('POST', $upload['method']);
+                self::assertSame('/api/v1/admin/projects/17/estimate-generation/sessions/41/documents', $upload['endpoint']);
+            } else {
+                self::assertNull($upload, $status->value);
+            }
+        }
+        $denied = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::EstimateReviewRequired), permissions: ['estimate_generation.view'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+        self::assertNotContains('upload_documents', array_column($denied->availableActions, 'action'));
+    }
+
     #[Test]
     public function resumable_document_system_failure_recommends_documents_with_zero_ready_pages(): void
     {
