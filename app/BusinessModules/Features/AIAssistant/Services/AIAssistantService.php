@@ -1170,7 +1170,7 @@ class AIAssistantService
             }
 
             if ($this->scopedContext?->isGuarded() ?? false) {
-                $approvedReferences = $this->scopedContext->validateResults($verificationToolResults);
+                $approvedReferences = $this->scopedContext->canonicalReferencesForPublication($verificationToolResults);
                 if ($clarification === null && $approvedReferences !== [] && ! ($financialCheck['replaced'] ?? false) && $rawPresentationPlan === null
                     && ! $rejectedFinancialPlan && ! $terminalToolResponse && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
                     $assistantContent = $scopedModelContent;
