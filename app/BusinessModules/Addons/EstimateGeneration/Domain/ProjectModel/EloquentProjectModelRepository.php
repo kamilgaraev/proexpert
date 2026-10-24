@@ -291,7 +291,8 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 $reviewFacts[$fact->id] = null;
             }
         }
-        if ($reviewFacts === []) {
+        $sourceReviews = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => str_starts_with($fact->id, 'fact:source-review:')));
+        if ($reviewFacts === [] && $sourceReviews === []) {
             return ['snapshot' => $snapshot, 'reviews' => []];
         }
         $scope = [$organizationId, $projectId, $sessionId];
@@ -299,6 +300,12 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             : $this->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
         $facts = [];
         foreach ($snapshot->facts as $fact) {
+            if (str_starts_with($fact->id, 'fact:source-review:')) {
+                $current = $this->cellReviews?->captureSourceReview($scope, $snapshot, $decisions, $fact);
+                $reviewFacts[$fact->id] = $current;
+                if ($current !== null) $facts[] = $fact;
+                continue;
+            }
             if (! array_key_exists($fact->id, $reviewFacts)) {
                 $facts[] = $fact;
                 continue;
@@ -334,18 +341,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             if (isset($entities[(string) $row->stable_key])) {
                 continue;
             }
-            $attributes = $this->decode($row->payload);
-            unset($attributes['kind'], $attributes['key']);
-            $entities[(string) $row->stable_key] = new Entity(
-                (string) $row->stable_key,
-                (int) $row->organization_id,
-                (int) $row->project_id,
-                (int) $row->session_id,
-                (string) $row->source_version,
-                (string) $row->entity_kind,
-                (string) $row->stable_key,
-                $attributes,
-            );
+            $entities[(string) $row->stable_key] = $this->hydrateEntityRow($row);
         }
 
         $evidenceIds = array_values(array_unique(array_merge(...array_map(
@@ -449,13 +445,19 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             ->select('entity.*')->distinct()->orderBy('entity.stable_key')->orderBy('entity.source_version')->get();
         $entities = [];
         foreach ($rows as $row) {
-            $attributes = $this->decode($row->payload);
-            unset($attributes['kind'], $attributes['key']);
-            $entities[] = new Entity((string) $row->stable_key, (int) $row->organization_id, (int) $row->project_id,
-                (int) $row->session_id, (string) $row->source_version, (string) $row->entity_kind, (string) $row->stable_key, $attributes);
+            $entities[] = $this->hydrateEntityRow($row);
         }
 
         return $entities;
+    }
+
+    private function hydrateEntityRow(object $row): Entity
+    {
+        $attributes = $this->decode($row->payload);
+        unset($attributes['kind'], $attributes['key']);
+
+        return new Entity((string) $row->stable_key, (int) $row->organization_id, (int) $row->project_id,
+            (int) $row->session_id, (string) $row->source_version, (string) $row->entity_kind, (string) $row->stable_key, $attributes);
     }
 
     public function understandingPreflight(
@@ -1427,6 +1429,33 @@ SQL, [
         return $this->hydrateFactRows($rows, $organizationId, $projectId, $sessionId);
     }
 
+    public function sourceRequirementCandidates(int $organizationId, int $projectId, int $sessionId,
+        int $documentId, string $sourceVersion, int $limit): ?ProjectModelSnapshot
+    {
+        if ($limit < 1 || $limit > 10000) {
+            throw new InvalidArgumentException('Project model candidate read limit is invalid.');
+        }
+        $rows = $this->database->table('estimate_generation_project_model_assertions as fact')
+            ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
+            ->where('fact.organization_id', $organizationId)->where('fact.project_id', $projectId)->where('fact.session_id', $sessionId)
+            ->where('entity.organization_id', $organizationId)->where('entity.project_id', $projectId)->where('entity.session_id', $sessionId)
+            ->where('fact.source_version', $sourceVersion)->where('entity.source_version', $sourceVersion)
+            ->where('fact.fact_origin', 'document')->where('fact.fact_status', 'candidate')
+            ->where('entity.payload->properties->document_semantic_proposal->payload->kind', 'source_requirement')
+            ->where('entity.payload->properties->document_semantic_proposal->source_pins->document_id', $documentId)
+            ->orderBy('fact.stable_key')->limit($limit + 1)->get(['entity.*', 'fact.stable_key as fact_key']);
+        if ($rows->count() > $limit) {
+            return null;
+        }
+        $entities = [];
+        foreach ($rows as $row) {
+            $entities[(string) $row->stable_key] = $this->hydrateEntityRow($row);
+        }
+
+        return new ProjectModelSnapshot(array_values($entities),
+            $this->factsByIds($organizationId, $projectId, $sessionId, $rows->pluck('fact_key')->all()), [], []);
+    }
+
     public function factsByIds(int $organizationId, int $projectId, int $sessionId, array $factIds): array
     {
         if (count($factIds) > 10000) {
@@ -2091,8 +2120,9 @@ SQL, [
             $latestEntities[(string) $entity->stable_key] ??= $this->decode($entity->payload);
         }
         foreach ($facts as $fact) {
-            if ($fact->fact_origin === 'document' && $fact->assertion_type === 'equipment_specification'
-                && isset($latestEntities[(string) $fact->entity_stable_key]['properties']['document_cell_review_anchor'])) {
+            if (str_starts_with((string) $fact->stable_key, 'fact:source-review:')
+                || ($fact->fact_origin === 'document' && $fact->assertion_type === 'equipment_specification'
+                    && isset($latestEntities[(string) $fact->entity_stable_key]['properties']['document_cell_review_anchor']))) {
                 $reviewProjection[(string) $fact->stable_key] = null;
             }
         }

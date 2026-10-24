@@ -15,6 +15,12 @@ final class ReviewSpreadsheetCellRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->input('kind') === 'source_requirement') {
+            return ['kind' => ['required', 'in:source_requirement'], 'request_id' => ['required', 'uuid'],
+                'state_version' => ['required', 'integer', 'min:0'], 'review_ref' => ['required', 'regex:/\A[a-f0-9]{64}\z/D'],
+                'decision' => ['required', 'in:accept,reject,revoke'], 'reason' => ['required', 'string', 'min:12', 'max:1000']];
+        }
+
         return ['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
             'source_version' => ['required', 'string', 'regex:/\Asha256:[a-f0-9]{64}\z/D'],
             'unit_id' => ['required', 'integer', 'min:1'], 'proposal_run_id' => ['required', 'integer', 'min:1'],

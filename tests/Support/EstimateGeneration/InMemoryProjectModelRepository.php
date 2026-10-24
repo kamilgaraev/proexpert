@@ -594,6 +594,43 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
         return null;
     }
 
+    public function sourceRequirementCandidates(int $organizationId, int $projectId, int $sessionId,
+        int $documentId, string $sourceVersion, int $limit): ?ProjectModelSnapshot
+    {
+        if ($limit < 1 || $limit > 10000) {
+            throw new InvalidArgumentException('Project model candidate read limit is invalid.');
+        }
+        $scope = [$organizationId, $projectId, $sessionId];
+        $entities = $facts = [];
+        foreach ($this->facts as $fact) {
+            if ($this->scope($fact) !== $scope || $fact->sourceVersion !== $sourceVersion
+                || $fact->origin !== 'document' || $fact->status !== 'candidate') {
+                continue;
+            }
+            foreach ($this->entities as $entity) {
+                if ($this->scope($entity) !== $scope || $entity->id !== $fact->entityId || $entity->sourceVersion !== $sourceVersion) {
+                    continue;
+                }
+                $descriptor = $entity->attributes['properties']['document_semantic_proposal'] ?? [];
+                if (($descriptor['payload']['kind'] ?? null) === 'source_requirement'
+                    && ($descriptor['source_pins']['document_id'] ?? null) === $documentId) {
+                    $facts[$fact->id] = $fact;
+                    $entities[$entity->id] = $entity;
+                }
+            }
+        }
+        if (count($facts) > $limit) {
+            return null;
+        }
+        ksort($facts, SORT_STRING);
+        $orderedEntities = [];
+        foreach ($facts as $fact) {
+            $orderedEntities[$fact->entityId] = $entities[$fact->entityId];
+        }
+
+        return new ProjectModelSnapshot(array_values($orderedEntities), array_values($facts), [], []);
+    }
+
     public function factsByIds(int $organizationId, int $projectId, int $sessionId, array $factIds): array
     {
         if (count($factIds) > 10000) {

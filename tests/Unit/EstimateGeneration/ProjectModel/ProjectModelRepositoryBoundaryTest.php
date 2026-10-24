@@ -120,6 +120,105 @@ final class ProjectModelRepositoryBoundaryTest extends TestCase
         self::assertSame([$entity->id], array_values(array_unique(array_column($facts, 'entityId'))));
     }
 
+    #[Test]
+    public function bounded_source_candidates_reuse_canonical_history_hydration_and_refuse_overflow(): void
+    {
+        $version = 'sha256:'.str_repeat('a', 64);
+        $fact = new Fact('fact:source', 1, 2, 3, $version, 'entity:source', 'technology_requirements',
+            'Зазор не менее 0.90 м', null, 0.0, 'document', 'candidate', ['evidence:1'], 2, 'fact:previous');
+        $attributes = ['properties' => ['document_semantic_proposal' => ['payload' => ['kind' => 'source_requirement'],
+            'source_pins' => ['document_id' => 17]]], 'name' => 'Исходный документ'];
+        $serializer = new EloquentProjectModelRepository($this->createMock(DatabaseManager::class));
+        $factRow = $this->row($fact, $this->invoke($serializer, 'factPayload', $fact));
+        $factRow->supersedes_assertion_id = 9;
+        $entityRow = (object) ['organization_id' => 1, 'project_id' => 2, 'session_id' => 3, 'stable_key' => $fact->entityId,
+            'source_version' => $version, 'entity_kind' => 'equipment', 'fact_key' => $fact->id,
+            'payload' => json_encode(['kind' => 'equipment', 'key' => $fact->entityId, ...$attributes], JSON_THROW_ON_ERROR)];
+        $state = (object) ['candidates' => [$entityRow], 'where' => [], 'limits' => [], 'orders' => [], 'factReads' => 0, 'tables' => []];
+        $database = $this->getMockBuilder(DatabaseManager::class)->disableOriginalConstructor()->onlyMethods(['__call'])->getMock();
+        $database->method('__call')->willReturnCallback(function (string $method, array $arguments) use ($state, $factRow): Builder {
+            self::assertSame('table', $method);
+            $table = $arguments[0];
+            $state->tables[] = $table;
+            $builder = $this->getMockBuilder(Builder::class)->disableOriginalConstructor()
+                ->onlyMethods(['join', 'where', 'whereIn', 'whereNull', 'whereColumn', 'orderBy', 'limit', 'get', 'pluck'])->getMock();
+            foreach (['join', 'whereIn', 'whereNull', 'whereColumn'] as $chain) $builder->method($chain)->willReturnSelf();
+            $builder->method('where')->willReturnCallback(static function (...$args) use ($state, $builder): Builder {
+                $state->where[] = array_slice($args, 0, 2);
+
+                return $builder;
+            });
+            $builder->method('orderBy')->willReturnCallback(static function (...$args) use ($state, $builder): Builder {
+                $state->orders[] = array_slice($args, 0, 1);
+
+                return $builder;
+            });
+            $builder->method('limit')->willReturnCallback(static function (int $limit) use ($state, $builder): Builder {
+                $state->limits[] = $limit;
+
+                return $builder;
+            });
+            $builder->method('get')->willReturnCallback(static function (array $columns = ['*']) use ($state, $table, $factRow): Collection {
+                if ($table === 'estimate_generation_project_model_assertions as fact') {
+                    if ($columns === ['entity.*', 'fact.stable_key as fact_key']) return new Collection($state->candidates);
+                    $state->factReads++;
+
+                    return new Collection([$factRow]);
+                }
+                if ($table === 'estimate_generation_project_model_fact_evidence as binding') {
+                    return new Collection([(object) ['fact_id' => 8, 'evidence_id' => 1]]);
+                }
+                throw new \LogicException('Unexpected query table: '.$table);
+            });
+            $builder->method('pluck')->willReturn(new Collection([9 => 'fact:previous']));
+
+            return $builder;
+        });
+        $repository = new EloquentProjectModelRepository($database);
+        $result = $repository->sourceRequirementCandidates(1, 2, 3, 17, $version, 8);
+        self::assertNotNull($result);
+        self::assertCount(1, $result->entities);
+        self::assertSame($attributes, $result->entities[0]->attributes);
+        self::assertSame(get_object_vars($fact), get_object_vars($result->facts[0]));
+        self::assertSame(get_object_vars($repository->factsByIds(1, 2, 3, [$fact->id])[0]), get_object_vars($result->facts[0]));
+        self::assertSame([], $result->evidence);
+        self::assertSame([9], $state->limits);
+        foreach (['fact', 'entity'] as $alias) {
+            foreach (['organization_id' => 1, 'project_id' => 2, 'session_id' => 3, 'source_version' => $version] as $key => $value) {
+                self::assertContains([$alias.'.'.$key, $value], $state->where);
+            }
+        }
+        self::assertContains(['fact.fact_origin', 'document'], $state->where);
+        self::assertContains(['fact.fact_status', 'candidate'], $state->where);
+        self::assertContains(['entity.payload->properties->document_semantic_proposal->payload->kind', 'source_requirement'], $state->where);
+        self::assertContains(['entity.payload->properties->document_semantic_proposal->source_pins->document_id', 17], $state->where);
+        self::assertContains(['fact.stable_key'], $state->orders);
+        self::assertNotContains('estimate_generation_project_model_fact_projections as projection', $state->tables);
+        $state->candidates = array_fill(0, 9, $entityRow);
+        $reads = $state->factReads;
+        self::assertNull($repository->sourceRequirementCandidates(1, 2, 3, 17, $version, 8));
+        self::assertSame($reads, $state->factReads);
+
+        $memory = new InMemoryProjectModelRepository;
+        $memory->entities = [new Entity($fact->entityId, 1, 2, 3, $version, 'equipment', $fact->entityId, $attributes)];
+        $memory->facts = [$fact, new Fact('fact:accepted', 1, 2, 3, $version, $fact->entityId, $fact->type, $fact->value,
+            null, 0.0, 'document', 'confirmed', ['evidence:1'], 3, $fact->id)];
+        self::assertSame([$fact], $memory->sourceRequirementCandidates(1, 2, 3, 17, $version, 8)?->facts);
+        self::assertSame([], $memory->sourceRequirementCandidates(1, 2, 4, 17, $version, 8)?->facts);
+        self::assertSame([], $memory->sourceRequirementCandidates(1, 2, 3, 18, $version, 8)?->facts);
+        self::assertSame([], $memory->sourceRequirementCandidates(1, 2, 3, 17, 'sha256:'.str_repeat('b', 64), 8)?->facts);
+        $memory->facts[] = new Fact('fact:source:second', 1, 2, 3, $version, $fact->entityId, $fact->type, $fact->value,
+            null, 0.0, 'document', 'candidate', ['evidence:1']);
+        self::assertNull($memory->sourceRequirementCandidates(1, 2, 3, 17, $version, 1));
+        $memory->entities[] = new Entity('entity:second', 1, 2, 3, $version, 'equipment', 'entity:second', $attributes);
+        $memory->facts[] = new Fact('fact:a-source', 1, 2, 3, $version, 'entity:second', $fact->type, $fact->value,
+            null, 0.0, 'document', 'candidate', ['evidence:1']);
+        $ordered = $memory->sourceRequirementCandidates(1, 2, 3, 17, $version, 8);
+        self::assertNotNull($ordered);
+        self::assertSame(['fact:a-source', 'fact:source', 'fact:source:second'], array_column($ordered->facts, 'id'));
+        self::assertSame(['entity:second', 'entity:source'], array_column($ordered->entities, 'id'));
+    }
+
     private function parameter(?string $value, string $name = 'Размер B', string $status = 'candidate'): Fact
     {
         $source = 'sha256:'.str_repeat('a', 64);

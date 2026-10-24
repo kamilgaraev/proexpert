@@ -80,12 +80,22 @@ final readonly class ComposerSourceClaimValidationService
 
     public static function requirementProposal(Entity $entity, Fact $fact): ?array
     {
+        return self::documentRequirementProposal($entity, $fact, 'confirmed');
+    }
+
+    public static function sourceReviewProposal(Entity $entity, Fact $fact): ?array
+    {
+        return self::documentRequirementProposal($entity, $fact, 'candidate');
+    }
+
+    private static function documentRequirementProposal(Entity $entity, Fact $fact, string $status): ?array
+    {
         $descriptor = $entity->attributes['properties']['document_semantic_proposal'] ?? null;
         if (! is_array($descriptor) || ! self::keys($descriptor, ['schema_version', 'payload', 'field_locators', 'source_pins', 'status', 'proposal_hash'])
             || $descriptor['schema_version'] !== 1 || $descriptor['status'] !== 'proposed'
             || $fact->entityId !== $entity->id || $fact->sourceVersion !== $entity->sourceVersion
             || [$fact->organizationId, $fact->projectId, $fact->sessionId] !== [$entity->organizationId, $entity->projectId, $entity->sessionId]
-            || $fact->origin !== 'document' || $fact->status !== 'confirmed' || $fact->unit !== null
+            || $fact->origin !== 'document' || $fact->status !== $status || $fact->unit !== null
             || ! is_string($fact->value) || $fact->evidenceIds === [] || ! is_array($descriptor['payload'])
             || ! is_array($descriptor['field_locators']) || ! is_array($descriptor['source_pins'])
             || ! self::keys($descriptor['source_pins'], ['organization_id', 'project_id', 'session_id', 'document_id', 'page_number', 'processing_unit_id', 'source_version'])
@@ -131,6 +141,182 @@ final readonly class ComposerSourceClaimValidationService
         return $descriptor;
     }
 
+    public static function sourceReviewReference(array $scope, array $association): string
+    {
+        return hash('sha256', CanonicalPipelineJson::encode(['document-source-review:v1', $scope, $association]));
+    }
+
+    public static function sourceReviewPublicationId(array $scope, string $ref, string $requestId): string
+    {
+        return 'fact:source-review:'.hash('sha256', CanonicalPipelineJson::encode([$scope, $ref, $requestId]));
+    }
+
+    public function sourceReviewSources(array $scope, ProjectModelSnapshot $snapshot, array $documents): array
+    {
+        if (count($scope) !== 3 || count($snapshot->facts) > self::MAX_CLAIMS || count($documents) !== 1
+            || $this->contentReader === null) {
+            return [];
+        }
+        $entities = array_column($snapshot->entities, null, 'id');
+        $candidates = [];
+        foreach ($snapshot->facts as $fact) {
+            $entity = $entities[$fact->entityId] ?? null;
+            $descriptor = $entity instanceof Entity ? self::sourceReviewProposal($entity, $fact) : null;
+            if ($descriptor !== null) {
+                $candidates[] = ['fact' => $fact, 'entity' => $entity, 'descriptor' => $descriptor];
+            }
+        }
+        $index = ['candidates' => $candidates, 'proofs' => array_column($snapshot->evidence, null, 'id')];
+        $result = [];
+        foreach ($this->captureRequirementSources($scope, $index, array_column($documents, null, 'document_id')) as $association) {
+            $result[self::sourceReviewReference($scope, $association)] = $association;
+        }
+
+        return $result;
+    }
+
+    public function documentSourceReviewCandidates(array $scope, int $documentId): ?array
+    {
+        $models = $this->models === null ? null : ($this->models)();
+        if (! $models instanceof ProjectModelRepository || count($scope) !== 3) {
+            return null;
+        }
+        $documentQuery = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query();
+        $documentQuery->where('organization_id', $scope[0])->where('project_id', $scope[1])->where('session_id', $scope[2])
+            ->whereNull('ignored_at')->whereIn('status', ['ready', 'needs_review']);
+        $document = $documentQuery->find($documentId);
+        if (! $document instanceof \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument) {
+            return null;
+        }
+        $candidates = $models->sourceRequirementCandidates(...[...$scope, $documentId, (string) $document->getAttribute('source_version'), self::MAX_CLAIMS]);
+        if ($candidates === null) {
+            return null;
+        }
+        $facts = $candidates->facts;
+        $proofs = [];
+        foreach ($facts as $fact) {
+            foreach ($fact->evidenceIds as $id) {
+                if (isset($proofs[$id]) || preg_match('/\Aevidence:([1-9][0-9]*)\z/D', $id, $match) !== 1) continue;
+                $node = $this->evidence->node(...[...$scope, (int) $match[1]]);
+                if ($node === null || $node->invalidatedAt !== null || $node->sourceType !== EvidenceSourceType::Document
+                    || $node->sourceRef !== 'document:'.$documentId || $node->sourceVersion !== $document->getAttribute('source_version')
+                    || ! is_int($node->locator['page'] ?? null) || $node->locator['page'] < 1) continue;
+                $proofs[$id] = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence($id,
+                    $scope[0], $scope[1], $scope[2], $node->sourceVersion, $node->sourceRef, 'document', $node->locator['page'],
+                    producerName: $node->producerName, sourceReference: $node->sourceRef, fingerprint: $node->fingerprint);
+            }
+        }
+        $snapshot = new ProjectModelSnapshot($candidates->entities, $facts, array_values($proofs), []);
+        $documents = [['document_id' => $documentId, 'source_version' => $document->getAttribute('source_version'),
+            'checksum_sha256' => $document->getAttribute('checksum_sha256'), 'status' => $document->getAttribute('status')]];
+
+        return ['snapshot' => $snapshot, 'sources' => $this->sourceReviewSources($scope, $snapshot, $documents)];
+    }
+
+    public function currentSourceReview(array $scope, string $publicationId, string $reviewFactId): ?array
+    {
+        if (! str_starts_with($publicationId, 'fact:source-review:') || $this->models === null) return null;
+        $models = ($this->models)();
+        if (! $models instanceof ProjectModelRepository) return null;
+        $facts = $models->factsByIds(...[...$scope, [$publicationId, $reviewFactId]]);
+        $byId = array_column($facts, null, 'id');
+        if (! isset($byId[$publicationId], $byId[$reviewFactId])) return null;
+        $current = array_column($models->currentFacts(...[...$scope, $byId[$reviewFactId]->entityId]), null, 'id');
+        if (! isset($current[$reviewFactId])) return null;
+        $proofs = [];
+        foreach ($facts as $fact) {
+            foreach ($fact->evidenceIds as $id) {
+                if (isset($proofs[$id]) || preg_match('/\Aevidence:([1-9][0-9]*)\z/D', $id, $match) !== 1) continue;
+                $node = $this->evidence->node(...[...$scope, (int) $match[1]]);
+                if ($node === null || $node->invalidatedAt !== null) continue;
+                $proofs[$id] = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence($id,
+                    $scope[0], $scope[1], $scope[2], $node->sourceVersion, $node->sourceRef, $node->sourceType->value, $node->locator['page'] ?? null,
+                    nativeReference: $node->locator['native_reference'] ?? null, producerName: $node->producerName,
+                    sourceReference: $node->sourceRef, choiceHash: $node->sourceType === EvidenceSourceType::UserInput ? $node->value['fact_value'] ?? null : null,
+                    fingerprint: $node->fingerprint);
+            }
+        }
+        $snapshot = new ProjectModelSnapshot([], $facts, array_values($proofs), []);
+
+        return $this->captureSourceReview($scope, $snapshot, $models->decisionsForSelectedFacts(...[...$scope, [$reviewFactId]]), $byId[$publicationId]);
+    }
+
+    public function captureSourceReview(array $scope, ProjectModelSnapshot $snapshot, array $decisions, Fact $source): ?array
+    {
+        if (! str_starts_with($source->id, 'fact:source-review:') || $this->reviewAuthorization === null || $this->models === null) {
+            return null;
+        }
+        $reviews = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'evaluation_answer'
+            && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'document_source_review'
+            && ($fact->value['publication']['fact_id'] ?? null) === $source->id));
+        if (count($reviews) !== 1) return null;
+        $review = $reviews[0];
+        $models = ($this->models)();
+        if (! $models instanceof ProjectModelRepository) return null;
+        $currentReviews = array_values(array_filter($models->currentFacts(...[...$scope, $review->entityId]),
+            static fn (Fact $fact): bool => $fact->type === 'evaluation_answer' && $fact->sourceVersion === $review->sourceVersion));
+        if (count($currentReviews) !== 1 || $currentReviews[0]->id !== $review->id
+            || $currentReviews[0]->version !== $review->version
+            || CanonicalPipelineJson::encode($currentReviews[0]->value) !== CanonicalPipelineJson::encode($review->value)) return null;
+        $value = $review->value;
+        $decision = array_column($decisions, null, 'id')[$value['decision_id'] ?? ''] ?? null;
+        if (! self::keys($value, ['schema_version', 'kind', 'review_kind', 'review_ref', 'decision', 'source', 'publication', 'decision_id', 'reason'])
+            || $value['schema_version'] !== 1 || $value['review_kind'] !== 'source_requirement' || $value['decision'] !== 'accept'
+            || ! is_array($value['source']) || ! is_array($value['publication'])
+            || ! self::keys($value['publication'], ['fact_id', 'version']) || $value['publication']['version'] !== $source->version
+            || $review->origin !== 'user_input' || $review->status !== 'confirmed'
+            || [$review->organizationId, $review->projectId, $review->sessionId] !== $scope
+            || ! $decision instanceof Decision || $decision->selectedFactId !== $review->id || $decision->actorType !== 'user'
+            || $decision->targetType !== 'fact' || $decision->targetId !== ($review->supersedesFactId ?? $review->id)
+            || $decision->reason !== $value['reason']
+            || [$decision->organizationId, $decision->projectId, $decision->sessionId] !== $scope
+            || $decision->sourceVersion !== $review->sourceVersion || $decision->version !== $review->version
+            || $decision->evidenceIds !== $review->evidenceIds || $review->evidenceIds === []
+            || array_intersect($review->evidenceIds, $source->evidenceIds) !== []) return null;
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $humanEvidence = [];
+        foreach ($review->evidenceIds as $id) {
+            $proof = $proofs[$id] ?? null;
+            if ($proof === null || [$proof->organizationId, $proof->projectId, $proof->sessionId] !== $scope
+                || $proof->sourceType !== 'user_input' || $proof->producerName !== 'user_input_normalizer'
+                || $proof->sourceArtifactId !== 'input:'.$scope[2]
+                || $proof->sourceVersion !== $review->sourceVersion || $proof->sourceReference !== 'input:'.$scope[2]
+                || $proof->choiceHash !== hash('sha256', CanonicalPipelineJson::encode($value))
+                || preg_match('/\Aevidence:([1-9][0-9]*)\z/D', $id, $match) !== 1) return null;
+            $node = $this->evidence->node(...[...$scope, (int) $match[1]]);
+            if ($node === null || $node->invalidatedAt !== null || $node->sourceType !== EvidenceSourceType::UserInput
+                || $node->sourceRef !== $proof->sourceReference || $node->producerName !== 'user_input_normalizer'
+                || $node->sourceVersion !== $review->sourceVersion || ($node->value['fact_value'] ?? null) !== $proof->choiceHash
+                || $node->fingerprint !== $proof->fingerprint || $node->fingerprint !== $node->data->fingerprint()) return null;
+            $humanEvidence[$id] = ['evidence_id' => $id, 'fingerprint' => $node->fingerprint,
+                'invalidation_version' => $node->invalidationVersion];
+        }
+        $session = EstimateGenerationSession::query()->where('organization_id', $scope[0])->where('project_id', $scope[1])->find($scope[2]);
+        $actor = \App\Models\User::query()->where('is_active', true)->find($decision->actorId);
+        if ($session === null || $actor === null || (int) $actor->getAttribute('current_organization_id') !== $scope[0]) return null;
+        try {
+            $this->reviewAuthorization->authorize($actor, $session, 'estimate_generation.view');
+            $this->reviewAuthorization->authorize($actor, $session, 'estimate_generation.review');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            return null;
+        }
+        $capture = $this->documentSourceReviewCandidates($scope, (int) ($value['source']['document_pin']['document_id'] ?? 0));
+        $association = $capture['sources'][$value['review_ref']] ?? null;
+        $original = array_column($capture['snapshot']->facts ?? [], null, 'id')[$value['source']['source_fact_id'] ?? ''] ?? null;
+        if ($association === null || ! $original instanceof Fact
+            || CanonicalPipelineJson::encode($association) !== CanonicalPipelineJson::encode($value['source'])
+            || $source->entityId !== $original->entityId || $source->sourceVersion !== $original->sourceVersion
+            || $source->type !== $original->type || $source->value !== $original->value || $source->unit !== null
+            || $source->origin !== 'document' || $source->status !== 'confirmed' || $source->nativeNumericProofs !== []
+            || $source->evidenceIds !== $original->evidenceIds || $source->version <= $original->version
+            || $source->supersedesFactId !== $original->id) return null;
+
+        ksort($humanEvidence, SORT_STRING);
+
+        return ['fact_id' => $review->id, 'version' => $review->version, 'decision_id' => $decision->id,
+            'value_hash' => hash('sha256', CanonicalPipelineJson::encode($value)), 'evidence' => array_values($humanEvidence)];
+    }
+
     public function requirementSources(array $scope, ProjectModelSnapshot $snapshot, array $workContext, array $documents, array &$cache = []): array
     {
         if (! array_is_list($scope) || count($scope) !== 3 || count(array_filter($scope, static fn (mixed $id): bool => is_int($id) && $id > 0)) !== 3
@@ -165,6 +351,11 @@ final readonly class ComposerSourceClaimValidationService
                 'proofs' => array_column($snapshot->evidence, null, 'id'), 'candidates' => $candidates, 'captures' => []];
         }
         $index = &$cache[$snapshotKey];
+        if (! isset($index['decisions']) && array_filter($snapshot->facts, static fn (Fact $fact): bool => str_starts_with($fact->id, 'fact:source-review:')) !== []) {
+            $models = $this->models === null ? null : ($this->models)();
+            $index['decisions'] = $models instanceof ProjectModelRepository
+                ? $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]) : [];
+        }
         $target = $index['entities'][$workContext['binding']['entity_id'] ?? ''] ?? null;
         if (! $target instanceof Entity
             || [$target->organizationId, $target->projectId, $target->sessionId] !== $scope) {
@@ -294,11 +485,17 @@ final readonly class ComposerSourceClaimValidationService
             if ($cache[$artifactKey] === null) {
                 continue;
             }
+            $humanReview = null;
+            if (str_starts_with($fact->id, 'fact:source-review:')) {
+                $humanReview = $this->captureSourceReview($scope, $index['snapshot'], $index['decisions'] ?? [], $fact);
+                if ($humanReview === null) continue;
+            }
             $association = ['source_fact_id' => $fact->id, 'source_fact_version' => $fact->version,
                 'source_value_hash' => hash('sha256', json_encode($fact->value,
                     JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)), 'source_entity_id' => $entity->id,
                 'descriptor' => $descriptor, 'document_pin' => $pin, 'output_identity' => $outputIdentity,
                 'evidence' => array_values($witnesses), 'artifact' => $cache[$artifactKey]];
+            if ($humanReview !== null) $association['human_review'] = $humanReview;
             $sourceKey = hash('sha256', CanonicalPipelineJson::encode($association));
             if (isset($result[$sourceKey])) {
                 return [];

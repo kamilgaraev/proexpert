@@ -25,7 +25,8 @@ final readonly class ReviewSpreadsheetCellInterpretation
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
         private SpreadsheetCellReviewSource $sources, private UserEvaluationChoiceWriter $choices,
         private ProjectModelRepository $models, private AtomicDocumentUnitPublicationWriter $publisher,
-        private EstimateGenerationLearningRecorder $learning) {}
+        private EstimateGenerationLearningRecorder $learning,
+        private ?\App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService $sourceReviews = null) {}
 
     public function rows(User $actor, EstimateGenerationSession $session, int $documentId): array
     {
@@ -64,6 +65,9 @@ final readonly class ReviewSpreadsheetCellInterpretation
 
     public function handle(User $actor, int $projectId, int $sessionId, int $documentId, array $input): array
     {
+        if (($input['kind'] ?? null) === 'source_requirement') {
+            return $this->reviewSource($actor, $projectId, $sessionId, $documentId, $input);
+        }
         $keys = ['request_id', 'state_version', 'source_version', 'unit_id', 'proposal_run_id', 'proposal_hash', 'decision', 'reason',
             ...(($input['decision'] ?? null) === 'accept' ? ['identity_confirmation'] : [])];
         if (count($input) !== count($keys) || array_diff($keys, array_keys($input)) !== [] || ! Str::isUuid($input['request_id'] ?? '')
@@ -190,6 +194,165 @@ final readonly class ReviewSpreadsheetCellInterpretation
 
                     return $result;
                 });
+        }, 3);
+    }
+
+    public function sourceRows(User $actor, EstimateGenerationSession $session, int $documentId): array
+    {
+        $this->authorization->authorize($actor, $session, 'estimate_generation.view');
+        if ($this->sourceReviews === null || $this->database->getDriverName() !== 'pgsql') return [];
+        $read = function () use ($actor, $session, $documentId): array {
+            $fresh = EstimateGenerationSession::query()->where('organization_id', $session->getAttribute('organization_id'))
+                ->where('project_id', $session->getAttribute('project_id'))->find($session->getKey());
+            if (! $fresh instanceof EstimateGenerationSession || (int) $fresh->getAttribute('state_version') !== (int) $session->getAttribute('state_version')) return [];
+            $this->authorization->authorize($actor, $fresh, 'estimate_generation.view');
+            $canReview = $this->mutable($fresh);
+            try {
+                $this->authorization->authorize($actor, $fresh, 'estimate_generation.review');
+            } catch (\Illuminate\Auth\Access\AuthorizationException) {
+                $canReview = false;
+            }
+            $scope = [(int) $fresh->getAttribute('organization_id'), (int) $fresh->getAttribute('project_id'), (int) $fresh->getKey()];
+            $capture = $this->sourceReviews->documentSourceReviewCandidates($scope, $documentId);
+            $rows = [];
+            foreach ($capture['sources'] ?? [] as $ref => $association) {
+                $stored = $fresh->input_payload['document_source_review_rows'][$ref] ?? null;
+                $status = $stored['decision'] ?? 'pending';
+                if ($status === 'accept' && $this->sourceReviews->currentSourceReview($scope,
+                    $stored['publication']['fact_id'] ?? '', $stored['fact_id'] ?? '') === null) $status = 'invalidated';
+                $details = \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::requirementDetails($association);
+                $source = $details['source'];
+                $rows[] = ['kind' => 'source_requirement', 'schema_version' => 1, 'review_ref' => $ref, 'status' => $status,
+                    'proposal' => array_intersect_key($details, array_flip(['parameter', 'comparator', 'threshold', 'unit', 'subject',
+                        'document_edition', 'clause', 'conditions', 'equipment_identity'])),
+                    'source' => ['document_id' => $documentId, 'source_version' => $source['source_version'], 'page' => $source['page_number'],
+                        'region' => $source['region'], 'native_reference' => $source['native_reference']],
+                    ...self::sourceOutcome($status), 'actions' => $canReview
+                        ? ($status === 'pending' ? ['accept', 'reject'] : (in_array($status, ['accept', 'invalidated'], true) ? ['revoke'] : ['accept'])) : []];
+            }
+
+            return $rows;
+        };
+        if ($this->database->transactionLevel() > 0) {
+            $isolation = $this->database->selectOne('SHOW transaction_isolation');
+            $readOnly = $this->database->selectOne('SHOW transaction_read_only');
+
+            return ($isolation->transaction_isolation ?? null) === 'repeatable read'
+                && ($readOnly->transaction_read_only ?? null) === 'on' ? $read() : [];
+        }
+
+        return $this->database->transaction(function () use ($read): array {
+            $this->database->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+
+            return $read();
+        });
+    }
+
+    private static function sourceOutcome(string $decision): array
+    {
+        return ['human_interpretation' => $decision === 'accept' ? 'confirmed_by_user' : 'unresolved',
+            'source_correspondence' => 'unresolved', 'source_authority' => 'unresolved', 'engineering_applicability' => 'unresolved'];
+    }
+
+    private function reviewSource(User $actor, int $projectId, int $sessionId, int $documentId, array $input): array
+    {
+        $keys = ['kind', 'request_id', 'state_version', 'review_ref', 'decision', 'reason'];
+        if (count($input) !== count($keys) || array_diff($keys, array_keys($input)) !== [] || ! Str::isUuid($input['request_id'] ?? '')
+            || ! is_int($input['state_version'] ?? null) || $input['state_version'] < 0
+            || ! is_string($input['review_ref'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/D', $input['review_ref']) !== 1
+            || ! in_array($input['decision'] ?? null, ['accept', 'reject', 'revoke'], true)
+            || ! is_string($input['reason'] ?? null) || mb_strlen(trim($input['reason'])) < 12 || strlen($input['reason']) > 1000
+            || $this->sourceReviews === null) $this->invalid();
+
+        return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $documentId, $input): array {
+            $sessionQuery = EstimateGenerationSession::query();
+            $sessionQuery->where('organization_id', $actor->getAttribute('current_organization_id'))->where('project_id', $projectId)->lockForUpdate();
+            $session = $sessionQuery->find($sessionId);
+            if (! $session instanceof EstimateGenerationSession) {
+                throw (new \Illuminate\Database\Eloquent\ModelNotFoundException)->setModel(EstimateGenerationSession::class, [$sessionId]);
+            }
+            $this->authorization->authorize($actor, $session, 'estimate_generation.view');
+            $this->authorization->authorize($actor, $session, 'estimate_generation.review');
+            $documentQuery = EstimateGenerationDocument::query();
+            $documentQuery->where('organization_id', $session->getAttribute('organization_id'))->where('project_id', $projectId)
+                ->where('session_id', $sessionId)->lockForUpdate();
+            $document = $documentQuery->find($documentId);
+            if (! $document instanceof EstimateGenerationDocument) {
+                throw (new \Illuminate\Database\Eloquent\ModelNotFoundException)->setModel(EstimateGenerationDocument::class, [$documentId]);
+            }
+            $payload = $session->input_payload ?? [];
+            $receipts = $payload['document_cell_review_receipts'] ?? [];
+            $fingerprint = hash('sha256', CanonicalPipelineJson::encode([$documentId, $input]));
+            if (isset($receipts[$input['request_id']])) {
+                $receipt = $receipts[$input['request_id']];
+                if ($receipt['actor_id'] !== (int) $actor->getKey() || ! hash_equals($receipt['fingerprint'], $fingerprint)) $this->invalid();
+
+                return $receipt['result'];
+            }
+            if ((int) $session->getAttribute('state_version') !== $input['state_version'] || ! $this->mutable($session)) {
+                throw new StaleEstimateGenerationState($sessionId, $input['state_version']);
+            }
+            if ($document->getAttribute('ignored_at') !== null) {
+                throw new StaleEstimateGenerationState($sessionId, $input['state_version']);
+            }
+            if (count($receipts) >= 10000) $this->invalid();
+            $scope = [(int) $session->getAttribute('organization_id'), $projectId, $sessionId];
+            $capture = $this->sourceReviews->documentSourceReviewCandidates($scope, $documentId);
+            $association = $capture['sources'][$input['review_ref']] ?? null;
+            if ($association === null) $this->invalid();
+            $original = array_column($capture['snapshot']->facts, null, 'id')[$association['source_fact_id']] ?? null;
+            $entity = array_column($capture['snapshot']->entities, null, 'id')[$association['source_entity_id']] ?? null;
+            if ($original === null || $entity === null) $this->invalid();
+            $unitQuery = EstimateGenerationProcessingUnit::query();
+            $unitQuery->where('organization_id', $scope[0])->where('project_id', $scope[1])
+                ->where('session_id', $scope[2])->where('document_id', $documentId)->lockForUpdate();
+            $unit = $unitQuery->find($association['output_identity']['processing_unit_id']);
+            if (! $unit instanceof EstimateGenerationProcessingUnit) $this->invalid();
+            $fresh = $this->sourceReviews->documentSourceReviewCandidates($scope, $documentId);
+            if (CanonicalPipelineJson::encode($fresh['sources'][$input['review_ref']] ?? []) !== CanonicalPipelineJson::encode($association)) $this->invalid();
+            $previous = $payload['document_source_review_rows'][$input['review_ref']] ?? null;
+            $allowed = match ($previous['decision'] ?? 'pending') {
+                'pending' => ['accept', 'reject'],
+                'accept' => ['revoke'],
+                'reject', 'revoke' => ['accept'],
+                default => [],
+            };
+            if (! in_array($input['decision'], $allowed, true)) $this->invalid();
+
+            return $this->publisher->transaction($scope[0], $scope[2], function () use ($actor, $session, $scope, $input,
+                $association, $original, $entity, $capture, $payload, $receipts, $fingerprint, $previous): array {
+                $publication = $previous['publication'] ?? null;
+                if ($input['decision'] === 'accept') {
+                    $version = $original->version;
+                    foreach ($this->models->currentFacts(...[...$scope, $original->entityId]) as $fact) {
+                        if ($fact->type === $original->type && $fact->sourceVersion === $original->sourceVersion) $version = max($version, $fact->version);
+                    }
+                    $publication = ['fact_id' => \App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ComposerSourceClaimValidationService::sourceReviewPublicationId(
+                        $scope, $input['review_ref'], $input['request_id']), 'version' => $version + 1];
+                }
+                $choice = $this->choices->write($actor, $session, 'document-source-review:'.$input['review_ref'], 'evaluation_answer',
+                    ['schema_version' => 1, 'kind' => 'document_source_review', 'review_kind' => 'source_requirement',
+                        'review_ref' => $input['review_ref'], 'decision' => $input['decision'], 'source' => $association, 'publication' => $publication],
+                    $input['reason'], $input['request_id']);
+                $review = $this->models->factsByIds(...[...$scope, [$choice['fact_id']]])[0] ?? null;
+                if ($review === null) throw new \LogicException('document_source_review_fact_missing');
+                if ($input['decision'] === 'accept') {
+                    $this->publisher->writeReviewedSourceRequirement($entity, $original, $capture['snapshot']->evidence, $review);
+                }
+                $result = ['kind' => 'source_requirement', 'request_id' => $input['request_id'], 'state_version' => (int) $session->getAttribute('state_version') + 1,
+                    'review_ref' => $input['review_ref'], 'decision_id' => $choice['decision_id'], 'decision' => $input['decision'],
+                    'cost_units' => '0', ...self::sourceOutcome($input['decision'])];
+                $payload['document_source_review_rows'][$input['review_ref']] = ['decision' => $input['decision'],
+                    'fact_id' => $review->id, 'publication' => $publication];
+                $payload['document_cell_review_receipts'] = [...$receipts, $input['request_id'] => ['actor_id' => (int) $actor->getKey(),
+                    'fingerprint' => $fingerprint, 'result' => $result]];
+                unset($payload['confirmed_evaluation']);
+                $this->authorization->authorize($actor, $session, 'estimate_generation.view');
+                $this->authorization->authorize($actor, $session, 'estimate_generation.review');
+                $session->update(['input_payload' => $payload, 'state_version' => $result['state_version']]);
+
+                return $result;
+            });
         }, 3);
     }
 
