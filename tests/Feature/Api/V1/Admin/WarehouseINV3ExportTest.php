@@ -99,10 +99,12 @@ class WarehouseINV3ExportTest extends TestCase
 
         Storage::disk('s3')->assertExists($path);
 
-        $temporaryPath = tempnam(sys_get_temp_dir(), 'inv3_').'.xlsx';
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'inv3_');
         file_put_contents($temporaryPath, Storage::disk('s3')->get($path));
 
-        $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
+        $sheet = IOFactory::load($temporaryPath)->getSheetByName('Итоги и подписи');
+        unlink($temporaryPath);
+        $this->assertNotNull($sheet);
         $commissionHeaderRow = null;
         for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
             if ($sheet->getCell("A{$row}")->getValue() === 'Члены комиссии:') {
@@ -113,11 +115,11 @@ class WarehouseINV3ExportTest extends TestCase
 
         $this->assertNotNull($commissionHeaderRow);
         $this->assertSame(
-            '- ____________________ / Борис Сидоров /',
+            'Должность ________________    Подпись ________________ / Борис Сидоров /',
             $sheet->getCell('A'.($commissionHeaderRow + 1))->getValue()
         );
         $this->assertSame(
-            '- ____________________ / Анна Петрова /',
+            'Должность ________________    Подпись ________________ / Анна Петрова /',
             $sheet->getCell('A'.($commissionHeaderRow + 2))->getValue()
         );
         $documentText = '';
@@ -125,14 +127,14 @@ class WarehouseINV3ExportTest extends TestCase
         for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
             $cellValue = (string) $sheet->getCell("A{$row}")->getValue();
             $documentText .= ' '.$cellValue;
-            if (str_starts_with($cellValue, '- ____________________ /')) {
+            if (str_starts_with($cellValue, 'Должность ________________    Подпись ________________ /')) {
                 $signatureRows[] = $cellValue;
             }
         }
 
         $this->assertSame([
-            '- ____________________ / Борис Сидоров /',
-            '- ____________________ / Анна Петрова /',
+            'Должность ________________    Подпись ________________ / Борис Сидоров /',
+            'Должность ________________    Подпись ________________ / Анна Петрова /',
         ], $signatureRows);
         $this->assertStringNotContainsString('Чужой Пользователь', $documentText);
         $this->assertStringNotContainsString("/ {$employee->id} /", $documentText);
