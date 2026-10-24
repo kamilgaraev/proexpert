@@ -17,6 +17,74 @@ use Tests\Support\DatabaseLessTestCase;
 
 final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
 {
+    public function test_v4_general_requirement_survives_normalization_and_stored_roundtrip_without_equipment_identity(): void
+    {
+        $source = static fn (?string $data): array => ['data' => $data, 'evidenceRef' => $data === null ? null : 'page-1',
+            'sourcePolygonOrNativeRef' => $data === null ? null : 'pdf:page:1/text'];
+        $proposal = ['schemaVersion' => 1, 'kind' => 'source_requirement', 'parameter' => $source('Зазор'),
+            'dimension' => 'length', 'comparator' => $source('gte'), 'threshold' => $source('102'), 'unit' => $source('mm'),
+            'appliesTo' => ['subject' => $source('Работы по установке'), 'equipmentIdentity' => null],
+            'documentEdition' => $source(null), 'clause' => $source('Не менее 102 мм'), 'conditions' => null];
+        $payload = $this->payload('specification', 'technology_requirements');
+        $payload['contractVersion'] = 'sheet-analysis:v4';
+        $payload['facts'][0] = [...$payload['facts'][0], 'entityKey' => 'wall.source', 'contractVersion' => 'sheet-analysis:v4',
+            'value' => ['type' => 'string', 'data' => 'Не менее 102 мм'], 'unit' => null, 'semanticProposal' => $proposal];
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1'], nativeReferences: ['pdf:page:1/text']);
+        self::assertSame([], $analysis->quarantinedItems);
+        self::assertSame($proposal, $analysis->facts[0]['semanticProposal']);
+        self::assertSame('sheet-analysis:v4', $analysis->toArray()['contractVersion']);
+        self::assertSame($analysis->toArray(), ProjectSheetAnalysisData::fromStoredArray($analysis->toArray(), ['page-1'])->toArray());
+        $polygon = $payload;
+        $polygon['facts'][0]['semanticProposal']['threshold']['sourcePolygonOrNativeRef'] = [[0.1, 0.1], [0.9, 0.9]];
+        $transform = new ProjectiveTransformData([[2.0, 0.0, -0.5], [0.0, 2.0, -0.8], [0.0, 0.0, 1.0]],
+            [[0.5, 0.0, 0.25], [0.0, 0.5, 0.4], [0.0, 0.0, 1.0]], 4.0, 10.0);
+        $mapped = ProjectSheetAnalysisData::fromProviderArray($polygon, ['page-1'], nativeReferences: ['pdf:page:1/text'])->mapPolygonsToSource($transform);
+        self::assertSame([[0.3, 0.45], [0.7, 0.8500000000000001]], $mapped->facts[0]['semanticProposal']['threshold']['sourcePolygonOrNativeRef']);
+        self::assertSame('pdf:page:1/text', $mapped->facts[0]['semanticProposal']['clause']['sourcePolygonOrNativeRef']);
+        foreach ([['accepted' => true], ['trust' => 'verified'], ['threshold' => $source('1e2')],
+            ['threshold' => ['data' => 102.5, 'evidenceRef' => 'page-1', 'sourcePolygonOrNativeRef' => 'pdf:page:1/text']],
+            ['threshold' => $source('1000000000001')], ['threshold' => $source('-0')],
+            ['unit' => $source('m2')], ['schemaVersion' => 99], ['conditions' => array_fill(0, 9, $source('Условие'))],
+            ['clause' => [...$source('Пункт'), 'evidenceRef' => 'foreign-page']],
+            ['clause' => [...$source('Пункт'), 'sourcePolygonOrNativeRef' => 'pdf:page:2/text']]] as $change) {
+            $invalid = $payload;
+            $invalid['facts'][0]['semanticProposal'] = [...$proposal, ...$change];
+            self::assertSame([], ProjectSheetAnalysisData::fromProviderArray($invalid, ['page-1'], nativeReferences: ['pdf:page:1/text'])->facts);
+        }
+        $legacy = $this->payload('specification', 'technology_requirements');
+        $legacy['facts'][0] = [...$legacy['facts'][0], 'entityKey' => 'wall.source', 'value' => ['type' => 'string', 'data' => 'Требование'], 'unit' => null];
+        $stored = ProjectSheetAnalysisData::fromProviderArray($legacy, ['page-1'])->toArray();
+        self::assertSame('sheet-analysis:v3', $stored['contractVersion']);
+        self::assertArrayNotHasKey('semanticProposal', $stored['facts'][0]);
+        $unknown = $payload;
+        $unknown['facts'][0]['semanticProposal'] = [...$proposal, 'threshold' => $source(null), 'conditions' => []];
+        self::assertCount(1, ProjectSheetAnalysisData::fromProviderArray($unknown, ['page-1'], nativeReferences: ['pdf:page:1/text'])->facts);
+        $inferred = $payload;
+        $inferred['facts'][0]['semanticProposal']['threshold'] = ['data' => '-1', 'evidenceRef' => null, 'sourcePolygonOrNativeRef' => null];
+        self::assertCount(1, ProjectSheetAnalysisData::fromProviderArray($inferred, ['page-1'], nativeReferences: ['pdf:page:1/text'])->facts);
+        $collision = $payload;
+        $collision['facts'][] = [...$payload['facts'][0], 'semanticProposal' => [...$proposal, 'threshold' => $source('103')]];
+        $collision['facts'][] = $payload['facts'][0];
+        $parsed = ProjectSheetAnalysisData::fromProviderArray($collision, ['page-1'], nativeReferences: ['pdf:page:1/text']);
+        self::assertCount(2, $parsed->facts);
+        self::assertSame('duplicate_project_sheet_fact_key', $parsed->quarantinedItems[0]['reason']);
+        $equipment = $payload;
+        $equipment['facts'][0] = [...$payload['facts'][0], 'entityKey' => 'equipment.p1', 'factType' => 'equipment_specification',
+            'semanticProposal' => ['schemaVersion' => 1, 'kind' => 'equipment_identity',
+                'identity' => ['manufacturer' => $source('Изготовитель'), 'model' => $source('Модель'), 'variant' => $source(null), 'configuration' => $source(null)]]];
+        self::assertCount(1, ProjectSheetAnalysisData::fromProviderArray($equipment, ['page-1'], nativeReferences: ['pdf:page:1/text'])->facts);
+        $equipment['facts'][0]['factType'] = 'technology_requirements';
+        self::assertSame([], ProjectSheetAnalysisData::fromProviderArray($equipment, ['page-1'], nativeReferences: ['pdf:page:1/text'])->facts);
+        $work = $payload;
+        $work['facts'][0]['factType'] = 'technology_candidate';
+        self::assertCount(1, ProjectSheetAnalysisData::fromProviderArray($work, ['page-1'], nativeReferences: ['pdf:page:1/text'])->facts);
+        $noProposal = $legacy;
+        $noProposal['contractVersion'] = 'sheet-analysis:v4';
+        $noProposal['facts'][0]['contractVersion'] = 'sheet-analysis:v4';
+        $noProposal['facts'][0]['semanticProposal'] = null;
+        self::assertArrayNotHasKey('semanticProposal', ProjectSheetAnalysisData::fromProviderArray($noProposal, ['page-1'])->facts[0]);
+    }
+
     public function test_plan_keeps_separate_room_dimensions_with_explicit_units_and_source_anchors(): void
     {
         $payload = $this->payload('plan', 'length');

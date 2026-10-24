@@ -50,11 +50,8 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
             $source->sourceVersion,
             AiAnalysisRole::Arbiter,
             $this->model,
-            ArbitrationInputBuilder::PROMPT_CONTRACT,
-            hash('sha256', json_encode(array_map(
-                static fn (ObservationClaim $item): array => [$item->id, $item->factType, $item->value, $item->evidenceRef],
-                $built['claims'],
-            ), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)),
+            ArbitrationInputBuilder::contractForClaims($built['claims']),
+            ArbitrationInputBuilder::fingerprintForClaims($built['claims']),
         );
         $owner = AiOperationContext::deterministicId('arbiter-owner|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($input, $owner);
@@ -87,7 +84,7 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
             $result = new AiRoleRunResult([
                 'schema_version' => 3,
                 'role' => AiAnalysisRole::Arbiter->value,
-                'prompt_contract' => ArbitrationInputBuilder::PROMPT_CONTRACT,
+                'prompt_contract' => ArbitrationInputBuilder::contractForClaims($built['claims']),
                 'source' => [
                     'document_id' => $source->documentId,
                     'page_id' => $source->pageId,

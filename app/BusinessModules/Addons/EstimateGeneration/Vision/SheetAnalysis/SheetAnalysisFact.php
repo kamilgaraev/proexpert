@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\SheetAnalysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 
 final readonly class SheetAnalysisFact
 {
@@ -18,6 +19,7 @@ final readonly class SheetAnalysisFact
         public array|string $sourcePolygonOrNativeRef,
         public float $confidence,
         public string $contractVersion,
+        public ?array $semanticProposal = null,
     ) {}
 
     /** @param array<string, mixed> $fact */
@@ -37,12 +39,13 @@ final readonly class SheetAnalysisFact
             $source,
             (float) $fact['confidence'],
             $fact['contractVersion'],
+            isset($fact['semanticProposal']) ? FactVocabulary::semanticProposal($fact['semanticProposal'], $fact['factType'], $fact['entityKey'], $value, $fact['unit']) : null,
         );
     }
 
     public function mapPolygonToSource(ProjectiveTransformData $transform): self
     {
-        if (is_string($this->sourcePolygonOrNativeRef)) {
+        if (is_string($this->sourcePolygonOrNativeRef) && $this->semanticProposal === null) {
             return $this;
         }
 
@@ -52,9 +55,12 @@ final readonly class SheetAnalysisFact
             $this->value,
             $this->unit,
             $this->evidenceRef,
-            array_map($transform->toSource(...), $this->sourcePolygonOrNativeRef),
+            is_string($this->sourcePolygonOrNativeRef) ? $this->sourcePolygonOrNativeRef : array_map($transform->toSource(...), $this->sourcePolygonOrNativeRef),
             $this->confidence,
             $this->contractVersion,
+            FactVocabulary::mapSemanticSources($this->semanticProposal, static fn (array $field): array => [
+                ...$field, 'sourcePolygonOrNativeRef' => is_array($field['sourcePolygonOrNativeRef'])
+                    ? array_map($transform->toSource(...), $field['sourcePolygonOrNativeRef']) : $field['sourcePolygonOrNativeRef']]),
         );
     }
 
@@ -70,6 +76,7 @@ final readonly class SheetAnalysisFact
             'sourcePolygonOrNativeRef' => $this->sourcePolygonOrNativeRef,
             'confidence' => $this->confidence,
             'contractVersion' => $this->contractVersion,
+            ...($this->semanticProposal === null ? [] : ['semanticProposal' => $this->semanticProposal]),
         ];
     }
 }

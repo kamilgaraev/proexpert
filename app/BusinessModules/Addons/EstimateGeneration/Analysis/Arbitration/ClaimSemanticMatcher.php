@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use Throwable;
 
 final class ClaimSemanticMatcher
 {
     public function equivalent(ObservationClaim $left, ObservationClaim $right): bool
     {
+        if (DerivedQuantityIdentity::canonicalJson($left->semanticIdentity()) !== DerivedQuantityIdentity::canonicalJson($right->semanticIdentity())) return false;
         if ([$left->organizationId, $left->projectId, $left->sessionId, $left->sourceVersion]
             !== [$right->organizationId, $right->projectId, $right->sessionId, $right->sourceVersion]
             || (new VisualObjectIdentity)->normalizeEntityKey($left->entityKey)
@@ -59,12 +61,14 @@ final class ClaimSemanticMatcher
 
     public function key(ObservationClaim $claim): string
     {
-        return $this->keyForCanonical([
+        $key = $this->keyForCanonical([
             'entity_key' => $claim->entityKey,
             'fact_type' => $claim->factType,
             'value' => $claim->value,
             'unit' => $claim->unit,
         ]);
+
+        return $claim->semanticProposal === null ? $key : $key.'|semantic:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($claim->semanticIdentity()));
     }
 
     public function entityScope(ObservationClaim $claim): string

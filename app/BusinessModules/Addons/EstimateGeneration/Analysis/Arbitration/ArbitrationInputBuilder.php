@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ConstructionObserverPrompt;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use Closure;
@@ -14,6 +17,28 @@ use InvalidArgumentException;
 final class ArbitrationInputBuilder
 {
     public const PROMPT_CONTRACT = 'document-arbitration:v3';
+    public const SEMANTIC_PROMPT_CONTRACT = 'document-arbitration:v4';
+
+    public static function contractForClaims(array $claims): string
+    {
+        foreach ($claims as $claim) {
+            if ($claim->semanticProposal !== null) return self::SEMANTIC_PROMPT_CONTRACT;
+        }
+
+        return self::PROMPT_CONTRACT;
+    }
+
+    public static function fingerprintForClaims(array $claims): string
+    {
+        $semantic = self::contractForClaims($claims) === self::SEMANTIC_PROMPT_CONTRACT;
+        $payload = array_map(static fn (ObservationClaim $item): array => [
+            $item->id, $item->factType, $item->value, $item->evidenceRef,
+            ...($semantic ? [$item->semanticIdentity()] : []),
+        ], $claims);
+
+        return hash('sha256', $semantic ? DerivedQuantityIdentity::canonicalJson($payload)
+            : json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
 
     /**
      * @param  array<string,AiRoleRunResult>  $observerRuns
@@ -40,10 +65,11 @@ final class ArbitrationInputBuilder
             'evidence_ref' => $claim->evidenceRef,
             'explicit_evidence' => $claim->explicitEvidence,
             'locator' => $claim->locator,
+            ...($claim->semanticProposal === null ? [] : ['semantic_proposal' => $claim->semanticProposal, 'semantic_field_locators' => $claim->semanticFieldLocators]),
         ], $claims);
         $metadata = [
             'arbitration' => [
-                'contract' => self::PROMPT_CONTRACT,
+                'contract' => self::contractForClaims($claims),
                 'source_version' => $source->sourceVersion,
                 'minority_evidence_required' => true,
                 'claims' => $compact,
@@ -199,6 +225,32 @@ final class ArbitrationInputBuilder
                         }
                     } elseif (is_string($reference) && ! in_array($reference, $source->nativeReferences, true)) {
                         throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                    }
+                    if (is_array($claim['semanticProposal'] ?? null)) {
+                        if ($role !== 'observer_construction' || ($payload['prompt_contract'] ?? null) !== ConstructionObserverPrompt::VERSION) {
+                            throw new InvalidArgumentException('observation_semantic_contract_invalid');
+                        }
+                        $claim['semanticProposal'] = FactVocabulary::semanticProposal($claim['semanticProposal'], (string) ($claim['factType'] ?? ''),
+                            (string) ($claim['entityKey'] ?? ''), is_array($claim['value'] ?? null) ? $claim['value'] : [], $claim['unit'] ?? null);
+                        $claim['semanticProposal'] = FactVocabulary::mapSemanticSources($claim['semanticProposal'], static function (array $field) use ($source, $role, $evidence, &$claimEvidence): array {
+                            if ($field['evidenceRef'] === null) return $field;
+                            $field['evidenceRef'] = str_replace('observer_', '', $role).':'.$field['evidenceRef'];
+                            $key = $field['evidenceRef'];
+                            if (! isset($evidence[$key])) throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                            $reference = $field['sourcePolygonOrNativeRef'];
+                            if (is_array($reference)) {
+                                $space = $evidence[$key]['coordinate_space'] ?? null;
+                                if (! in_array($space, ['normalized_source_v1', 'normalized_derivative_v1'], true)) throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                                $reference = array_map(static fn (array $point): array => [(float) $point[0], (float) $point[1]], $reference);
+                                $field['sourcePolygonOrNativeRef'] = $space === 'normalized_source_v1' ? $reference
+                                    : array_map(static fn (array $point): array => $source->sourceTransform->toSource($point), $reference);
+                                $claimEvidence[$key]['coordinate_space'] = 'normalized_source_v1';
+                            } elseif (! is_string($reference) || ! in_array($reference, $source->nativeReferences, true)) {
+                                throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                            }
+
+                            return $field;
+                        });
                     }
                     $claims[] = ObservationClaim::fromObserverPayload(
                         $role,

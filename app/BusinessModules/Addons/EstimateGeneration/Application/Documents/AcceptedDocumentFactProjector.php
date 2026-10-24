@@ -55,10 +55,9 @@ final class AcceptedDocumentFactProjector
             'elevation', 'level' => 'height',
             'floor_count' => $this->validFloorCount($claim) ? 'floor_count' : null,
             'material', 'finish_zone' => 'material',
-            'technology_candidate', 'roof_geometry' => 'work_scope',
             'table' => 'table_row',
             'note' => 'note',
-            default => null,
+            default => FactVocabulary::isWorkScopeFactType($claim->factType) ? 'work_scope' : null,
         });
         if ($type === null) {
             return null;

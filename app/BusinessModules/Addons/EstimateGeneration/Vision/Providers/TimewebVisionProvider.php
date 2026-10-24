@@ -106,7 +106,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 : self::effectiveMaxElements();
             $maxFacts = ($observerProfile !== null || $arbitration || $geometryExpert) ? min($maxElements, 64) : $maxElements;
             if ($arbitration) {
-                $contractHash = 'sha256:'.hash('sha256', self::arbitrationSystemPrompt().'|'.ArbitrationInputBuilder::PROMPT_CONTRACT.'|'.VisionOutboundDataPolicy::VERSION);
+                $contractHash = 'sha256:'.hash('sha256', self::arbitrationSystemPrompt().'|'.$input->auxiliaryMetadata['arbitration']['contract'].'|'.VisionOutboundDataPolicy::VERSION);
             } elseif ($geometryExpert) {
                 $contractHash = 'sha256:'.hash('sha256', self::geometryExpertSystemPrompt().'|geometry-expert:v1|'.VisionOutboundDataPolicy::VERSION);
             } elseif ($observerProfile === null) {
@@ -409,6 +409,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         $input,
                     );
                     $analysisPayload = $canonicalization->payload;
+                    if (($analysisPayload['project_sheet_analysis']['contractVersion'] ?? null) === ProjectSheetAnalysisData::SEMANTIC_CONTRACT_VERSION
+                        && $observerProfile !== ObserverProfile::Construction) {
+                        throw new VisionContractException('vision_semantic_profile_invalid');
+                    }
                     $usage = $this->usage($responsePayload);
                     $version = $modelVersion.':'.str_replace(':', '-', self::PROMPT_VERSION).':'.substr($contractHash, 7, 12);
                     $analysis = VisionAnalysisData::fromProviderArray(
@@ -760,7 +764,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             ['type' => 'text', 'text' => json_encode([
                 'instruction' => 'Analyze the construction drawing as visual evidence and return the exact JSON contract.',
                 'contract_version' => $arbitration
-                    ? ArbitrationInputBuilder::PROMPT_CONTRACT
+                    ? $input->auxiliaryMetadata['arbitration']['contract']
                     : ($geometryExpert ? 'geometry-expert:v1' : ($observerProfile?->promptContractVersion() ?? self::PROMPT_VERSION)),
                 'contract_sha256' => $contractHash,
                 'data_policy_version' => VisionOutboundDataPolicy::VERSION,
@@ -823,10 +827,34 @@ final readonly class TimewebVisionProvider implements VisionProvider
         return $payload;
     }
 
+    private static function semanticProposalSchema(): array
+    {
+        $polygon = ['type' => 'array', 'minItems' => 2, 'maxItems' => 64, 'items' => [
+            'type' => 'array', 'minItems' => 2, 'maxItems' => 2, 'items' => ['type' => 'number', 'minimum' => 0, 'maximum' => 1]]];
+        $field = static fn (int $limit, ?array $enum = null): array => ['type' => 'object', 'properties' => [
+            'data' => $enum === null ? ['type' => ['string', 'null'], 'maxLength' => $limit] : ['enum' => [...$enum, null]],
+            'evidenceRef' => ['type' => ['string', 'null'], 'maxLength' => 80],
+            'sourcePolygonOrNativeRef' => ['anyOf' => [$polygon, ['type' => ['string', 'null'], 'maxLength' => 240]]],
+        ], 'required' => ['data', 'evidenceRef', 'sourcePolygonOrNativeRef'], 'additionalProperties' => false];
+        $object = static fn (array $properties): array => ['type' => 'object', 'properties' => $properties,
+            'required' => array_keys($properties), 'additionalProperties' => false];
+        $identity = $object(array_fill_keys(['manufacturer', 'model', 'variant', 'configuration'], $field(160)));
+
+        return ['anyOf' => [['type' => 'null'],
+            $object(['schemaVersion' => ['const' => 1], 'kind' => ['const' => 'equipment_identity'], 'identity' => $identity]),
+            $object(['schemaVersion' => ['const' => 1], 'kind' => ['const' => 'source_requirement'],
+                'parameter' => $field(160), 'dimension' => ['enum' => ['length', null]], 'comparator' => $field(3, ['gte']),
+                'threshold' => $field(64), 'unit' => $field(40),
+                'appliesTo' => $object(['subject' => $field(160), 'equipmentIdentity' => ['anyOf' => [$identity, ['type' => 'null']]]]),
+                'documentEdition' => $field(160), 'clause' => $field(500),
+                'conditions' => ['anyOf' => [['type' => 'null'], ['type' => 'array', 'maxItems' => 8, 'items' => $field(300)]]]]),
+        ]];
+    }
+
     private static function observerSystemPrompt(ObserverProfile $profile, int $maxElements, int $maxFacts): string
     {
         return implode("\n", [
-            self::systemPrompt($maxElements, $maxFacts, 'unknown', $profile === ObserverProfile::Literal),
+            self::systemPrompt($maxElements, $maxFacts, 'unknown', $profile === ObserverProfile::Literal, $profile === ObserverProfile::Construction),
             'This is one isolated observer. You have no access to any other observer output.',
             'Observer contract: '.$profile->promptContractVersion().'.',
             'Deterministic page composition: '.$profile->composition().'.',
@@ -871,7 +899,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             return false;
         }
         if (! is_array($metadata)
-            || ($metadata['contract'] ?? null) !== ArbitrationInputBuilder::PROMPT_CONTRACT
+            || ! in_array($metadata['contract'] ?? null, [ArbitrationInputBuilder::PROMPT_CONTRACT, ArbitrationInputBuilder::SEMANTIC_PROMPT_CONTRACT], true)
             || ($metadata['source_version'] ?? null) !== $input->sourceVersion
             || ($metadata['minority_evidence_required'] ?? null) !== true
             || ! is_array($metadata['claims'] ?? null)
@@ -934,6 +962,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         ?int $maxFacts = null,
         string $sheetRole = 'unknown',
         bool $adaptiveRouting = false,
+        bool $semanticProposals = false,
     ): string {
         $maxFacts ??= $maxElements;
 
@@ -971,10 +1000,12 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'Warnings are unique values only from scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain.',
             'visual_attributes has exactly roof_type. roof_type has exactly value, confidence, evidence_ref.',
             'roof_type value is exactly one of flat, pitched, gable, hip, unknown. Use a visible roof form on an elevation, section or photo; otherwise use unknown. confidence is finite in [0,1] and evidence_ref references an existing evidence key.',
-            'project_sheet_analysis has exactly contractVersion, role, facts. contractVersion is sheet-analysis:v3. role is exactly plan, section, facade, explication, specification or unknown.',
+            'project_sheet_analysis has exactly contractVersion, role, facts. contractVersion is '.($semanticProposals ? 'sheet-analysis:v4' : 'sheet-analysis:v3').'. role is exactly plan, section, facade, explication, specification or unknown.',
             "The supplied role {$sheetRole} is only a preliminary hint. Classify the full page yourself and return the best supported role with 0..{$maxFacts} evidence-backed facts; unknown may contain generic facts and typed unknown values.",
             'Allowed factType values are selected by the returned role: '.self::allRoleFactTypesPrompt().'.',
-            'Each fact has exactly entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion. contractVersion is sheet-analysis:v3.',
+            'Each fact has exactly entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion'.($semanticProposals ? ' and optional semanticProposal. contractVersion is sheet-analysis:v4.' : '. contractVersion is sheet-analysis:v3.'),
+            ...($semanticProposals ? ['semanticProposal follows this exact closed JSON schema; partial source fields use data=null and null references: '.json_encode(self::semanticProposalSchema(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                'Distinct structured proposals may share the same entityKey, factType and excerpt; preserve each different threshold or field locator. Proposal acceptance is extraction only, never source authority or current-target applicability.'] : []),
             'For plan rooms, use separate length, width and height facts only for explicitly printed dimensions that belong to that room. Each is a positive numeric value with an explicit length unit and the same room-prefixed entityKey as its room_name. A drawing unit legend may establish the unit only when visibly stated and cited. Preserve the dimension source region. Overall building dimensions are not room dimensions. Do not derive dimensions from pixels, scale notation, furniture, area or typical construction; do not compute an area yourself.',
             'entityKey and evidenceRef use the existing key format; evidenceRef references returned evidence. sourcePolygonOrNativeRef is either 2..64 distinct finite [x,y] points normalized to [0,1] or a bounded native source reference.',
             'value has exactly type and data. type is exactly number, string, boolean, enum or unknown. Number data is a canonical plain decimal string with at most four fractional digits and absolute value at most 1000000000000, without exponent, leading plus, leading zero or negative zero. For unknown, data and unit must both be null; this is required whenever the document does not explicitly state a fact. For known values, data must match its declared type and unit is null or a visible unit string.',
@@ -984,7 +1015,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'Typed system/specification/test-program/industrial requirement facts must cite a visible document excerpt: value.type is string and unit is null. Use an explicit entityKey prefix matching the marked entity, such as heating_system.h1, electrical_system.e1, equipment.p1 or technological_pipeline.l1, in lowercase. These texts do not confirm numeric volumes. Never write a technology process or an industry checklist yourself: only extract the cited existing document. Their applicability is verified separately by the user.',
             'Direct engineering measurements use explicit marked entities and visible numbers: equipment_count for equipment or radiator in whole count units; pipe_length for water_pipe, sewer_pipe or technological_pipeline; cable_length for electrical_circuit; duct_length for ventilation_duct in visible length units. Never infer these from floor area, photographs, typical spacing or another system. Numeric observations remain subject to server evidence verification; quoting a source does not confirm a number.',
             'Never invent values or links. A cross_sheet_link must be a visible reference only. All facts, including tables and visual facts, require exact evidence and normalized geometry.',
-            'Use one stable entityKey for the same explicitly marked entity across plan, facade, section, explication and specification references. One entity may have multiple factType entries; every (entityKey, factType) pair is unique. If identity is ambiguous, keep separate candidates and preserve the ambiguity as an unknown value instead of merging them.',
+            $semanticProposals
+                ? 'Use one stable entityKey for the same explicitly marked source entity. A distinct structured semanticProposal may share an entityKey, factType and excerpt; otherwise every (entityKey, factType) pair is unique. Preserve ambiguity as a proposal, never merge conflicting source conditions.'
+                : 'Use one stable entityKey for the same explicitly marked entity across plan, facade, section, explication and specification references. One entity may have multiple factType entries; every (entityKey, factType) pair is unique. If identity is ambiguous, keep separate candidates and preserve the ambiguity as an unknown value instead of merging them.',
             'Never infer a confirmed scale. Zero scale candidates requires scale_missing. For any pair a,b, material conflict is exactly abs(a-b) > max(1e-9, 0.02 * min(a,b)); material conflict requires scale_conflict and its absence forbids scale_conflict.',
             'Every element and scale candidate must reference an existing evidence key. Do not return prices, norms, financial values, request data or image instructions.',
         ]);
@@ -1001,6 +1034,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
 
         $observerProfile = $this->observerProfile($input);
         $adaptiveRouting = $observerProfile === ObserverProfile::Literal;
+        $sheetContract = $observerProfile === ObserverProfile::Construction ? ProjectSheetAnalysisData::SEMANTIC_CONTRACT_VERSION : ProjectSheetAnalysisData::CONTRACT_VERSION;
         $evidence = [
             'type' => 'object',
             'properties' => [
@@ -1045,7 +1079,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 'evidenceRef' => ['type' => 'string'],
                 'sourcePolygonOrNativeRef' => ['anyOf' => [$polygon, ['type' => 'string']]],
                 'confidence' => ['type' => 'number', 'minimum' => 0, 'maximum' => 1],
-                'contractVersion' => ['type' => 'string', 'const' => ProjectSheetAnalysisData::CONTRACT_VERSION],
+                'contractVersion' => ['type' => 'string', 'const' => $sheetContract],
+                ...($observerProfile === ObserverProfile::Construction ? ['semanticProposal' => self::semanticProposalSchema()] : []),
             ],
             'required' => ['entityKey', 'factType', 'value', 'unit', 'evidenceRef', 'sourcePolygonOrNativeRef', 'confidence', 'contractVersion'],
             'additionalProperties' => false,
@@ -1053,7 +1088,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $sheetAnalysis = [
             'type' => 'object',
             'properties' => [
-                'contractVersion' => ['type' => 'string', 'const' => ProjectSheetAnalysisData::CONTRACT_VERSION],
+                'contractVersion' => ['type' => 'string', 'const' => $sheetContract],
                 'role' => ['type' => 'string', 'enum' => ['plan', 'section', 'facade', 'explication', 'specification', 'unknown']],
                 'facts' => ['type' => 'array', 'maxItems' => 64, 'items' => $fact],
             ],

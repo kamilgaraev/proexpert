@@ -22,6 +22,16 @@ use PHPUnit\Framework\TestCase;
 
 final class IndependentObserversTest extends TestCase
 {
+    public function test_only_construction_profile_enables_the_new_semantic_contract(): void
+    {
+        self::assertSame('observer-literal:v8', ObserverProfile::Literal->promptContractVersion());
+        self::assertSame('observer-risk:v3', ObserverProfile::Risk->promptContractVersion());
+        self::assertSame('observer-construction:v4', ObserverProfile::Construction->promptContractVersion());
+        self::assertStringContainsString('source_requirement', ObserverProfile::Construction->prompt());
+        self::assertStringNotContainsString('semanticProposal', ObserverProfile::Literal->prompt());
+        self::assertStringNotContainsString('semanticProposal', ObserverProfile::Risk->prompt());
+    }
+
     #[Test]
     public function profiles_build_three_isolated_contexts_without_peer_outputs(): void
     {

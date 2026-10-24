@@ -32,6 +32,176 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class DocumentArbitrationTest extends TestCase
 {
+    public function test_semantic_batch_changes_replay_identity_without_changing_legacy_identity(): void
+    {
+        $builder = new ArbitrationInputBuilder;
+        $legacy = $builder->claims($this->sourceInput(), $this->observerRuns());
+        self::assertSame('document-arbitration:v3', $builder::contractForClaims($legacy));
+        self::assertSame(hash('sha256', json_encode(array_map(static fn (ObservationClaim $claim): array => [
+            $claim->id, $claim->factType, $claim->value, $claim->evidenceRef,
+        ], $legacy), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)), $builder::fingerprintForClaims($legacy));
+        $runs = $this->semanticRuns('102');
+        $first = $builder->claims($this->sourceInput(), $runs);
+        $second = $builder->claims($this->sourceInput(), $this->semanticRuns('103'));
+        self::assertSame('document-arbitration:v4', $builder::contractForClaims($first));
+        self::assertNotSame($builder::fingerprintForClaims($first), $builder::fingerprintForClaims($second));
+        self::assertFalse((new ClaimSemanticMatcher)->equivalent($first[1], $second[1]));
+        $changed = $runs['observer_construction']->payload;
+        $changed['claims'][0]['semanticProposal']['threshold']['sourcePolygonOrNativeRef'] = [[0.3, 0.3], [0.4, 0.4]];
+        $runs['observer_construction'] = new AiRoleRunResult($changed, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002');
+        self::assertNotSame($builder::fingerprintForClaims($first), $builder::fingerprintForClaims($builder->claims($this->sourceInput(), $runs)));
+        $runs = new ArbitrationRunMemoryRepository;
+        $provider = new ArbitrationRecordingProvider;
+        $service = new RunDocumentArbitration($runs, $provider, $builder, 'openai/gpt-6-luna');
+        $one = $service->run($this->sourceInput(), $this->semanticRuns('102'));
+        $service->run($this->sourceInput(), $this->semanticRuns('102'));
+        $service->run($this->sourceInput(), $this->semanticRuns('103'));
+        self::assertSame('document-arbitration:v4', $one->payload['prompt_contract']);
+        self::assertCount(2, $provider->inputs);
+        self::assertSame('document-arbitration:v4', $runs->inputs[0]->promptContractVersion);
+        self::assertSame($builder::fingerprintForClaims($first), $runs->inputs[0]->inputFingerprint);
+    }
+
+    public function test_semantic_source_publication_preserves_distinct_proposals_without_numeric_authority(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $claims = [];
+        foreach (['102', '103'] as $threshold) {
+            $claim = (new ArbitrationInputBuilder)->claims($this->sourceInput(), $this->semanticRuns($threshold))[1];
+            $claims[] = $claim;
+            $decision = $this->decision(['claim_id' => $claim->id, 'status' => 'accepted',
+                'supporting_claim_ids' => [$claim->id], 'evidence_refs' => [$claim->evidenceRef], 'reason' => 'Виден текст условия'], [$claim]);
+            $writer->writeArbitration([$claim], [$decision], 13, 4);
+        }
+        self::assertCount(2, $models->facts);
+        self::assertCount(2, $models->entities);
+        foreach ($models->entities as $entity) {
+            $proposal = $entity->attributes['properties']['document_semantic_proposal'];
+            self::assertSame('proposed', $proposal['status']);
+            self::assertNull($proposal['payload']['appliesTo']['equipmentIdentity']);
+            self::assertSame(13, $proposal['source_pins']['document_id']);
+            self::assertSame(19, $proposal['source_pins']['processing_unit_id']);
+            self::assertSame('construction:note-1', $proposal['payload']['threshold']['evidenceRef']);
+        }
+        foreach ($models->facts as $fact) {
+            self::assertSame([], $fact->nativeNumericProofs);
+            self::assertSame('Не менее указанного зазора', $fact->value);
+            self::assertNull($fact->unit);
+        }
+        $runs = $this->semanticRuns('102');
+        $payload = $runs['observer_construction']->payload;
+        $payload['evidence'][0]['locator']['source_version'] = 'sha256:'.str_repeat('b', 64);
+        $runs['observer_construction'] = new AiRoleRunResult($payload, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002');
+        self::assertCount(2, (new ArbitrationInputBuilder)->claimBatch($this->sourceInput(), $runs)->claims);
+        foreach (['observer-construction:v3', 'observer-construction:v99'] as $version) {
+            $runs = $this->semanticRuns('102');
+            $payload = $runs['observer_construction']->payload;
+            $payload['prompt_contract'] = $version;
+            $runs['observer_construction'] = new AiRoleRunResult($payload, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002');
+            $batch = (new ArbitrationInputBuilder)->claimBatch($this->sourceInput(), $runs);
+            self::assertCount(2, $batch->claims);
+            self::assertCount(1, $batch->quarantined);
+        }
+        $runs = $this->semanticRuns('102');
+        $payload = $runs['observer_construction']->payload;
+        $payload['claims'][0]['semanticProposal']['threshold']['evidenceRef'] = 'another-page';
+        $payload['evidence'][] = ['key' => 'another-page', 'locator' => [...$payload['evidence'][0]['locator'], 'page_id' => 99]];
+        $runs['observer_construction'] = new AiRoleRunResult($payload, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002');
+        self::assertCount(2, (new ArbitrationInputBuilder)->claimBatch($this->sourceInput(), $runs)->claims);
+    }
+
+    public function test_actual_arbiter_preserves_distinct_requirements_with_one_source_excerpt(): void
+    {
+        $first = $this->semanticRuns('0.90')['observer_construction']->payload['claims'][0];
+        $threshold = $conditions = $locator = $first;
+        $threshold['semanticProposal']['threshold']['data'] = '0.95';
+        $conditions['semanticProposal']['conditions'] = [$first['semanticProposal']['appliesTo']['subject']];
+        $locator['semanticProposal']['threshold']['sourcePolygonOrNativeRef'] = [[0.3, 0.3], [0.4, 0.4]];
+        foreach ([$threshold, $conditions, $locator] as $second) {
+            [$claims, $decisions] = $this->arbitrateConstructionClaims([$first, $second]);
+            self::assertCount(2, $decisions);
+            self::assertSame(['accepted', 'accepted'], array_column($decisions, 'status'));
+            $lineage = array_column($decisions, 'supportingClaimIds');
+            sort($lineage);
+            self::assertSame([['construction:1'], ['construction:2']], $lineage);
+            $models = new InMemoryProjectModelRepository;
+            (new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository))->writeArbitration($claims, $decisions, 13, 4);
+            self::assertCount(2, $models->facts);
+            self::assertCount(2, $models->entities);
+            $aliases = [];
+            foreach ($decisions as $index => $decision) {
+                $aliases[] = new ArbitrationDecision($decision->claimId, $decision->status,
+                    array_column($claims, 'id'), $decision->evidenceRefs, $decision->reasonCode,
+                    [...$decision->canonicalClaim, 'entity_key' => 'wall.alias-'.($index + 1)], $decision->reason);
+            }
+            self::assertCount(2, (new CanonicalFactReducer)->reduce($claims, $aliases));
+            self::assertEquals($decisions, (new CanonicalFactReducer)->reduce($claims, array_reverse($decisions)));
+        }
+    }
+
+    public function test_identical_source_requirements_keep_existing_duplicate_consensus(): void
+    {
+        $claim = $this->semanticRuns('0.90')['observer_construction']->payload['claims'][0];
+        [$claims, $decisions] = $this->arbitrateConstructionClaims([$claim, $claim]);
+        self::assertCount(1, $decisions);
+        self::assertSame(['construction:1', 'construction:2'], $decisions[0]->supportingClaimIds);
+        self::assertSame('accepted', $decisions[0]->status);
+        (new CanonicalFactReducer)->assertReduced($claims, $decisions);
+        self::assertEquals($decisions, (new CanonicalFactReducer)->reduce($claims, [...$decisions, ...$decisions]));
+        $aliases = array_map(static fn (string $key): ArbitrationDecision => new ArbitrationDecision(
+            $decisions[0]->claimId, $decisions[0]->status, $decisions[0]->supportingClaimIds, $decisions[0]->evidenceRefs,
+            $decisions[0]->reasonCode, [...$decisions[0]->canonicalClaim, 'entity_key' => $key], $decisions[0]->reason), ['wall.first', 'wall.second']);
+        self::assertCount(1, (new CanonicalFactReducer)->reduce($claims, $aliases));
+    }
+
+    public function test_absent_and_null_proposals_preserve_legacy_canonical_bytes(): void
+    {
+        $claim = $this->semanticRuns('0.90')['observer_construction']->payload['claims'][0];
+        unset($claim['semanticProposal']);
+        [, $absent] = $this->arbitrateConstructionClaims([$claim, $claim]);
+        $claim['semanticProposal'] = null;
+        [, $null] = $this->arbitrateConstructionClaims([$claim, $claim]);
+        self::assertCount(1, $absent);
+        self::assertSame(json_encode($absent, JSON_THROW_ON_ERROR), json_encode($null, JSON_THROW_ON_ERROR));
+        self::assertSame(['construction:1', 'construction:2'], $absent[0]->supportingClaimIds);
+        self::assertSame(['entity_key', 'fact_type', 'value', 'unit', 'source_claim_id'], array_keys($absent[0]->canonicalClaim));
+    }
+
+    private function arbitrateConstructionClaims(array $claimPayloads): array
+    {
+        $runs = $this->semanticRuns('0.90');
+        $payload = $runs['observer_construction']->payload;
+        $payload['claims'] = $claimPayloads;
+        $runs['observer_construction'] = new AiRoleRunResult($payload, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002');
+        $claims = array_values(array_filter((new ArbitrationInputBuilder)->claims($this->sourceInput(), $runs),
+            static fn (ObservationClaim $claim): bool => $claim->observerRole === 'observer_construction'));
+        $intents = array_map(static fn (ObservationClaim $claim): array => ['claim_ref' => $claim->id, 'status' => 'accepted',
+            'supporting_claim_refs' => [$claim->id], 'evidence_refs' => [$claim->evidenceRef], 'reason' => 'Виден текст условия'], $claims);
+        $result = (new ArbitrationIntentIngestor)->ingest($intents, $claims);
+        self::assertSame([], $result->quarantined);
+
+        return [$claims, $result->accepted];
+    }
+
+    private function semanticRuns(string $threshold): array
+    {
+        $runs = $this->observerRuns();
+        $payload = $runs['observer_construction']->payload;
+        $payload['prompt_contract'] = 'observer-construction:v4';
+        $field = static fn (?string $data): array => ['data' => $data, 'evidenceRef' => $data === null ? null : 'note-1',
+            'sourcePolygonOrNativeRef' => $data === null ? null : [[0.1, 0.1], [0.2, 0.2]]];
+        $payload['claims'][0] = [...$payload['claims'][0], 'entityKey' => 'wall.source', 'factType' => 'technology_requirements',
+            'value' => ['type' => 'string', 'data' => 'Не менее указанного зазора'], 'contractVersion' => 'sheet-analysis:v4',
+            'semanticProposal' => ['schemaVersion' => 1, 'kind' => 'source_requirement', 'parameter' => $field('Зазор'),
+                'dimension' => 'length', 'comparator' => $field('gte'), 'threshold' => $field($threshold), 'unit' => $field('mm'),
+                'appliesTo' => ['subject' => $field('Стена источника'), 'equipmentIdentity' => null],
+                'documentEdition' => $field(null), 'clause' => $field('Пункт 1'), 'conditions' => null]];
+        $runs['observer_construction'] = new AiRoleRunResult($payload, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002');
+
+        return $runs;
+    }
+
     public function test_vision_number_locator_is_bound_to_captured_document_and_page_before_publication(): void
     {
         $runs = $this->observerRuns();
@@ -994,20 +1164,24 @@ final class EmptyArbitrationProvider implements VisionProvider
 
 final class ArbitrationRunMemoryRepository implements AiRoleRunRepository
 {
-    private ?AiRoleRunResult $result = null;
+    private array $results = [];
+    private string $currentIdentity = '';
+    public array $inputs = [];
 
     public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
     {
-        return $this->result === null
+        $this->inputs[] = $input;
+        $this->currentIdentity = $input->identityFingerprint();
+        return ! isset($this->results[$this->currentIdentity])
             ? new AiRoleRunClaim(1, 'owned', $ownerUuid)
-            : new AiRoleRunClaim(1, 'replay', result: $this->result);
+            : new AiRoleRunClaim(1, 'replay', result: $this->results[$this->currentIdentity]);
     }
 
     public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void {}
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {
-        $this->result = $result;
+        $this->results[$this->currentIdentity] = $result;
     }
 
     public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}

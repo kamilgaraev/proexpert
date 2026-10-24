@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdent
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 
@@ -27,7 +28,7 @@ final class ProjectSheetAnalysisValidator
     {
         if ($maxFacts < 1 || $maxFacts > 500
             || ! self::hasExactKeys($data, ['contractVersion', 'role', 'facts'])
-            || ($data['contractVersion'] ?? null) !== ProjectSheetAnalysisData::CONTRACT_VERSION
+            || ! in_array($data['contractVersion'] ?? null, [ProjectSheetAnalysisData::CONTRACT_VERSION, ProjectSheetAnalysisData::SEMANTIC_CONTRACT_VERSION], true)
             || ! is_string($data['role'] ?? null) || ! array_key_exists($data['role'], self::ROLE_FACT_TYPES)
             || ! is_array($data['facts'] ?? null) || ! array_is_list($data['facts']) || count($data['facts']) > $maxFacts) {
             throw new VisionContractException('invalid_project_sheet_analysis');
@@ -38,8 +39,9 @@ final class ProjectSheetAnalysisValidator
             if (! is_array($fact)) {
                 throw new VisionContractException('invalid_project_sheet_fact');
             }
+            if (($fact['contractVersion'] ?? null) !== $data['contractVersion']) throw new VisionContractException('invalid_project_sheet_fact');
             self::assertFact($fact, $data['role'], $evidenceKeys, $nativeReferences);
-            $entities[] = $fact['entityKey']."\0".$fact['factType'];
+            $entities[] = self::factIdentity($fact);
         }
         if (count($entities) !== count(array_unique($entities))) {
             throw new VisionContractException('duplicate_project_sheet_fact_key');
@@ -65,7 +67,7 @@ final class ProjectSheetAnalysisValidator
     {
         if ($maxFacts < 1 || $maxFacts > 500
             || ! self::hasExactKeys($data, ['contractVersion', 'role', 'facts'])
-            || ($data['contractVersion'] ?? null) !== ProjectSheetAnalysisData::CONTRACT_VERSION
+            || ! in_array($data['contractVersion'] ?? null, [ProjectSheetAnalysisData::CONTRACT_VERSION, ProjectSheetAnalysisData::SEMANTIC_CONTRACT_VERSION], true)
             || ! is_string($data['role'] ?? null) || ! array_key_exists($data['role'], self::ROLE_FACT_TYPES)
             || ! is_array($data['facts'] ?? null) || ! array_is_list($data['facts']) || count($data['facts']) > $maxFacts) {
             throw new VisionContractException('invalid_project_sheet_analysis');
@@ -79,8 +81,9 @@ final class ProjectSheetAnalysisValidator
                 if (! is_array($fact)) {
                     throw new VisionContractException('invalid_project_sheet_fact');
                 }
+                if (($fact['contractVersion'] ?? null) !== $data['contractVersion']) throw new VisionContractException('invalid_project_sheet_fact');
                 self::assertFact($fact, $data['role'], $evidenceKeys, $nativeReferences);
-                $factIdentity = $fact['entityKey']."\0".$fact['factType'];
+                $factIdentity = self::factIdentity($fact);
                 if (isset($entities[$factIdentity])) {
                     throw new VisionContractException('duplicate_project_sheet_fact_key');
                 }
@@ -97,14 +100,16 @@ final class ProjectSheetAnalysisValidator
     /** @param array<string, mixed> $fact @param list<string> $evidenceKeys @param list<string> $nativeReferences */
     private static function assertFact(array $fact, string $role, array $evidenceKeys, array $nativeReferences): void
     {
-        if (! self::hasExactKeys($fact, ['entityKey', 'factType', 'value', 'unit', 'evidenceRef', 'sourcePolygonOrNativeRef', 'confidence', 'contractVersion'])
+        $keys = ['entityKey', 'factType', 'value', 'unit', 'evidenceRef', 'sourcePolygonOrNativeRef', 'confidence', 'contractVersion'];
+        if (($fact['contractVersion'] ?? null) === ProjectSheetAnalysisData::SEMANTIC_CONTRACT_VERSION && array_key_exists('semanticProposal', $fact)) $keys[] = 'semanticProposal';
+        if (! self::hasExactKeys($fact, $keys)
             || ! is_string($fact['entityKey'] ?? null) || preg_match('~^[a-z0-9][a-z0-9._:-]{0,79}$~', $fact['entityKey']) !== 1
             || ! is_string($fact['factType'] ?? null) || preg_match('~^[a-z0-9][a-z0-9._:-]{0,79}$~', $fact['factType']) !== 1
             || ! is_array($fact['value'] ?? null) || (! is_string($fact['unit'] ?? null) && ($fact['unit'] ?? null) !== null)
             || ! is_string($fact['evidenceRef'] ?? null) || ! in_array($fact['evidenceRef'], $evidenceKeys, true)
             || ! is_numeric($fact['confidence'] ?? null) || ! is_finite((float) $fact['confidence'])
             || (float) $fact['confidence'] < 0 || (float) $fact['confidence'] > 1
-            || ($fact['contractVersion'] ?? null) !== ProjectSheetAnalysisData::CONTRACT_VERSION) {
+            || ! in_array($fact['contractVersion'] ?? null, [ProjectSheetAnalysisData::CONTRACT_VERSION, ProjectSheetAnalysisData::SEMANTIC_CONTRACT_VERSION], true)) {
             throw new VisionContractException('invalid_project_sheet_fact');
         }
 
@@ -138,6 +143,18 @@ final class ProjectSheetAnalysisValidator
             throw new VisionContractException('invalid_engineering_measurement_observation');
         }
 
+        if (array_key_exists('semanticProposal', $fact)) {
+            try {
+                if ($fact['semanticProposal'] !== null && ! is_array($fact['semanticProposal'])) throw new \InvalidArgumentException;
+                $proposal = FactVocabulary::semanticProposal($fact['semanticProposal'], $fact['factType'], $fact['entityKey'], $fact['value'], $fact['unit']);
+                foreach ($proposal === null ? [] : FactVocabulary::semanticSourceFields($proposal) as $field) {
+                    if ($field['evidenceRef'] !== null && ! in_array($field['evidenceRef'], $evidenceKeys, true)) throw new \InvalidArgumentException;
+                    if ($field['sourcePolygonOrNativeRef'] !== null) self::assertSourceReference($field['sourcePolygonOrNativeRef'], $nativeReferences);
+                }
+            } catch (\InvalidArgumentException) {
+                throw new VisionContractException('invalid_document_semantic_proposal');
+            }
+        }
         self::assertSourceReference($fact['sourcePolygonOrNativeRef'] ?? null, $nativeReferences);
         self::assertTypedValue($fact['value'], $fact['unit'], $fact['factType']);
     }
@@ -202,5 +219,13 @@ final class ProjectSheetAnalysisValidator
     private static function hasExactKeys(array $data, array $keys): bool
     {
         return count($data) === count($keys) && array_diff(array_keys($data), $keys) === [];
+    }
+
+    private static function factIdentity(array $fact): string
+    {
+        $identity = $fact['entityKey']."\0".$fact['factType'];
+        $proposal = $fact['semanticProposal'] ?? null;
+
+        return $proposal === null ? $identity : $identity."\0".hash('sha256', DerivedQuantityIdentity::canonicalJson($proposal));
     }
 }
