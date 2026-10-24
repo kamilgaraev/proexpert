@@ -5,22 +5,141 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentAdmissionOperation;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PreparedDocumentAdmission;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\AuthSessionStatus;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Services\Auth\WebAuthTokenService;
+use GuzzleHttp\Psr7\Response;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
+use Psr\Http\Message\RequestInterface;
+use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 use Tests\Support\EstimateGeneration\InMemoryS3HttpStorage;
 
 final class DocumentAdmissionHttpPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_review_upload_preserves_saved_context_and_replays_without_storage_or_automatic_generation(): void
+    {
+        [$rights, $session] = $this->httpFixture();
+        Queue::fake();
+        $puts = 0;
+        (new InMemoryS3HttpStorage)->install(static function (RequestInterface $request) use (&$puts): ?Response {
+            if ($request->getMethod() === 'PUT' && ! str_contains($request->getUri()->getQuery(), 'tagging')) $puts++;
+
+            return null;
+        });
+        $base = '/api/v1/admin/projects/'.$session->project_id.'/estimate-generation/sessions/'.$session->id;
+        $input = ['state_version' => 8, 'request_id' => (string) Str::uuid(), 'files' => [$this->pdf()]];
+        $this->withHeader('Accept', 'application/json');
+        $this->post($base.'/documents', $input)->assertUnauthorized();
+        $denied = $rights->addMember(['ai-estimates' => ['estimate_generation.view']], ['admin.access']);
+        $denied->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
+        $this->withHeaders($this->headers($denied))->post($base.'/documents', $input)->assertForbidden();
+        $foreign = $this->withHeaders($this->headers($rights->foreignOwner))->post($base.'/documents', $input);
+        self::assertContains($foreign->status(), [403, 404]);
+        self::assertSame(0, $puts);
+        self::assertSame(0, DB::table(DocumentAdmissionOperation::TABLE)->where('session_id', $session->id)->count());
+        $draft = CanonicalPipelineJson::encode($session->draft_payload);
+        $accepted = $this->withHeaders($this->headers($rights->member))->post($base.'/documents', $input)->assertOk();
+        self::assertSame('processing_documents', $session->fresh()->status->value);
+        self::assertSame($draft, CanonicalPipelineJson::encode($session->fresh()->draft_payload));
+        self::assertSame('Сохранённое описание проекта', $session->fresh()->input_payload['object_name']);
+        self::assertFalse($session->fresh()->input_payload['generation_requested']);
+        $version = $session->fresh()->state_version;
+        $replayed = $this->post($base.'/documents', $input)->assertOk();
+        self::assertSame($accepted->json('data.documents.0.id'), $replayed->json('data.documents.0.id'));
+        self::assertSame($version, $session->fresh()->state_version);
+        self::assertSame(1, $puts);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
+        Queue::assertNotPushed(GenerateEstimateDraftJob::class);
+        $this->post($base.'/documents', [...$input, 'request_id' => (string) Str::uuid()])->assertConflict();
+        $this->post($base.'/documents', [...$input, 'files' => [$this->pdf('changed.pdf')]])->assertConflict();
+        $this->getJson($base.'/document-admissions/'.$input['request_id'])->assertOk()->assertJsonPath('data.status', 'accepted');
+        self::assertSame(1, $puts);
+        self::assertSame(1, $session->documents()->count());
+        foreach (['estimate_generation_ai_usage', 'estimate_generation_credit_operations'] as $table) {
+            self::assertSame(0, DB::table($table)->where('session_id', $session->id)->count());
+        }
+    }
+
+    public function test_review_pending_admission_blocks_new_storage_and_preserves_its_receipt(): void
+    {
+        [$rights, $session] = $this->httpFixture();
+        Queue::fake();
+        $puts = 0;
+        (new InMemoryS3HttpStorage)->install(static function (RequestInterface $request) use (&$puts): ?Response {
+            if ($request->getMethod() === 'PUT') $puts++;
+
+            return null;
+        });
+        $prepared = PreparedDocumentAdmission::upload($session, [$this->pdf()]);
+        $requestId = (string) Str::uuid();
+        $id = DB::table(DocumentAdmissionOperation::TABLE)->insertGetId(['organization_id' => $session->organization_id,
+            'project_id' => $session->project_id, 'session_id' => $session->id, 'user_id' => $rights->member->id,
+            'request_id' => $requestId, 'kind' => 'upload', 'expected_version' => 8, 'request_hash' => hash('sha256', 'pending fixture'),
+            'reserved_slots' => count($prepared->objects), 'objects' => json_encode($prepared->snapshot(), JSON_THROW_ON_ERROR),
+            'document_ids' => '[]', 'status' => 'pending', 'expires_at' => now()->addMinutes(30), 'created_at' => now(), 'updated_at' => now()]);
+        $base = '/api/v1/admin/projects/'.$session->project_id.'/estimate-generation/sessions/'.$session->id;
+        $this->withHeaders($this->headers($rights->member))->post($base.'/documents', [
+            'state_version' => 8, 'request_id' => (string) Str::uuid(), 'files' => [$this->pdf()],
+        ])->assertConflict();
+        self::assertSame('pending', DB::table(DocumentAdmissionOperation::TABLE)->where('id', $id)->value('status'));
+        self::assertSame(8, $session->fresh()->state_version);
+        self::assertSame(0, $puts);
+        self::assertSame(0, $session->documents()->count());
+        Queue::assertNothingPushed();
+    }
+
+    private function httpFixture(): array
+    {
+        config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
+        $this->seedGlobalSettings();
+        $rights = AssistantRealAuthorizationFixture::create(['working-entry']);
+        $rights->memberRole->update(['module_permissions' => ['ai-estimates' => ['estimate_generation.view', 'estimate_generation.upload_documents']], 'system_permissions' => ['admin.access']]);
+        $rights->member->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
+        $project = Project::factory()->for($rights->organization)->create(['is_archived' => false]);
+        AuthorizationContext::getProjectContext((int) $project->id, (int) $rights->organization->id);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $rights->organization->id, 'project_id' => $project->id,
+            'user_id' => $rights->member->id, 'status' => 'estimate_review_required', 'state_version' => 8,
+            'input_payload' => ['object_name' => 'Сохранённое описание проекта', 'generation_requested' => false],
+            'draft_payload' => ['local_estimates' => []]]);
+
+        return [$rights, $session];
+    }
+
+    private function headers(User $actor): array
+    {
+        $this->app['auth']->forgetGuards();
+        $uuid = (string) Str::uuid();
+        $session = UserAuthSession::query()->create(['user_id' => $actor->id, 'organization_id' => $actor->current_organization_id,
+            'session_uuid' => $uuid, 'device_fingerprint' => hash('sha256', $uuid), 'device_name' => 'MOST document admission test',
+            'ip_address' => '127.0.0.1', 'risk_score' => 0, 'risk_flags' => [], 'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(), 'last_seen_at' => now()]);
+        $tokens = app(WebAuthTokenService::class)->issue($actor, 'admin', $session->session_uuid, (int) $actor->current_organization_id, false);
+
+        return ['Accept' => 'application/json', 'Origin' => 'https://admin.fixture.test', 'Authorization' => 'Bearer '.$tokens->accessToken];
+    }
+
+    private function pdf(string $name = 'plan.pdf'): UploadedFile
+    {
+        return UploadedFile::fake()->createWithContent($name, file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf')));
+    }
+
     public function test_file_content_admission_rejection_is_422_with_export_instructions_before_storage(): void
     {
         [$actor, $session] = $this->fixture();
