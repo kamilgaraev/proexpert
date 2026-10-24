@@ -1749,6 +1749,9 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         $description = data_get($movement->metadata, 'description')
             ?? data_get($movement->metadata, 'metadata.description');
+        $receiptTax = $movement->movement_type === WarehouseMovement::TYPE_RECEIPT
+            ? ($movement->metadata['receipt_tax'] ?? null)
+            : null;
 
         return [
             'movement_id' => $movement->id,
@@ -1802,6 +1805,12 @@ class WarehouseService implements WarehouseReportDataProvider
             'is_tolling_material' => $movement->isContractorTransferOut() || $movement->isCustomerMaterialReceipt(),
             'reason' => $movement->reason,
             'description' => is_string($description) ? $description : null,
+            'metadata' => is_array($receiptTax) ? [
+                'receipt_tax' => array_intersect_key($receiptTax, array_flip([
+                    'version', 'mode', 'quantity', 'unit_price', 'rate',
+                    'net_amount', 'vat_amount', 'gross_amount',
+                ])),
+            ] : [],
             'movement_date' => $movement->movement_date->toIso8601String(),
             'photo_gallery' => $movement->photo_gallery,
             'passport_document' => $movement->passport_document,
