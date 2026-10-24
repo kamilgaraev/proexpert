@@ -309,6 +309,89 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
         } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState) {
             self::assertGreaterThan($oldState, (int) $session->fresh()->state_version);
         }
+        foreach ($counts as $table => $count) {
+            self::assertSame($count, DB::table($table)->where('organization_id', $scope[0])->where('session_id', $scope[2])->count(), $table);
+        }
+        Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+        Http::assertNothingSent();
+        if ($session->fresh()->status->value === 'input_review_required') {
+            $this->postJson($url.'/confirm-input', ['state_version' => $session->fresh()->state_version], $headers)->assertOk();
+        }
+        self::assertSame('ready_to_generate', $session->fresh()->status->value);
+        $work = ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.installation',
+            'name' => 'Монтаж неизвестной установки', 'work_section' => 'equipment', 'unit' => 'count',
+            'derived_quantity_id' => null, 'source_fact_ids' => [$initialAnswer->id, $sources[0]->id],
+            'entity_id' => $sources[0]->entityId, 'technology_package_candidate' => null,
+            'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+        $response = static fn (array $content): \GuzzleHttp\Psr7\Response => new \GuzzleHttp\Psr7\Response(200,
+            ['Content-Type' => 'application/json'], json_encode(['id' => 'chatcmpl-review-upload-fixture',
+                'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+                'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => json_encode($content, JSON_THROW_ON_ERROR)],
+                    'finish_reason' => 'stop', 'logprobs' => null]],
+                'usage' => ['prompt_tokens' => 1000, 'completion_tokens' => 100, 'total_tokens' => 1100]], JSON_THROW_ON_ERROR));
+        $wireHistory = [];
+        $wireHandler = new \GuzzleHttp\Handler\MockHandler([
+            $response(['work_intents' => [$work], 'claim_candidates' => []]), $response(['findings' => []]),
+        ]);
+        $stack = \GuzzleHttp\HandlerStack::create($wireHandler);
+        $stack->push(\GuzzleHttp\Middleware::history($wireHistory));
+        config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key',
+            'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $this->app->instance(RerankWireClient::class, new \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient(
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebChatCompletionPayloadFactory::class),
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard::class),
+            app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore::class),
+            httpClient: new \GuzzleHttp\Client(['handler' => $stack])));
+        foreach ([TimewebEstimateComposerModel::class, RunEstimateComposer::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection::class] as $service) {
+            $this->app->forgetInstance($service);
+        }
+        $newOperation = (string) Str::uuid();
+        $quote = $this->postJson($url.'/operations/quote', ['request_id' => $newOperation,
+            'state_version' => $session->fresh()->state_version, 'operation_kind' => 'generation',
+            'operation_parameters' => ['max_work_items' => 4]], $headers)->assertOk()->json('data');
+        self::assertNotSame($oldQuote['quote_id'], $quote['quote_id']);
+        self::assertSame('quoted', DB::table('estimate_generation_credit_operations')->where('operation_id', $newOperation)->value('status'));
+        self::assertCount(0, $wireHistory);
+        Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+        $this->postJson($url.'/generate', ['request_id' => $newOperation, 'quote_id' => $quote['quote_id'],
+            'state_version' => $session->fresh()->state_version, 'generation_mode' => 'ai_assisted'], $headers)->assertSuccessful();
+        self::assertSame('generating', $session->fresh()->status->value);
+        $job = Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->sole();
+        foreach (Pipeline\ProcessingStage::cases() as $stage) {
+            $job->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
+        }
+        self::assertSame(9, DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $scope[2])
+            ->where('generation_attempt_id', $newOperation)->where('status', 'completed')->count());
+        self::assertSame(0, $wireHandler->count());
+        self::assertCount(2, $wireHistory);
+        self::assertSame('settled', DB::table('estimate_generation_credit_operations')->where('operation_id', $newOperation)->value('status'));
+        self::assertSame($counts['estimate_generation_credit_operations'] + 1,
+            DB::table('estimate_generation_credit_operations')->where('organization_id', $scope[0])->where('session_id', $scope[2])->count());
+        foreach (['estimate_generation_ai_usage', 'estimate_generation_vision_physical_attempts'] as $table) {
+            self::assertSame($counts[$table] + 2, DB::table($table)->where('organization_id', $scope[0])->where('session_id', $scope[2])->count(), $table);
+        }
+        $review = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
+            static fn (array $question): bool => $question['code'] === $card['code']));
+        self::assertSame('estimate_review_required', $session->fresh()->status->value);
+        self::assertCount(1, $review);
+        self::assertSame('answered', $review[0]['status']);
+        self::assertSame($answered['answer'], $review[0]['answer']);
+        self::assertSame(['reanswer', 'revoke'], $review[0]['actions']);
+        self::assertNotSame($answered['answer_fingerprint'], $review[0]['answer_fingerprint']);
+        self::assertCount(1, $review[0]['parameter_options']);
+        self::assertSame([$option['value'], $option['unit'], $option['source']],
+            [$review[0]['parameter_options'][0]['value'], $review[0]['parameter_options'][0]['unit'], $review[0]['parameter_options'][0]['source']]);
+        self::assertNotEmpty($review[0]['parameter_options'][0]['source_operand_ref']);
+        self::assertSame([], $review[0]['parameter_checks']);
+        $projectInput = json_decode((string) $wireHistory[0]['request']->getBody(), true, flags: JSON_THROW_ON_ERROR);
+        $workContexts = json_decode($projectInput['messages'][1]['content'], true, flags: JSON_THROW_ON_ERROR)['project']['work_technology_context'];
+        self::assertCount(1, $workContexts);
+        self::assertSame($answered['answer'], $workContexts[0]['answer']);
+        $queuedAfterGeneration = Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->count();
         $this->postJson($url.'/documents/'.$document->id.'/ignore', ['state_version' => $session->fresh()->state_version], $headers)->assertOk();
         self::assertNull($factory->readLengthOperand($context, $content, $raw[0]->id, $models, app(EvidenceRepository::class)));
         $afterIgnore = array_values(array_filter($this->getJson($url.'/questions', $headers)->assertOk()->json('data.items'),
@@ -325,9 +408,11 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
             self::assertEquals($rows, DB::table($table)->whereIn('id', array_column($rows, 'id'))->orderBy('id')->get()->all(), $table);
         }
         foreach ($counts as $table => $count) {
-            self::assertSame($count, DB::table($table)->where('organization_id', $scope[0])->where('session_id', $scope[2])->count(), $table);
+            self::assertSame($count + ($table === 'estimate_generation_credit_operations' ? 1 : 2),
+                DB::table($table)->where('organization_id', $scope[0])->where('session_id', $scope[2])->count(), $table);
         }
-        Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+        self::assertCount($queuedAfterGeneration,
+            Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class));
         Http::assertNothingSent();
     }
 
