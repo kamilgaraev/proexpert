@@ -6,8 +6,10 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentAdmissionOperation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PreparedDocumentAdmission;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
@@ -22,7 +24,9 @@ use App\Models\UserAuthSession;
 use App\Services\Auth\WebAuthTokenService;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
@@ -33,6 +37,85 @@ use Tests\Support\EstimateGeneration\InMemoryS3HttpStorage;
 
 final class DocumentAdmissionHttpPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_owner_snapshot_offers_review_document_upload_through_real_authorization_without_explicit_grants(): void
+    {
+        config(['cache.default' => 'array', 'web_auth.origins.admin' => ['https://admin.fixture.test']]);
+        Http::fake();
+        Http::preventStrayRequests();
+        Queue::fake();
+        $this->seedGlobalSettings();
+        $rights = AssistantRealAuthorizationFixture::create(['working-entry']);
+        $owner = $rights->owner;
+        $project = Project::factory()->for($rights->organization)->create(['is_archived' => false, 'address' => null]);
+        AuthorizationContext::getProjectContext((int) $project->id, (int) $rights->organization->id);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $rights->organization->id, 'project_id' => $project->id,
+            'user_id' => $owner->id, 'status' => 'estimate_review_required', 'state_version' => 8,
+            'input_payload' => ['object_name' => 'Owner snapshot context fixture', 'generation_requested' => false],
+            'draft_payload' => ['local_estimates' => []]]);
+        self::assertSame('organization_owner', $rights->ownerAssignment->role_slug);
+        self::assertSame('system', $rights->ownerAssignment->role_type);
+        self::assertSame('active', $rights->subscription->status->value);
+        self::assertSame('paid_package', $rights->subscription->access_source->value);
+        $membership = $owner->organizations()->whereKey($rights->organization->id)->firstOrFail()->pivot;
+        self::assertTrue((bool) $membership->is_owner);
+        self::assertSame('all_projects', $membership->project_access_mode);
+        $authorization = app(AuthorizationService::class);
+        self::assertFalse($authorization instanceof \Mockery\MockInterface);
+        $context = ['organization_id' => (int) $rights->organization->id, 'project_id' => (int) $project->id];
+        $diagnostics = [];
+        foreach (['estimate_generation.view', 'estimate_generation.upload_documents'] as $permission) {
+            foreach (['can', 'canCurrent'] as $method) {
+                try {
+                    $allowed = $authorization->{$method}($owner, $permission, $context);
+                    $diagnostics[$permission][$method] = ['state' => $allowed ? 'allowed' : 'denied', 'exception' => null];
+                } catch (\Throwable $exception) {
+                    $diagnostics[$permission][$method] = ['state' => 'exception', 'exception' => $exception::class];
+                }
+            }
+        }
+        $base = '/api/v1/admin/projects/'.$project->id.'/estimate-generation/sessions/'.$session->id;
+        $request = Request::create($base.'/snapshot', 'GET');
+        $request->setUserResolver(static fn (): User => $owner);
+        $permissions = EstimateGenerationSessionListResource::permissions($request, $session);
+        $diagnostics['resource_permissions'] = $permissions;
+        $snapshot = null;
+        try {
+            $snapshot = app(BuildSessionOperationalSnapshot::class)->handle($session, $permissions);
+            $diagnostics['operational_snapshot'] = ['state' => 'returned', 'exception' => null];
+        } catch (\Throwable $exception) {
+            $diagnostics['operational_snapshot'] = ['state' => 'exception', 'exception' => $exception::class];
+        }
+        $headers = $this->headers($owner);
+        self::assertArrayNotHasKey('If-None-Match', $headers);
+        $response = $this->withHeaders($headers)->getJson($base.'/snapshot');
+        $diagnostics['http_status'] = $response->status();
+        $diagnostics['http_error_code'] = $response->json('error_code');
+        $message = json_encode($diagnostics, JSON_THROW_ON_ERROR);
+        self::assertSame(200, $response->status(), $message);
+        self::assertNull($this->app['request']->header('If-None-Match'));
+        foreach (['estimate_generation.view', 'estimate_generation.upload_documents'] as $permission) {
+            self::assertSame(['state' => 'allowed', 'exception' => null], $diagnostics[$permission]['can'], $message);
+            self::assertSame(['state' => 'allowed', 'exception' => null], $diagnostics[$permission]['canCurrent'], $message);
+            self::assertContains($permission, $permissions, $message);
+        }
+        self::assertNotNull($snapshot, $message);
+        $expected = ['action' => 'upload_documents', 'method' => 'POST', 'endpoint' => $base.'/documents', 'requires_confirmation' => true];
+        $direct = array_values(array_filter($snapshot->availableActions, static fn (array $action): bool => $action['action'] === 'upload_documents'));
+        $raw = array_values(array_filter($response->json('data.available_actions') ?? [], static fn (array $action): bool => $action['action'] === 'upload_documents'));
+        self::assertCount(1, $direct, $message);
+        self::assertCount(1, $raw, $message);
+        self::assertEquals($expected, array_intersect_key($direct[0], $expected), $message);
+        self::assertEquals($expected, array_intersect_key($raw[0], $expected), $message);
+        self::assertSame('estimate_review_required', $session->fresh()->status->value);
+        self::assertSame(8, $session->fresh()->state_version);
+        foreach (['estimate_generation_ai_role_runs', 'estimate_generation_ai_usage', 'estimate_generation_credit_operations', DocumentAdmissionOperation::TABLE] as $table) {
+            self::assertSame(0, DB::table($table)->where('session_id', $session->id)->count());
+        }
+        self::assertSame(0, $session->documents()->count());
+        Queue::assertNothingPushed();
+        Http::assertNothingSent();
+    }
+
     public function test_review_upload_preserves_saved_context_and_replays_without_storage_or_automatic_generation(): void
     {
         [$rights, $session] = $this->httpFixture();
