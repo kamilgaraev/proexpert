@@ -67,34 +67,32 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
     }
 
     #[DataProvider('printCases')]
-    public function test_receipt_forms_print_complete_width_with_wrapped_requisites(bool $long, int $count): void
+    public function test_m7_prints_twenty_columns_with_wrapped_requisites(bool $long, int $count): void
     {
         [$material, $warehouse, $movements] = $this->fixture($long, $count);
+        $path = app(M7ExportStrategy::class)->export($movements);
+        $sheet = $this->sheet($path, 2);
+        $lastRow = 11 + $count;
 
-        foreach ([M7ExportStrategy::class => 17] as $strategy => $headerRow) {
-            $sheet = $this->sheet(app($strategy)->export($movements));
-            $lastRow = $headerRow + $count + ($headerRow === 16 ? 2 : 3);
-
-            $this->assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
-            $this->assertSame(PageSetup::PAPERSIZE_A4, $sheet->getPageSetup()->getPaperSize());
-            $this->assertSame(1, $sheet->getPageSetup()->getFitToWidth());
-            $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
-            $this->assertSame("A1:I{$lastRow}", $sheet->getPageSetup()->getPrintArea());
-            $this->assertSame([$headerRow, $headerRow], array_map('intval', $sheet->getPageSetup()->getRowsToRepeatAtTop()));
-            $this->assertNotEmpty($sheet->getCell('G1')->getValue());
-            $this->assertNull($sheet->getCell('J1')->getValue());
-            $this->assertSame($movements->first()->document_number, $sheet->getCell('H11')->getValue());
-            $this->assertStringContainsString($warehouse->name, $sheet->getCell('A13')->getValue());
-            $this->assertSame($material->name, $sheet->getCell('A'.($headerRow + 1))->getValue());
-            $this->assertContains('A'.($headerRow + 1).':D'.($headerRow + 1), $sheet->getMergeCells());
-            $this->assertNotEmpty($sheet->getCell('A'.$lastRow)->getValue());
-            if ($long) {
-                $this->assertGreaterThan(30, $sheet->getRowDimension(11)->getRowHeight());
-                $this->assertGreaterThan(18, $sheet->getRowDimension($headerRow + 1)->getRowHeight());
-            }
-            $this->assertSame(1.5, (float) $sheet->getCell('F18')->getValue());
-            $this->assertSame(1.25, (float) $sheet->getCell('G18')->getValue());
-            $this->assertSame(0.25, (float) $sheet->getCell('H18')->getValue());
+        $this->assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
+        $this->assertSame(PageSetup::PAPERSIZE_A4, $sheet->getPageSetup()->getPaperSize());
+        $this->assertSame(70, $sheet->getPageSetup()->getScale());
+        $this->assertFalse($sheet->getPageSetup()->getFitToPage());
+        $this->assertSame("A1:T{$lastRow}", $sheet->getPageSetup()->getPrintArea());
+        $this->assertSame([8, 11], array_map('intval', $sheet->getPageSetup()->getRowsToRepeatAtTop()));
+        $this->assertStringContainsString($movements->first()->document_number, (string) $sheet->getCell('A8')->getValue());
+        $this->assertStringStartsWith($material->name, (string) $sheet->getCell('A12')->getValue());
+        $this->assertSame($material->code, $sheet->getCell('B12')->getValue());
+        $this->assertStringStartsWith($material->name, (string) $sheet->getCell('A'.$lastRow)->getValue());
+        $this->assertSame(1.5, (float) $sheet->getCell('F12')->getValue());
+        $this->assertSame(1.25, (float) $sheet->getCell('J12')->getValue());
+        $this->assertSame(0.25, (float) $sheet->getCell('P12')->getValue());
+        $first = $this->sheet($path);
+        $this->assertSame(PageSetup::ORIENTATION_PORTRAIT, $first->getPageSetup()->getOrientation());
+        $this->assertStringContainsString($warehouse->name, (string) $first->getCell('A12')->getValue());
+        if ($long) {
+            $this->assertGreaterThan(18, $first->getRowDimension(12)->getRowHeight());
+            $this->assertGreaterThan(18, $sheet->getRowDimension(12)->getRowHeight());
         }
     }
 
@@ -286,12 +284,12 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
 
         foreach ($metadataCases as $case => $metadata) {
             $movement->metadata = $metadata;
-            $sheet = $this->sheet(app(M7ExportStrategy::class)->export($movements));
+            $sheet = $this->sheet(app(M7ExportStrategy::class)->export($movements), 2);
 
-            $this->assertNull($sheet->getCell('F18')->getValue(), $case);
-            $this->assertSame(1.25, (float) $sheet->getCell('G18')->getValue(), $case);
-            $this->assertEmpty($sheet->getCell('H18')->getValue(), $case);
-            $this->assertEmpty($sheet->getCell('I18')->getValue(), $case);
+            $this->assertNull($sheet->getCell('F12')->getValue(), $case);
+            $this->assertSame(1.25, (float) $sheet->getCell('J12')->getValue(), $case);
+            $this->assertEmpty($sheet->getCell('P12')->getValue(), $case);
+            $this->assertEmpty($sheet->getCell('R12')->getValue(), $case);
         }
     }
 
@@ -436,11 +434,11 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
 
         foreach ($cases as [$source, $quantity, $shortage, $surplus]) {
             $movement->metadata = ['supplier_quantity' => $source];
-            $sheet = $this->sheet(app(M7ExportStrategy::class)->export($movements));
+            $sheet = $this->sheet(app(M7ExportStrategy::class)->export($movements), 2);
 
-            $this->assertSame($quantity, (float) $sheet->getCell('F18')->getValue());
-            $this->assertSame(1.25, (float) $sheet->getCell('G18')->getValue());
-            foreach (['H18' => $shortage, 'I18' => $surplus] as $coordinate => $expected) {
+            $this->assertSame($quantity, (float) $sheet->getCell('F12')->getValue());
+            $this->assertSame(1.25, (float) $sheet->getCell('J12')->getValue());
+            foreach (['P12' => $shortage, 'R12' => $surplus] as $coordinate => $expected) {
                 $value = $sheet->getCell($coordinate)->getValue();
                 if ($expected === null) {
                     $this->assertEmpty($value);
@@ -488,18 +486,20 @@ final class WarehouseOfficialFormsPrintTest extends TestCase
         return [$material, $warehouse, $movements];
     }
 
-    private function sheet(string $path): Worksheet
+    private function sheet(string $path, int $index = 0): Worksheet
     {
         if ($directory = getenv('MOST_WAREHOUSE_PRINT_QA_DIR')) {
             $content = Storage::disk('s3')->get($path);
             $target = $directory.'/'.pathinfo($path, PATHINFO_FILENAME).'-'.substr(hash('sha256', $content), 0, 12).'.xlsx';
-            if (! file_exists($target)) file_put_contents($target, $content);
+            if (! file_exists($target)) {
+                file_put_contents($target, $content);
+            }
         }
         $temporaryPath = tempnam(sys_get_temp_dir(), 'warehouse_print_');
         try {
             file_put_contents($temporaryPath, Storage::disk('s3')->get($path));
 
-            return IOFactory::load($temporaryPath)->getActiveSheet();
+            return IOFactory::load($temporaryPath)->getSheet($index);
         } finally {
             unlink($temporaryPath);
         }

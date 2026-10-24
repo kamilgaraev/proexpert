@@ -51,18 +51,18 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $forms = [
-            [M4ExportStrategy::class, 'H11', 'б/н'],
-            [M7ExportStrategy::class, 'H11', 'б/н'],
-            [M11ExportStrategy::class, 'H11', 'б/н'],
-            [M15ExportStrategy::class, 'A6', 'НАКЛАДНАЯ N б/н'],
+            [M4ExportStrategy::class, 'H11', 'б/н', '20260830_131112'],
+            [M7ExportStrategy::class, 'A1', 'М-7 № б/н от 30.08.2026', '20260830_131112'],
+            [M11ExportStrategy::class, 'H11', 'б/н', '20260830_101112'],
+            [M15ExportStrategy::class, 'A6', 'НАКЛАДНАЯ N б/н', '20260830_101112'],
         ];
 
-        foreach ($forms as [$strategy, $numberCell, $expectedNumber]) {
+        foreach ($forms as [$strategy, $numberCell, $expectedNumber, $expectedFilenameDate]) {
             $path = app($strategy)->export($movement);
             $sheet = $this->sheetFromStorage($path);
 
             $this->assertSame($expectedNumber, $sheet->getCell($numberCell)->getValue(), $strategy);
-            $this->assertStringContainsString($strategy === M4ExportStrategy::class ? '20260830_131112' : '20260830_101112', $path);
+            $this->assertStringContainsString($expectedFilenameDate, $path);
             $this->assertStringNotContainsString('_'.$movement->id.'.xlsx', $path);
         }
 

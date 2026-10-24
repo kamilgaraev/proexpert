@@ -39,8 +39,9 @@ final readonly class WarehouseMovementFormExportService
             throw new InvalidArgumentException('warehouse_movement_form_is_not_available');
         }
 
-        $timezone = $form === 'm4' ? (new OrganizationBusinessTimezone)->resolve($movement->organization) : null;
-        $movements = $this->documentResolver->resolve($movement, $timezone, $form === 'm4' ? ['supplier_name', 'invoice_number'] : []);
+        $receiptForm = in_array($form, ['m4', 'm7'], true);
+        $timezone = $receiptForm ? (new OrganizationBusinessTimezone)->resolve($movement->organization) : null;
+        $movements = $this->documentResolver->resolve($movement, $timezone, $receiptForm ? ['supplier_name', 'invoice_number'] : []);
         $movements->loadMissing([
             'organization',
             'warehouse',
