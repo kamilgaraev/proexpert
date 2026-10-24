@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementLifecycleSummary;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseOrderPaymentReadContext;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
@@ -28,7 +29,7 @@ class ProcurementLifecycleService
         private readonly PurchaseOrderPaymentGateService $paymentGateService
     ) {}
 
-    public function forPurchaseRequest(PurchaseRequest $purchaseRequest): ProcurementLifecycleSummary
+    public function forPurchaseRequest(PurchaseRequest $purchaseRequest, ?PurchaseOrderPaymentReadContext $paymentReadContext = null): ProcurementLifecycleSummary
     {
         $purchaseRequest->loadMissing([
             'lines',
@@ -57,7 +58,10 @@ class ProcurementLifecycleService
 
         $order = $this->latestOrder($purchaseRequest);
         if ($order instanceof PurchaseOrder) {
-            return $this->forPurchaseOrder($order);
+            return $this->forPurchaseOrder(
+                $order,
+                $paymentReadContext === null ? null : $this->paymentGateService->summary($order, $paymentReadContext),
+            );
         }
 
         $supplierRequests = $purchaseRequest->supplierRequests

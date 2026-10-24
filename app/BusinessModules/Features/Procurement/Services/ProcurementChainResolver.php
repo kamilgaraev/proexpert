@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseOrderPaymentReadContext;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
@@ -76,21 +77,21 @@ final class ProcurementChainResolver
     /**
      * @return array<string, mixed>
      */
-    public function fromPurchaseRequest(PurchaseRequest $purchaseRequest): array
+    public function fromPurchaseRequest(PurchaseRequest $purchaseRequest, ?PurchaseOrderPaymentReadContext $paymentReadContext = null): array
     {
         $purchaseRequest->loadMissing(self::PURCHASE_REQUEST_RELATIONS);
 
-        return $this->graph($purchaseRequest->siteRequest, $purchaseRequest);
+        return $this->graph($purchaseRequest->siteRequest, $purchaseRequest, paymentReadContext: $paymentReadContext);
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function fromPurchaseOrder(PurchaseOrder $purchaseOrder): array
+    public function fromPurchaseOrder(PurchaseOrder $purchaseOrder, ?PurchaseOrderPaymentReadContext $paymentReadContext = null): array
     {
         $purchaseOrder->loadMissing(self::PURCHASE_ORDER_RELATIONS);
 
-        return $this->graph($purchaseOrder->purchaseRequest?->siteRequest, $purchaseOrder->purchaseRequest, $purchaseOrder);
+        return $this->graph($purchaseOrder->purchaseRequest?->siteRequest, $purchaseOrder->purchaseRequest, $purchaseOrder, $paymentReadContext);
     }
 
     /**
@@ -121,7 +122,7 @@ final class ProcurementChainResolver
     /**
      * @return array<string, mixed>
      */
-    public function fromPurchaseReceipt(PurchaseReceipt $purchaseReceipt): array
+    public function fromPurchaseReceipt(PurchaseReceipt $purchaseReceipt, ?PurchaseOrderPaymentReadContext $paymentReadContext = null): array
     {
         $purchaseReceipt->loadMissing('purchaseOrder');
 
@@ -140,7 +141,7 @@ final class ProcurementChainResolver
             ];
         }
 
-        return $this->fromPurchaseOrder($purchaseReceipt->purchaseOrder);
+        return $this->fromPurchaseOrder($purchaseReceipt->purchaseOrder, $paymentReadContext);
     }
 
     /**
@@ -149,7 +150,8 @@ final class ProcurementChainResolver
     private function graph(
         ?SiteRequest $siteRequest,
         ?PurchaseRequest $purchaseRequest,
-        ?PurchaseOrder $explicitOrder = null
+        ?PurchaseOrder $explicitOrder = null,
+        ?PurchaseOrderPaymentReadContext $paymentReadContext = null,
     ): array {
         $purchaseOrder = $explicitOrder ?? $this->latestPurchaseOrder($purchaseRequest);
         $supplierRequests = $purchaseRequest?->supplierRequests ?? collect();
@@ -164,7 +166,7 @@ final class ProcurementChainResolver
         $selectedProposal = $proposalDecision?->winningProposal
             ?? $purchaseOrder?->acceptedSupplierProposal;
         $paymentDocuments = $purchaseOrder instanceof PurchaseOrder
-            ? $this->paymentGateService->linkedDocuments($purchaseOrder)
+            ? $this->paymentGateService->linkedDocuments($purchaseOrder, $paymentReadContext)
             : collect();
         $receipts = $purchaseOrder?->receipts ?? collect();
         $materialDeliveries = $siteRequest?->materialDeliveries ?? collect();
