@@ -36,7 +36,10 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
 
         $organizationModel = $organization instanceof Organization ? $organization : null;
         $orgId = $organizationModel?->id ?? $organization;
-        $s3Path = "org-{$orgId}/{$path}";
+        $directory = dirname($path);
+        $filename = basename($path);
+        $preparationId = Str::uuid();
+        $s3Path = "org-{$orgId}/{$directory}/{$preparationId}/{$filename}";
 
         $this->fileService->disk($organizationModel)->put($s3Path, $content);
 

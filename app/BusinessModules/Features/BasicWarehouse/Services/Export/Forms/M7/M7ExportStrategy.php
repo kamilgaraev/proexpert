@@ -13,7 +13,6 @@ use Brick\Math\BigDecimal;
 use Brick\Math\Exception\MathException;
 use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -38,9 +37,8 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
         }
         $book->setActiveSheetIndex(0);
         $filename = 'M7_'.$this->documentFileSuffix($movement->document_number, $this->businessDate($movement)).'.xlsx';
-        $directory = (string) Str::uuid();
 
-        return $this->saveSpreadsheetToS3($book, "exports/warehouse/m7/{$directory}/{$filename}", $movement->organization);
+        return $this->saveSpreadsheetToS3($book, "exports/warehouse/m7/{$filename}", $movement->organization);
     }
 
     public function getSupportedType(): string
