@@ -214,8 +214,9 @@ final class ProjectModelRepositoryBoundaryTest extends TestCase
         $memory->facts[] = new Fact('fact:a-source', 1, 2, 3, $version, 'entity:second', $fact->type, $fact->value,
             null, 0.0, 'document', 'candidate', ['evidence:1']);
         $ordered = $memory->sourceRequirementCandidates(1, 2, 3, 17, $version, 8);
-        self::assertSame(['fact:a-source', 'fact:source', 'fact:source:second'], array_column($ordered?->facts ?? [], 'id'));
-        self::assertSame(['entity:second', 'entity:source'], array_column($ordered?->entities ?? [], 'id'));
+        self::assertNotNull($ordered);
+        self::assertSame(['fact:a-source', 'fact:source', 'fact:source:second'], array_column($ordered->facts, 'id'));
+        self::assertSame(['entity:second', 'entity:source'], array_column($ordered->entities, 'id'));
     }
 
     private function parameter(?string $value, string $name = 'Размер B', string $status = 'candidate'): Fact
