@@ -677,7 +677,7 @@ class AIAssistantService
             $options = [];
             $options['profile'] = 'assistant';
             $options['budget_profile'] = $this->activeProfile;
-            if (! $imageDiscussion) {
+            if (! $restricted && ! $imageDiscussion) {
                 $this->recordUnavailableBusinessTools($taskPlan, $tools);
             }
             if (! empty($tools)) {

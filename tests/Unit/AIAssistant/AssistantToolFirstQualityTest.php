@@ -115,6 +115,24 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame([], $response['message']['metadata']['source_refs']);
     }
 
+    public function test_legacy_explicit_report_without_available_report_tool_keeps_service_error_and_rejects_completion(): void
+    {
+        $query = 'Сформируй PDF-отчёт по проекту.';
+        $plan = (new AssistantTaskOrchestrator(new AssistantCapabilityRegistry, $this->createMock(AssistantAccessContextResolver::class)))
+            ->plan($query, [], []);
+        self::assertSame('generate_report', $plan['request_understanding']['primary_intent']);
+        self::assertNotEmpty($plan['capability']['domain']);
+        $service = $this->service([], [['content' => 'Отчёт готов, скачать: https://fixture.invalid/fake.pdf']], taskPlanOverride: $plan);
+
+        $response = $service->ask($query, 15, $this->actor(), 7);
+
+        self::assertSame('service_error', $response['message']['metadata']['outcome']);
+        self::assertTrue($response['message']['metadata']['service_error']);
+        self::assertSame(trans_message('ai_assistant.report_download_missing'), $response['message']['content']);
+        self::assertSame([], $response['message']['metadata']['artifacts']);
+        self::assertFalse((new \ReflectionMethod(AIAssistantService::class, 'isUsefulAnswer'))->invoke($service, $response));
+    }
+
     public function test_general_request_preparation_passes_messages_and_tool_schema_to_provider(): void
     {
         $query = 'Какие типы данных доступны по проектам?';
@@ -1769,7 +1787,7 @@ final class AssistantToolFirstQualityTest extends TestCase
 
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
         ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null,
-        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true, array $toolSchemas = [], bool $typedResponseFixture = false, ?callable $canExecuteTool = null): ToolFirstStubService
+        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true, array $toolSchemas = [], bool $typedResponseFixture = false, ?callable $canExecuteTool = null, ?array $taskPlanOverride = null): ToolFirstStubService
     {
         $typedBatchFixture = $typedResponseFixture || array_filter($responses, static fn (array $response): bool => count($response['tool_calls'] ?? []) > 1) !== [];
         $registry = new AIToolRegistry;
@@ -1840,7 +1858,7 @@ final class AssistantToolFirstQualityTest extends TestCase
         $accessResolver = $this->createMock(AssistantAccessContextResolver::class);
         if ($navigationPermissions === null) {
             $orchestrator = $this->createMock(AssistantTaskOrchestrator::class);
-            $orchestrator->method('plan')->willReturnCallback(static fn (string $query): array => ['request' => ['message' => $query, 'context' => $requestContext, 'allow_actions' => false],
+            $orchestrator->method('plan')->willReturnCallback(static fn (string $query): array => $taskPlanOverride ?? ['request' => ['message' => $query, 'context' => $requestContext, 'allow_actions' => false],
                 'task_type' => 'summary', 'capability' => [], 'access_context_public' => []]);
             $orchestrator->method('buildPayload')->willReturnCallback($payloadBuilder ?? static fn (array $plan, string $answer, array $options): array => $options + ['answer' => $answer]);
         } else {
