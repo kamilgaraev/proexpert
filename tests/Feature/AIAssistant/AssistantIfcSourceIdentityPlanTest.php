@@ -57,6 +57,67 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         self::assertStringNotContainsString('"ai_rag_expected_sources"."entity_type" = ?', $branch->toSql());
     }
 
+    public function test_mixed_expected_identity_batch_keeps_the_complete_join_key(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $organizationId = (int) $fixture->organization->id;
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organizationId, 'is_archived' => false]));
+        $package = DesignPackage::withoutEvents(fn () => DesignPackage::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'title' => 'Mixed identities', 'status' => 'draft',
+        ]));
+        $sharedId = max((int) DesignPackageSection::withoutGlobalScopes()->max('id'), (int) DesignReviewRound::withoutGlobalScopes()->max('id')) + 1;
+        $section = new DesignPackageSection([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'package_id' => $package->id,
+            'code' => 'AR', 'title' => 'Section', 'project_stage' => $package->project_stage,
+        ]);
+        $section->forceFill(['id' => $sharedId])->saveQuietly();
+        $round = new DesignReviewRound([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'package_id' => $package->id, 'round_number' => 1,
+        ]);
+        $round->forceFill(['id' => $sharedId])->saveQuietly();
+        $generation = (string) Str::uuid();
+        $checksum = hash('sha256', 'same-identity-key');
+        foreach (['design_package_section', 'design_review_round'] as $type) {
+            $identity = [
+                'organization_id' => $organizationId, 'project_id' => $project->id, 'source_type' => 'design_additional',
+                'entity_type' => $type, 'entity_id' => (string) $sharedId, 'checksum' => $checksum,
+            ];
+            RagExpectedSource::withoutEvents(fn () => RagExpectedSource::query()->create($identity + [
+                'generation' => $generation, 'identity_project_id' => $project->id, 'pending_since' => now(),
+            ]));
+            $source = RagSource::withoutEvents(fn () => RagSource::query()->create($identity + ['identity_project_id' => $project->id, 'title' => 'Mixed identity']));
+            if ($type === 'design_package_section') {
+                DB::table('ai_rag_chunks')->insert([
+                    'organization_id' => $organizationId, 'project_id' => $project->id, 'source_id' => $source->id,
+                    'chunk_index' => 0, 'content' => 'Indexed section', 'content_hash' => hash('sha256', 'Indexed section'),
+                    'embedding' => json_encode(RagTestEmbedding::fromLeadingValues([1.0]), JSON_THROW_ON_ERROR),
+                ]);
+            }
+        }
+        $policy = app(AssistantDataAccessPolicy::class);
+        $projection = new RagExpectedSourceProjection(Mockery::mock(RagIndexer::class));
+        $read = fn (bool $collectProof): array => $policy->withCurrentChecks($fixture->owner, $organizationId,
+            fn (): array => $projection->actorCounts($organizationId, $fixture->owner, $policy, ['design_additional'], $generation, collectProof: $collectProof), fresh: true);
+        DB::enableQueryLog();
+        try {
+            $counts = $read(false);
+            $queries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'matched_source_cache AS MATERIALIZED')));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame(2, (int) $counts['design_additional']->expected_count);
+        self::assertSame(1, (int) $counts['design_additional']->indexed_count);
+        self::assertCount(1, $queries);
+        foreach (['organization_id', 'source_type', 'entity_type'] as $constantColumn) {
+            self::assertStringContainsString('"matched_sources"."'.$constantColumn.'" = "expected"."'.$constantColumn.'"', $queries[0]['query']);
+        }
+        $full = $read(true);
+        foreach (['expected_count', 'indexed_count', 'pending_since'] as $field) {
+            self::assertEquals($full['design_additional']->{$field}, $counts['design_additional']->{$field}, $field);
+        }
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('identityProjectionCases')]
     public function test_sparse_ifc_sources_use_native_keys_and_keep_current_parent_access(bool $expectedProjection): void
     {
@@ -240,6 +301,13 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             'chunk_index' => 0, 'content' => 'Indexed IFC', 'content_hash' => hash('sha256', 'Indexed IFC'),
             'embedding' => json_encode(RagTestEmbedding::fromLeadingValues([1.0]), JSON_THROW_ON_ERROR),
         ]);
+        $unindexed = RagSource::query()->where('organization_id', $organizationId)->where('entity_id', (string) ($firstId + 1))
+            ->where('identity_part_key', '')->firstOrFail();
+        foreach ([['organization_id' => $fixture->foreignOrganization->id], ['source_type' => 'project'], ['entity_type' => 'design_package_section']] as $differentScope) {
+            $decoy = $unindexed->replicate()->forceFill($differentScope);
+            $decoy->saveQuietly();
+            DB::table('ai_rag_status_sources')->where('id', $decoy->id)->update(['chunk_count' => 1, 'indexed_chunk_count' => 1]);
+        }
         $pendingSince = now()->subHours(2)->startOfSecond()->toDateTimeString();
         RagExpectedSource::query()->where('organization_id', $organizationId)->where('generation', $generation)
             ->where('identity_part_key', 'second-part')->update(['pending_since' => $pendingSince]);
@@ -273,6 +341,27 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             self::assertEquals($full['design_additional']->{$field}, $counts['design_additional']->{$field}, $field);
         }
         self::assertCount(1, $queries);
+        foreach (['organization_id', 'source_type', 'entity_type'] as $constantColumn) {
+            self::assertStringNotContainsString('"matched_sources"."'.$constantColumn.'" = "expected"."'.$constantColumn.'"', $queries[0]['query']);
+        }
+        self::assertStringContainsString('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id', $queries[0]['query']);
+        DB::enableQueryLog();
+        try {
+            $read(true);
+            $proofQueries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'jsonb_object_agg')));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertCount(1, $proofQueries);
+        foreach (['organization_id', 'source_type', 'entity_type'] as $constantColumn) {
+            self::assertStringContainsString('"matched_sources"."'.$constantColumn.'" = "expected"."'.$constantColumn.'"', $proofQueries[0]['query']);
+        }
+        $checksum = $source->checksum;
+        $source->updateQuietly(['checksum' => 'outdated-checksum']);
+        self::assertSame(0, (int) $read(false)['design_additional']->indexed_count);
+        self::assertSame(0, (int) $read(true)['design_additional']->indexed_count);
+        $source->updateQuietly(['checksum' => $checksum]);
         $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$queries[0]['query'], $queries[0]['bindings']);
         $plan = json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
         $materialized = [];
@@ -300,7 +389,13 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
                 'work_mem' => '16MB', 'jit' => 'off', 'matched_cache_rows_processed' => $matchedScanWork,
             ], JSON_THROW_ON_ERROR).PHP_EOL);
         }
-        DB::table('ai_rag_status_sources')->where('organization_id', $organizationId)->update(['chunk_count' => 1, 'indexed_chunk_count' => 1]);
+        $statusIds = DB::table('ai_rag_status_sources')->where('organization_id', $organizationId)->orderBy('id')->pluck('id');
+        $updatedStatuses = 0;
+        foreach ($statusIds->chunk(250) as $statusChunk) {
+            $updatedStatuses += DB::table('ai_rag_status_sources')->where('organization_id', $organizationId)
+                ->whereIn('id', $statusChunk->all())->update(['chunk_count' => 1, 'indexed_chunk_count' => 1]);
+        }
+        self::assertSame($statusIds->count(), $updatedStatuses);
         $fullyIndexed = $read(false)['design_additional'];
         self::assertSame(20005, (int) $fullyIndexed->expected_count);
         self::assertSame(20005, (int) $fullyIndexed->indexed_count);

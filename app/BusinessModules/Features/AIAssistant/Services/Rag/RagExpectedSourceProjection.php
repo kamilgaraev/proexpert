@@ -73,8 +73,11 @@ final class RagExpectedSourceProjection
         $aggregate = static function (\Illuminate\Database\Query\Builder $visible, ?array $batchTypes = null, ?array $entityTypes = null) use ($matched, $collectProof, $proofColumns, $organizationId, $types, &$batchFilters): \Illuminate\Database\Query\Builder {
             if (! $collectProof) { $batchFilters = ['source_types' => $batchTypes ?? $types, 'entity_types' => $entityTypes]; }
             $query = DB::query()->fromSub($visible, 'expected');
-            $joinIdentity = static function (JoinClause $join): void {
-                foreach (['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'] as $column) {
+            $joinColumns = ! $collectProof && count($batchTypes ?? []) === 1 && count($entityTypes ?? []) === 1
+                ? ['identity_project_id', 'identity_part_key', 'entity_id', 'checksum']
+                : ['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'];
+            $joinIdentity = static function (JoinClause $join) use ($joinColumns): void {
+                foreach ($joinColumns as $column) {
                     $join->on('matched_sources.'.$column, '=', 'expected.'.$column);
                 }
                 $join->whereRaw('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id');
