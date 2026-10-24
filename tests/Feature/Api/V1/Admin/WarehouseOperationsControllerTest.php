@@ -604,6 +604,15 @@ class WarehouseOperationsControllerTest extends TestCase
                 ->assertJsonPath('data.metadata.receipt_tax.quantity', $quantity)
                 ->assertJsonPath('data.metadata.receipt_tax.unit_price', $price);
             $id = $response->json('data.id');
+            $history = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/movements?movement_type=receipt")
+                ->assertOk();
+            $historyMovement = collect($history->json('data'))->firstWhere('movement_id', $id);
+            $this->assertNotNull($historyMovement);
+            $this->assertSame(
+                ['receipt_tax' => $response->json('data.metadata.receipt_tax')],
+                $historyMovement['metadata'] ?? null,
+            );
             $this->assertSame($price, WarehouseMovement::findOrFail($id)->price);
             $this->assertSame('Учебный поставщик НДС', WarehouseMovement::findOrFail($id)->metadata['metadata']['supplier_name']);
             if ($mode === 'included' && $price === '12.34') {
