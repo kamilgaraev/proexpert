@@ -642,7 +642,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                 self::assertFalse($savedAnswer['requirement']['source_details']['numeric_inputs_verified']);
                 self::assertFalse($savedAnswer['requirement']['source_details']['numeric_parameters_confirmed']);
                 $written = $models->fact(...[...$scope, $answerId]);
-                self::assertSame($answerInput['parameter'], $written->value['parameter']['input']);
+                self::assertSame(CanonicalPipelineJson::encode($answerInput['parameter']), CanonicalPipelineJson::encode($written->value['parameter']['input']));
                 self::assertSame($sourceFact->id, $written->value['parameter']['association']['source_fact_id']);
                 self::assertArrayNotHasKey('observed_fact_id', $written->value['parameter']);
                 self::assertArrayNotHasKey('requirement_fact_id', $written->value['parameter']);
@@ -656,7 +656,7 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                         array_flip(['idempotency_key', 'expected_source_version', 'answer_fingerprint', 'document_ids'])));
                 self::assertSame('saved', $receipt['status']);
                 self::assertSame('0', $receipt['cost_units']);
-                self::assertSame($answerInput['parameter'], $receipt['parameter']);
+                self::assertSame(CanonicalPipelineJson::encode($answerInput['parameter']), CanonicalPipelineJson::encode($receipt['parameter']));
                 self::assertSame($beforeRead, $counts());
                 self::assertSame($beforeAnswerOperations, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
                 Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
