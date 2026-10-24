@@ -92,6 +92,53 @@ final class RagCoverageRefreshDiagnosticsTest extends TestCase
         self::assertFalse($record['entity_type_filters_complete']);
     }
 
+    #[DataProvider('abortEvents')]
+    public function test_abort_events_contain_only_a_fixed_site_scope_and_elapsed_time(string $abortSite, bool $global): void
+    {
+        $record = null;
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andReturnSelf();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_coverage_aborted', Mockery::on(static function (array $context) use (&$record): bool {
+            $record = $context;
+
+            return true;
+        }));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::coverageAbort($global, 12.345, $abortSite);
+        self::assertIsArray($record);
+        self::assertSame(['scope', 'release_sha', 'elapsed_ms', 'abort_site'], array_keys($record));
+        self::assertSame($global ? 'global' : 'filtered', $record['scope']);
+        self::assertSame(str_repeat('a', 40), $record['release_sha']);
+        self::assertSame(12.35, $record['elapsed_ms']);
+        self::assertSame($abortSite, $record['abort_site']);
+    }
+
+    public static function abortEvents(): array
+    {
+        return [['refresh_guard', true], ['publish_revision_mismatch', false], ['unclassified', true]];
+    }
+
+    public function test_abort_events_reject_unbounded_sites_and_invalid_elapsed_time(): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldNotReceive('channel');
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::coverageAbort(true, 100, 'private_site_fixture');
+        foreach ([-1.0, NAN, INF, -INF] as $elapsed) {
+            AssistantStatusSnapshotDiagnostics::coverageAbort(true, $elapsed, 'refresh_guard');
+        }
+        self::assertTrue(true);
+    }
+
+    public function test_abort_logger_failure_does_not_escape(): void
+    {
+        $logger = Mockery::mock();
+        $logger->shouldReceive('channel')->once()->with('api_latency')->andThrow(new RuntimeException('private_logger_failure_fixture'));
+        Log::swap($logger);
+        AssistantStatusSnapshotDiagnostics::coverageAbort(true, 100, 'refresh_guard');
+        self::assertTrue(true);
+    }
+
     #[DataProvider('filterCases')]
     public function test_projection_filters_export_only_closed_catalog_labels(bool $proof, ?array $sources, ?array $entities, ?array $expectedSources, bool $sourcesComplete, ?array $expectedEntities, bool $entitiesComplete): void
     {
