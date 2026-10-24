@@ -71,6 +71,31 @@ final class AssistantRequestLifecycle
         $this->assertActive($request, $actor);
     }
 
+    public function checkpointControl(int $requestKey, string $requestId, int $userId, int $organizationId, ?int $conversationId): void
+    {
+        $connection = DB::connection();
+        if ($connection->getName() !== config('database.default') || $connection->getDriverName() !== 'pgsql'
+            || $connection->transactionLevel() !== 0 || $connection->getPdo()->inTransaction()) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+
+        $current = AssistantRequest::query()->useWritePdo()->select([
+            'id', 'request_id', 'user_id', 'organization_id', 'conversation_id',
+            'status', 'cancel_requested_at', 'lease_expires_at',
+        ])->find($requestKey);
+        if ($current === null) {
+            throw new AssistantRequestCancelled;
+        }
+        if ($current->request_id !== $requestId || $current->user_id !== $userId
+            || $current->organization_id !== $organizationId || $current->conversation_id !== $conversationId) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+        if ($current->status !== 'running' || $current->cancel_requested_at !== null
+            || $current->lease_expires_at === null || $current->lease_expires_at->lessThanOrEqualTo(now())) {
+            throw new AssistantRequestCancelled;
+        }
+    }
+
     public function start(Organization $organization, User $actor, ?int $conversationId, array $payload, ?string $surface = null, bool $queued = false): array
     {
         $authorizationStartedAt = $queued ? hrtime(true) : null;
@@ -406,40 +431,49 @@ final class AssistantRequestLifecycle
     public function complete(AssistantRequest $request, User $actor, array $response, bool $useful = true, ?callable $onPublished = null): array
     {
         return DB::transaction(function () use ($request, $actor, $response, $useful, $onPublished): array {
-            $current = AssistantRequest::query()->whereKey($request->id)->lockForUpdate()->firstOrFail();
-            User::query()->whereKey($actor->id)->lockForUpdate()->firstOrFail();
-            $actor->refresh();
-            $this->assertActive($current, $actor);
-            $this->assertResponseAccess($response, $actor, $current->organization_id);
-            $this->assertActor($current, $actor);
-            $reservation = $this->reservation($current);
-            $projected = $useful ? $this->credits->calculatedChargeMinor($reservation) : 0;
-            $charged = $this->credits->finalize($reservation, 0, $useful);
-            if (isset($response['message']['id'])) {
-                $message = Message::query()->whereKey($response['message']['id'])->where('conversation_id', $current->conversation_id)
-                    ->where('role', 'assistant')->where('metadata->request_id', $current->request_id)
-                    ->where('metadata->actor_user_id', $actor->id)->lockForUpdate()->firstOrFail();
-                $metadata = $message->metadata ?? [];
-                $metadata['request_state'] = 'completed';
-                $message->forceFill(['metadata' => $metadata])->save();
-                $response['message']['metadata'] = $metadata;
-            }
-            $balance = $this->credits->balance(Organization::query()->findOrFail($current->organization_id));
-            $response['request_id'] = $current->request_id;
-            $response['conversation_id'] = $current->conversation_id;
-            $response['status'] = 'completed';
-            $response['progress'] = AssistantRequestProgress::sanitize($current->response['progress'] ?? []);
-            $response['credit_usage'] = [
-                'charged_minor' => $charged,
-                'projected_charge_minor' => $projected,
-                'reserved_minor' => $reservation->reserved_minor,
-                'available_after_minor' => (int) $balance['available_minor'],
-                'charging_enabled' => (bool) config('ai-assistant-credits.enforce', false),
-            ];
-            $current->forceFill(['status' => 'completed', 'stage' => 'completed', 'response' => $response, 'completed_at' => now(), 'heartbeat_at' => now(), 'lease_expires_at' => now()])->save();
-            $this->publishChangedAfterCommit($current);
+            $timingRequestId = $this->activeExecutionContext() === null ? null : $request->request_id;
+            $current = AssistantRequestPhaseTimer::run($timingRequestId, 'complete_lock', function () use ($request, $actor): AssistantRequest {
+                $current = AssistantRequest::query()->whereKey($request->id)->lockForUpdate()->firstOrFail();
+                User::query()->whereKey($actor->id)->lockForUpdate()->firstOrFail();
+                $actor->refresh();
+                return $current;
+            });
+            AssistantRequestPhaseTimer::run($timingRequestId, 'complete_authorization', fn () => $this->assertActive($current, $actor));
+            $this->assertResponseAccess($response, $actor, $current->organization_id, timingRequestId: $timingRequestId);
+            AssistantRequestPhaseTimer::run($timingRequestId, 'complete_actor_recheck', fn () => $this->assertActor($current, $actor));
+            [$reservation, $projected, $charged] = AssistantRequestPhaseTimer::run($timingRequestId, 'complete_charge', function () use ($current, $useful): array {
+                $reservation = $this->reservation($current);
+                $projected = $useful ? $this->credits->calculatedChargeMinor($reservation) : 0;
+                $charged = $this->credits->finalize($reservation, 0, $useful);
+                return [$reservation, $projected, $charged];
+            });
+            AssistantRequestPhaseTimer::run($timingRequestId, 'complete_persist', function () use (&$response, $current, $actor, $charged, $projected, $reservation): void {
+                if (isset($response['message']['id'])) {
+                    $message = Message::query()->whereKey($response['message']['id'])->where('conversation_id', $current->conversation_id)
+                        ->where('role', 'assistant')->where('metadata->request_id', $current->request_id)
+                        ->where('metadata->actor_user_id', $actor->id)->lockForUpdate()->firstOrFail();
+                    $metadata = $message->metadata ?? [];
+                    $metadata['request_state'] = 'completed';
+                    $message->forceFill(['metadata' => $metadata])->save();
+                    $response['message']['metadata'] = $metadata;
+                }
+                $balance = $this->credits->balance(Organization::query()->findOrFail($current->organization_id));
+                $response['request_id'] = $current->request_id;
+                $response['conversation_id'] = $current->conversation_id;
+                $response['status'] = 'completed';
+                $response['progress'] = AssistantRequestProgress::sanitize($current->response['progress'] ?? []);
+                $response['credit_usage'] = [
+                    'charged_minor' => $charged,
+                    'projected_charge_minor' => $projected,
+                    'reserved_minor' => $reservation->reserved_minor,
+                    'available_after_minor' => (int) $balance['available_minor'],
+                    'charging_enabled' => (bool) config('ai-assistant-credits.enforce', false),
+                ];
+                $current->forceFill(['status' => 'completed', 'stage' => 'completed', 'response' => $response, 'completed_at' => now(), 'heartbeat_at' => now(), 'lease_expires_at' => now()])->save();
+                $this->publishChangedAfterCommit($current);
+            });
             if ($onPublished !== null) {
-                $onPublished();
+                AssistantRequestPhaseTimer::run($timingRequestId, 'complete_publication', $onPublished);
             }
             return $response;
         }, 3);
@@ -675,7 +709,7 @@ final class AssistantRequestLifecycle
             ->where('request_key', $requestId)->where('expires_at', '>', now())->orderByDesc('id')->firstOrFail();
     }
 
-    private function assertResponseAccess(array $response, User $actor, int $organizationId, bool $storedResponse = false): void
+    private function assertResponseAccess(array $response, User $actor, int $organizationId, bool $storedResponse = false, ?string $timingRequestId = null): void
     {
         $refs = $response['message']['metadata']['source_refs'] ?? [];
         if (!is_array($refs)) {
@@ -687,19 +721,19 @@ final class AssistantRequestLifecycle
         $checkpoint = $execution === null ? null : fn (): int => $execution->remainingMilliseconds();
         $requestId = $response['message']['metadata']['request_id'] ?? null;
         $requestId = is_string($requestId) && Str::isUuid($requestId) ? $requestId : null;
-        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId, $storedResponse);
-        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId, $storedResponse);
+        AssistantRequestPhaseTimer::run($timingRequestId, 'complete_reference_first', fn () => $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId, $storedResponse));
+        AssistantRequestPhaseTimer::run($timingRequestId, 'complete_reference_second', fn () => $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId, $storedResponse));
     }
 
     private function assertResponseReferences(array $refs, User $actor, int $organizationId, ?callable $checkpoint, ?string $requestId, bool $storedResponse = false): void
     {
         $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($refs, $actor, $organizationId, $requestId, $storedResponse): void {
             foreach ($refs as $index => $ref) {
-                if (!is_array($ref) || !$this->dataAccess->canReadReference($actor, $organizationId, $ref)
-                    || (($ref['egress_projection_version'] ?? null) === \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection::VERSION
-                        && !($storedResponse
+                if (!is_array($ref) || (($ref['egress_projection_version'] ?? null) === \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantDocumentProjection::VERSION
+                        ? !($storedResponse
                             ? app(AssistantSourceReferenceGuard::class)->storedDocumentCurrent($actor, $organizationId, [$ref])
-                            : app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, [$ref])))) {
+                            : app(AssistantSourceReferenceGuard::class)->fresh($actor, $organizationId, [$ref]))
+                        : !$this->dataAccess->canReadReference($actor, $organizationId, $ref))) {
                     $type = is_array($ref) ? ($ref['entity_type'] ?? null) : null;
                     Log::notice('ai.assistant.response_source_access_denied', [
                         'request_id' => $requestId, 'reason' => 'source_ref_denied', 'reference_index' => is_int($index) ? $index : null,

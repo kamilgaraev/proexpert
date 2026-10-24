@@ -13,7 +13,6 @@ use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -37,7 +36,10 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
 
         $organizationModel = $organization instanceof Organization ? $organization : null;
         $orgId = $organizationModel?->id ?? $organization;
-        $s3Path = "org-{$orgId}/{$path}";
+        $directory = dirname($path);
+        $filename = basename($path);
+        $preparationId = Str::uuid();
+        $s3Path = "org-{$orgId}/{$directory}/{$preparationId}/{$filename}";
 
         $this->fileService->disk($organizationModel)->put($s3Path, $content);
 
@@ -64,77 +66,6 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
         $fragment = Str::slug(trim((string) $value));
 
         return $fragment !== '' ? $fragment : $fallback;
-    }
-
-    protected function applyReceiptPrintLayout(Worksheet $sheet, int $headerRow, bool $singleQuantity): void
-    {
-        $lastRow = $sheet->getHighestRow();
-        $lastDataRow = $lastRow - ($singleQuantity ? 2 : 3);
-        $sheet->setShowGridlines(false);
-        $sheet->getStyle("A1:I{$lastRow}")->getFont()->setName('Arial')->setSize(10);
-        $sheet->getStyle("A1:I{$lastRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
-        foreach (['A' => 18, 'B' => 12, 'C' => 12, 'D' => 12, 'E' => 12, 'F' => 14, 'G' => 14, 'H' => 20, 'I' => 23] as $column => $width) {
-            $sheet->getColumnDimension($column)->setWidth($width);
-        }
-        foreach (range(1, $lastRow) as $row) {
-            $sheet->getRowDimension($row)->setRowHeight(max(18, $sheet->getRowDimension($row)->getRowHeight()));
-        }
-        $sheet->getStyle('G1:I3')->getFont()->setSize(8);
-        $sheet->getStyle('G1:I3')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-        $sheet->getStyle('A6')->getFont()->setSize(8);
-        $sheet->getStyle('A9')->getFont()->setSize($singleQuantity ? 14 : 12);
-        $sheet->getStyle('H10:I10')->getFont()->setSize(8);
-        $sheet->mergeCells('A6:G6');
-        foreach ([5, 9, 13, 14, 15] as $row) {
-            if ($sheet->getCell("A{$row}")->getValue() === null) {
-                continue;
-            }
-            $range = $row === 5 ? 'A5:G5' : "A{$row}:I{$row}";
-            if (!isset($sheet->getMergeCells()[$range])) {
-                $sheet->mergeCells($range);
-            }
-            $this->fitWrappedCell($sheet, $range);
-        }
-        foreach (range(1, 3) as $row) {
-            $this->fitWrappedCell($sheet, "G{$row}:I{$row}");
-        }
-        foreach (['H6', 'H7', 'I7', 'H10', 'I10', 'H11', 'I11'] as $cell) {
-            $this->fitWrappedCell($sheet, $cell);
-        }
-        foreach (range($headerRow, $lastDataRow) as $row) {
-            $sheet->mergeCells("A{$row}:D{$row}");
-            if ($singleQuantity) {
-                $sheet->mergeCells("F{$row}:G{$row}");
-            }
-            $this->fitWrappedCell($sheet, "A{$row}:D{$row}");
-            $this->fitWrappedCell($sheet, "E{$row}");
-            if ($row === $headerRow) {
-                foreach ($singleQuantity ? ["F{$row}:G{$row}", "H{$row}", "I{$row}"] : ["F{$row}", "G{$row}", "H{$row}", "I{$row}"] as $range) {
-                    $this->fitWrappedCell($sheet, $range);
-                }
-            } else {
-                $sheet->getStyle("F{$row}:I{$row}")->getAlignment()->setWrapText(false)->setShrinkToFit(true)
-                    ->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-            }
-        }
-        foreach (range($lastDataRow + 2, $lastRow) as $row) {
-            $range = "A{$row}:I{$row}";
-            if (!isset($sheet->getMergeCells()[$range])) {
-                $sheet->mergeCells($range);
-            }
-            $this->fitWrappedCell($sheet, $range, 24);
-        }
-        foreach ([4, 8, 12, $headerRow - 1, $lastDataRow + 1] as $row) {
-            if ($sheet->getCell("A{$row}")->getValue() === null) {
-                $sheet->getRowDimension($row)->setRowHeight(7);
-            }
-        }
-        $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
-            ->setPaperSize(PageSetup::PAPERSIZE_A4)->setFitToWidth(1)->setFitToHeight(0)
-            ->setPrintArea("A1:I{$lastRow}")->setRowsToRepeatAtTop([$headerRow, $headerRow]);
-        $sheet->getPageMargins()->setTop(0.25)->setBottom(0.3)->setLeft(0.2)->setRight(0.2)->setHeader(0.1)->setFooter(0.15);
-        $number = str_replace('&', '&&', (string) $sheet->getCell('H11')->getValue());
-        $sheet->getHeaderFooter()->setOddFooter('&L&8М-'.($singleQuantity ? '4' : '7').' № '.$number.'&R&8Страница &P из &N');
     }
 
     protected function fitWrappedCell(Worksheet $sheet, string $range, float $minimumHeight = 18): void

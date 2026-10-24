@@ -230,7 +230,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $status = (new RagIndexStatusResource($service->status($organization->id, $actor)))->toArray(new Request);
 
         $this->assertTrue($expired);
-        $this->assertSame('source_counts', $budgetContext['phase'] ?? null);
+        $this->assertSame('source_acl', $budgetContext['phase'] ?? null);
         $this->assertSame($organization->id, $budgetContext['organization_id'] ?? null);
         $this->assertSame($actor->id, $budgetContext['actor_id'] ?? null);
         $this->assertGreaterThanOrEqual(2500, $budgetContext['elapsed_ms'] ?? 0);

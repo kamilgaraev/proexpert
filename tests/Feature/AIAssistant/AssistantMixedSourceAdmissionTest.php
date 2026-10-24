@@ -438,35 +438,81 @@ final class AssistantMixedSourceAdmissionTest extends TestCase
         }
     }
 
-    public function test_three_quoted_calls_have_no_hidden_fourth_send_or_model_final_after_terminal_third_read(): void
+    public function test_three_quoted_calls_reject_terminal_function_call_without_a_fourth_send(): void
     {
         [$cohort, $payload] = $this->enrollThree('short');
         $sequence = [OrdinaryAssistantDocumentProjection::TOOL, ...OrdinaryAssistantSourceProjection::TOOLS];
         $context = app(OrdinaryAssistantScopedContext::class);
         $calls = 0;
+        $executedQueries = array_fill_keys($sequence, 0);
+        $instances = [];
+        foreach ($sequence as $name) {
+            $instances[$name] = app(\App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry::class)->getTool($name);
+            self::assertNotNull($instances[$name]);
+        }
+        self::assertCount(3, array_unique(array_map(static fn ($tool): string => $tool::class, $instances)));
+        $observing = true;
+        DB::listen(static function () use (&$executedQueries, &$observing, $instances): void {
+            if (! $observing) { return; }
+            $handler = false;
+            $capture = false;
+            $executions = [];
+            foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS | DEBUG_BACKTRACE_PROVIDE_OBJECT, 64) as $frame) {
+                $handler = $handler || (($frame['class'] ?? null) === \App\BusinessModules\Features\AIAssistant\Services\AIAssistantService::class
+                    && ($frame['function'] ?? null) === 'handleToolCall');
+                $capture = $capture || (($frame['class'] ?? null) === \App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSourceCatalog::class
+                    && in_array($frame['function'] ?? null, ['capture', 'captureForReview'], true));
+                if (($frame['function'] ?? null) === 'execute') {
+                    $name = array_search($frame['object'] ?? null, $instances, true);
+                    if (is_string($name)) { $executions[$name] = true; }
+                }
+            }
+            if ($handler && ! $capture) {
+                foreach (array_keys($executions) as $name) { $executedQueries[$name]++; }
+            }
+        });
         $provider = $this->responses(function (array $input, array $options) use (&$calls, $sequence): array {
             self::assertLessThan(3, $calls);
             self::assertSame(3, $options['budget_limits']['max_calls']);
+            self::assertSame($calls === 2 ? 'none' : 'auto', $options['tool_choice']);
             $outputs = array_values(array_filter($input, static fn (array $item): bool => ($item['type'] ?? '') === 'function_call_output'));
             self::assertCount($calls, $outputs);
             foreach ($outputs as $index => $output) { self::assertSame('call_mixed_'.$index, $output['call_id']); }
             $name = $sequence[$calls];
             return $this->nativeCall($name, $this->modelArgs($name), $calls++);
         });
-        $result = AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id, $context)
-            ->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        $denied = null;
+        try {
+            AssistantEgressFixtureService::forScope($provider, $this->fixture->owner, $cohort->organization_id, $context)
+                ->ask($payload['message'], $cohort->organization_id, $this->fixture->owner, null, $payload);
+        } catch (AssistantEgressDenied $failure) {
+            $denied = $failure;
+        } finally {
+            $observing = false;
+        }
+        self::assertInstanceOf(AssistantEgressDenied::class, $denied);
+        self::assertSame('unsupported_purpose', $denied->reason);
         self::assertSame(3, $calls);
-        $request = AssistantRequest::query()->where('request_id', $result['request_id'])->sole();
+        self::assertGreaterThan(0, $executedQueries[$sequence[0]]);
+        self::assertGreaterThan(0, $executedQueries[$sequence[1]]);
+        self::assertSame(0, $executedQueries[$sequence[2]]);
+        $request = AssistantRequest::query()->where('request_id', $payload['request_id'])->sole();
+        self::assertSame('failed', $request->status);
         self::assertSame(3, $request->max_calls);
         self::assertSame(3, $request->calls_used);
-        self::assertSame(3, AICreditProviderUsage::query()->where('organization_id', $cohort->organization_id)->count());
-        self::assertSame(trans_message('ai_assistant_facts.live_proof_required'), $result['message']['content']);
-        self::assertFalse($result['message']['metadata']['model_invoked']);
-        self::assertTrue($result['message']['metadata']['needs_clarification']);
-        self::assertCount(3, array_filter($result['message']['metadata']['evidence'],
-            static fn (array $item): bool => ($item['source'] ?? null) === 'assistant_tool'));
+        $usage = AICreditProviderUsage::query()->where('ai_credit_reservation_id', $request->reservation_id)->orderBy('id')->get();
+        self::assertCount(3, $usage);
+        self::assertSame([true, true, false], $usage->pluck('is_successful')->all());
+        self::assertSame([1, 2, 3], $usage->map(static fn ($row): mixed => $row->metadata['attempt'] ?? null)->all());
+        self::assertTrue($usage->every(static fn ($row): bool => ($row->metadata['provider_usage_available'] ?? null) === true
+            && ($row->metadata['input_tokens'] ?? null) === 100 && ($row->metadata['output_tokens'] ?? null) === 20
+            && $row->cost_micro_rub > 0));
+        self::assertSame(3, $usage->pluck('usage_key')->unique()->count());
+        self::assertSame(0, Message::query()->where('conversation_id', $request->conversation_id)->where('role', 'assistant')->count());
+        $reservation = \App\Models\Credits\AICreditReservation::query()->findOrFail($request->reservation_id);
+        self::assertSame('cancelled', $reservation->status);
+        self::assertSame(0, $reservation->consumed_minor);
     }
-
     public static function threeUnusedSourceChanges(): iterable
     {
         yield 'document before first send' => ['document', 0];

@@ -75,4 +75,28 @@ class AutoReorderRuleRequest extends FormRequest
 
         return $rules;
     }
+
+    public function messages(): array
+    {
+        return [
+            'min_stock.min' => trans_message('basic_warehouse.auto_reorder.validation.min_stock_non_negative'),
+            'max_stock.gt' => trans_message('basic_warehouse.auto_reorder.validation.max_stock_above_min'),
+            'reorder_point.gte' => trans_message('basic_warehouse.auto_reorder.validation.reorder_point_below_min'),
+            'reorder_point.lte' => trans_message('basic_warehouse.auto_reorder.validation.reorder_point_above_max'),
+            'reorder_quantity.min' => trans_message('basic_warehouse.auto_reorder.validation.reorder_quantity_min'),
+        ];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'warehouse_id' => trans_message('basic_warehouse.auto_reorder.validation.attributes.warehouse'),
+            'material_id' => trans_message('basic_warehouse.auto_reorder.validation.attributes.material'),
+            'min_stock' => trans_message('basic_warehouse.auto_reorder.validation.attributes.min_stock'),
+            'max_stock' => trans_message('basic_warehouse.auto_reorder.validation.attributes.max_stock'),
+            'reorder_point' => trans_message('basic_warehouse.auto_reorder.validation.attributes.reorder_point'),
+            'reorder_quantity' => trans_message('basic_warehouse.auto_reorder.validation.attributes.reorder_quantity'),
+            'default_supplier_id' => trans_message('basic_warehouse.auto_reorder.validation.attributes.supplier'),
+        ];
+    }
 }

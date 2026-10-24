@@ -54,25 +54,11 @@ final class AssistantIndexStatusService
             throw new AuthorizationException;
         }
 
-        $checkCurrentAccess = $this->checksAssistantAccess();
-        if ($checkCurrentAccess && $section === 'all') {
+        if ($this->checksAssistantAccess()) {
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
-        $sectionRecoveryKey = $checkCurrentAccess && in_array($section, ['sources', 'documents'], true)
-            ? $this->snapshotKey($organizationId, (int) $actor->id, $this->currentSurface()).':'.$section.':background-recovery'
-            : null;
-        if ($sectionRecoveryKey !== null && Cache::has($sectionRecoveryKey)) {
-            $snapshot = $this->snapshotStatus($organizationId, $actor, $section);
-            if ($snapshot['status_available'] ?? false) {
-                Cache::put($sectionRecoveryKey, true, 180);
-            }
-
-            return $snapshot;
-        }
-
-        $phase = (object) ['value' => 'schema', 'missing_release' => false];
-        $budgetExceeded = false;
+        $phase = (object) ['value' => 'schema'];
         $started = hrtime(true);
         $metricsRequest = request();
         $processingPhase = 'rag_prepare';
@@ -86,31 +72,11 @@ final class AssistantIndexStatusService
         };
         try {
             $budget = new RagStatusBudget(DB::connection(), 2500);
-            $result = $this->inRepeatableRead(fn (): array => $budget->run(function (callable $checkpoint) use ($organizationId, $actor, $budget, $section, $phase, $checkCurrentAccess, $setProcessingPhase): array {
-                if ($checkCurrentAccess) {
-                    $actor = User::query()->find($actor->id);
-                    if ($actor === null || ! $actor->is_active || (int) $actor->current_organization_id !== $organizationId) {
-                        throw new AuthorizationException;
-                    }
-                }
-
+            $result = $this->inRepeatableRead(fn (): array => $budget->run(function (callable $checkpoint) use ($organizationId, $actor, $budget, $section, $phase, $setProcessingPhase): array {
                 return $this->access->withCurrentChecks(
                     $actor,
                     $organizationId,
-                    function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section, $phase, $checkCurrentAccess, $setProcessingPhase): array {
-                        $validUntil = null;
-                        if ($checkCurrentAccess) {
-                            if (! $this->access->canReadDomain($actor, $organizationId, 'assistant')) { throw new AuthorizationException; }
-                            $inputs = $this->snapshotInputs ?? app(AssistantStatusSnapshotInputs::class);
-                            if ($inputs->fingerprint($actor, $organizationId, $this->currentSurface(), $section, request()->ip(), $authorization) === null) {
-                                $phase->missing_release = true;
-                                AssistantStatusSnapshotDiagnostics::request('missing_release', $section);
-
-                                return $this->unavailableStatus();
-                            }
-                            $capturedAt = DB::selectOne('SELECT LEAST(transaction_timestamp(), clock_timestamp())::text AS captured_at')->captured_at;
-                            $validUntil = $inputs->validUntil($capturedAt, self::SNAPSHOT_TTL_SECONDS, $organizationId, (int) $actor->id);
-                        }
+                    function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section, $phase, $setProcessingPhase): array {
                         $setProcessingPhase('rag_schema_prefetch');
                         $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
                         $setProcessingPhase('rag_source_prepare');
@@ -129,12 +95,6 @@ final class AssistantIndexStatusService
 
                         $canReindex = $authorization->canCurrent($actor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]);
                         $budget->checkDeadline();
-                        if ($checkCurrentAccess && ! $inputs->isUnexpired($validUntil)) {
-                            AssistantStatusSnapshotDiagnostics::request('fresh_read_unavailable', $section);
-
-                            return $this->unavailableStatus();
-                        }
-
                         return array_merge($coverage, $documents, [
                             'status_available' => true,
                             'can_reindex' => $canReindex,
@@ -149,24 +109,14 @@ final class AssistantIndexStatusService
             if ($exception instanceof QueryException && ($exception->errorInfo[0] ?? null) !== '57014') {
                 throw $exception;
             }
-            $budgetExceeded = true;
             \Illuminate\Support\Facades\Log::warning('assistant.rag_status_budget_exceeded', [
                 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'section' => $section,
                 'phase' => $phase->value, 'elapsed_ms' => (int) ((hrtime(true) - $started) / 1_000_000),
             ]);
             $result = $this->unavailableStatus();
-            if ($checkCurrentAccess && ! $phase->missing_release) { AssistantStatusSnapshotDiagnostics::request('fresh_read_unavailable', $section); }
         } finally {
             $setProcessingPhase(null);
         }
-
-        if ($budgetExceeded && $sectionRecoveryKey !== null && ! $phase->missing_release) {
-            Cache::put($sectionRecoveryKey, true, 180);
-
-            return $this->snapshotStatus($organizationId, $actor, $section);
-        }
-
-        if ($checkCurrentAccess && ($result['status_available'] ?? false)) { AssistantStatusSnapshotDiagnostics::request('fresh_read', $section); }
 
         return $result;
     }

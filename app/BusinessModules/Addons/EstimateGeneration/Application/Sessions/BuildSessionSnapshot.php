@@ -36,7 +36,7 @@ final class BuildSessionSnapshot
         'input_review_required' => [EstimateGenerationAction::ConfirmInput, EstimateGenerationAction::UploadDocuments, EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel],
         'ready_to_generate' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
         'generating' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel],
-        'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
+        'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::UploadDocuments, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'failed' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel, EstimateGenerationAction::Archive],
         'applied' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Archive],
@@ -249,7 +249,9 @@ final class BuildSessionSnapshot
                 EstimateGenerationAction::Apply,
                 EstimateGenerationAction::Cancel,
                 EstimateGenerationAction::Archive,
-            ], true) || ($action === EstimateGenerationAction::Generate
+            ], true) || ($action === EstimateGenerationAction::UploadDocuments
+                && $session->status === EstimateGenerationStatus::EstimateReviewRequired)
+                || ($action === EstimateGenerationAction::Generate
                 && $session->status === EstimateGenerationStatus::Applied),
         ];
     }

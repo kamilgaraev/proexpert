@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use InvalidArgumentException;
 
 final readonly class ObservationClaim
@@ -25,6 +27,8 @@ final readonly class ObservationClaim
         public string $sourceVersion,
         public array $locator,
         public float $confidence = 0.0,
+        public ?array $semanticProposal = null,
+        public array $semanticFieldLocators = [],
     ) {
         if (preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $id) !== 1
             || ! in_array($observerRole, ['observer_literal', 'observer_construction', 'observer_risk'], true)
@@ -39,6 +43,30 @@ final readonly class ObservationClaim
             || $locator === [] || array_is_list($locator)
             || ! is_finite($confidence) || $confidence < 0 || $confidence > 1) {
             throw new InvalidArgumentException('observation_claim_invalid');
+        }
+        $normalized = FactVocabulary::semanticProposal($semanticProposal, $factType, $entityKey, $value, $unit);
+        if ($normalized !== null && ($observerRole !== 'observer_construction'
+            || DerivedQuantityIdentity::canonicalJson($normalized) !== DerivedQuantityIdentity::canonicalJson($semanticProposal))) {
+            throw new InvalidArgumentException('observation_semantic_proposal_invalid');
+        }
+        $expected = [];
+        foreach ($normalized === null ? [] : FactVocabulary::semanticSourceFields($normalized) as $path => $field) {
+            if ($field['evidenceRef'] === null) continue;
+            $resolved = $semanticFieldLocators[$path] ?? null;
+            if (! is_array($resolved) || ($resolved['source_version'] ?? null) !== $sourceVersion
+                || ($resolved['organization_id'] ?? null) !== $organizationId || ($resolved['project_id'] ?? null) !== $projectId
+                || ($resolved['session_id'] ?? null) !== $sessionId
+                || ($resolved['document_id'] ?? null) !== ($locator['document_id'] ?? null)
+                || ($resolved['page'] ?? null) !== ($locator['page'] ?? null)
+                || ($resolved['page_id'] ?? null) !== ($locator['page_id'] ?? null)
+                || ($resolved['processing_unit_id'] ?? null) !== ($locator['processing_unit_id'] ?? null)
+                || ($resolved['fact_source'] ?? null) !== self::exactSource($field['sourcePolygonOrNativeRef'])) {
+                throw new InvalidArgumentException('observation_semantic_locator_invalid');
+            }
+            $expected[] = $path;
+        }
+        if (array_diff(array_keys($semanticFieldLocators), $expected) !== [] || count($expected) !== count($semanticFieldLocators)) {
+            throw new InvalidArgumentException('observation_semantic_locator_invalid');
         }
     }
 
@@ -78,6 +106,23 @@ final readonly class ObservationClaim
         if (FactSourceLocator::valid($exact)) {
             $locator['fact_source'] = $exact;
         }
+        if (($claim['semanticProposal'] ?? null) !== null && ! is_array($claim['semanticProposal'])) {
+            throw new InvalidArgumentException('observation_semantic_proposal_invalid');
+        }
+        $proposal = FactVocabulary::semanticProposal($claim['semanticProposal'] ?? null,
+            (string) ($claim['factType'] ?? ''), (string) ($claim['entityKey'] ?? ''), $value, is_string($claim['unit'] ?? null) ? $claim['unit'] : null);
+        if ($proposal !== null && ($claim['contractVersion'] ?? null) !== 'sheet-analysis:v4') {
+            throw new InvalidArgumentException('observation_semantic_proposal_invalid');
+        }
+        $fields = [];
+        foreach ($proposal === null ? [] : FactVocabulary::semanticSourceFields($proposal) as $path => $field) {
+            if ($field['evidenceRef'] === null) continue;
+            $fieldLocator = $evidence[$field['evidenceRef']] ?? null;
+            if (! is_array($fieldLocator)) throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+            unset($fieldLocator['fact_source']);
+            $fieldLocator['fact_source'] = self::exactSource($field['sourcePolygonOrNativeRef']);
+            $fields[$path] = $fieldLocator;
+        }
 
         return new self(
             str_replace('observer_', '', $role).':'.($index + 1),
@@ -96,7 +141,23 @@ final readonly class ObservationClaim
             ! array_key_exists('confidence', $claim)
                 ? 0.0
                 : (is_numeric($claim['confidence']) ? (float) $claim['confidence'] : -1.0),
+            $proposal,
+            $fields,
         );
+    }
+
+    public function semanticIdentity(): ?array
+    {
+        return $this->semanticProposal === null ? null : ['payload' => $this->semanticProposal, 'field_locators' => $this->semanticFieldLocators];
+    }
+
+    private static function exactSource(mixed $source): array
+    {
+        $exact = ['kind' => is_array($source) ? 'polygon' : 'native',
+            'coordinate_space' => is_array($source) ? 'normalized_source_v1' : 'native', 'value' => $source];
+        if (! FactSourceLocator::valid($exact)) throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+
+        return $exact;
     }
 
     private static function hasExplicitSourceReference(mixed $source): bool

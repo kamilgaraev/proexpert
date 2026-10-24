@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel;
 
 use InvalidArgumentException;
+use JsonSerializable;
 
-final readonly class Fact
+final readonly class Fact implements JsonSerializable
 {
     public const ORIGINS = [
         'document',
@@ -20,6 +21,8 @@ final readonly class Fact
     public const STATUSES = ['candidate', 'confirmed', 'conflicted', 'unresolved', 'invalidated'];
 
     public array $evidenceIds;
+
+    public array $semanticAttributes;
 
     public function __construct(
         public string $id,
@@ -38,6 +41,7 @@ final readonly class Fact
         public int $version = 1,
         public ?string $supersedesFactId = null,
         public array $nativeNumericProofs = [],
+        array $semanticAttributes = [],
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Fact');
@@ -62,5 +66,18 @@ final readonly class Fact
             }
         }
         $this->evidenceIds = ProjectModelInvariant::uniqueIds($evidenceIds, 'Evidence', true);
+        $this->semanticAttributes = json_decode(DerivedQuantityIdentity::canonicalJson($semanticAttributes), true, 512, JSON_THROW_ON_ERROR);
+        FactVocabulary::assertEngineeringParameter($this);
+    }
+
+    public function jsonSerialize(): array
+    {
+        $payload = get_object_vars($this);
+        unset($payload['semanticAttributes']);
+        if ($this->semanticAttributes !== []) {
+            $payload['semantic_attributes'] = $this->semanticAttributes;
+        }
+
+        return $payload;
     }
 }

@@ -87,6 +87,7 @@ final readonly class EstimateComposerInputFactory
         if (! hash_equals((string) $capture['token'], (string) $verified['token']) || $workContexts !== $verifiedWorkContexts) {
             throw new InvalidArgumentException('estimate_composer_snapshot_changed');
         }
+        $sourceDecisions = $decisions;
 
         $answerContexts = [];
         $checkedAnswers = [];
@@ -95,6 +96,9 @@ final readonly class EstimateComposerInputFactory
         $eligibleFacts = [];
         $policy = $answerPolicy === [] ? null : ResolveCurrentEstimateClarification::composerPolicy($answerPolicy);
         foreach ($snapshot->facts as $fact) {
+            if (str_starts_with($fact->type, 'engineering_parameter_')) {
+                continue;
+            }
             if ($fact->type === 'evaluation_answer' && is_array($fact->value)
                 && ($fact->value['composer_context']['kind'] ?? null) === 'work_technology') {
                 $hasComposerAnswer = true;
@@ -131,7 +135,8 @@ final readonly class EstimateComposerInputFactory
         }
         $eligibleById = $answerContexts === [] ? [] : array_column($eligibleFacts, null, 'id');
         $snapshotById = $answerContexts === [] ? [] : array_column($snapshot->facts, null, 'id');
-        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts, $eligibleById, $snapshotById, $reviewContexts): array {
+        $workSourceClaims = EstimateComposerInput::workSourceClaimContexts($workContexts) !== [];
+        $facts = array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections, $evaluationMode, $answerContexts, $eligibleById, $snapshotById, $reviewContexts, $workSourceClaims): array {
             $entity = $entities[$fact->entityId] ?? null;
             $related = [];
             foreach (['room_id', 'wall_id', 'roof_id'] as $relation) {
@@ -142,6 +147,9 @@ final readonly class EstimateComposerInputFactory
             }
 
             $context = [];
+            if ($workSourceClaims && ($documentId = $this->sourceDocumentId($fact, $evidence)) !== null) {
+                $context['source_document_id'] = $documentId;
+            }
             if (isset($reviewContexts[$fact->id])) {
                 $context['source_review_decision_id'] = $reviewContexts[$fact->id]['candidate']['source_review_decision_id'];
             }
@@ -188,12 +196,28 @@ final readonly class EstimateComposerInputFactory
             $allowedWorkSections = EstimateComposerInput::WORK_SECTIONS;
             $contractVersion = RunEstimateComposer::LEGACY_PROMPT_CONTRACT;
         }
-        if ($answerContexts !== []) {
+        if ($answerContexts !== [] || $workSourceClaims) {
             $contractVersion = $contractVersion === RunEstimateComposer::LEGACY_PROMPT_CONTRACT
                 ? RunEstimateComposer::LEGACY_ANSWER_PROMPT_CONTRACT : RunEstimateComposer::ANSWER_PROMPT_CONTRACT;
         }
 
         $quantities = array_map($this->derivedQuantity(...), $derivedQuantities);
+        if ($workContexts !== [] && $this->learning !== null) {
+            $references = $this->learning->parameterReferences([$organizationId, $projectId, $sessionId], $snapshot, $sourceDecisions, $answerPolicy, $localEstimateKey);
+            foreach ($workContexts as &$entry) {
+                $reference = $references[$entry['answer']['fact_id'] ?? ''] ?? null;
+                if ($reference !== null && isset($entry['answer']['parameter'])) {
+                    $entry['answer']['parameter']['component'] = $reference;
+                } elseif (($reference['schema_version'] ?? null) === 2 && isset($entry['answer']['requirement'])) {
+                    $entry['answer']['requirement']['component'] = $reference;
+                }
+            }
+            unset($entry);
+            if ($references !== [] && ! hash_equals((string) $capture['token'],
+                (string) $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts + 1)['token'])) {
+                throw new InvalidArgumentException('estimate_composer_snapshot_changed');
+            }
+        }
         $input = new EstimateComposerInput(
             organizationId: $organizationId,
             projectId: $projectId,
@@ -211,9 +235,10 @@ final readonly class EstimateComposerInputFactory
             workTechnologyContext: $workContexts,
         );
         if ($input->claimAnswerFactIds !== [] && $this->learning !== null) {
-            $references = $this->learning->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot, $decisions, $answerPolicy);
+            $references = $this->learning->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot, $sourceDecisions, $answerPolicy, $localEstimateKey);
             $references = array_values(array_filter(array_slice($references, 0, EstimateComposerInput::MAX_SOURCE_CLAIMS),
-                static fn (mixed $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $facts, $input->claimAnswerFactIds)));
+                static fn (mixed $reference): bool => EstimateComposerInput::sourceClaimReference($reference, $facts, $input->claimAnswerFactIds,
+                    $input->acceptsWorkSourceClaims() ? $input->workTechnologyContext : [])));
             $input = $input->withSourceClaimReferences($references);
         }
         if ($reviewContexts !== [] && $this->learning !== null) {
@@ -399,6 +424,28 @@ final readonly class EstimateComposerInputFactory
             ])),
             ...(is_string($entityId) ? ['entity_id' => $entityId] : []),
             ...($factIds === [] ? [] : ['operand_fact_ids' => $factIds])];
+    }
+
+    private function sourceDocumentId(Fact $fact, array $evidence): ?int
+    {
+        if ($fact->origin !== 'document' || $fact->status !== 'confirmed' || $fact->type !== 'equipment_specification'
+            || $fact->unit !== null || $fact->evidenceIds === []) {
+            return null;
+        }
+        $documents = [];
+        foreach ($fact->evidenceIds as $id) {
+            $proof = $evidence[$id] ?? null;
+            if ($proof === null || $proof->sourceType !== 'document' || $proof->sourceVersion !== $fact->sourceVersion
+                || [$proof->organizationId, $proof->projectId, $proof->sessionId] !== [$fact->organizationId, $fact->projectId, $fact->sessionId]
+                || preg_match('/\Adocument:([1-9][0-9]*)\z/D', $proof->sourceReference ?? $proof->sourceArtifactId, $match) !== 1
+                || (string) (int) $match[1] !== $match[1]
+                || (preg_match('/\Adocument:([1-9][0-9]*)\z/D', $proof->sourceArtifactId, $artifact) === 1 && $artifact[1] !== $match[1])) {
+                return null;
+            }
+            $documents[(int) $match[1]] = true;
+        }
+
+        return count($documents) === 1 ? array_key_first($documents) : null;
     }
 
     /** @return array<string, mixed> */

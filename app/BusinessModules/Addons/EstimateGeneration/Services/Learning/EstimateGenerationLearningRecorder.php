@@ -433,9 +433,6 @@ final class EstimateGenerationLearningRecorder
             return 0;
         }
         $receipts = $this->sourceClaimCandidatesForOperation($session, $operationId);
-        if ($receipts === []) {
-            return 0;
-        }
         $scope = [$organizationId, $projectId, $sessionId];
         $capture = $this->sourceClaimPlanningSnapshot($scope);
         if ($capture === null) {
@@ -446,11 +443,15 @@ final class EstimateGenerationLearningRecorder
             return 0;
         }
         $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $cache = [];
+        $parameters = $this->sourceClaims->parameterComponents($scope, $snapshot, $decisions, $session->input_payload ?? [],
+            $session->input_payload['rebuild_section_key'] ?? null, $cache);
         $anchors = GeometryInventory::currentDocumentVersions($snapshot);
         $checked = $validated = [];
         foreach ($receipts as $receipt) {
             $result = $this->sourceClaims->capture($scope, $snapshot, $decisions, $session->input_payload ?? [],
-                $receipt['candidate'], $anchors, $checked);
+                $receipt['candidate'], $anchors, $checked, $receipt['contract_version'] ?? null,
+                $session->input_payload['rebuild_section_key'] ?? null);
             if ($result !== null) {
                 $validated[] = [...$receipt, 'validation' => $result];
             }
@@ -459,7 +460,7 @@ final class EstimateGenerationLearningRecorder
         if ($verified === null || ! hash_equals($capture['token'], $verified['token'])) {
             return 0;
         }
-        $created = 0;
+        $created = $this->recordParameterComponents($scope, $operationId, $parameters);
         foreach ($validated as $receipt) {
             $candidate = $receipt['candidate'];
             $validation = $receipt['validation'];
@@ -483,6 +484,52 @@ final class EstimateGenerationLearningRecorder
             $stored = is_string($stored) ? json_decode($stored, true, 64, JSON_THROW_ON_ERROR) : null;
             if (! is_array($stored) || CanonicalPipelineJson::encode($stored['source_claim_validation']['identity'] ?? [])
                 !== CanonicalPipelineJson::encode($validation['identity'])) {
+                throw new \DomainException('composer_source_claim_identity_collision');
+            }
+        }
+
+        return $created;
+    }
+
+    private function recordParameterComponents(array $scope, string $operationId, array $parameters): int
+    {
+        if ($parameters === []) {
+            return 0;
+        }
+        $operation = DB::table('estimate_generation_credit_operations')->where('organization_id', $scope[0])
+            ->where('project_id', $scope[1])->where('session_id', $scope[2])->where('operation_id', $operationId)
+            ->where('kind', 'generation')->where('status', 'settled')->whereNotNull('receipt')->first();
+        if ($operation === null) {
+            return 0;
+        }
+        $created = 0;
+        foreach ($parameters as $answerId => $validation) {
+            if ($validation['answer_state_version'] > (int) $operation->approved_state_version) {
+                continue;
+            }
+            $requirementOnly = ($validation['identity']['origin'] ?? null) === ComposerSourceClaimValidationService::REQUIREMENT_ORIGIN;
+            $context = ['schema_version' => $requirementOnly ? 2 : 1,
+                'origin' => $requirementOnly ? ComposerSourceClaimValidationService::REQUIREMENT_ORIGIN : ComposerSourceClaimValidationService::PARAMETER_ORIGIN,
+                'source_claim_validation' => $validation, 'training_allowed' => false];
+            $created += DB::affectingStatement(<<<'SQL'
+                INSERT INTO estimate_generation_learning_examples (
+                    organization_id, project_id, generation_session_id, source_type, source_entity_type, source_entity_id,
+                    source_claim_key, work_name, norm_code, decision_status, is_positive, accepted_at,
+                    context_payload, source_refs, quality_flags, created_at, updated_at
+                ) VALUES (?, ?, ?, 'composer_source_claim', 'estimate_session', ?, ?, ?, NULL, 'proposed', false, NULL,
+                    ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)
+                ON CONFLICT (organization_id, project_id, generation_session_id, source_claim_key) DO NOTHING
+                SQL, [...$scope, $scope[2], $validation['source_claim_key'], $requirementOnly
+                    ? $validation['component']['parameter'] : $validation['identity']['parameter']['name'],
+                CanonicalPipelineJson::encode($context),
+                CanonicalPipelineJson::encode(['credit_operation_id' => $operationId, 'source_answer_fact_id' => $answerId,
+                    'document_fact_ids' => [$validation['identity']['source'][$requirementOnly ? 'source_fact_id' : 'raw_fact_id']]]),
+                json_encode($requirementOnly ? ['user_interpretation', 'requirement_without_observed', 'do_not_index']
+                    : ['source_correspondence_only', 'user_interpretation', 'conditional_comparison', 'do_not_index'], JSON_THROW_ON_ERROR), now(), now()]);
+            $stored = DB::table('estimate_generation_learning_examples')->where('organization_id', $scope[0])->where('project_id', $scope[1])
+                ->where('generation_session_id', $scope[2])->where('source_claim_key', $validation['source_claim_key'])->value('context_payload');
+            $stored = is_string($stored) ? json_decode($stored, true, 64, JSON_THROW_ON_ERROR) : null;
+            if (! is_array($stored) || CanonicalPipelineJson::encode($stored) !== CanonicalPipelineJson::encode($context)) {
                 throw new \DomainException('composer_source_claim_identity_collision');
             }
         }
@@ -663,14 +710,16 @@ final class EstimateGenerationLearningRecorder
             ->whereIn('run.prompt_contract_version', ['estimate-composer:answers:v2', 'estimate-composer:legacy-answers:v2',
                 'estimate-composer:answers:v3', 'estimate-composer:legacy-answers:v3',
                 'estimate-composer:answers:v4', 'estimate-composer:legacy-answers:v4',
+                'estimate-composer:answers:v5', 'estimate-composer:legacy-answers:v5',
                 'estimate-composer:answer-cells:v1', 'estimate-composer:legacy-answer-cells:v1',
                 'estimate-composer:answer-cells:v2', 'estimate-composer:legacy-answer-cells:v2',
-                'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3'])
+                'estimate-composer:answer-cells:v3', 'estimate-composer:legacy-answer-cells:v3',
+                'estimate-composer:answer-cells:v4', 'estimate-composer:legacy-answer-cells:v4'])
             ->whereColumn('physical.request_fingerprint', 'run.input_fingerprint')
             ->whereColumn('physical.logical_request_fingerprint', 'run.input_fingerprint')
-            ->whereRaw("((run.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4') AND run.result_payload->'schema_version' = '2'::jsonb
+            ->whereRaw("((run.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4','estimate-composer:answers:v5','estimate-composer:legacy-answers:v5') AND run.result_payload->'schema_version' = '2'::jsonb
                 AND run.result_payload - ARRAY['schema_version','role','work_intents','quarantined_intents','result_state','claim_candidates'] = '{}'::jsonb)
-                OR (run.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3') AND run.result_payload->'schema_version' = '3'::jsonb
+                OR (run.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3','estimate-composer:answer-cells:v4','estimate-composer:legacy-answer-cells:v4') AND run.result_payload->'schema_version' = '3'::jsonb
                 AND run.result_payload - ARRAY['schema_version','role','work_intents','quarantined_intents','result_state','claim_candidates','cell_mapping_proposals','cell_mapping_context'] = '{}'::jsonb
                 AND jsonb_typeof(run.result_payload->'cell_mapping_proposals') = 'array' AND jsonb_typeof(run.result_payload->'cell_mapping_context') = 'array'))")
             ->whereRaw("run.result_payload->>'role' = ?", [AiAnalysisRole::EstimateComposer->value])
@@ -702,7 +751,11 @@ final class EstimateGenerationLearningRecorder
                 'candidates' => json_decode($row->claim_candidates, true, 64, JSON_THROW_ON_ERROR)];
         }
 
-        return ComposerSourceClaimValidationService::foldReceipts($receipts);
+        $contracts = $rows->pluck('prompt_contract_version', 'id')->all();
+
+        return array_map(static fn (array $receipt): array => [...$receipt,
+            ...(in_array($contracts[$receipt['run_id']], \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput::WORK_SOURCE_CLAIM_CONTRACTS, true)
+                ? ['contract_version' => $contracts[$receipt['run_id']]] : [])], ComposerSourceClaimValidationService::foldReceipts($receipts));
     }
 
     private function knowledgeContext(EstimateGenerationSession $session, array $workItem, int $normId): array

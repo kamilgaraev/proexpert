@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Enums\WarehouseReceiptVatMode;
 use App\BusinessModules\Features\BasicWarehouse\Services\ContractorTransferService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -23,6 +24,8 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -575,6 +578,212 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
     }
 
+    public function test_receipt_vat_snapshot_is_server_calculated_preserved_and_idempotent(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Tax material', 'TAX');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Tax warehouse', 'TAX');
+        $this->allowAdminAccess();
+        foreach ([['included', '2.345', '12.34', '24.12', '4.82', '28.94'], ['on_top', '2.345', '12.34', '28.94', '5.79', '34.73'], ['none', '2.345', '12.34', '28.94', '0.00', '28.94'], ['included', '1.000', '0.03', '0.02', '0.01', '0.03']] as [$mode, $quantity, $price, $net, $vat, $gross]) {
+            $payload = [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+                'quantity' => $quantity, 'price' => $price, 'vat_mode' => $mode,
+                'metadata' => ['description' => 'VAT fixture', 'receipt_tax' => ['net_amount' => '999.99'],
+                    'supplier_name' => 'Учебный поставщик НДС', 'invoice_number' => 'УЧ-СОПР-НДС-001', 'supplier_quantity' => $quantity],
+            ];
+            if ($mode !== 'none') $payload['vat_rate'] = '20';
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)->assertCreated();
+            $response->assertJsonPath('data.metadata.receipt_tax.net_amount', $net)
+                ->assertJsonPath('data.metadata.receipt_tax.vat_amount', $vat)
+                ->assertJsonPath('data.metadata.receipt_tax.gross_amount', $gross)
+                ->assertJsonPath('data.metadata.receipt_tax.mode', $mode)
+                ->assertJsonPath('data.metadata.receipt_tax.quantity', $quantity)
+                ->assertJsonPath('data.metadata.receipt_tax.unit_price', $price);
+            $id = $response->json('data.id');
+            $history = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/movements?movement_type=receipt")
+                ->assertOk();
+            $historyMovement = collect($history->json('data'))->firstWhere('movement_id', $id);
+            $this->assertNotNull($historyMovement);
+            $this->assertSame(
+                ['receipt_tax' => $response->json('data.metadata.receipt_tax')],
+                $historyMovement['metadata'] ?? null,
+            );
+            $this->assertSame($price, WarehouseMovement::findOrFail($id)->price);
+            $this->assertSame('Учебный поставщик НДС', WarehouseMovement::findOrFail($id)->metadata['metadata']['supplier_name']);
+            if ($mode === 'included' && $price === '12.34') {
+                $export = $this->withHeaders($context->authHeaders())
+                    ->getJson("/api/v1/admin/warehouses/movements/{$id}/export-m4")->assertOk();
+                $exportPath = ltrim((string) parse_url((string) $export->json('data.url'), PHP_URL_PATH), '/');
+                $temporaryPath = tempnam(sys_get_temp_dir(), 'm4_receipt_vat_').'.xlsx';
+                try {
+                    file_put_contents($temporaryPath, Storage::disk('s3')->get(rawurldecode($exportPath)));
+                    $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
+                    $this->assertSame('Поставщик: Учебный поставщик НДС', $sheet->getCell('A14')->getValue());
+                    $this->assertSame('Номер сопроводительного документа: УЧ-СОПР-НДС-001', $sheet->getCell('A17')->getValue());
+                    $this->assertSame(2.345, (float) $sheet->getCell('E23')->getValue());
+                } finally {
+                    @unlink($temporaryPath);
+                }
+            }
+            $repeat = $payload;
+            if ($mode !== 'none') $repeat['vat_rate'] = '20.00';
+            $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', $repeat)
+                ->assertCreated()->assertJsonPath('data.id', $id);
+            $repeat['vat_mode'] = $mode === 'included' ? 'on_top' : 'included';
+            $repeat['vat_rate'] = '20';
+            $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', $repeat)->assertStatus(409);
+        }
+        $this->assertDatabaseCount('warehouse_movements', 4);
+        $this->assertSame('7.035', WarehouseBalance::query()->where('warehouse_id', $warehouse->id)->where('unit_price', '12.34')->sole()->available_quantity);
+        $this->assertSame('1.000', WarehouseBalance::query()->where('warehouse_id', $warehouse->id)->where('unit_price', '0.03')->sole()->available_quantity);
+    }
+
+    public function test_receipt_vat_rejects_missing_or_invalid_context_without_writing_stock(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Tax material', 'TAX');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Tax warehouse', 'TAX');
+        $this->allowAdminAccess();
+        $base = ['idempotency_key' => (string) \Illuminate\Support\Str::uuid(), 'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id, 'quantity' => '1.25', 'price' => '100.00', 'vat_mode' => 'included', 'vat_rate' => '20'];
+        foreach ([
+            [['vat_rate' => null], 'vat_rate'], [['vat_rate' => '-1'], 'vat_rate'],
+            [['vat_rate' => '100.01'], 'vat_rate'], [['vat_rate' => '20.001'], 'vat_rate'],
+            [['vat_mode' => 'none'], 'vat_rate'], [['vat_mode' => null], 'vat_rate'],
+            [['vat_mode' => 'invalid'], 'vat_mode'], [['quantity' => '1.2345'], 'quantity'],
+            [['quantity' => '1000000000000'], 'quantity'], [['price' => '1.001'], 'price'],
+            [['price' => '10000000000000'], 'price'],
+            [['metadata' => ['supplier_quantity' => '1.2345']], 'metadata.supplier_quantity'],
+            [['metadata' => ['supplier_name' => ['invalid']]], 'metadata.supplier_name'],
+            [['metadata' => ['invoice_number' => ['invalid']]], 'metadata.invoice_number'],
+        ] as [$overrides, $field]) {
+            $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', array_replace($base, $overrides))
+                ->assertUnprocessable()->assertJsonValidationErrors($field);
+            if ($field === 'vat_rate') $this->assertStringContainsString('ставка НДС', implode(' ', $response->json('errors.vat_rate')));
+            $this->assertStringNotContainsString('validation.', json_encode($response->json('errors'), JSON_UNESCAPED_UNICODE));
+        }
+        $this->assertDatabaseCount('warehouse_movements', 0);
+        $this->assertDatabaseCount('warehouse_balances', 0);
+    }
+
+    public function test_receipt_vat_keeps_large_json_numeric_values_exact(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Numeric tax material', 'TAX-NUMERIC');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Numeric tax warehouse', 'TAX-NUMERIC');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+            'quantity' => 999999999999.999, 'price' => 0, 'vat_mode' => 'none',
+            'metadata' => ['supplier_quantity' => 999999999999.999],
+        ])->assertCreated()
+            ->assertJsonPath('data.metadata.receipt_tax.quantity', '999999999999.999')
+            ->assertJsonPath('data.metadata.metadata.supplier_quantity', '999999999999.999');
+
+        $this->assertSame('999999999999.999', WarehouseMovement::findOrFail($response->json('data.id'))->quantity);
+        $this->assertSame('999999999999.999', WarehouseBalance::query()->where('warehouse_id', $warehouse->id)->sole()->available_quantity);
+
+        $priceResponse = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+            'quantity' => 1, 'price' => 9999999999999.99, 'vat_mode' => 'none',
+        ])->assertCreated()
+            ->assertJsonPath('data.metadata.receipt_tax.unit_price', '9999999999999.99')
+            ->assertJsonPath('data.metadata.receipt_tax.gross_amount', '9999999999999.99');
+        $this->assertSame('9999999999999.99', WarehouseMovement::findOrFail($priceResponse->json('data.id'))->price);
+    }
+
+    public function test_receipt_rejects_batch_quantity_overflow_without_partial_changes(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Limit warehouse', 'STOCK-LIMIT');
+        $this->allowAdminAccess();
+
+        foreach ([false, true] as $withVat) {
+            $material = $this->createMaterial($context->organization->id, $unit->id, 'Limit material', 'STOCK-LIMIT-'.(int) $withVat);
+            $balance = WarehouseBalance::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'available_quantity' => '999999999999.999',
+                'unit_price' => '0.00',
+            ]);
+            $payload = [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+                'quantity' => '0.001', 'price' => '0',
+            ];
+            if ($withVat) {
+                $payload['vat_mode'] = 'none';
+            }
+
+            for ($attempt = 0; $attempt < 2; $attempt++) {
+                $this->withHeaders($context->authHeaders())
+                    ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)
+                    ->assertUnprocessable()
+                    ->assertJsonPath('message', trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+                $this->assertSame('999999999999.999', $balance->fresh()->available_quantity);
+                $this->assertSame(0, WarehouseMovement::query()->where('material_id', $material->id)->count());
+            }
+        }
+
+        $newMaterial = $this->createMaterial($context->organization->id, $unit->id, 'Oversized new batch', 'NEW-BATCH-LIMIT');
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/warehouses/operations/receipt', [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id, 'material_id' => $newMaterial->id,
+            'quantity' => '1000000000000', 'price' => '0',
+        ])->assertUnprocessable()
+            ->assertJsonPath('message', trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+        $this->assertSame(0, WarehouseBalance::query()->where('material_id', $newMaterial->id)->count());
+        $this->assertDatabaseCount('warehouse_movements', 0);
+    }
+
+    public function test_receipt_adds_exact_quantity_at_batch_limit_and_replays_without_another_addition(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Exact limit warehouse', 'EXACT-LIMIT');
+        $this->allowAdminAccess();
+
+        foreach ([false, true] as $withVat) {
+            $material = $this->createMaterial($context->organization->id, $unit->id, 'Exact limit material', 'EXACT-LIMIT-'.(int) $withVat);
+            $balance = WarehouseBalance::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'available_quantity' => '999999999999.998',
+                'unit_price' => '0.00',
+            ]);
+            $payload = [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
+                'quantity' => '0.001', 'price' => '0',
+            ];
+            if ($withVat) {
+                $payload['vat_mode'] = 'none';
+            }
+
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)->assertCreated();
+            $this->assertSame('999999999999.999', $balance->fresh()->available_quantity);
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)
+                ->assertCreated()->assertJsonPath('data.id', $response->json('data.id'));
+            $this->assertSame('999999999999.999', $balance->fresh()->available_quantity);
+            $this->assertSame(1, WarehouseMovement::query()->where('material_id', $material->id)->count());
+        }
+    }
+
     public function test_transfer_to_contractor_uses_scoped_ids_and_preserves_project_on_movements(): void
     {
         $context = AdminApiTestContext::create();
@@ -881,10 +1090,12 @@ class WarehouseOperationsControllerTest extends TestCase
                 int $organizationId,
                 int $warehouseId,
                 int $materialId,
-                float $quantity,
-                float $price,
+                float|string $quantity,
+                float|string $price,
                 array $metadata = [],
-                bool $recordInventoryEvent = true
+                bool $recordInventoryEvent = true,
+                ?WarehouseReceiptVatMode $vatMode = null,
+                ?string $vatRate = null,
             ): array {
                 throw new \RuntimeException('Simulated recipient failure');
             }

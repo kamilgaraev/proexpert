@@ -231,22 +231,38 @@ final class ContractPeriodCertificateTest extends TestCase
         $xlsxPath = $export->exportCertificateKS3ToExcel($certificate);
 
         foreach ([$pdfPath, $xlsxPath] as $path) {
-            self::assertStringStartsWith('org-'.$contract->organization_id.'/exports/acts/ks3/KS-3_', $path);
-            self::assertCount(5, explode('/', $path));
+            self::assertStringStartsWith('org-'.$contract->organization_id.'/exports/acts/ks3/', $path);
+            self::assertStringStartsWith('KS-3_', basename($path));
+            self::assertCount(6, explode('/', $path));
             self::assertSame(0, preg_match('/[\\\\:*?"<>|\p{C}]/u', basename($path)));
             self::assertStringContainsString('УЧ-ПТО-102-2026', basename($path));
         }
         $text = (new \Smalot\PdfParser\Parser)->parseContent($disk->get($pdfPath))->getText();
         self::assertStringContainsString('20.10.2026 08:41 (UTC+05:00)', preg_replace('/\s+/u', ' ', $text));
         self::assertStringContainsString($certificate->number, preg_replace('/\s+/u', '', $text));
-        $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($disk->path($xlsxPath));
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'most-ks3-');
+        self::assertNotFalse($temporaryPath);
         try {
-            self::assertSame($certificate->number, $spreadsheet->getActiveSheet()->getCell('B20')->getValue());
+            self::assertTrue(copy($disk->path($xlsxPath), $temporaryPath));
+            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($temporaryPath);
+            try {
+                self::assertStringContainsString($certificate->number, (string) $spreadsheet->getActiveSheet()->getCell('A13')->getValue());
+            } finally {
+                $spreadsheet->disconnectWorksheets();
+            }
         } finally {
-            $spreadsheet->disconnectWorksheets();
+            unlink($temporaryPath);
         }
         self::assertSame($before, $certificate->fresh()->snapshot);
         self::assertSame(ContractPeriodCertificate::STATUS_APPROVED, $certificate->fresh()->status);
+        $preparedHashes = [$pdfPath => hash('sha256', $disk->get($pdfPath)), $xlsxPath => hash('sha256', $disk->get($xlsxPath))];
+        foreach ([$pdfPath => $export->exportCertificateKS3ToPdf($certificate), $xlsxPath => $export->exportCertificateKS3ToExcel($certificate)] as $first => $second) {
+            self::assertNotSame($first, $second);
+            self::assertSame(basename($first), basename($second));
+            self::assertSame($preparedHashes[$first], hash('sha256', $disk->get($first)));
+            $disk->assertExists($second);
+        }
+        self::assertCount(4, $disk->allFiles());
     }
 
     public function test_same_idempotency_key_with_changed_payload_is_conflict(): void

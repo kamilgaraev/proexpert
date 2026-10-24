@@ -51,18 +51,18 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $forms = [
-            [M4ExportStrategy::class, 'H11', 'б/н'],
-            [M7ExportStrategy::class, 'H11', 'б/н'],
-            [M11ExportStrategy::class, 'H11', 'б/н'],
-            [M15ExportStrategy::class, 'A6', 'НАКЛАДНАЯ N б/н'],
+            [M4ExportStrategy::class, 'H11', 'б/н', '20260830_131112'],
+            [M7ExportStrategy::class, 'A1', 'М-7 № б/н от 30.08.2026', '20260830_131112'],
+            [M11ExportStrategy::class, 'H11', 'б/н', '20260830_101112'],
+            [M15ExportStrategy::class, 'A6', 'НАКЛАДНАЯ N б/н', '20260830_101112'],
         ];
 
-        foreach ($forms as [$strategy, $numberCell, $expectedNumber]) {
+        foreach ($forms as [$strategy, $numberCell, $expectedNumber, $expectedFilenameDate]) {
             $path = app($strategy)->export($movement);
             $sheet = $this->sheetFromStorage($path);
 
             $this->assertSame($expectedNumber, $sheet->getCell($numberCell)->getValue(), $strategy);
-            $this->assertStringContainsString('20260830_101112', $path);
+            $this->assertStringContainsString($expectedFilenameDate, $path);
             $this->assertStringNotContainsString('_'.$movement->id.'.xlsx', $path);
         }
 
@@ -87,7 +87,7 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         $inventoryPath = app(INV3ExportStrategy::class)->export($act);
         $inventorySheet = $this->sheetFromStorage($inventoryPath);
 
-        $this->assertSame('б/н', $inventorySheet->getCell('D11')->getValue());
+        $this->assertStringContainsString('Номер описи: б/н', (string) $inventorySheet->getCell('A7')->getValue());
         $this->assertStringContainsString('20260830', $inventoryPath);
         $this->assertStringNotContainsString('_'.$act->id.'.xlsx', $inventoryPath);
     }
@@ -113,8 +113,8 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $withoutPersonnelSheet = $this->sheetFromStorage(app(M4ExportStrategy::class)->export($movement));
-        $this->assertStringContainsString('Владелец организации', $withoutPersonnelSheet->getCell('A19')->getValue());
-        $this->assertStringNotContainsString('technical_login', $withoutPersonnelSheet->getCell('A19')->getValue());
+        $this->assertStringContainsString('Владелец организации', $withoutPersonnelSheet->getCell('I25')->getValue());
+        $this->assertStringNotContainsString('technical_login', $withoutPersonnelSheet->getCell('I25')->getValue());
 
         WorkforceEmployee::query()->create([
             'organization_id' => $context->organization->id,
@@ -138,7 +138,7 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $forms = [
-            [M4ExportStrategy::class, 'A19'],
+            [M4ExportStrategy::class, 'I25'],
             [M11ExportStrategy::class, 'A19'],
             [M15ExportStrategy::class, 'AE16'],
         ];

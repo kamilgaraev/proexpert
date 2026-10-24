@@ -127,6 +127,39 @@ final class WarehouseMovementsPaginationControllerTest extends TestCase
             ->assertJsonValidationErrors(['movement_type', 'per_page', 'page']);
     }
 
+    public function test_history_exposes_only_root_receipt_tax_fields_and_keeps_legacy_tax_unknown(): void
+    {
+        $context = AdminApiTestContext::create();
+        [$warehouse, $material] = $this->createWarehouseContext($context->organization->id, 'TAX-HISTORY');
+        $tax = [
+            'version' => 1, 'mode' => 'included', 'rate' => '22.00',
+            'quantity' => '1.000', 'unit_price' => '12.20',
+            'net_amount' => '10.00', 'vat_amount' => '2.20', 'gross_amount' => '12.20',
+        ];
+        foreach ([
+            ['TAX', WarehouseMovement::TYPE_RECEIPT, ['receipt_tax' => $tax + ['private_context' => 'hidden-tax-context'], 'internal_operation' => 'hidden-operation']],
+            ['LEGACY', WarehouseMovement::TYPE_RECEIPT, ['metadata' => ['receipt_tax' => $tax], 'internal_operation' => 'hidden-operation']],
+            ['WRITE-OFF', WarehouseMovement::TYPE_WRITE_OFF, ['receipt_tax' => $tax]],
+        ] as [$number, $type, $metadata]) {
+            WarehouseMovement::query()->create([
+                'organization_id' => $context->organization->id, 'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id, 'movement_type' => $type,
+                'quantity' => 1, 'price' => '12.20', 'document_number' => $number,
+                'movement_date' => '2026-10-23 22:33:01', 'metadata' => $metadata,
+            ]);
+        }
+        $this->allowAdminAccess();
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/movements")
+            ->assertOk()->assertJsonCount(3, 'data');
+        $movements = collect($response->json('data'))->keyBy('document_number');
+        $this->assertSame(['receipt_tax' => $tax], $movements['TAX']['metadata'] ?? null);
+        $this->assertSame([], $movements['LEGACY']['metadata'] ?? null);
+        $this->assertSame([], $movements['WRITE-OFF']['metadata'] ?? null);
+        $this->assertStringNotContainsString('hidden-tax-context', $response->getContent());
+        $this->assertStringNotContainsString('hidden-operation', $response->getContent());
+    }
+
     /** @return array{OrganizationWarehouse, Material} */
     private function createWarehouseContext(int $organizationId, string $suffix): array
     {

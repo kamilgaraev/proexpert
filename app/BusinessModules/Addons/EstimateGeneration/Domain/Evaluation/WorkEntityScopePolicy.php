@@ -22,6 +22,6 @@ final class WorkEntityScopePolicy
             return [self::TYPES[$work]];
         }
 
-        return ($item['metadata']['generation_source'] ?? null) === 'accepted_supplementary_work' ? [] : ['room'];
+        return [];
     }
 }

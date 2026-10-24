@@ -29,6 +29,7 @@ use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\DatabaseTransactionsManager;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Log\LogManager;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\DB;
@@ -459,21 +460,42 @@ final class RagActorCoverageTest extends TestCase
     public function test_failed_or_revision_changed_traversal_never_publishes_partial_projection(): void
     {
         [$organization, $actor, $visible] = $this->scope();
-        $this->index($organization->id, $visible);
-        $this->collector->failure = true;
-        $this->coverage->refreshCoverage($organization->id);
-        $this->assertFalse($this->coverage->coverageForActor($organization->id, $actor)['eligible_count_known']);
-        $this->collector->failure = false;
-        $this->collector->afterCollection = static fn () => RagCoverageService::invalidate($organization->id);
-        $this->coverage->refreshCoverage($organization->id);
-        $status = $this->coverage->coverageForActor($organization->id, $actor);
-        $this->assertFalse($status['eligible_count_known']);
-        $this->assertNull($status['expected_source_count']);
-        $this->assertNull($status['lag_seconds']);
-        $this->assertNull($status['source_catalog'][0]['error']);
-        $this->collector->afterCollection = null;
-        $this->coverage->refreshCoverage($organization->id);
-        $this->assertTrue($this->coverage->coverageForActor($organization->id, $actor)['coverage_complete']);
+        $aborts = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->andReturnNull()->byDefault();
+        $logger->shouldReceive('info')->once()->with('assistant_rag_coverage_aborted', Mockery::on(static function (array $context) use (&$aborts): bool {
+            $aborts[] = $context;
+
+            return true;
+        }));
+        $originalLog = Log::getFacadeRoot();
+        $manager = Mockery::mock(LogManager::class, [$this->app])->makePartial();
+        $manager->shouldReceive('channel')->with('api_latency')->andReturn($logger);
+        Log::swap($manager);
+        try {
+            $this->index($organization->id, $visible);
+            $this->collector->failure = true;
+            $this->coverage->refreshCoverage($organization->id);
+            $this->assertFalse($this->coverage->coverageForActor($organization->id, $actor)['eligible_count_known']);
+            $this->collector->failure = false;
+            $this->collector->afterCollection = static fn () => RagCoverageService::invalidate($organization->id);
+            $this->coverage->refreshCoverage($organization->id);
+            $status = $this->coverage->coverageForActor($organization->id, $actor);
+            $this->assertFalse($status['eligible_count_known']);
+            $this->assertNull($status['expected_source_count']);
+            $this->assertNull($status['lag_seconds']);
+            $this->assertNull($status['source_catalog'][0]['error']);
+            self::assertCount(1, $aborts);
+            self::assertSame(['scope', 'release_sha', 'elapsed_ms', 'abort_site'], array_keys($aborts[0]));
+            self::assertSame('global', $aborts[0]['scope']);
+            self::assertSame('refresh_guard', $aborts[0]['abort_site']);
+            self::assertGreaterThanOrEqual(0, $aborts[0]['elapsed_ms']);
+            $this->collector->afterCollection = null;
+            $this->coverage->refreshCoverage($organization->id);
+            $this->assertTrue($this->coverage->coverageForActor($organization->id, $actor)['coverage_complete']);
+        } finally {
+            Log::swap($originalLog);
+        }
     }
 
     #[DataProvider('unpublishedProjectionFailures')]

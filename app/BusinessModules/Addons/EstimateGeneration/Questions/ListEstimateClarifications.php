@@ -4,11 +4,24 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Questions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
+use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\DatabaseManager;
+
 final readonly class ListEstimateClarifications
 {
     public function __construct(
         private EstimateClarificationCatalog $catalog,
         private EstimateClarificationAnswerRegistry $answers,
+        private ?ProjectModelRepository $models = null,
+        private ?EstimateGenerationLearningEvidenceService $evidence = null,
+        private ?EstimateGenerationActionAuthorization $authorization = null,
+        private ?DatabaseManager $database = null,
+        private int $maxFacts = 10001,
     ) {}
 
     /** @return list<array<string,mixed>> */
@@ -17,9 +30,18 @@ final readonly class ListEstimateClarifications
         $answered = array_fill_keys($this->answers->answeredKeys($organizationId, $projectId, $sessionId), true);
         $result = [];
         $canAnswerWork = null;
-        foreach ($this->catalog->allCurrent($organizationId, $projectId, $sessionId) as $current) {
+        [$questions, $checks, $parameterOptions, $parameterChecks, $requirementOptions, $requirementDetails, $requirementChecks] = $this->currentWithSourceChecks($organizationId, $projectId, $sessionId, $actor);
+        foreach ($questions as $current) {
             if (($current->question->sourceLocator['kind'] ?? null) === 'composer_work_technology') {
                 $answer = $current->workAnswer;
+                if (isset($answer['requirement'])) {
+                    $ref = $answer['requirement']['selected_ref'] ?? null;
+                    unset($answer['requirement']);
+                    if (($answer['response'] ?? null) === 'other' && is_string($ref) && preg_match('/\A[a-f0-9]{64}\z/D', $ref) === 1) {
+                        $answer['requirement'] = ['schema_version' => 2, 'selected_ref' => $ref, 'confirmation_level' => 'user_confirmed',
+                            'source_details' => $requirementDetails[$current->question->code][$ref] ?? ['status' => 'unavailable']];
+                    }
+                }
                 $canAnswerWork ??= $actor !== null && (int) $actor->current_organization_id === $organizationId
                     && \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()
                         ->where('organization_id', $organizationId)->where('project_id', $projectId)->whereKey($sessionId)
@@ -31,7 +53,12 @@ final readonly class ListEstimateClarifications
                     'status' => $answer === null ? 'unanswered' : match ($answer['response']) {
                         'other' => 'answered', 'revoke' => 'revoked', default => 'left_unresolved',
                     },
-                    'answer' => $answer, 'actions' => ! $canAnswerWork ? [] : ($answer === null ? [($current->composerContext['previous_fact_id'] ?? null) === null ? 'answer' : 'reanswer']
+                    'answer' => $answer, 'source_checks' => $checks[$current->question->code] ?? [],
+                    'parameter_options' => $parameterOptions[$current->question->code] ?? [],
+                    'parameter_checks' => $parameterChecks[$current->question->code] ?? [],
+                    'requirement_options' => $requirementOptions[$current->question->code] ?? [],
+                    'requirement_checks' => $requirementChecks[$current->question->code] ?? [],
+                    'actions' => ! $canAnswerWork ? [] : ($answer === null ? [($current->composerContext['previous_fact_id'] ?? null) === null ? 'answer' : 'reanswer']
                         : ($answer['response'] === 'other' ? ['reanswer', 'revoke'] : ['reanswer']))];
                 continue;
             }
@@ -48,5 +75,95 @@ final readonly class ListEstimateClarifications
         }
 
         return $result;
+    }
+
+    private function currentWithSourceChecks(int $organizationId, int $projectId, int $sessionId, ?User $actor): array
+    {
+        $fallback = fn (): array => [$this->catalog->allCurrent($organizationId, $projectId, $sessionId), [], [], [], [], [], []];
+        if ($actor === null || $this->models === null || $this->evidence === null || $this->authorization === null
+            || $this->database === null || $this->maxFacts < 1 || $this->maxFacts > 10001) {
+            return $fallback();
+        }
+        $connection = $this->database->connection();
+        if ($connection->getDriverName() !== 'pgsql' || $connection->transactionLevel() !== 0) {
+            return $fallback();
+        }
+        $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)->where('project_id', $projectId)->find($sessionId);
+        if ($session === null) {
+            return $fallback();
+        }
+        try {
+            $this->authorization->authorize($actor, $session, 'estimate_generation.view');
+        } catch (AuthorizationException) {
+            return $fallback();
+        }
+        try {
+            return $connection->transaction(function () use ($connection, $organizationId, $projectId, $sessionId, $actor): array {
+                $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+                $questions = $this->catalog->allCurrent($organizationId, $projectId, $sessionId);
+                if (array_filter($questions, static fn (CurrentEstimateClarification $current): bool =>
+                    ($current->question->sourceLocator['kind'] ?? null) === 'composer_work_technology') === []) {
+                    return [$questions, [], [], [], [], [], []];
+                }
+                $session = EstimateGenerationSession::query()->where('organization_id', $organizationId)->where('project_id', $projectId)->find($sessionId);
+                if ($session === null) {
+                    return [$questions, [], [], [], [], [], []];
+                }
+                try {
+                    $this->authorization->authorize($actor, $session, 'estimate_generation.view');
+                } catch (AuthorizationException) {
+                    return [$questions, [], [], [], [], [], []];
+                }
+                $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts);
+                $snapshot = $capture['snapshot'];
+                if (count($snapshot->facts) >= $this->maxFacts) {
+                    return [$questions, [], [], [], [], [], []];
+                }
+                $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
+                $references = $this->evidence->sourceClaimReferences($organizationId, $projectId, $sessionId, $snapshot,
+                    $decisions, $session->input_payload ?? [], includeSourceDetails: true);
+                $cache = [];
+                $parameters = $this->evidence->parameterReferences([$organizationId, $projectId, $sessionId], $snapshot, $decisions,
+                    $session->input_payload ?? [], includeSourceDetails: true, cache: $cache);
+                $checks = $parameterOptions = $parameterChecks = $requirementOptions = $requirementDetails = $requirementChecks = [];
+                foreach ($questions as $current) {
+                    if (($current->question->sourceLocator['kind'] ?? null) !== 'composer_work_technology'
+                        || $current->snapshotToken !== $capture['token']) {
+                        continue;
+                    }
+                    $parameterOptions[$current->question->code] = $this->evidence->parameterOptions([$organizationId, $projectId, $sessionId], $snapshot, $current, $cache);
+                    $options = $this->evidence->requirementOptions([$organizationId, $projectId, $sessionId], $snapshot, $current, $cache);
+                    $requirementOptions[$current->question->code] = $options;
+                    foreach ($options as $option) {
+                        $requirementDetails[$current->question->code][$option['source_requirement_ref']] = $option['source_details'];
+                    }
+                    $parameter = $parameters[$current->workAnswer['fact_id'] ?? ''] ?? null;
+                    if ($parameter !== null && $parameter['entity_id'] === ($current->question->sourceLocator['entity_id'] ?? null)) {
+                        if (($parameter['schema_version'] ?? null) === 2) {
+                            $requirementChecks[$current->question->code] = [$parameter];
+                        } else {
+                            $parameterChecks[$current->question->code] = [$parameter];
+                        }
+                    }
+                    if (($current->workAnswer['response'] ?? null) !== 'other') {
+                        continue;
+                    }
+                    $matches = array_values(array_filter($references, static fn (array $reference): bool => isset($reference['source_proof'])
+                        && $reference['source_answer_fact_id'] === $current->workAnswer['fact_id']
+                        && $reference['entity_id'] === ($current->question->sourceLocator['entity_id'] ?? null)));
+                    if (count($matches) !== 1) {
+                        continue;
+                    }
+                    $reference = $matches[0];
+                    $checks[$current->question->code] = [['source_answer_fact_id' => $reference['source_answer_fact_id'],
+                        'entity_id' => $reference['entity_id'], 'fact_type' => $reference['fact_type'], 'value' => $reference['value'],
+                        'source' => $reference['source_proof'], 'interpretation_status' => 'proposed', 'source_correspondence' => 'passed',
+                        'engineering_applicability' => 'unresolved', 'numeric_parameters_confirmed' => false]];
+                }
+                return [$questions, $checks, $parameterOptions, $parameterChecks, $requirementOptions, $requirementDetails, $requirementChecks];
+            });
+        } catch (\Illuminate\Database\QueryException) {
+            return $fallback();
+        }
     }
 }

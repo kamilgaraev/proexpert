@@ -159,6 +159,20 @@ final readonly class ProjectModelEvidenceWriter
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
+                if ($claim->semanticProposal !== null) {
+                    $pins = ['organization_id' => $scope->organizationId, 'project_id' => $scope->projectId,
+                        'session_id' => $scope->sessionId, 'document_id' => $documentId, 'page_number' => $pageNumber,
+                        'processing_unit_id' => $claim->locator['processing_unit_id'] ?? null, 'source_version' => $scope->sourceVersion];
+                    if (($claim->locator['document_id'] ?? null) !== $documentId || ($claim->locator['page'] ?? null) !== $pageNumber) {
+                        throw new InvalidArgumentException('document_semantic_source_scope_invalid');
+                    }
+                    $identity = ['schema_version' => 1, 'payload' => $claim->semanticProposal,
+                        'field_locators' => $claim->semanticFieldLocators, 'source_pins' => $pins];
+                    $proposalHash = hash('sha256', DerivedQuantityIdentity::canonicalJson($identity));
+                    $projection['attributes']['properties']['document_semantic_proposal'] = [
+                        ...$identity, 'status' => 'proposed', 'proposal_hash' => $proposalHash];
+                    $entityIdentity .= '|document-semantic-proposal:v1:'.$proposalHash;
+                }
                 if ($cellReview !== null) {
                     if ($claim->factType !== 'equipment_specification' || $claim->unit !== null || $numericSources !== null
                         || $literalSources?->binding($claim, $documentId, $pageNumber) === null) {
@@ -228,7 +242,9 @@ final readonly class ProjectModelEvidenceWriter
                         (string) $documentId,
                         (string) $pageNumber,
                     ]));
-                if ($decision->status === 'accepted' || $visualInventoryFact || $roomIdentityFact) {
+                if ($claim->semanticProposal !== null) {
+                    $entityId = 'entity:'.hash('sha256', DerivedQuantityIdentity::canonicalJson([$projection['type'], $scope->sourceVersion, $entityIdentity]));
+                } elseif ($decision->status === 'accepted' || $visualInventoryFact || $roomIdentityFact) {
                     // Entity rows and fact bindings belong to one source version. Reuse old keys only within that version.
                     $legacyCanonicalEntityId = $entityId;
                     $entityId = 'entity:'.hash('sha256', implode('|', [$projection['type'], $scope->sourceVersion, $entityIdentity]));
@@ -760,6 +776,10 @@ final readonly class ProjectModelEvidenceWriter
             return ['type' => $physical,
                 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
                 'attributes' => $attributes];
+        }
+        if ($claim->semanticProposal !== null && FactVocabulary::isWorkScopeFactType($claim->factType)) {
+            return ['type' => 'quantity', 'identity_key' => $claim->entityKey,
+                'attributes' => ['semantic_type' => 'work_scope', 'identity' => ['source_entity_key' => $claim->entityKey]]];
         }
         $type = mb_strtolower($claim->factType);
         $value = $claim->value['data'];

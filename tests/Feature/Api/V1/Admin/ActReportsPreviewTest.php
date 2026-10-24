@@ -1611,6 +1611,7 @@ class ActReportsPreviewTest extends TestCase
         });
         $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'АВР-УЧ-102/01', 1);
         $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+        $preparedHashes = [];
 
         foreach (['xlsx', 'pdf'] as $format) {
             foreach (['ks2', 'ks3', 'ks-both'] as $form) {
@@ -1663,9 +1664,15 @@ class ActReportsPreviewTest extends TestCase
                         unlink($path);
                     }
                 }
+                foreach ($preparedHashes as $preparedPath => $preparedHash) {
+                    self::assertSame($preparedHash, hash('sha256', $disk->get($preparedPath)), 'Previously prepared export content must remain unchanged.');
+                }
+                foreach ($disk->allFiles() as $preparedPath) {
+                    $preparedHashes[$preparedPath] ??= hash('sha256', $disk->get($preparedPath));
+                }
             }
         }
-        self::assertCount(4, $disk->allFiles(), 'Existing official S3 exports must remain available to their temporary links.');
+        self::assertCount(8, $disk->allFiles(), 'Each preparation must retain its own object for its temporary link.');
     }
 
     public function test_legacy_official_exports_require_exact_permission_before_generation(): void

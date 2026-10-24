@@ -85,9 +85,27 @@ final class AssistantStatusSnapshotDiagnostics
         }
     }
 
+    public static function coverageAbort(bool $global, float $elapsedMs, string $abortSite): void
+    {
+        if (! is_finite($elapsedMs) || $elapsedMs < 0
+            || ! in_array($abortSite, ['refresh_guard', 'publish_revision_mismatch', 'unclassified'], true)) {
+            return;
+        }
+        try {
+            Log::channel('api_latency')->info('assistant_rag_coverage_aborted', [
+                'scope' => $global ? 'global' : 'filtered',
+                'release_sha' => self::releaseSha(),
+                'elapsed_ms' => round($elapsedMs, 2),
+                'abort_site' => $abortSite,
+            ]);
+        } catch (Throwable) {
+        }
+    }
+
     public static function expectedProjectionQuery(bool $collectProof, int $ordinal, float $elapsedMs, bool $completed, ?array $sourceTypeFilters = null, ?array $entityTypeFilters = null): void
     {
-        if ($ordinal < 1 || $ordinal > 32 || ! is_finite($elapsedMs) || $elapsedMs < 500) { return; }
+        $ifcCounts = ! $collectProof && $sourceTypeFilters === ['design_additional'] && $entityTypeFilters === ['design_ifc_model_element'];
+        if ($ordinal < 1 || $ordinal > 32 || ! is_finite($elapsedMs) || $elapsedMs < 0 || ($elapsedMs < 500 && ! $ifcCounts)) { return; }
         try {
             $definitions = AssistantEntityAccessCatalog::entityDefinitions();
             $entities = array_fill_keys([...array_keys($definitions), 'assistant_document'], true);

@@ -17,7 +17,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'pricing' => 'e4a4258475b71eb4fe383e6888c1217c89807aa29aef7b1826f3e3f3e33ecd97',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '389d76e11d9892ab7dd122aed187e08670685a4b1f51859ba8cfb8ac3926b3ee';
+    private const FRESH_INVENTORY_DIGEST = 'a0fecc7579a849729405ce530c7e3063d4d56627b8ba697b11c7aff72711bf8d';
 
     private const SUBJECT = [
         'geometry' => [
@@ -452,7 +452,9 @@ final class EstimateGenerationContractDatabaseProvisioner
         }
         array_splice($entries, $trainingInsertAt, 0, self::SUBJECT['training']);
 
-        return $entries;
+        return [...$entries, 'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_24_000100_allow_work_parameter_component_learning.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_24_000200_allow_document_semantic_proposal_entities.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_24_000300_allow_requirement_only_component_learning.php'];
     }
 
     public static function inventory(string $phase = 'training'): array

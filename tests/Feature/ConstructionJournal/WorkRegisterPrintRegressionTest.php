@@ -107,6 +107,14 @@ final class WorkRegisterPrintRegressionTest extends TestCase
             file_put_contents($debugDirectory.'/'.$name.'.xlsx', Storage::disk('s3')->get($path));
         }
 
-        return IOFactory::load(Storage::disk('s3')->path($path))->getActiveSheet();
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'most-register-');
+        self::assertNotFalse($temporaryPath);
+        try {
+            self::assertTrue(copy(Storage::disk('s3')->path($path), $temporaryPath));
+
+            return IOFactory::load($temporaryPath)->getActiveSheet();
+        } finally {
+            unlink($temporaryPath);
+        }
     }
 }

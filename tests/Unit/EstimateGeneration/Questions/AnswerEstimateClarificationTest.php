@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningR
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\AnswerEstimateClarification;
@@ -26,6 +27,65 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class AnswerEstimateClarificationTest extends TestCase
 {
     private const SOURCE_VERSION = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    public function test_typed_work_answer_requires_source_view_permission_before_any_write(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturnCallback(static fn (User $actor, string $permission): bool => $permission === 'estimate_generation.review');
+        $service = new AnswerEstimateClarification($authorization,
+            new FixedClarificationSource(new CurrentEstimateClarification($this->question(), self::SOURCE_VERSION,
+                str_repeat('b', 64), str_repeat('c', 64), 'fact:wall-material')),
+            $models, new ApplyProjectModelDecision($models), new RecordingPlanningReanalysisTrigger,
+            static fn (string $key): string => $key);
+        $this->expectException(AuthorizationException::class);
+        $service->handle($this->actor(), $this->session(),
+            new ActorContext(10, 20, 30, 'typed-no-view-001', self::SOURCE_VERSION, str_repeat('c', 64)),
+            'composer_work_technology_fixture', 'other', 'Допущение', documentIds: [7], parameter: $this->parameter());
+    }
+
+    public function test_typed_work_answer_replay_matches_the_entire_parameter_without_requiring_a_current_question(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $parameter = $this->parameter();
+        $requestId = 'typed-answer-replay-001';
+        $decisionId = 'decision:clarification:'.hash('sha256', $requestId);
+        $question = 'composer_work_technology_fixture';
+        $fact = new Fact('fact:typed-answer', 10, 20, 40, self::SOURCE_VERSION, 'entity:wall', 'evaluation_answer',
+            ['question_key' => $question, 'choice_value' => 'other', 'response' => 'other', 'other' => 'Допущение',
+                'documents' => [['document_id' => 7]], 'question_fingerprint' => str_repeat('c', 64),
+                'parameter' => ['input' => $parameter]], null, 0.0, 'user_assumption', 'confirmed', []);
+        $models->saveSourceModel([$this->entity()], [$fact], []);
+        $models->applyDecision(new Decision($decisionId, 10, 20, 40, self::SOURCE_VERSION, 'fact', $fact->id, $fact->id,
+            'user', '30', 'Допущение', 1, []), $fact);
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturn(true);
+        $source = new VanishingClarificationSource(new CurrentEstimateClarification($this->question(), self::SOURCE_VERSION,
+            str_repeat('b', 64), str_repeat('c', 64), 'fact:wall-material'));
+        $service = new AnswerEstimateClarification($authorization, $source, $models,
+            new ApplyProjectModelDecision($models), new RecordingPlanningReanalysisTrigger, static fn (string $key): string => $key);
+        $context = new ActorContext(10, 20, 30, $requestId, self::SOURCE_VERSION, str_repeat('c', 64));
+        self::assertSame('answered', $service->handle($this->actor(), $this->session(), $context, $question, 'other', 'Допущение',
+            documentIds: [7], parameter: array_reverse($parameter, true))->status);
+        self::assertSame(0, $source->calls);
+        foreach (['value' => '101', 'unit' => 'cm', 'basis' => 'assumption', 'name' => 'Другой зазор',
+            'source_operand_ref' => str_repeat('b', 64)] as $key => $changed) {
+            try {
+                $service->handle($this->actor(), $this->session(), $context, $question, 'other', 'Допущение',
+                    documentIds: [7], parameter: [...$parameter, $key => $changed]);
+                self::fail('A different typed operand must not replay a committed answer.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('estimate_generation.question_idempotency_collision', $exception->getMessage());
+            }
+        }
+        self::assertCount(1, $models->decisions);
+    }
+
+    private function parameter(): array
+    {
+        return ['name' => 'Свободный зазор B', 'value' => '102', 'unit' => 'mm', 'basis' => 'measurement',
+            'source_operand_ref' => str_repeat('a', 64), 'condition' => 'minimum_length'];
+    }
 
     public function test_recommended_choice_is_persisted_through_the_canonical_decision_boundary_and_reanalysis(): void
     {

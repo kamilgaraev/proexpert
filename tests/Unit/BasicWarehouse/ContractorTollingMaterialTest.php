@@ -238,6 +238,7 @@ final class ContractorTollingMaterialTest extends TestCase
         (new ReflectionMethod($strategy, 'setTable'))->invoke($strategy, $sheet, collect([$movement]));
         self::assertSame('Поставщик: Заказчик', $sheet->getCell('A14')->getValue());
         self::assertStringContainsString('Давальческие материалы заказчика', $sheet->getCell('A15')->getValue());
-        self::assertSame('12,34', $sheet->getCell('H17')->getValue());
+        self::assertSame('12,34', $sheet->getCell('G23')->getValue());
+        self::assertNull($sheet->getCell('H23')->getValue());
     }
 }

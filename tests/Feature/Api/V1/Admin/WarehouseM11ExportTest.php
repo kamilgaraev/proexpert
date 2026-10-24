@@ -95,10 +95,8 @@ class WarehouseM11ExportTest extends TestCase
         $path = app(M11ExportStrategy::class)->export($movement);
 
         Storage::disk('s3')->assertExists($path);
-        $this->assertSame(
-            "org-{$context->organization->id}/exports/warehouse/m11/M11_qa-m11-return-postrelease-20260902-001.xlsx",
-            $path,
-        );
+        $this->assertStringStartsWith("org-{$context->organization->id}/exports/warehouse/m11/", $path);
+        $this->assertSame('M11_qa-m11-return-postrelease-20260902-001.xlsx', basename($path));
 
         $temporaryPath = tempnam(sys_get_temp_dir(), 'm11_');
         $this->assertNotFalse($temporaryPath);

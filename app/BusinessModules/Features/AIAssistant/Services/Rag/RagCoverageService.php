@@ -295,6 +295,7 @@ final class RagCoverageService
 
     public function refreshCoverage(int $organizationId, ?int $projectId = null, ?string $sourceType = null, ?string $expectedCacheKey = null): array
     {
+        $startedAt = hrtime(true);
         $cacheKey = $this->key($organizationId, $projectId, $sourceType);
         $snapshot = $expectedCacheKey === null ? null : $this->snapshot($organizationId, $projectId, $sourceType, $cacheKey);
         if ($expectedCacheKey !== null && ($expectedCacheKey !== $cacheKey || $this->currentSnapshot($snapshot, $projectId, $sourceType))) {
@@ -312,7 +313,7 @@ final class RagCoverageService
         $deadline = microtime(true) + 7200;
         $guard = function () use ($organizationId, $projectId, $sourceType, $cacheKey, $deadline): void {
             if (microtime(true) >= $deadline || $cacheKey !== $this->key($organizationId, $projectId, $sourceType)) {
-                throw new RuntimeException('rag_coverage_projection_expired');
+                throw RagCoverageProjectionExpired::refreshGuard();
             }
         };
         $generation = null;
@@ -334,6 +335,9 @@ final class RagCoverageService
             if ($exception->getMessage() !== 'rag_coverage_projection_expired') {
                 throw $exception;
             }
+            AssistantStatusSnapshotDiagnostics::coverageAbort($projectId === null && $sourceType === null,
+                (hrtime(true) - $startedAt) / 1_000_000,
+                $exception instanceof RagCoverageProjectionExpired ? $exception->abortSite : 'unclassified');
             Log::info('ai_assistant.rag.coverage_aborted', ['organization_id' => $organizationId, 'reason' => 'rag_coverage_projection_expired']);
 
             return $this->coverage($organizationId, $projectId, $sourceType);

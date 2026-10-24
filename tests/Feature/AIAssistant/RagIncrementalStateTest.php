@@ -6,6 +6,7 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageProjectionExpired;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingCheckpointStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\Models\Organization;
@@ -34,6 +35,8 @@ final class RagIncrementalStateTest extends TestCase
             $this->fail('Stale publication must be rejected.');
         } catch (RuntimeException $exception) {
             $this->assertSame('rag_coverage_projection_expired', $exception->getMessage());
+            self::assertInstanceOf(RagCoverageProjectionExpired::class, $exception);
+            self::assertSame('publish_revision_mismatch', $exception->abortSite);
         }
         $this->assertSame($generation, $store->activeGeneration($organization->id));
     }

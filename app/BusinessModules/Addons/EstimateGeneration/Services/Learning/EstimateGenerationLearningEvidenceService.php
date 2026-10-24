@@ -33,7 +33,7 @@ final class EstimateGenerationLearningEvidenceService
     ) {}
 
     public function sourceClaimReferences(int $organizationId, int $projectId, int $sessionId,
-        ProjectModelSnapshot $snapshot, array $decisions, array $input): array
+        ProjectModelSnapshot $snapshot, array $decisions, array $input, ?string $localEstimateKey = null, bool $includeSourceDetails = false): array
     {
         if (min($organizationId, $projectId, $sessionId) < 1 || count($snapshot->facts) > 10000) {
             return [];
@@ -49,6 +49,7 @@ final class EstimateGenerationLearningEvidenceService
             return [];
         }
         $answerHashes = $answerIds = $documentIds = $checked = [];
+        $workContexts = $this->sourceClaims->currentWorkSourceClaimContexts($scope, $snapshot, $decisions, $input, $localEstimateKey);
         $entities = array_column($snapshot->entities, null, 'id');
         $facts = $snapshot->facts;
         usort($facts, static fn (Fact $left, Fact $right): int => strcmp($left->id, $right->id));
@@ -64,7 +65,8 @@ final class EstimateGenerationLearningEvidenceService
                 || count($answerIds) >= ComposerSourceClaimValidationService::MAX_CLAIMS) {
                 continue;
             }
-            $context = ResolveCurrentEstimateClarification::composerAnswerContext($fact, $snapshot, $decisions, $input, $checked);
+            $context = isset($workContexts[$fact->id]) ? ['work_sections' => ['equipment']]
+                : ResolveCurrentEstimateClarification::composerAnswerContext($fact, $snapshot, $decisions, $input, $checked);
             if ($context !== null && in_array('equipment', $context['work_sections'], true)) {
                 $answerIds[] = $fact->id;
                 $answerHashes[] = hash('sha256', CanonicalPipelineJson::encode($fact->value));
@@ -74,7 +76,7 @@ final class EstimateGenerationLearningEvidenceService
             return [];
         }
         $table = 'estimate_generation_learning_examples';
-        $query = EstimateGenerationLearningExample::query()->select($table.'.*')
+        $query = EstimateGenerationLearningExample::query()->select($table.'.*', 'receipt.prompt_contract_version as receipt_contract_version')
             ->join('estimate_generation_ai_role_runs as receipt', 'receipt.id', '=', $table.'.source_entity_id')
             ->join('estimate_generation_vision_physical_attempts as physical', 'physical.attempt_id', '=', 'receipt.physical_attempt_id')
             ->join('estimate_generation_credit_attempts as credit', 'credit.attempt_id', '=', 'physical.attempt_id')
@@ -89,8 +91,8 @@ final class EstimateGenerationLearningEvidenceService
             ->whereIn(DB::raw($table.".context_payload #>> '{candidate,document_fact_ids,0}'"), $documentIds)
             ->where('receipt.status', 'completed')->where('receipt.role', 'estimate_composer')
             ->where('receipt.subject_type', 'estimate_session')->where('receipt.subject_id', (string) $sessionId)
-            ->whereRaw("((receipt.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4') AND receipt.result_payload->'schema_version' = '2'::jsonb)
-                OR (receipt.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3') AND receipt.result_payload->'schema_version' = '3'::jsonb))")
+            ->whereRaw("((receipt.prompt_contract_version IN ('estimate-composer:answers:v2','estimate-composer:legacy-answers:v2','estimate-composer:answers:v3','estimate-composer:legacy-answers:v3','estimate-composer:answers:v4','estimate-composer:legacy-answers:v4','estimate-composer:answers:v5','estimate-composer:legacy-answers:v5') AND receipt.result_payload->'schema_version' = '2'::jsonb)
+                OR (receipt.prompt_contract_version IN ('estimate-composer:answer-cells:v1','estimate-composer:legacy-answer-cells:v1','estimate-composer:answer-cells:v2','estimate-composer:legacy-answer-cells:v2','estimate-composer:answer-cells:v3','estimate-composer:legacy-answer-cells:v3','estimate-composer:answer-cells:v4','estimate-composer:legacy-answer-cells:v4') AND receipt.result_payload->'schema_version' = '3'::jsonb))")
             ->whereRaw('receipt.result_payload->\'claim_candidates\' @> jsonb_build_array('.$table.'.context_payload->\'candidate\')')
             ->whereColumn('physical.request_fingerprint', 'receipt.input_fingerprint')
             ->whereColumn('physical.logical_request_fingerprint', 'receipt.input_fingerprint')
@@ -123,11 +125,12 @@ final class EstimateGenerationLearningEvidenceService
             }
             $group = array_values($matches)[0];
             $candidate = $group['candidate'];
-            $fresh = $this->sourceClaims->capture($scope, $snapshot, $decisions, $input, $candidate, $anchors, $checked);
-            if ($fresh === null) {
-                continue;
-            }
             foreach ($group['rows'] as $row) {
+                $fresh = $this->sourceClaims->capture($scope, $snapshot, $decisions, $input, $candidate, $anchors, $checked,
+                    $row->receipt_contract_version, $localEstimateKey);
+                if ($fresh === null) {
+                    continue;
+                }
                 if ($fresh['source_claim_key'] !== $row->source_claim_key) {
                     continue;
                 }
@@ -135,8 +138,105 @@ final class EstimateGenerationLearningEvidenceService
                     'value' => $candidate['value'], 'unit' => null, 'document_fact_ids' => $candidate['document_fact_ids'],
                     'interpretation_status' => 'proposed', 'source_correspondence' => 'passed', 'engineering_applicability' => 'unresolved',
                     'source_answer_fact_id' => $candidate['source_answer_fact_id']];
+                if ($includeSourceDetails && isset($fresh['identity']['work_context'])) {
+                    $source = $fresh['identity']['source'];
+                    $result[array_key_last($result)]['source_proof'] = ['reference' => $source['evidence_id'],
+                        'document_id' => $source['literal_witness']['document_id'], 'source_version' => $source['source_version'],
+                        'cell' => $source['literal_witness']['cell']];
+                }
                 break;
             }
+        }
+
+        return $result;
+    }
+
+    public function parameterOptions(array $scope, ProjectModelSnapshot $snapshot,
+        \App\BusinessModules\Addons\EstimateGeneration\Questions\CurrentEstimateClarification $current, array &$cache = []): array
+    {
+        if (($current->question->sourceLocator['kind'] ?? null) !== 'composer_work_technology'
+            || ! is_array($current->composerContext['work_context'] ?? null)) {
+            return [];
+        }
+        $options = $this->sourceClaims->parameterOperands($scope, $snapshot, $current->composerContext['work_context'],
+            $current->composerContext['documents'], $cache);
+        $result = [];
+        foreach ($options as $ref => $descriptor) {
+            $result[] = ['source_operand_ref' => $ref, 'value' => $descriptor['value'], 'unit' => $descriptor['unit'],
+                'source' => ['reference' => $descriptor['evidence_id'], 'document_id' => $descriptor['document_id'],
+                    'source_version' => $descriptor['document_source_version'], 'value_cell' => $descriptor['value_cell'],
+                    'unit_cell' => $descriptor['unit_cell']]];
+        }
+
+        return $result;
+    }
+
+    public function parameterReferences(array $scope, ProjectModelSnapshot $snapshot, array $decisions, array $input,
+        ?string $localEstimateKey = null, bool $includeSourceDetails = false, array &$cache = []): array
+    {
+        $fresh = $this->sourceClaims->parameterComponents($scope, $snapshot, $decisions, $input, $localEstimateKey, $cache);
+        if ($fresh === []) {
+            return [];
+        }
+        $table = 'estimate_generation_learning_examples';
+        $rows = EstimateGenerationLearningExample::query()->select($table.'.*', 'operation.approved_state_version as operation_state_version')
+            ->join('estimate_generation_credit_operations as operation', static fn ($join) => $join
+                ->whereRaw('operation.operation_id::text = '.$table.".source_refs->>'credit_operation_id'"))
+            ->where($table.'.organization_id', $scope[0])->where($table.'.project_id', $scope[1])->where($table.'.generation_session_id', $scope[2])
+            ->where('operation.organization_id', $scope[0])->where('operation.project_id', $scope[1])->where('operation.session_id', $scope[2])
+            ->where('operation.kind', 'generation')->where('operation.status', 'settled')->whereNotNull('operation.receipt')
+            ->where($table.'.source_type', 'composer_source_claim')->where($table.'.source_entity_type', 'estimate_session')->where($table.'.source_entity_id', $scope[2])
+            ->whereIn($table.'.context_payload->origin', [ComposerSourceClaimValidationService::PARAMETER_ORIGIN, ComposerSourceClaimValidationService::REQUIREMENT_ORIGIN])
+            ->where($table.'.context_payload->training_allowed', false)->where($table.'.decision_status', 'proposed')->where($table.'.is_positive', false)
+            ->whereNull($table.'.accepted_at')->whereNull($table.'.norm_code')->whereNull($table.'.estimate_norm_id')->whereNull($table.'.normative_dataset_version_id')
+            ->whereIn($table.'.source_refs->source_answer_fact_id', array_keys($fresh))->orderBy($table.'.id')
+            ->limit(ComposerSourceClaimValidationService::MAX_CLAIMS + 1)->get();
+        if ($rows->count() > ComposerSourceClaimValidationService::MAX_CLAIMS) {
+            return [];
+        }
+        $result = $duplicates = [];
+        foreach ($rows as $row) {
+            $answerId = $row->source_refs['source_answer_fact_id'] ?? null;
+            $validation = $fresh[$answerId] ?? null;
+            if ($validation === null || $validation['answer_state_version'] > (int) $row->operation_state_version
+                || ($row->context_payload['origin'] ?? null) !== $validation['identity']['origin']
+                || ($row->context_payload['schema_version'] ?? null) !== ($validation['identity']['origin'] === ComposerSourceClaimValidationService::REQUIREMENT_ORIGIN ? 2 : 1)
+                || $row->source_claim_key !== $validation['source_claim_key']
+                || CanonicalPipelineJson::encode($row->context_payload['source_claim_validation'] ?? []) !== CanonicalPipelineJson::encode($validation)
+                || ! in_array('do_not_index', $row->quality_flags ?? [], true)) {
+                continue;
+            }
+            if (isset($result[$answerId])) {
+                $duplicates[$answerId] = true;
+            }
+            $result[$answerId] = ['learning_example_id' => (int) $row->id, 'source_answer_fact_id' => $answerId,
+                'entity_id' => $validation['identity']['work_context']['binding']['entity_id'], ...$validation['component']];
+            if ($includeSourceDetails) {
+                $source = $validation['identity']['source'];
+                if ($validation['identity']['origin'] === ComposerSourceClaimValidationService::REQUIREMENT_ORIGIN) {
+                    $result[$answerId]['source'] = ComposerSourceClaimValidationService::requirementDetails($source)['source'];
+                } else {
+                    $result[$answerId]['source'] = ['reference' => $source['evidence_id'], 'document_id' => $source['document_id'],
+                    'source_version' => $source['document_source_version'], 'value_cell' => $source['value_cell'], 'unit_cell' => $source['unit_cell']];
+                }
+            }
+        }
+
+        return array_diff_key($result, $duplicates);
+    }
+
+    public function requirementOptions(array $scope, ProjectModelSnapshot $snapshot,
+        \App\BusinessModules\Addons\EstimateGeneration\Questions\CurrentEstimateClarification $current, array &$cache = []): array
+    {
+        if (($current->question->sourceLocator['kind'] ?? null) !== 'composer_work_technology'
+            || ! is_array($current->composerContext['work_context'] ?? null)) {
+            return [];
+        }
+        $options = $this->sourceClaims->requirementSources($scope, $snapshot, $current->composerContext['work_context'],
+            $current->composerContext['documents'], $cache);
+        $result = [];
+        foreach ($options as $ref => $source) {
+            $result[] = ['source_requirement_ref' => $ref, 'source_details' => ComposerSourceClaimValidationService::requirementDetails($source)];
         }
 
         return $result;

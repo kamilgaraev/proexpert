@@ -74,7 +74,7 @@ class WarehouseExportManager
      */
     public function getTemporaryUrl(string $path, int $minutes = 15): string
     {
-        return $this->fileService->temporaryUrl($path, $minutes);
+        return $this->fileService->temporaryDownloadUrl($path, $minutes * 60, basename($path));
     }
 
     /**

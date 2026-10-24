@@ -25,6 +25,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Egress\OrdinaryAssistantSc
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateResolver;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\AssistantInterruptedProviderUsage;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
@@ -117,6 +118,8 @@ class AIAssistantService
     protected AssistantToolEligibilityPolicy $toolEligibilityPolicy;
 
     private ?AssistantRequest $activeRequest = null;
+
+    private ?AssistantGuardedLoopDiagnostics $guardedLoopDiagnostics = null;
 
     private bool $runtimeTimingEnabled = false;
 
@@ -233,6 +236,7 @@ class AIAssistantService
                     return $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
                 } finally {
                     $this->activeActor = null;
+                    $this->guardedLoopDiagnostics = null;
                     $this->activeToolResults = [];
                     $this->activeCustomReportSources = [];
                     $this->activeSearchScopeAttempts = [];
@@ -258,6 +262,7 @@ class AIAssistantService
             } finally {
                 app(AssistantCurrentRequest::class)->replace($previousRequestScope);
                 $this->activeRequest = null;
+                $this->guardedLoopDiagnostics = null;
                 $this->activeActor = null;
                 $this->activeToolResults = [];
                 $this->activeCustomReportSources = [];
@@ -323,6 +328,7 @@ class AIAssistantService
                 $this->runtimeTimingEnabled = false;
                 app(AssistantCurrentRequest::class)->replace($previousRequestScope);
                 $this->activeRequest = null;
+                $this->guardedLoopDiagnostics = null;
                 $this->activeActor = null;
                 $this->activeToolResults = [];
                 $this->activeCustomReportSources = [];
@@ -758,6 +764,15 @@ class AIAssistantService
                         'call_id' => $toolCall['call_id'],
                         'output' => $toolContent,
                     ];
+                    try {
+                        $diagnostics = $this->guardedLoopDiagnostics();
+                        $observation = $diagnostics?->toolResult($toolName, $toolCall['arguments'] ?? [], $providerResult,
+                            $toolCall['call_id'], $toolContent, array_column($options['tools'] ?? [], 'name'));
+                        if ($observation !== null) {
+                            Log::info('ai.assistant.guarded_tool_result', ['request_id' => $diagnostics->requestId, ...$observation]);
+                        }
+                    } catch (Throwable) {
+                    }
 
                     $serverResult = $this->activeToolResults[0] ?? null;
                     $serverAnswer = is_array($serverResult) ? ($serverResult['server_formatted_answer'] ?? null) : null;
@@ -1155,7 +1170,7 @@ class AIAssistantService
             }
 
             if ($this->scopedContext?->isGuarded() ?? false) {
-                $approvedReferences = $this->scopedContext->validateResults($verificationToolResults);
+                $approvedReferences = $this->scopedContext->canonicalReferencesForPublication($verificationToolResults);
                 if ($clarification === null && $approvedReferences !== [] && ! ($financialCheck['replaced'] ?? false) && $rawPresentationPlan === null
                     && ! $rejectedFinancialPlan && ! $terminalToolResponse && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
                     $assistantContent = $scopedModelContent;
@@ -1424,76 +1439,84 @@ class AIAssistantService
             }
             $assistantPayload = $this->decorateMetadata($assistantPayload, $user);
             $verificationTimer->finish();
-            $this->rememberRagContext($conversation, $ragMetadata);
-            $this->rememberResolvedEstimate($conversation, $user, $organizationId);
+            $stagingTimer = $this->runtimeTimingEnabled ? AssistantRequestPhaseTimer::start($this->activeRequest?->request_id, 'response_staging') : null;
+            try {
+                $this->rememberRagContext($conversation, $ragMetadata);
+                $this->rememberResolvedEstimate($conversation, $user, $organizationId);
 
-            $this->pendingSummary = [
-                'conversation' => $conversation,
-                'validation_status' => $assistantPayload['validation_status'] ?? 'unverified',
-                'summary' => json_encode(['user_request' => $query, 'request_id' => $assistantPayload['request_id']], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
-                'selected_entities' => $this->selectedSummaryEntities($requestPayload, $organizationId),
-                'source_refs' => $assistantPayload['source_refs'],
-                'user_decisions' => [['request_id' => $assistantPayload['request_id'], 'user_request' => $query]],
-            ];
+                $this->pendingSummary = [
+                    'conversation' => $conversation,
+                    'validation_status' => $assistantPayload['validation_status'] ?? 'unverified',
+                    'summary' => json_encode(['user_request' => $query, 'request_id' => $assistantPayload['request_id']], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                    'selected_entities' => $this->selectedSummaryEntities($requestPayload, $organizationId),
+                    'source_refs' => $assistantPayload['source_refs'],
+                    'user_decisions' => [['request_id' => $assistantPayload['request_id'], 'user_request' => $query]],
+                ];
 
-            $tokensUsed = (int) array_sum(array_column($this->providerUsageAttempts, 'tokens'));
-            $cost = (float) array_sum(array_column($this->providerUsageAttempts, 'cost'));
-            $assistantMessage = $this->conversationManager->addMessage(
-                $conversation,
-                'assistant',
-                $assistantContent,
-                $tokensUsed,
-                (string) ($response['model'] ?? $this->llmProvider->getModel()),
-                $assistantPayload
-            );
+                $tokensUsed = (int) array_sum(array_column($this->providerUsageAttempts, 'tokens'));
+                $cost = (float) array_sum(array_column($this->providerUsageAttempts, 'cost'));
+                $assistantMessage = $this->conversationManager->addMessage(
+                    $conversation,
+                    'assistant',
+                    $assistantContent,
+                    $tokensUsed,
+                    (string) ($response['model'] ?? $this->llmProvider->getModel()),
+                    $assistantPayload
+                );
 
-            if ($acceptedClarification !== null && $this->activeRequest !== null) {
-                $continuation = $this->scopedContext->recordClarification($this->activeRequest, $userMessage, $assistantMessage, $acceptedClarification);
-                if ($continuation !== null) {
-                    $assistantPayload['clarification_continuation'] = $continuation;
-                    $assistantMessage->forceFill(['metadata' => $assistantPayload])->save();
+                if ($acceptedClarification !== null && $this->activeRequest !== null) {
+                    $continuation = $this->scopedContext->recordClarification($this->activeRequest, $userMessage, $assistantMessage, $acceptedClarification);
+                    if ($continuation !== null) {
+                        $assistantPayload['clarification_continuation'] = $continuation;
+                        $assistantMessage->forceFill(['metadata' => $assistantPayload])->save();
+                    }
                 }
-            }
 
-            $this->usageTracker->trackRequest(
-                $organizationId,
-                $user,
-                $tokensUsed,
-                $cost
-            );
+                $this->usageTracker->trackRequest(
+                    $organizationId,
+                    $user,
+                    $tokensUsed,
+                    $cost
+                );
 
-            $this->logging->business('ai.assistant.success', [
-                'organization_id' => $organizationId,
-                'user_id' => $user->id,
-                'conversation_id' => $conversation->id,
-                'tokens_used' => $tokensUsed,
-                'cost_rub' => $cost,
-                'provider' => $response['provider'] ?? null,
-                'model' => $response['model'] ?? null,
-                'profile' => $response['profile'] ?? null,
-                'task_type' => $taskPlan['task_type'],
-                'capability' => $taskPlan['capability']['id'] ?? null,
-            ]);
-
-            $result = [
-                'conversation_id' => $conversation->id,
-                'message' => [
-                    'id' => $assistantMessage->id,
-                    'role' => 'assistant',
-                    'content' => $assistantContent,
+                $this->logging->business('ai.assistant.success', [
+                    'organization_id' => $organizationId,
+                    'user_id' => $user->id,
+                    'conversation_id' => $conversation->id,
                     'tokens_used' => $tokensUsed,
-                    'metadata' => $assistantPayload,
-                    'created_at' => $assistantMessage->created_at?->toISOString(),
-                ],
-                'tokens_used' => $tokensUsed,
-                'usage' => $this->usageTracker->getUsageStats($organizationId),
-            ];
+                    'cost_rub' => $cost,
+                    'provider' => $response['provider'] ?? null,
+                    'model' => $response['model'] ?? null,
+                    'profile' => $response['profile'] ?? null,
+                    'task_type' => $taskPlan['task_type'],
+                    'capability' => $taskPlan['capability']['id'] ?? null,
+                ]);
 
-            if ($executedAction) {
-                $result['executed_action'] = $executedAction;
+                $result = [
+                    'conversation_id' => $conversation->id,
+                    'message' => [
+                        'id' => $assistantMessage->id,
+                        'role' => 'assistant',
+                        'content' => $assistantContent,
+                        'tokens_used' => $tokensUsed,
+                        'metadata' => $assistantPayload,
+                        'created_at' => $assistantMessage->created_at?->toISOString(),
+                    ],
+                    'tokens_used' => $tokensUsed,
+                    'usage' => $this->usageTracker->getUsageStats($organizationId),
+                ];
+
+                if ($executedAction) {
+                    $result['executed_action'] = $executedAction;
+                }
+
+                return $result;
+            } catch (Throwable $exception) {
+                $stagingTimer?->finish($exception);
+                throw $exception;
+            } finally {
+                $stagingTimer?->finish();
             }
-
-            return $result;
         } catch (Throwable $exception) {
             $verificationTimer?->finish($exception);
             $this->logging->technical('ai.assistant.error', [
@@ -1886,6 +1909,20 @@ class AIAssistantService
     private function measurePhase(string $phase, callable $operation): mixed
     {
         return AssistantRequestPhaseTimer::run($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, $phase, $operation);
+    }
+
+    protected function guardedLoopDiagnostics(): ?AssistantGuardedLoopDiagnostics
+    {
+        if (! ($this->scopedContext?->isGuarded() ?? false) || $this->activeRequest === null
+            || ! is_string($this->activeRequest->request_id)
+            || ! \Illuminate\Support\Str::isUuid($this->activeRequest->request_id)) {
+            return null;
+        }
+        if ($this->guardedLoopDiagnostics?->requestId !== $this->activeRequest->request_id) {
+            $this->guardedLoopDiagnostics = new AssistantGuardedLoopDiagnostics($this->activeRequest->request_id);
+        }
+
+        return $this->guardedLoopDiagnostics;
     }
 
     private function requestErrorCode(Throwable $exception): string
@@ -2950,8 +2987,13 @@ class AIAssistantService
     protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
     {
         $this->executionCheckpoint();
-        if ($this->scopedContext?->isGuarded() ?? false) { $options['tool_choice'] = 'auto'; }
+        $finalSynthesis = ($this->scopedContext?->isGuarded() ?? false) && $this->activeRequest !== null
+            && $this->activeRequest->calls_used === $this->activeRequest->max_calls - 1;
+        if ($this->scopedContext?->isGuarded() ?? false) { $options['tool_choice'] = $finalSynthesis ? 'none' : 'auto'; }
         [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->measurePhase('provider_prepare', fn (): array => $this->prepareProviderPayload($messages, $options, $organizationId, $user));
+        if ($finalSynthesis) {
+            $this->scopedContext->beginFinalSynthesis($this->activeRequest, $preparedMessages, (array) ($preparedOptions['tools'] ?? []));
+        }
         $legacy = $this->scopedContext?->isLegacy() ?? false;
         $selectedProvider = $legacy && $this->ordinaryEgress->transport()->isBound($this->llmProvider)
             ? app(LLMProviderInterface::class) : $this->llmProvider;
@@ -2976,25 +3018,30 @@ class AIAssistantService
             throw new RuntimeException('assistant_native_responses_unavailable');
         }
 
-        $egressRequest = $legacy ? null : $this->ordinaryEgress->prepare($preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel());
+        $egressRequest = $legacy ? null : $this->measurePhase('egress_prepare', fn () => $this->ordinaryEgress->prepare($preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel()));
         if ($egressRequest !== null) {
             $this->ordinaryEgress->transport()->arm($selectedProvider, $egressRequest,
-                fn () => $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel()), $providerTimeout);
+                fn () => $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel()), $providerTimeout, $this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null);
         }
         $attempt = 1;
         $response = null;
         $providerStarted = false;
         try {
-            $attempt = $this->activeRequest !== null
-                ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
-                : 1;
-            $this->executionCheckpoint();
-            if ($egressRequest !== null) {
-                $this->ordinaryEgress->assertCurrent($egressRequest, $preparedMessages, $preparedOptions, $organizationId, $user, $selectedProvider->getModel());
-            }
+            $attempt = $this->measurePhase('provider_reservation', function () use ($user, $preparedOptions): ?int {
+                $attempt = $this->activeRequest !== null
+                    ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
+                    : 1;
+                $this->executionCheckpoint();
+                return $attempt;
+            });
             $providerStarted = true;
             $providerCallStarted = hrtime(true);
             $providerCallFailure = null;
+            $nativeInputDiagnostics = [];
+            try {
+                $nativeInputDiagnostics = $this->guardedLoopDiagnostics()?->sdkEntry($preparedMessages) ?? [];
+            } catch (Throwable) {
+            }
             try {
                 $response = $selectedProvider->responses($preparedMessages, $preparedOptions);
             } catch (Throwable $exception) {
@@ -3016,42 +3063,56 @@ class AIAssistantService
                             'success' => $providerCallFailure === null,
                             'exception_class' => $providerCallFailure === null ? null : $providerCallFailure::class,
                             ...AssistantProviderErrorDiagnostics::fromFailure($providerCallFailure),
+                            ...$nativeInputDiagnostics,
                         ]);
                     }
                 } catch (Throwable) {
                 }
             }
-            $this->executionCheckpoint();
-            $priorIds = array_filter(array_column($messages, 'id'));
-            $priorCalls = array_filter(array_column($messages, 'call_id'));
-            foreach ($response['output'] ?? [] as $item) {
-                if (in_array($item['id'] ?? null, $priorIds, true)
-                    || (($item['type'] ?? null) === 'function_call' && in_array($item['call_id'] ?? null, $priorCalls, true))) {
-                    throw new RuntimeException('assistant_native_replayed_output');
+            $postSdkTimer = $this->runtimeTimingEnabled ? AssistantRequestPhaseTimer::start($this->activeRequest?->request_id, 'provider_post_sdk') : null;
+            try {
+                $this->executionCheckpoint();
+                $priorIds = array_filter(array_column($messages, 'id'));
+                $priorCalls = array_filter(array_column($messages, 'call_id'));
+                foreach ($response['output'] ?? [] as $item) {
+                    if (in_array($item['id'] ?? null, $priorIds, true)
+                        || (($item['type'] ?? null) === 'function_call' && in_array($item['call_id'] ?? null, $priorCalls, true))) {
+                        throw new RuntimeException('assistant_native_replayed_output');
+                    }
                 }
-            }
-            if (($response['response_status'] ?? null) === 'incomplete' || ($response['finish_reason'] ?? null) === 'length') {
-                throw new AssistantResponseIncomplete($response);
-            }
-            if (! $legacy) { $this->scopedContext?->rememberResponse($response); }
-            $this->recordProviderUsageDuringCleanup($response, $organizationId, $user, $preparedOptions, $budgetDegraded, true, (int) $attempt);
+                if (($response['response_status'] ?? null) === 'incomplete' || ($response['finish_reason'] ?? null) === 'length') {
+                    throw new AssistantResponseIncomplete($response);
+                }
+                if ($finalSynthesis && ! empty($response['function_calls'])) {
+                    throw new AssistantEgressDenied('unsupported_purpose');
+                }
+                if (! $legacy) { $this->scopedContext?->rememberResponse($response); }
+                $this->recordProviderUsageDuringCleanup($response, $organizationId, $user, $preparedOptions, $budgetDegraded, true, (int) $attempt);
 
-            return [
-                'response' => $response,
-                'degraded_mode' => $budgetDegraded,
-                'fallback_reason' => null,
-            ];
-        } catch (Throwable $exception) {
-            if ($providerStarted && (! $exception instanceof AssistantEgressDenied || $legacy || $this->ordinaryEgress->transport()->dispatched())) {
-                $failedUsage = $this->providerUsageFromFailure($exception, $response);
-                try {
-                    $this->recordProviderUsageDuringCleanup($failedUsage, $organizationId, $user, $preparedOptions, true, false, (int) $attempt);
-                } catch (Throwable $cleanupFailure) {
-                    $this->logging->technical('ai.assistant.provider_usage_cleanup_failed', [
-                        'organization_id' => $organizationId, 'exception_class' => $cleanupFailure::class,
-                    ], 'error');
-                }
+                return [
+                    'response' => $response,
+                    'degraded_mode' => $budgetDegraded,
+                    'fallback_reason' => null,
+                ];
+            } catch (Throwable $exception) {
+                $postSdkTimer?->finish($exception);
+                throw $exception;
+            } finally {
+                $postSdkTimer?->finish();
             }
+        } catch (Throwable $exception) {
+            $this->measurePhase('provider_failure_cleanup', function () use ($providerStarted, $exception, $legacy, $response, $organizationId, $user, $preparedOptions, $attempt): void {
+                if ($providerStarted && (! $exception instanceof AssistantEgressDenied || $legacy || $this->ordinaryEgress->transport()->dispatched())) {
+                    $failedUsage = $this->providerUsageFromFailure($exception, $response);
+                    try {
+                        $this->recordProviderUsageDuringCleanup($failedUsage, $organizationId, $user, $preparedOptions, true, false, (int) $attempt);
+                    } catch (Throwable $cleanupFailure) {
+                        $this->logging->technical('ai.assistant.provider_usage_cleanup_failed', [
+                            'organization_id' => $organizationId, 'exception_class' => $cleanupFailure::class,
+                        ], 'error');
+                    }
+                }
+            });
             $this->executionCheckpoint();
             throw $exception;
         } finally {
@@ -3134,6 +3195,10 @@ class AIAssistantService
 
     private function providerUsageFromFailure(Throwable $exception, ?array $response): array
     {
+        $interruptedUsage = AssistantInterruptedProviderUsage::take($exception);
+        if ($interruptedUsage !== null) {
+            return $interruptedUsage;
+        }
         if ($exception instanceof AssistantResponseIncomplete) {
             return $exception->providerUsage;
         }

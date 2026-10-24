@@ -81,6 +81,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 ['role' => 'user', 'content' => $payload],
             ], [
                 'profile' => 'json',
+                ...($input->responseFormat() === null ? [] : ['response_format' => $input->responseFormat()]),
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
@@ -250,6 +251,9 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                     .'Кандидат — предлагаемая интерпретация ответа, не подтверждённый факт, не согласие пользователя с этой интерпретацией и не инженерная проверка. '
                     .'Ровно 6 полей: source_answer_fact_id, entity_id, fact_type="equipment_specification", value={"type":"string","data":"непустая строка до 500 символов"}, unit=null, document_fact_ids=[один id отдельного исходного документного факта equipment_specification]. '
                     .'Используй только переданные id: entity_id должен совпадать с equipment-сущностью документного факта; корневая сущность агрегатного ответа может отличаться. Не извлекай из этого количества, единицы, нормы, цены или проверенную технологию. Не возвращай confidence, verified, proof или candidate_key. Если нет точной связи с исходным документным фактом, не предлагай кандидат. '
+                : '')
+            .($input->acceptsWorkSourceClaims()
+                ? 'В claim_answer_fact_ids могут входить active ответы из work_technology_context, которые не являются обычными facts. Для такого ответа entity_id строго равен context.binding.entity_id; документный факт должен относиться к одному из приложенных к этому ответу текущих документов. Предлагай только буквальное значение equipment_specification из переданного документного факта. Это проверка соответствия источнику, а не доказательство всего ответа или способа монтажа; numeric и engineering applicability не подтверждаются. '
                 : '')
             .($input->sourceClaimReferences !== []
                 ? ($reviewedCells

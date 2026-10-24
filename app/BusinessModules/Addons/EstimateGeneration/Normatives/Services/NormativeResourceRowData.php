@@ -99,7 +99,7 @@ final readonly class NormativeResourceRowData
             'name' => (string) ($row->resource_name ?? ''),
             'unit' => (string) ($row->unit ?? ''),
             'price_unit' => (string) ($row->price_unit ?? $row->unit ?? ''),
-            'quantity' => (float) ($row->quantity ?? 0),
+            'quantity' => (string) ($row->quantity ?? 0),
             'price_id' => $priceId,
             'unit_price' => $unitPrice,
             'price_source' => $priceSource,

@@ -145,6 +145,14 @@ final class AssistantDataAccessPolicy
         $this->knowledgeContexts = new AssistantKnowledgeArticleAccessContextFactory($modules);
     }
 
+    public function independentAuthorizationScope(): self
+    {
+        $policy = new self($this->authorization, $this->projectAccess, $this->modules, $this->sourceQueries, $this->schemaMetadata);
+        $policy->setTrustedSurface($this->trustedSurface);
+
+        return $policy;
+    }
+
     public function canReadSource(User $user, int $organizationId, array $source): bool
     {
         if (! $this->belongsToOrganization($user, $organizationId)) {
@@ -369,6 +377,7 @@ final class AssistantDataAccessPolicy
         $previous = $this->pendingEntityReads;
         $sourceBatch = AssistantReferenceSourceBatch::load($organizationId, $referenceSets, $this->currentCheckpoint);
         $sourceLookup = $sourceBatch->lookup(...);
+        $this->prefetchReportReferenceSchemas($referenceSets);
         $decisions = [];
         $requirements = [];
         $entities = [];
@@ -484,6 +493,29 @@ final class AssistantDataAccessPolicy
             return $read();
         } finally {
             $this->pendingEntityReads = $previous;
+        }
+    }
+
+    private function prefetchReportReferenceSchemas(array $referenceSets): void
+    {
+        $definitions = AssistantEntityAccessCatalog::entityDefinitions();
+        $types = [];
+        foreach ($referenceSets as $references) {
+            if (! is_array($references)) { continue; }
+            foreach ($references as $reference) {
+                if (! is_array($reference) || ($reference['entity_type'] ?? null) !== \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference::TYPE
+                    || ! is_array($reference['_report_scope'] ?? null)) { continue; }
+                $type = $reference['_report_scope']['entity_type'] ?? null;
+                if (! is_string($type) || ! isset($definitions[$type])) { continue; }
+                $types[$type] = true;
+                if (count($types) >= 32) { break 2; }
+            }
+        }
+        if ($types === []) { return; }
+        try {
+            $this->schemaMetadata->prefetchForEntities(array_keys($types), $this->currentCheckpoint);
+        } catch (\Illuminate\Database\QueryException) {
+            return;
         }
     }
 
@@ -816,8 +848,9 @@ final class AssistantDataAccessPolicy
                     }
                     $nextProcessingPhase(null);
                     if ($consume !== null) {
-                        ApiQueryMetrics::measureRagSourceBatch(array_filter($batchIdentities, static fn (mixed $sources): bool => $sources !== []), $expectedProjection,
-                            static fn () => (new RagSourceBatchQueryContext(count($compiled), $expectedProjection, $types, $entry['entity']))
+                        $reportedIdentities = array_filter($batchIdentities, static fn (mixed $sources): bool => $sources !== []);
+                        ApiQueryMetrics::measureRagSourceBatch($reportedIdentities, $expectedProjection,
+                            static fn () => (new RagSourceBatchQueryContext(count($compiled), $expectedProjection, $types, $entry['entity'], $reportedIdentities))
                                 ->run(static fn () => $consume($compiled[array_key_last($compiled)])));
                     }
                 }

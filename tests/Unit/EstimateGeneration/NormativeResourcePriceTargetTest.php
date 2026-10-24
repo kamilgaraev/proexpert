@@ -18,6 +18,9 @@ final class NormativeResourcePriceTargetTest extends TestCase
         self::assertSame('3.5', $target['quantity']);
         self::assertSame(71, $target['norm_source_resource_id']);
         self::assertSame('norm-original-code', $target['resource_code']);
+        $equivalentScale = $item;
+        $equivalentScale['materials'][0]['quantity_per_unit'] = '0.125000';
+        self::assertSame($target, $reader->find($equivalentScale, 'generation:first', 29));
         $quantityOnly = $item;
         $quantityOnly['materials'][0]['quantity'] = '7';
         self::assertSame($target['target_hash'], $reader->find($quantityOnly, 'generation:first', 29)['target_hash']);
@@ -31,6 +34,19 @@ final class NormativeResourcePriceTargetTest extends TestCase
         $consumption['materials'][0]['quantity_per_unit'] = '0.25';
         self::assertNotSame($target['target_hash'], $reader->find($consumption, 'generation:first', 29)['target_hash']);
         self::assertSame($this->item(), $item);
+    }
+
+    public function test_exact_consumption_identity_preserves_decimal_column_significant_digits(): void
+    {
+        $item = $this->item();
+        $item['materials'][0]['quantity_per_unit'] = '123456789.123456';
+        $reader = new NormativeResourcePriceTarget;
+        $target = $reader->find($item, 'generation:first', 29);
+
+        self::assertSame('123456789.123456', $target['quantity_per_unit']);
+        $changed = $item;
+        $changed['materials'][0]['quantity_per_unit'] = '123456789.123460';
+        self::assertNotSame($target['target_hash'], $reader->find($changed, 'generation:first', 29)['target_hash']);
     }
 
     public function test_duplicate_normative_resources_and_unproven_materials_are_not_price_targets(): void

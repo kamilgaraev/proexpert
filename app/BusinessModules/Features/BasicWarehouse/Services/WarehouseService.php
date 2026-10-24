@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Contracts\WarehouseReportDataProvider;
 use App\BusinessModules\Features\BasicWarehouse\DTOs\WarehouseBalanceAggregateDTO;
+use App\BusinessModules\Features\BasicWarehouse\Enums\WarehouseReceiptVatMode;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\BasicWarehouse\Models\AutoReorderRule;
@@ -25,6 +26,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
+use Brick\Math\BigDecimal;
 use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
 use DateTimeInterface;
@@ -43,6 +45,8 @@ use function trans_message;
  */
 class WarehouseService implements WarehouseReportDataProvider
 {
+    private const MAXIMUM_RECEIPT_BATCH_QUANTITY = '999999999999.999';
+
     protected LoggingService $logging;
 
     public function __construct(
@@ -53,6 +57,7 @@ class WarehouseService implements WarehouseReportDataProvider
         private readonly ProjectAllocationAvailabilityService $allocationAvailabilityService,
         private readonly WorkforcePersonNameProvider $personNameProvider,
         private readonly WarehousePersonIdentityResolver $personIdentityResolver,
+        private readonly WarehouseReceiptTaxCalculator $receiptTaxCalculator,
     ) {
         $this->logging = $logging;
     }
@@ -212,11 +217,24 @@ class WarehouseService implements WarehouseReportDataProvider
         int $organizationId,
         int $warehouseId,
         int $materialId,
-        float $quantity,
-        float $price,
+        float|string $quantity,
+        float|string $price,
         array $metadata = [],
-        bool $recordInventoryEvent = true
+        bool $recordInventoryEvent = true,
+        ?WarehouseReceiptVatMode $vatMode = null,
+        ?string $vatRate = null,
     ): array {
+        unset($metadata['receipt_tax']);
+        if ($vatMode !== null) {
+            $tax = $this->receiptTaxCalculator->calculate((string) $quantity, (string) $price, $vatMode, $vatRate);
+            $quantity = $tax->quantity;
+            $price = $tax->unitPrice;
+            $metadata['receipt_tax'] = $tax->toArray();
+        }
+        $receiptQuantity = BigDecimal::of((string) $quantity);
+        if ($receiptQuantity->compareTo(self::MAXIMUM_RECEIPT_BATCH_QUANTITY) > 0) {
+            throw new \InvalidArgumentException(trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+        }
         DB::beginTransaction();
         try {
             $this->lockWarehouses($organizationId, [$warehouseId]);
@@ -298,7 +316,12 @@ class WarehouseService implements WarehouseReportDataProvider
 
             if ($balance) {
                 // Если партия найдена - увеличиваем количество
-                $balance->available_quantity += $quantity;
+                $updatedQuantity = BigDecimal::of((string) $balance->getRawOriginal('available_quantity'))
+                    ->plus((string) $receiptQuantity);
+                if ($updatedQuantity->compareTo(self::MAXIMUM_RECEIPT_BATCH_QUANTITY) > 0) {
+                    throw new \InvalidArgumentException(trans_message('warehouse_basic.receipt_validation.balance_quantity_limit'));
+                }
+                $balance->available_quantity = (string) $updatedQuantity;
                 $balance->last_movement_at = now();
                 $balance->save();
             } else {
@@ -1726,6 +1749,9 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         $description = data_get($movement->metadata, 'description')
             ?? data_get($movement->metadata, 'metadata.description');
+        $receiptTax = $movement->movement_type === WarehouseMovement::TYPE_RECEIPT
+            ? ($movement->metadata['receipt_tax'] ?? null)
+            : null;
 
         return [
             'movement_id' => $movement->id,
@@ -1779,6 +1805,12 @@ class WarehouseService implements WarehouseReportDataProvider
             'is_tolling_material' => $movement->isContractorTransferOut() || $movement->isCustomerMaterialReceipt(),
             'reason' => $movement->reason,
             'description' => is_string($description) ? $description : null,
+            'metadata' => is_array($receiptTax) ? [
+                'receipt_tax' => array_intersect_key($receiptTax, array_flip([
+                    'version', 'mode', 'quantity', 'unit_price', 'rate',
+                    'net_amount', 'vat_amount', 'gross_amount',
+                ])),
+            ] : [],
             'movement_date' => $movement->movement_date->toIso8601String(),
             'photo_gallery' => $movement->photo_gallery,
             'passport_document' => $movement->passport_document,

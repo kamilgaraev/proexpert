@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseMovementDocumentResolver;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use DateTimeZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -75,6 +76,24 @@ final class WarehouseMovementDocumentResolverTest extends TestCase
         $resolved = app(WarehouseMovementDocumentResolver::class)->resolve($selected);
 
         $this->assertSame([$selected->id], $resolved->pluck('id')->all());
+    }
+
+    public function test_it_groups_lines_by_the_document_business_day_when_a_timezone_is_supplied(): void
+    {
+        $context = AdminApiTestContext::create();
+        [$warehouse, $material] = $this->createWarehouseContext($context->organization->id, 'TIMEZONE');
+        $selected = $this->createMovement($context->organization->id, $warehouse->id, $material->id, '2026-10-31 22:30:00');
+        $sameBusinessDay = $this->createMovement($context->organization->id, $warehouse->id, $material->id, '2026-11-01 12:00:00');
+        $previousBusinessDay = $this->createMovement($context->organization->id, $warehouse->id, $material->id, '2026-10-31 20:59:59');
+        $this->createMovement($context->organization->id, $warehouse->id, $material->id, '2026-11-01 21:00:00');
+
+        $resolved = app(WarehouseMovementDocumentResolver::class)->resolve($selected, new DateTimeZone('Europe/Moscow'));
+
+        $this->assertSame([$selected->id, $sameBusinessDay->id], $resolved->pluck('id')->all());
+        $this->assertSame(
+            [$selected->id, $previousBusinessDay->id],
+            app(WarehouseMovementDocumentResolver::class)->resolve($selected)->pluck('id')->all(),
+        );
     }
 
     /** @return array{OrganizationWarehouse, Material} */
