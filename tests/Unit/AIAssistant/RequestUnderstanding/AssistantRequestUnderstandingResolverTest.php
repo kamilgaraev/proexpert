@@ -11,6 +11,15 @@ use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
+    public function test_change_request_count_is_read_only_analysis_with_the_business_entity(): void
+    {
+        $question = 'Посчитай запросы на изменения по всей организации по текущим статусам, включая черновики. Если запросов нет, скажи об этом прямо. Не ограничивайся выбранным проектом.';
+        $result = (new AssistantRequestUnderstandingResolver)->resolve($question);
+        self::assertSame('analyze', $result->primaryIntent);
+        self::assertSame('read_only', $result->actionPolicy);
+        self::assertContains('change_request', $result->requestedEntities);
+    }
+
     public function test_excel_and_csv_requests_are_explicit_files_and_respect_no_file_constraints(): void
     {
         $resolver = new AssistantRequestUnderstandingResolver;

@@ -72,7 +72,7 @@ class AssistantCapabilityRegistry
             'quality' => ['качеств', 'дефект'],
             'documents' => ['документ', 'исполнительн', 'документац'],
             'safety' => ['безопасност', 'инцидент', 'нарушен', 'наряд допуск', 'инструктаж'],
-            'change_management' => ['изменения проект', 'изменений проект', 'запрос на изменен', 'rfi', 'вариац', 'претензи'],
+            'change_management' => ['изменения проект', 'изменений проект', 'запрос на изменен', 'запросы на изменен', 'запросов на изменен', 'rfi', 'вариац', 'претензи'],
             'handover_acceptance' => ['приемк', 'приёмк', 'передач', 'замечан', 'чек лист', 'handover'],
             'crm' => ['crm', 'срм', 'лид', 'сделк', 'воронк', 'контакт'],
             'commercial_processes' => ['коммерческ предложен', 'коммерческ', 'кп'],
@@ -431,6 +431,9 @@ class AssistantCapabilityRegistry
     private function matchesKeyword(string $query, string $keyword): bool
     {
         $keyword = str_replace('ё', 'е', $keyword);
+        if (in_array($keyword, ['запрос на изменен', 'запросы на изменен', 'запросов на изменен'], true)) {
+            $query = preg_replace('/(?<![\pL\pN_])запрос[а-яе]*\s+на\s+изменени[а-яе]*\s+(?:сайт|лендинг)[а-яе]*(?![\pL\pN_])/u', '', $query) ?? $query;
+        }
 
         return $keyword !== '' && preg_match('/(?:^|[^\\p{L}\\p{N}])'.preg_quote($keyword, '/').'/u', $query) === 1;
     }
