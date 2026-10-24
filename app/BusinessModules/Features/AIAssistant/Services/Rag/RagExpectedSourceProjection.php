@@ -76,9 +76,14 @@ final class RagExpectedSourceProjection
             $joinColumns = ! $collectProof && count($batchTypes ?? []) === 1 && count($entityTypes ?? []) === 1
                 ? ['identity_project_id', 'identity_part_key', 'entity_id', 'checksum']
                 : ['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'];
-            $joinIdentity = static function (JoinClause $join) use ($joinColumns): void {
+            $bytewiseIdentity = ! $collectProof && $batchTypes === ['design_additional'] && $entityTypes === ['design_ifc_model_element'];
+            $joinIdentity = static function (JoinClause $join) use ($joinColumns, $bytewiseIdentity): void {
                 foreach ($joinColumns as $column) {
-                    $join->on('matched_sources.'.$column, '=', 'expected.'.$column);
+                    if ($bytewiseIdentity && in_array($column, ['identity_part_key', 'entity_id', 'checksum'], true)) {
+                        $join->whereRaw('("matched_sources"."'.$column.'" COLLATE "C") = ("expected"."'.$column.'" COLLATE "C")');
+                    } else {
+                        $join->on('matched_sources.'.$column, '=', 'expected.'.$column);
+                    }
                 }
                 $join->whereRaw('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id');
             };

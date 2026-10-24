@@ -104,7 +104,8 @@ final class AssistantStatusSnapshotDiagnostics
 
     public static function expectedProjectionQuery(bool $collectProof, int $ordinal, float $elapsedMs, bool $completed, ?array $sourceTypeFilters = null, ?array $entityTypeFilters = null): void
     {
-        if ($ordinal < 1 || $ordinal > 32 || ! is_finite($elapsedMs) || $elapsedMs < 500) { return; }
+        $ifcCounts = ! $collectProof && $sourceTypeFilters === ['design_additional'] && $entityTypeFilters === ['design_ifc_model_element'];
+        if ($ordinal < 1 || $ordinal > 32 || ! is_finite($elapsedMs) || $elapsedMs < 0 || ($elapsedMs < 500 && ! $ifcCounts)) { return; }
         try {
             $definitions = AssistantEntityAccessCatalog::entityDefinitions();
             $entities = array_fill_keys([...array_keys($definitions), 'assistant_document'], true);
