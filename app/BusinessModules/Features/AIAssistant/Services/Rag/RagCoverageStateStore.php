@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 final class RagCoverageStateStore
 {
@@ -83,7 +82,7 @@ final class RagCoverageStateStore
             ]);
             $state = DB::table('ai_rag_coverage_states')->where('organization_id', $organizationId)->lockForUpdate()->first();
             if ($state === null || (int) $state->revision !== $revision) {
-                throw new RuntimeException('rag_coverage_projection_expired');
+                throw RagCoverageProjectionExpired::publicationRevision();
             }
             DB::table('ai_rag_coverage_states')->where('organization_id', $organizationId)->update([
                 'published_revision' => $revision,
