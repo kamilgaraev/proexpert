@@ -52,7 +52,7 @@ final class ObserverEvidenceProjectionPostgresTest extends EstimateGenerationCan
             self::assertSame($guardDefinition, DB::scalar("SELECT pg_get_functiondef('eg_project_model_entity_payload_guard()'::regprocedure)"));
         });
         $organization = Organization::factory()->create();
-        $project = Project::factory()->for($organization)->create();
+        $project = Project::factory()->for($organization)->create(['address' => null]);
         $actor = User::factory()->create();
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0, 'input_payload' => []]);
@@ -391,13 +391,6 @@ final class ObserverEvidenceProjectionPostgresTest extends EstimateGenerationCan
         self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $scope[2])->count());
         self::assertCount(4, $calls);
         Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
-        $recordedRequests = Http::recorded()->map(static function (array $record): string {
-            $request = $record[0];
-            $url = parse_url($request->url());
-
-            return $request->method().' '.($url['scheme'] ?? 'unknown').'://'.($url['host'] ?? 'unknown').($url['path'] ?? '/');
-        })->all();
-        self::assertSame([], $recordedRequests, 'Intercepted HTTP requests: '.json_encode($recordedRequests, JSON_THROW_ON_ERROR));
         Http::assertNothingSent();
     }
 
