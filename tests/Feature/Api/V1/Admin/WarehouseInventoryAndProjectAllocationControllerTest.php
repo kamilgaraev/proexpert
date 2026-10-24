@@ -1183,6 +1183,48 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         ]);
     }
 
+    public function test_auto_reorder_boundaries_have_readable_field_errors_without_creating_rules(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = MeasurementUnit::query()->where('organization_id', $context->organization->id)->firstOrFail();
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Учебный материал границ пополнения', 'REORDER-BOUNDARY');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Учебный склад границ пополнения', 'REORDER-BOUNDARY');
+        $this->allowAdminAccess();
+        $payload = [
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'min_stock_level' => 0,
+            'reorder_point' => 0,
+            'reorder_quantity' => 1,
+        ];
+
+        foreach ([
+            [['reorder_quantity' => 0], 'reorder_quantity', 'Объём заказа должен быть не меньше 0,001.'],
+            [['reorder_quantity' => -1], 'reorder_quantity', 'Объём заказа должен быть не меньше 0,001.'],
+            [['reorder_quantity' => 0.0009], 'reorder_quantity', 'Объём заказа должен быть не меньше 0,001.'],
+            [['min_stock_level' => -1], 'min_stock', 'Минимальный запас не может быть отрицательным.'],
+            [['reorder_point' => -1], 'reorder_point', 'Точка заказа не может быть ниже минимального запаса.'],
+            [['max_stock' => 0], 'max_stock', 'Максимальный запас должен быть больше минимального.'],
+            [['max_stock' => 1, 'reorder_point' => 2], 'reorder_point', 'Точка заказа не может быть выше максимального запаса.'],
+        ] as [$overrides, $field, $message]) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/advanced-warehouse/auto-reorder/rules', array_replace($payload, $overrides))
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors($field);
+            self::assertSame($message, $response->json('errors.'.$field.'.0'));
+            self::assertStringNotContainsString('validation.', (string) $response->json('message'));
+            $this->assertDatabaseCount('auto_reorder_rules', 0);
+        }
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/auto-reorder/rules', array_replace($payload, ['reorder_quantity' => 0.001]))
+            ->assertCreated()
+            ->assertJsonPath('data.min_stock_level', 0)
+            ->assertJsonPath('data.reorder_point', 0)
+            ->assertJsonPath('data.reorder_quantity', 0.001);
+        $this->assertDatabaseCount('auto_reorder_rules', 1);
+    }
+
     public function test_auto_reorder_owner_flow_is_readable_editable_and_scoped_to_selected_warehouse(): void
     {
         $context = AdminApiTestContext::create();
