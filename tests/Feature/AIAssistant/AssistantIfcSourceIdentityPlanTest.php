@@ -109,6 +109,8 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         self::assertSame(2, (int) $counts['design_additional']->expected_count);
         self::assertSame(1, (int) $counts['design_additional']->indexed_count);
         self::assertCount(1, $queries);
+        self::assertStringContainsString('matched_source_cache AS MATERIALIZED', $queries[0]['query']);
+        self::assertStringNotContainsString('matched_source_cache AS NOT MATERIALIZED', $queries[0]['query']);
         self::assertStringNotContainsString('matched_status_cache.indexed_chunk_count > 0', $queries[0]['query']);
         foreach (['organization_id', 'source_type', 'entity_type'] as $constantColumn) {
             self::assertStringContainsString('"matched_sources"."'.$constantColumn.'" = "expected"."'.$constantColumn.'"', $queries[0]['query']);
@@ -203,9 +205,10 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         foreach (['expected_count', 'indexed_count', 'pending_since'] as $field) {
             self::assertEquals($full['design_additional']->{$field}, $counts['design_additional']->{$field}, $field);
         }
-        $countsQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'matched_source_cache AS MATERIALIZED')));
+        $countsQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'matched_source_cache AS ')));
         $proofQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS identity_proof')));
         self::assertCount(1, $countsQueries);
+        self::assertStringContainsString('matched_source_cache AS NOT MATERIALIZED', $countsQueries[0]['query']);
         self::assertNotEmpty($proofQueries);
         self::assertStringContainsString('matched_status_cache.indexed_chunk_count > 0', $countsQueries[0]['query']);
         foreach ($proofQueries as $query) {
@@ -463,7 +466,7 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             $started = hrtime(true);
             $counts = $read(false);
             $pipelineMs = (hrtime(true) - $started) / 1000000;
-            $queries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'matched_source_cache AS MATERIALIZED')));
+            $queries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'matched_source_cache AS ')));
         } finally {
             DB::disableQueryLog();
             DB::flushQueryLog();
@@ -476,6 +479,7 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
             self::assertEquals($full['design_additional']->{$field}, $counts['design_additional']->{$field}, $field);
         }
         self::assertCount(1, $queries);
+        self::assertStringContainsString('matched_source_cache AS NOT MATERIALIZED', $queries[0]['query']);
         foreach (['organization_id', 'source_type', 'entity_type'] as $constantColumn) {
             self::assertStringNotContainsString('"matched_sources"."'.$constantColumn.'" = "expected"."'.$constantColumn.'"', $queries[0]['query']);
         }
@@ -497,32 +501,68 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         self::assertSame(0, (int) $read(false)['design_additional']->indexed_count);
         self::assertSame(0, (int) $read(true)['design_additional']->indexed_count);
         $source->updateQuietly(['checksum' => $checksum]);
+        $baseSourceRows = (int) DB::table('ai_rag_sources')->count();
+        $baseStatusRows = (int) DB::table('ai_rag_status_sources')->count();
+        $baseExpectedRows = (int) DB::table('ai_rag_expected_sources')->count();
+        $measurePlan = static function (array $root): array {
+            $matchedCacheCteNodes = 0;
+            $sourceScans = [];
+            $statusScans = [];
+            $expectedSourceScans = [];
+            $cteScans = [];
+            $walk = static function (array $node) use (&$walk, &$matchedCacheCteNodes, &$sourceScans, &$statusScans, &$expectedSourceScans, &$cteScans): void {
+                if (($node['CTE Name'] ?? null) === 'matched_source_cache' || ($node['Subplan Name'] ?? null) === 'CTE matched_source_cache') {
+                    $matchedCacheCteNodes++;
+                }
+                if (($node['Node Type'] ?? null) === 'CTE Scan') {
+                    $cteScans[] = ['rows' => (float) ($node['Actual Rows'] ?? 0), 'removed_filter' => (float) ($node['Rows Removed by Filter'] ?? 0),
+                        'removed_recheck' => (float) ($node['Rows Removed by Index Recheck'] ?? 0), 'loops' => max(0.0, (float) ($node['Actual Loops'] ?? 0))];
+                }
+                $relation = $node['Relation Name'] ?? null;
+                if ($relation === 'ai_rag_expected_sources') {
+                    $expectedSourceScans[] = ['rows' => (float) ($node['Actual Rows'] ?? 0), 'removed_filter' => (float) ($node['Rows Removed by Filter'] ?? 0),
+                        'removed_recheck' => (float) ($node['Rows Removed by Index Recheck'] ?? 0), 'loops' => max(0.0, (float) ($node['Actual Loops'] ?? 0))];
+                }
+                if (in_array($relation, ['ai_rag_sources', 'ai_rag_status_sources'], true)) {
+                    $scan = ['rows' => (float) ($node['Actual Rows'] ?? 0), 'removed_filter' => (float) ($node['Rows Removed by Filter'] ?? 0),
+                        'removed_recheck' => (float) ($node['Rows Removed by Index Recheck'] ?? 0),
+                        'loops' => max(0.0, (float) ($node['Actual Loops'] ?? 0)), 'workers' => max(0, (int) ($node['Workers Planned'] ?? 0))];
+                    if ($relation === 'ai_rag_sources') { $sourceScans[] = $scan; } else { $statusScans[] = $scan; }
+                }
+                foreach ($node['Plans'] ?? [] as $child) { $walk($child); }
+            };
+            $walk($root);
+            $sourceWork = array_sum(array_map(static fn (array $scan): float => max(1.0, $scan['rows'] + $scan['removed_filter'] + $scan['removed_recheck']) * $scan['loops'], $sourceScans));
+            $statusWork = array_sum(array_map(static fn (array $scan): float => max(1.0, $scan['rows'] + $scan['removed_filter'] + $scan['removed_recheck']) * $scan['loops'], $statusScans));
+            $roundingPadding = array_sum(array_map(static fn (array $scan): float => $scan['loops'] * max(1, $scan['workers'] + 1), array_merge($sourceScans, $statusScans)));
+            $cteScanWork = array_sum(array_map(static fn (array $scan): float => max(1.0, $scan['rows'] + $scan['removed_filter'] + $scan['removed_recheck']) * $scan['loops'], $cteScans));
+            $expectedSourceScanWork = array_sum(array_map(static fn (array $scan): float => max(1.0, $scan['rows'] + $scan['removed_filter'] + $scan['removed_recheck']) * $scan['loops'], $expectedSourceScans));
+            return ['matched_cache_cte_nodes' => $matchedCacheCteNodes, 'cte_scan_work' => $cteScanWork, 'expected_source_scan_nodes' => count($expectedSourceScans),
+                'expected_source_scan_work' => $expectedSourceScanWork, 'source_scan_nodes' => count($sourceScans), 'status_scan_nodes' => count($statusScans),
+                'source_scan_loops' => $sourceScans[0]['loops'] ?? 0.0, 'status_scan_loops' => $statusScans[0]['loops'] ?? 0.0,
+                'source_workers_planned' => $sourceScans[0]['workers'] ?? 0, 'status_workers_planned' => $statusScans[0]['workers'] ?? 0,
+                'source_rows_processed' => $sourceWork, 'status_rows_processed' => $statusWork, 'rows_processed' => $sourceWork + $statusWork, 'rounding_padding' => $roundingPadding];
+        };
         $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$queries[0]['query'], $queries[0]['bindings']);
         $plan = json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
-        $materialized = [];
-        $matchedScanWork = 0;
-        $collect = static function (array $node) use (&$collect, &$materialized, &$matchedScanWork): void {
-            if (($node['Subplan Name'] ?? null) === 'CTE matched_source_cache') {
-                $materialized[] = ($node['Actual Rows'] ?? 0) * ($node['Actual Loops'] ?? 1);
-            }
-            if (($node['Node Type'] ?? null) === 'CTE Scan' && ($node['CTE Name'] ?? null) === 'matched_source_cache') {
-                $matchedScanWork += (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1);
-            }
-            foreach ($node['Plans'] ?? [] as $child) {
-                $collect($child);
-            }
-        };
-        $collect($plan['Plan']);
-        self::assertSame([1], $materialized, 'Only indexed matched sources must be materialized.');
-        self::assertGreaterThan(0, $matchedScanWork);
-        self::assertLessThanOrEqual(2, $matchedScanWork, 'Expected counters must not rescan the indexed matched-source cache for each identity.');
+        $scanWork = $measurePlan($plan['Plan']);
+        self::assertSame(0, $scanWork['matched_cache_cte_nodes'], 'NOT MATERIALIZED must not leave a matched-source CTE producer or scan.');
+        $expectedProjectionWorkLimit = 2 * $baseExpectedRows + 64;
+        self::assertLessThanOrEqual($expectedProjectionWorkLimit, $scanWork['cte_scan_work'], 'CTE scans must not repeatedly rescan expected identity inputs.');
+        self::assertLessThanOrEqual($expectedProjectionWorkLimit, $scanWork['expected_source_scan_work'], 'Expected-source base scans must remain linear in fixture cardinality.');
+        self::assertSame(1, $scanWork['source_scan_nodes'], 'Unexpected source-table base scans in matched expected counts.');
+        self::assertSame(1, $scanWork['status_scan_nodes'], 'Unexpected status-table base scans in matched expected counts.');
+        self::assertGreaterThan(0, $scanWork['source_rows_processed']);
+        self::assertGreaterThan(0, $scanWork['status_rows_processed']);
+        self::assertLessThanOrEqual(max($baseSourceRows, $scanWork['source_workers_planned'] + 1), $scanWork['source_scan_loops'], 'Source scan loop count must be bounded independently by fixture table cardinality or parallel participants.');
+        self::assertLessThanOrEqual(max($baseStatusRows, $scanWork['status_workers_planned'] + 1), $scanWork['status_scan_loops'], 'Status scan loop count must be bounded independently by fixture table cardinality or parallel participants.');
+        self::assertLessThanOrEqual($baseSourceRows + $baseStatusRows + $scanWork['rounding_padding'], $scanWork['rows_processed'], 'Inline matched counts must stay within one linear pass over both tables plus bounded EXPLAIN rounding.');
         if (getenv('MOST_RAG_STORED_QUERY_PROFILE') === '1') {
-            fwrite(STDERR, 'IFC_EXPECTED_COUNTS_PROFILE '.json_encode([
-                'expected_count' => 20005, 'indexed_count' => 1, 'pipeline_ms' => round($pipelineMs, 3),
-                'planning_ms' => $plan['Planning Time'], 'execution_ms' => $plan['Execution Time'],
-                'materialized_rows' => $materialized, 'temp_read_blocks' => $plan['Plan']['Temp Read Blocks'] ?? 0,
-                'work_mem' => '16MB', 'jit' => 'off', 'matched_cache_rows_processed' => $matchedScanWork,
-            ], JSON_THROW_ON_ERROR).PHP_EOL);
+            fwrite(STDERR, 'IFC_EXPECTED_COUNTS_PROFILE '.json_encode(['expected_count' => 20005, 'indexed_count' => 1, 'pipeline_ms' => round($pipelineMs, 3),
+                'planning_ms' => $plan['Planning Time'], 'execution_ms' => $plan['Execution Time'], 'source_table_rows' => $baseSourceRows, 'status_table_rows' => $baseStatusRows,
+                'expected_source_table_rows' => $baseExpectedRows, 'expected_projection_work_limit' => $expectedProjectionWorkLimit,
+                'cte_scan_work' => $scanWork['cte_scan_work'], 'expected_source_scan_nodes' => $scanWork['expected_source_scan_nodes'],
+                'expected_source_scan_work' => $scanWork['expected_source_scan_work'], 'source_status_scan_work' => $scanWork, 'temp_read_blocks' => $plan['Plan']['Temp Read Blocks'] ?? 0, 'work_mem' => '16MB', 'jit' => 'off'], JSON_THROW_ON_ERROR).PHP_EOL);
         }
         $statusIds = DB::table('ai_rag_status_sources')->where('organization_id', $organizationId)->orderBy('id')->pluck('id');
         $updatedStatuses = 0;
@@ -536,12 +576,18 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         self::assertSame(20005, (int) $fullyIndexed->indexed_count);
         self::assertNull($fullyIndexed->pending_since);
         $fullyIndexedPlan = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$queries[0]['query'], $queries[0]['bindings']);
-        $materialized = [];
-        $matchedScanWork = 0;
-        $collect(json_decode($fullyIndexedPlan->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
-        self::assertSame([20014], $materialized, 'The fully indexed matched-source cache must remain materialized.');
-        self::assertGreaterThan(0, $matchedScanWork);
-        self::assertLessThanOrEqual(40028, $matchedScanWork, 'Fully indexed counters must not rescan the complete matched-source cache for each identity.');
+        $fullyIndexedJson = json_decode($fullyIndexedPlan->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
+        $fullyIndexedWork = $measurePlan($fullyIndexedJson['Plan']);
+        self::assertSame(0, $fullyIndexedWork['matched_cache_cte_nodes'], 'The fully indexed count must not leave a matched-source CTE producer or scan.');
+        self::assertLessThanOrEqual($expectedProjectionWorkLimit, $fullyIndexedWork['cte_scan_work'], 'Fully indexed CTE scans must not repeatedly rescan expected identity inputs.');
+        self::assertLessThanOrEqual($expectedProjectionWorkLimit, $fullyIndexedWork['expected_source_scan_work'], 'Fully indexed expected-source scans must remain linear in fixture cardinality.');
+        self::assertSame(1, $fullyIndexedWork['source_scan_nodes'], 'Unexpected source-table base scans in fully indexed counts.');
+        self::assertSame(1, $fullyIndexedWork['status_scan_nodes'], 'Unexpected status-table base scans in fully indexed counts.');
+        self::assertGreaterThan(0, $fullyIndexedWork['source_rows_processed']);
+        self::assertGreaterThan(0, $fullyIndexedWork['status_rows_processed']);
+        self::assertLessThanOrEqual(max($baseSourceRows, $fullyIndexedWork['source_workers_planned'] + 1), $fullyIndexedWork['source_scan_loops'], 'Fully indexed source scan loops must be bounded independently.');
+        self::assertLessThanOrEqual(max($baseStatusRows, $fullyIndexedWork['status_workers_planned'] + 1), $fullyIndexedWork['status_scan_loops'], 'Fully indexed status scan loops must be bounded independently.');
+        self::assertLessThanOrEqual($baseSourceRows + $baseStatusRows + $fullyIndexedWork['rounding_padding'], $fullyIndexedWork['rows_processed'], 'Fully indexed counts must stay within one linear source/status-table pass plus bounded EXPLAIN rounding.');
         $derivative->updateQuietly(['project_id' => $otherProject->id]);
         self::assertSame(2, (int) $read(false)['design_additional']->expected_count);
         $derivative->updateQuietly(['project_id' => $project->id]);
