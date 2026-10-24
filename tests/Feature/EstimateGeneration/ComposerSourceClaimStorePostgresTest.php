@@ -669,6 +669,8 @@ final class ComposerSourceClaimStorePostgresTest extends EstimateGenerationCanon
                     self::fail('A later human answer reused the old generation approval.');
                 } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState) {
                     self::assertGreaterThan($oldState, (int) $session->fresh()->state_version);
+                } catch (\DomainException $exception) {
+                    self::assertSame('estimator_known_context_changed', $exception->getMessage());
                 }
                 self::assertSame('quoted', DB::table('estimate_generation_credit_operations')->where('operation_id', $oldOperation)->value('status'));
                 self::assertSame($beforeRead, $counts());
